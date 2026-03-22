@@ -1,9 +1,7 @@
 // hrms/lib/screens/splash/splash_screen.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:background_location_tracker/background_location_tracker.dart';
 import '../../config/app_colors.dart';
 import '../../services/geo/live_tracking_service.dart';
 import '../../services/auth_service.dart';
@@ -21,11 +19,6 @@ class SplashScreen extends StatefulWidget {
 class _SplashScreenState extends State<SplashScreen> {
   Color _primaryColor = AppColors.primary;
   bool _isLoadingTheme = true;
-
-  bool _looksLikeMissingPlugin(Object error) {
-    return error is MissingPluginException ||
-        error.toString().contains('No implementation found for method initialized');
-  }
 
   @override
   void initState() {
@@ -78,16 +71,9 @@ class _SplashScreenState extends State<SplashScreen> {
       if (activeInfo != null && mounted) {
         // If user tapped "Stop tracking" in notification, native tracking stopped but we had stale state.
         // Sync: clear LiveTrackingService and go to dashboard.
-        bool isTracking = false;
-        try {
-          isTracking = await BackgroundLocationTrackerManager.isTracking();
-        } catch (e) {
-          if (_looksLikeMissingPlugin(e)) {
-            isTracking = true;
-          } else {
-            rethrow;
-          }
-        }
+        // Retry: on cold start the native plugin often returns false until initialized — don't wipe prefs.
+        final isTracking =
+            await LiveTrackingService().isBackgroundLocationTrackingRunningWithRetry();
         if (!isTracking) {
           await LiveTrackingService().stopTracking();
           Navigator.of(context).pushReplacement(

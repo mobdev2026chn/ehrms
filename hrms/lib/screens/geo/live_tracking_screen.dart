@@ -136,7 +136,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   double _totalDistanceCovered = 0.0;
 
-  Duration _totalTimeElapsed = Duration.zero;
+  /// Resolved after [LiveTrackingService.startTracking] (wall clock; not timer-based).
+  DateTime? _tripStartUtc;
+
   Duration _drivingDuration = Duration.zero;
   Duration _walkingDuration = Duration.zero;
   Duration _stopDuration = Duration.zero;
@@ -148,7 +150,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   /// Geofence status for UX: null = inside/no message, else soft or warning message.
   String? _geofenceStatusMessage;
 
-  final DateTime _taskStartTime = DateTime.now();
+  /// Elapsed time for the trip — uses wall clock so it stays correct after sleep / app restart.
+  Duration get _elapsedDuration {
+    final start = _tripStartUtc;
+    if (start == null) return Duration.zero;
+    final d = DateTime.now().difference(start);
+    return d.isNegative ? Duration.zero : d;
+  }
 
   // Step-based progress (Next Steps card).
   bool _reachedLocation = false;
@@ -169,6 +177,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _taskState = widget.task;
+    // Provisional; [_bootstrapTripClock] refines from prefs / API for accurate wall-clock elapsed.
+    _tripStartUtc = widget.task?.startTime;
     if (_task?.status == TaskStatus.arrived) _arrivedSent = true;
     final initialDestination = _task?.destinationLocation;
     if (initialDestination != null &&
@@ -219,28 +229,59 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     );
     _fetchPlannedTripRoute();
 
-    // Send GPS point every 15 sec: updateLocation (task path) + storeTracking (Tracking collection).
-    // Persist for background tracking (continues when app closed or in background).
-    if (widget.taskMongoId != null && widget.taskMongoId!.isNotEmpty) {
-      LiveTrackingService().startTracking(
-        taskMongoId: widget.taskMongoId!,
-        taskId: widget.taskId,
-        pickupLat: widget.pickupLocation.latitude,
-        pickupLng: widget.pickupLocation.longitude,
-        dropoffLat: _dropoffLatLng.latitude,
-        dropoffLng: _dropoffLatLng.longitude,
-      );
-      // Send first point after 2 sec, then every 15 sec.
-      Future.delayed(const Duration(seconds: 2), () {
-        _sendLocationToDb();
-        _syncPendingDestinationIfAny();
-      });
-      _locationUploadTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-        if (!mounted) return;
-        _sendLocationToDb();
-      });
-    }
+    // Persist trip start + start GPS uploads after first frame (async; needs awaited startTracking).
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapTripClock());
+
     _enablePipOnMinimize();
+  }
+
+  /// Starts background tracking, restores wall-clock trip start from prefs / server, then timers.
+  Future<void> _bootstrapTripClock() async {
+    if (widget.taskMongoId == null || widget.taskMongoId!.isEmpty) {
+      _tripStartUtc = widget.task?.startTime ?? DateTime.now();
+      if (mounted) setState(() {});
+      return;
+    }
+    await LiveTrackingService().startTracking(
+      taskMongoId: widget.taskMongoId!,
+      taskId: widget.taskId,
+      pickupLat: widget.pickupLocation.latitude,
+      pickupLng: widget.pickupLocation.longitude,
+      dropoffLat: _dropoffLatLng.latitude,
+      dropoffLng: _dropoffLatLng.longitude,
+    );
+    // Server startTime is authoritative if prefs were cleared on cold start (race) or mistaken sync.
+    DateTime? serverStart;
+    try {
+      final t = await TaskService().getTaskById(widget.taskMongoId!);
+      serverStart = t.startTime;
+      if (mounted) _taskState = t;
+    } catch (_) {}
+
+    DateTime? resolved = serverStart ?? widget.task?.startTime;
+    final ms = await LiveTrackingService().getTripStartMs();
+    if (resolved == null && ms != null) {
+      resolved = DateTime.fromMillisecondsSinceEpoch(ms);
+    }
+    if (resolved == null) {
+      resolved = DateTime.now();
+    } else {
+      await LiveTrackingService().persistTripStartMs(
+        resolved.millisecondsSinceEpoch,
+      );
+    }
+    _tripStartUtc = resolved;
+    if (mounted) setState(() {});
+
+    // Send first point after 2 sec, then every 15 sec.
+    Future.delayed(const Duration(seconds: 2), () {
+      _sendLocationToDb();
+      _syncPendingDestinationIfAny();
+    });
+    _locationUploadTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!mounted) return;
+      _sendLocationToDb();
+    });
   }
 
   Future<void> _enablePipOnMinimize() async {
@@ -822,7 +863,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
-          _totalTimeElapsed = _totalTimeElapsed + const Duration(seconds: 1);
+          // Elapsed uses [_elapsedDuration] (wall clock), not tick counting — survives background/sleep.
           switch (_currentActivity.toLowerCase()) {
             case 'drive':
             case 'driving':
@@ -875,6 +916,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       final fromLng =
           _lastLocation?.longitude ?? widget.pickupLocation.longitude;
       _fetchRoadRoute(fromLat, fromLng);
+      setState(() {}); // Refresh wall-clock elapsed immediately when returning from background.
     }
   }
 
@@ -982,7 +1024,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     if (_submittingArrived || _arrivedSent) return;
     final totalKm = _totalDistanceCovered / 1000;
     final arrival = DateTime.now();
-    final durationSeconds = _totalTimeElapsed.inSeconds;
+    final durationSeconds = _elapsedDuration.inSeconds;
+    Task? arrivedTask = _task;
 
     double? lat = _lastLocation?.latitude ?? widget.pickupLocation.latitude;
     double? lng = _lastLocation?.longitude ?? widget.pickupLocation.longitude;
@@ -1026,6 +1069,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             'stopDuration': _stopDuration.inSeconds,
           },
         );
+        try {
+          arrivedTask = await TaskService().getTaskById(widget.taskMongoId!);
+          _taskState = arrivedTask;
+        } catch (_) {}
         if (mounted)
           setState(() {
             _reachedLocation = true;
@@ -1055,9 +1102,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         builder: (context) => ArrivedScreen(
           taskMongoId: widget.taskMongoId,
           taskId: widget.taskId,
-          task: _task,
-          totalDuration: _totalTimeElapsed,
-          totalDistanceKm: totalKm,
+          task: arrivedTask,
+          totalDuration: Duration(
+            seconds: arrivedTask?.tripDurationSeconds ?? _elapsedDuration.inSeconds,
+          ),
+          totalDistanceKm: arrivedTask?.tripDistanceKm ?? totalKm,
           isWithinGeofence: _isInsideGeofence,
           arrivalTime: arrival,
           sourceLat: widget.pickupLocation.latitude,
@@ -1149,7 +1198,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               _buildTravelRow(
                 Icons.timer_outlined,
                 'Elapsed',
-                _formatDuration(_totalTimeElapsed),
+                _formatDuration(_elapsedDuration),
               ),
               const SizedBox(height: 4),
               _buildTravelRow(

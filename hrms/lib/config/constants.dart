@@ -6,7 +6,7 @@ static const String baseUrl = 'https://ehrms.askeva.net/api';
   /// Local dev – backend on port 9001. Use your machine's IP for physical device.
   /// For LMS (and all) data to match the web for the same user, point [baseUrl]
   /// to the same backend the web frontend uses (e.g. production or same dev server).
-//static const String baseUrl = 'http://192.168.16.104:9001/api';
+//static const String baseUrl = 'http://192.168.1.34:9001/api';
 
   // Android emulator: use 10.0.2.2 to reach host
   // stati

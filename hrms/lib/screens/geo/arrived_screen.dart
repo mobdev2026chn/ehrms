@@ -9,6 +9,7 @@ import 'package:hrms/config/constants.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/exit_ride_bottom_sheet.dart';
 import 'package:hrms/screens/geo/form_fill_screen.dart';
+import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/screens/geo/otp_verification_screen.dart';
 import 'package:hrms/screens/geo/photo_proof_screen.dart';
 import 'package:hrms/screens/geo/task_completed_screen.dart';
@@ -983,8 +984,15 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
       builder: (ctx) => ExitRideBottomSheet(onSubmit: _submitExitRide),
     );
     if (exited != true || !mounted) return;
+    // Do not only [Navigator.pop]: Arrived may be the sole route (e.g. Splash→Live→Arrived
+    // via pushReplacement), so pop would leave an empty stack → black screen. Match
+    // LiveTrackingScreen exit: land on Tasks list.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) Navigator.of(context).pop();
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MyTasksScreen()),
+        (route) => false,
+      );
     });
   }
 

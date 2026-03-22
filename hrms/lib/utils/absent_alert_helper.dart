@@ -283,7 +283,7 @@ Future<({bool hasPunchInToday, bool suppressAlert})> _resolveTodayAttendanceStat
       final punchIn = data['punchIn']?.toString().trim();
       return (
         hasPunchInToday: punchIn != null && punchIn.isNotEmpty,
-        suppressAlert: data['isHoliday'] == true,
+        suppressAlert: shouldSuppressAbsentAlert(data),
       );
     }
   } catch (_) {}
@@ -291,6 +291,17 @@ Future<({bool hasPunchInToday, bool suppressAlert})> _resolveTodayAttendanceStat
     hasPunchInToday: fallbackHasPunchInToday,
     suppressAlert: fallbackSuppressAlert,
   );
+}
+
+bool shouldSuppressAbsentAlert(Map<String, dynamic>? todayAttendance) {
+  if (todayAttendance == null) return false;
+
+  final isHoliday = todayAttendance['isHoliday'] == true;
+  final isOnLeave = todayAttendance['isOnLeave'] == true;
+  final isPaidLeaveToday = todayAttendance['isPaidLeaveToday'] == true;
+  final hasHalfDayLeave = todayAttendance['halfDayLeave'] is Map;
+
+  return isHoliday || isOnLeave || isPaidLeaveToday || hasHalfDayLeave;
 }
 
 Future<_AbsentAlertSchedule?> _loadAbsentAlertSchedule(DateTime now) async {

@@ -301,7 +301,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               showAbsentAlertIfNeeded(
                 context,
                 hasPunchInToday: hasPunchInToday,
-                suppressAlert: _isHoliday,
+                suppressAlert:
+                    _isHoliday ||
+                    _isOnLeave ||
+                    _isPaidLeaveToday ||
+                    _halfDayLeave != null,
               );
             });
           }
@@ -724,7 +728,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               showAbsentAlertIfNeeded(
                 context,
                 hasPunchInToday: hasPunchInToday,
-                suppressAlert: _isHoliday,
+                suppressAlert:
+                    _isHoliday ||
+                    _isOnLeave ||
+                    _isPaidLeaveToday ||
+                    _halfDayLeave != null,
               );
             });
           }

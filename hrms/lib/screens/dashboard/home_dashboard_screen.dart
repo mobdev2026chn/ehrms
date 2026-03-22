@@ -1,11 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
-import 'package:background_location_tracker/background_location_tracker.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/cloud_punch_card.dart';
@@ -59,11 +57,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   String _userName = 'User';
   String _companyName = '';
   String? _avatarUrl;
-
-  bool _looksLikeMissingPlugin(Object error) {
-    return error is MissingPluginException ||
-        error.toString().contains('No implementation found for method initialized');
-  }
 
   final RequestService _requestService = RequestService();
   final AttendanceService _attendanceService = AttendanceService();
@@ -135,16 +128,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final active = await LiveTrackingService().isActive();
     // Sync: if user tapped "Stop tracking" in notification, native stopped but we had stale state
     if (active) {
-      bool isTracking = false;
-      try {
-        isTracking = await BackgroundLocationTrackerManager.isTracking();
-      } catch (e) {
-        if (_looksLikeMissingPlugin(e)) {
-          isTracking = true;
-        } else {
-          rethrow;
-        }
-      }
+      // Retry: cold start can report false before native tracker is ready — avoid wiping trip prefs.
+      final isTracking =
+          await LiveTrackingService().isBackgroundLocationTrackingRunningWithRetry();
       if (!isTracking) {
         await LiveTrackingService().stopTracking();
         if (mounted) setState(() => _liveTrackingActive = false);
@@ -324,7 +310,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             showAbsentAlertIfNeeded(
               context,
               hasPunchInToday: hasPunchInToday,
-              suppressAlert: _todayAttendance?['isHoliday'] == true,
+              suppressAlert: shouldSuppressAbsentAlert(_todayAttendance),
             );
           });
         } else {

@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'package:background_location_tracker/background_location_tracker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart' as gl;
@@ -42,6 +44,8 @@ class LiveTrackingService {
   static const _keyLastResolvedArea = 'live_tracking_last_resolved_area';
   static const _keyLastResolvedPincode =
       'live_tracking_last_resolved_pincode';
+  /// Wall-clock start of the current live trip (for UI "Elapsed"; survives sleep / restart).
+  static const _keyTripStartMs = 'live_tracking_trip_start_ms';
   static const double duplicateLocationThresholdMeters = 10;
 
   static final LiveTrackingService _instance = LiveTrackingService._internal();
@@ -72,6 +76,10 @@ class LiveTrackingService {
       TrackingOutlierFilterService.taskScope(taskMongoId),
     );
     final prefs = await SharedPreferences.getInstance();
+    final previousTaskId = prefs.getString(_keyTaskMongoId);
+    final existingTripStartMs = prefs.getInt(_keyTripStartMs);
+    final previousLastSentTime = prefs.getInt(_keyLastSentTime);
+
     await prefs.setBool(_keyActive, true);
     await prefs.setString(_keyTaskMongoId, taskMongoId);
     await prefs.setString(_keyTaskId, taskId);
@@ -85,6 +93,18 @@ class LiveTrackingService {
     await prefs.setDouble(_keyLastSentLat, pickupLat);
     await prefs.setDouble(_keyLastSentLng, pickupLng);
     await prefs.setInt(_keyLastSentTime, DateTime.now().millisecondsSinceEpoch);
+
+    // Persist trip start once per task; reuse after app sleep / cold start so "Elapsed" stays correct.
+    if (previousTaskId == taskMongoId && existingTripStartMs != null) {
+      // keep existingTripStartMs
+    } else if (previousTaskId == taskMongoId && existingTripStartMs == null) {
+      await prefs.setInt(
+        _keyTripStartMs,
+        previousLastSentTime ?? DateTime.now().millisecondsSinceEpoch,
+      );
+    } else {
+      await prefs.setInt(_keyTripStartMs, DateTime.now().millisecondsSinceEpoch);
+    }
     final token = prefs.getString('token');
     if (token != null) {
       await prefs.setString(_keyToken, token);
@@ -132,6 +152,7 @@ class LiveTrackingService {
     await prefs.remove(_keyLastResolvedCity);
     await prefs.remove(_keyLastResolvedArea);
     await prefs.remove(_keyLastResolvedPincode);
+    await prefs.remove(_keyTripStartMs);
     if (taskMongoId != null && taskMongoId.isNotEmpty) {
       await TrackingOutlierFilterService.clearScope(
         TrackingOutlierFilterService.taskScope(taskMongoId),
@@ -325,6 +346,47 @@ class LiveTrackingService {
   Future<bool> isActive() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keyActive) == true;
+  }
+
+  /// Milliseconds since epoch when the current live trip started (for UI elapsed time).
+  Future<int?> getTripStartMs() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_keyTripStartMs);
+  }
+
+  /// Writes trip start (e.g. from server [Task.startTime]) when local prefs were reset incorrectly.
+  Future<void> persistTripStartMs(int millisecondsSinceEpoch) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_keyActive) != true) return;
+    await prefs.setInt(_keyTripStartMs, millisecondsSinceEpoch);
+  }
+
+  static bool _looksLikeMissingPlugin(Object e) {
+    return e is MissingPluginException ||
+        e.toString().contains('No implementation found for method initialized');
+  }
+
+  /// Cold start: native plugin often reports `false` briefly; retry before treating as stopped.
+  Future<bool> isBackgroundLocationTrackingRunningWithRetry({
+    int maxAttempts = 8,
+    Duration delayBetweenAttempts = const Duration(milliseconds: 350),
+  }) async {
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        if (await BackgroundLocationTrackerManager.isTracking()) {
+          return true;
+        }
+      } catch (e) {
+        if (_looksLikeMissingPlugin(e)) {
+          return true;
+        }
+        rethrow;
+      }
+      if (attempt < maxAttempts - 1) {
+        await Future.delayed(delayBetweenAttempts);
+      }
+    }
+    return false;
   }
 
   /// Get active task info for restoring LiveTrackingScreen.

@@ -364,6 +364,118 @@ function batteryAtTime(trackingRecords, date) {
   return best != null ? Number(best) : undefined;
 }
 
+function normalizeTravelMovementType(movementType) {
+  const value = String(movementType || '').trim().toLowerCase();
+  if (value === 'drive' || value === 'driving') return 'drive';
+  if (value === 'walk' || value === 'walking') return 'walk';
+  return 'stop';
+}
+
+function getTravelMetricsWindow(taskObj, endTimeInput) {
+  const endTime = endTimeInput ? new Date(endTimeInput) : null;
+  if (!endTime || Number.isNaN(endTime.getTime())) return null;
+
+  const restarts = taskObj?.tasks_restarted || taskObj?.restarted || [];
+  let startRaw = taskObj?.startTime || taskObj?.rideStartedAt || taskObj?.started;
+  if (Array.isArray(restarts) && restarts.length > 0) {
+    const last = restarts[restarts.length - 1];
+    startRaw = last?.restartedAt || last?.resumedAt || last?.time || startRaw;
+  }
+
+  const startTime = startRaw ? new Date(startRaw) : null;
+  if (!startTime || Number.isNaN(startTime.getTime()) || endTime <= startTime) {
+    return null;
+  }
+  return { startTime, endTime };
+}
+
+function computeTravelMetricsFromTrackingRecords(trackingRecords, window) {
+  if (!window) return null;
+  const { startTime, endTime } = window;
+  const totalSeconds = Math.max(0, Math.round((endTime.getTime() - startTime.getTime()) / 1000));
+
+  const movementRecords = (trackingRecords || [])
+    .map((record) => {
+      const tsRaw = record.timestamp || record.time;
+      const ts = tsRaw ? new Date(tsRaw) : null;
+      if (!ts || Number.isNaN(ts.getTime())) return null;
+      return { ...record, _ts: ts };
+    })
+    .filter((record) => record != null && record._ts <= endTime)
+    .sort((a, b) => a._ts - b._ts);
+
+  if (movementRecords.length === 0) {
+    return {
+      tripDurationSeconds: totalSeconds,
+      travelActivityDuration: {
+        driveDuration: 0,
+        walkDuration: 0,
+        stopDuration: totalSeconds,
+      },
+    };
+  }
+
+  let driveDuration = 0;
+  let walkDuration = 0;
+  let stopDuration = 0;
+
+  for (let i = 0; i < movementRecords.length; i += 1) {
+    const current = movementRecords[i];
+    const next = movementRecords[i + 1];
+    const segmentStart = i === 0
+      ? startTime
+      : new Date(Math.max(current._ts.getTime(), startTime.getTime()));
+    const nextTime = next?._ts ?? endTime;
+    const segmentEnd = new Date(Math.min(nextTime.getTime(), endTime.getTime()));
+    if (segmentEnd <= segmentStart) continue;
+
+    const durationSeconds = Math.round(
+      (segmentEnd.getTime() - segmentStart.getTime()) / 1000
+    );
+    switch (normalizeTravelMovementType(current.movementType)) {
+      case 'drive':
+        driveDuration += durationSeconds;
+        break;
+      case 'walk':
+        walkDuration += durationSeconds;
+        break;
+      case 'stop':
+      default:
+        stopDuration += durationSeconds;
+        break;
+    }
+  }
+
+  const accounted = driveDuration + walkDuration + stopDuration;
+  if (accounted < totalSeconds) {
+    stopDuration += (totalSeconds - accounted);
+  }
+
+  return {
+    tripDurationSeconds: totalSeconds,
+    travelActivityDuration: {
+      driveDuration,
+      walkDuration,
+      stopDuration,
+    },
+  };
+}
+
+async function computePersistedTravelMetrics(taskMongoId, taskObj, endTimeInput) {
+  const window = getTravelMetricsWindow(taskObj, endTimeInput);
+  if (!taskMongoId || !window) return null;
+  const trackingRecords = await Tracking.find({
+    taskId: taskMongoId,
+    timestamp: { $lte: window.endTime },
+  })
+    .select('timestamp time movementType latitude longitude status')
+    .sort({ timestamp: 1 })
+    .lean();
+  return computeTravelMetricsFromTrackingRecords(trackingRecords, window);
+}
+
+exports.computePersistedTravelMetrics = computePersistedTravelMetrics;
+
 exports.getTaskById = async (req, res) => {
   try {
     const taskId = req.params.id;
@@ -394,6 +506,15 @@ exports.getTaskById = async (req, res) => {
         ...rs,
         batteryPercent: batteryAtTime(trackingRecords, rs.restartedAt || rs.resumedAt || rs.time),
       }));
+    }
+
+    const persistedTravelMetrics = computeTravelMetricsFromTrackingRecords(
+      trackingRecords,
+      getTravelMetricsWindow(merged, merged.arrivalTime || merged.arrived)
+    );
+    if (persistedTravelMetrics) {
+      merged.tripDurationSeconds = persistedTravelMetrics.tripDurationSeconds;
+      merged.travelActivityDuration = persistedTravelMetrics.travelActivityDuration;
     }
 
     console.log('[Tasks] Fetched task:', task.taskId || taskId);
@@ -608,6 +729,15 @@ exports.getCompletionReport = async (req, res) => {
     const trackingRecords = await Tracking.find({ taskId: task._id })
       .sort({ timestamp: 1 })
       .lean();
+
+    const persistedTravelMetrics = computeTravelMetricsFromTrackingRecords(
+      trackingRecords,
+      getTravelMetricsWindow(taskObj, taskObj.arrivalTime || taskObj.arrived)
+    );
+    if (persistedTravelMetrics) {
+      taskObj.tripDurationSeconds = persistedTravelMetrics.tripDurationSeconds;
+      taskObj.travelActivityDuration = persistedTravelMetrics.travelActivityDuration;
+    }
 
     const routePoints = trackingRecords
           .filter((r) => r.latitude != null && r.longitude != null)
@@ -1064,10 +1194,19 @@ exports.endTask = async (req, res) => {
       completedDate: completedAt,
       completedBy: staffId,
     };
+    const persistedTravelMetrics = await computePersistedTravelMetrics(
+      task._id,
+      details || task,
+      details?.arrivalTime || details?.arrived || task.arrivalTime || completedAt
+    );
+    if (persistedTravelMetrics) {
+      fullDoc.tripDurationSeconds = persistedTravelMetrics.tripDurationSeconds;
+      fullDoc.travelActivityDuration = persistedTravelMetrics.travelActivityDuration;
+    }
     const travelActivityDuration = normalizeTravelActivityDuration(
       req.body?.travelActivityDuration
     );
-    if (travelActivityDuration) {
+    if (travelActivityDuration && !persistedTravelMetrics) {
       fullDoc.travelActivityDuration = travelActivityDuration;
     }
     await exports.upsertTaskDetails(fullDoc);

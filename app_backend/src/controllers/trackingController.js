@@ -8,6 +8,7 @@ const {
   upsertTaskDetails,
   buildUnsetExtended,
   normalizeTravelActivityDuration,
+  computePersistedTravelMetrics,
 } = require('./taskController');
 const { reverseGeocode } = require('../services/geocodingService');
 const { markLatestPresenceTrackingInactiveForStaff } = require('../services/presenceTrackingStatusService');
@@ -983,11 +984,22 @@ exports.arrivedTracking = async (req, res) => {
       arrivalLocation,
       sourceFullAddress: resolvedSourceFullAddress,
     };
-    if (req.body.tripDurationSeconds != null) updateData.tripDurationSeconds = Number(req.body.tripDurationSeconds);
+    const persistedTravelMetrics = await computePersistedTravelMetrics(
+      task._id,
+      details || task,
+      now
+    );
+    if (persistedTravelMetrics) {
+      updateData.tripDurationSeconds = persistedTravelMetrics.tripDurationSeconds;
+      updateData.travelActivityDuration =
+        persistedTravelMetrics.travelActivityDuration;
+    } else if (req.body.tripDurationSeconds != null) {
+      updateData.tripDurationSeconds = Number(req.body.tripDurationSeconds);
+    }
     const travelActivityDuration = normalizeTravelActivityDuration(
       req.body?.travelActivityDuration
     );
-    if (travelActivityDuration) {
+    if (travelActivityDuration && !persistedTravelMetrics) {
       updateData.travelActivityDuration = travelActivityDuration;
     }
     if (req.body.sourceLocation) {
