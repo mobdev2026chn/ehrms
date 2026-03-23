@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_colors.dart';
 import '../services/break_service.dart';
 import '../screens/dashboard/dashboard_screen.dart';
+import '../utils/break_datetime_util.dart';
 import 'break_status_card.dart';
 
 /// Config for a single nav item.
@@ -98,11 +99,11 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     final result = await _breakService.getCurrentBreak();
     if (!mounted) return;
     final data = result['data'];
-    final rawStartTime = data is Map ? data['startTime']?.toString() : null;
+    final parsed = data is Map
+        ? parseApiDateTimeToLocal(data['startTime'])
+        : null;
     setState(() {
-      _fetchedBreakStartTime = rawStartTime == null || rawStartTime.isEmpty
-          ? null
-          : DateTime.tryParse(rawStartTime)?.toLocal();
+      _fetchedBreakStartTime = parsed;
     });
   }
 
@@ -187,15 +188,21 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     ];
   }
 
-  Widget _buildPunchButton(BuildContext context) {
+  /// [fillNavColumn] — pill stretches to fill the punch column (reference UI: large CTA).
+  Widget _buildPunchButton(BuildContext context, {bool fillNavColumn = false}) {
     // Prefer dashboard today-card state when provided; else use prefs (same logic as today card)
     final isPunchedIn = widget.isPunchedInToday ?? _isPunchedIn;
     final label = isPunchedIn ? 'Punch Out' : 'Punch In';
     final icon = isPunchedIn ? Icons.logout_rounded : Icons.login_rounded;
     final isDisabled = widget.isPunchActionInProgress;
 
+    final hPad = fillNavColumn ? 14.0 : 10.0;
+    final vPad = fillNavColumn ? 14.0 : 8.0;
+    final iconSize = fillNavColumn ? 18.0 : 16.0;
+    final fontSize = fillNavColumn ? 11.0 : 10.0;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       child: IgnorePointer(
         ignoring: isDisabled,
         child: AnimatedOpacity(
@@ -204,10 +211,12 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () => _handleNavigation(context, 5),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeInOut,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            // [Container] not [AnimatedContainer]: when the break chip is inserted after
+            // punch-in, Flutter can reuse the same slot; tweening pill (borderRadius) ↔
+            // break circle (BoxShape.circle) throws (box_decoration.dart assertion).
+            child: Container(
+              width: fillNavColumn ? double.infinity : null,
+              padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [AppColors.primary, AppColors.primaryDark],
@@ -224,19 +233,36 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
                 ],
               ),
               child: Row(
-                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: fillNavColumn ? MainAxisSize.max : MainAxisSize.min,
                 children: [
-                  Icon(icon, size: 16, color: Colors.white),
-                  const SizedBox(width: 5),
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
+                  Icon(icon, size: iconSize, color: Colors.white),
+                  SizedBox(width: fillNavColumn ? 6 : 3),
+                  if (fillNavColumn)
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: fontSize,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    )
+                  else
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -253,7 +279,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     final isDisabled = widget.isBreakActionInProgress;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 2),
       child: IgnorePointer(
         ignoring: isDisabled,
         child: AnimatedOpacity(
@@ -262,11 +288,12 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () => _handleNavigation(context, 6),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeInOut,
-              width: 44,
-              height: 44,
+            // Use [Container] (not [AnimatedContainer]): inserting this row when punch-in
+            // flips can otherwise reuse the punch button's element and tween incompatible
+            // decorations (circle vs borderRadius). [AnimatedOpacity] still smooths feedback.
+            child: Container(
+              width: 40,
+              height: 40,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: _effectiveBreakActive
@@ -290,6 +317,9 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   @override
   Widget build(BuildContext context) {
     final navItems = widget.items ?? _buildItems();
+    // Tea break: same rule as Punch button — only after punch-in today (dashboard passes
+    // [isPunchedInToday]; otherwise prefs from [_checkPunchState]).
+    final isPunchedInForBreak = widget.isPunchedInToday ?? _isPunchedIn;
 
     // Nav bar background: black
     final barBg = Colors.black;
@@ -299,7 +329,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (_effectiveBreakStartTime != null)
+        if (isPunchedInForBreak && _effectiveBreakStartTime != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: BreakStatusCard(
@@ -327,47 +357,74 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
             top: false,
             bottom: false,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // Regular nav icon items
-                  ...List.generate(navItems.length, (i) {
-                    final item = navItems[i];
-                    final selected = widget.currentIndex == i;
-                    final iconColor = selected ? Colors.white : unselectedColor;
-                    return Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => _handleNavigation(context, i),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: selected ? selectedColor : Colors.transparent,
-                            shape: BoxShape.circle,
-                            boxShadow: selected
-                                ? [
-                                    BoxShadow(
-                                      color: selectedColor.withValues(alpha: 0.4),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ]
-                                : null,
+                  // Left cluster: tabs + break share ~2/3 of the bar; tight, even spacing
+                  // (reference: no huge dead gap in the middle).
+                  Expanded(
+                    flex: 5,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        for (int i = 0; i < navItems.length; i++)
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => _handleNavigation(context, i),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: widget.currentIndex == i
+                                    ? selectedColor
+                                    : Colors.transparent,
+                                shape: BoxShape.circle,
+                                boxShadow: widget.currentIndex == i
+                                    ? [
+                                        BoxShadow(
+                                          color: selectedColor.withValues(
+                                            alpha: 0.4,
+                                          ),
+                                          blurRadius: 10,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: Icon(
+                                widget.currentIndex == i
+                                    ? navItems[i].activeIcon
+                                    : navItems[i].icon,
+                                size: 24,
+                                color: widget.currentIndex == i
+                                    ? Colors.white
+                                    : unselectedColor,
+                              ),
+                            ),
                           ),
-                          child: Icon(
-                            selected ? item.activeIcon : item.icon,
-                            size: 24,
-                            color: iconColor,
+                        if (isPunchedInForBreak)
+                          KeyedSubtree(
+                            key: const ValueKey('bottom_nav_break'),
+                            child: _buildBreakButton(context),
                           ),
+                      ],
+                    ),
+                  ),
+                  // Punch CTA: ~3/8 of bar — larger pill (reference ~30–35% width).
+                  Expanded(
+                    flex: 3,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 4, right: 10),
+                      child: KeyedSubtree(
+                        key: const ValueKey('bottom_nav_punch'),
+                        child: _buildPunchButton(
+                          context,
+                          fillNavColumn: true,
                         ),
                       ),
-                    );
-                  }),
-
-                  _buildBreakButton(context),
-                  _buildPunchButton(context),
+                    ),
+                  ),
                 ],
               ),
             ),

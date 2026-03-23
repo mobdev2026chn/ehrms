@@ -2,7 +2,7 @@ const Attendance = require('../models/Attendance');
 const AttendanceLog = require('../models/AttendanceLog');
 const Staff = require('../models/Staff');
 const User = require('../models/User'); // Import if needed
-const AttendanceTemplate = require('../models/AttendanceTemplate'); // Register model
+require('../models/AttendanceTemplate'); // ensure model registered for populate/lean paths via utils
 const WeeklyHolidayTemplate = require('../models/WeeklyHolidayTemplate');
 const Tracking = require('../models/Tracking');
 const { reverseGeocode } = require('../services/geocodingService');
@@ -10,6 +10,7 @@ const { logTrackingWrite } = require('../utils/trackingLogger');
 const { calculateAttendanceStats } = require('./payrollController');
 const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
 const { getHolidayTemplateForStaff, getHolidayForDate, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
+const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const digitalOceanService = require('../services/digitalOceanService');
 
 /** Build a single address string from address, area, city, pincode. */
@@ -490,13 +491,13 @@ const checkIn = async (req, res) => {
     const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
 
     try {
-        // Re-fetch staff with populated branch and template
+        // Re-fetch staff (keep attendanceTemplateId as ObjectId; resolve template via collection lookup)
         const staff = await Staff.findById(staffId)
             .populate('branchId')
-            .populate('attendanceTemplateId')
             .populate('weeklyHolidayTemplateId')
             .populate('holidayTemplateId');
-        const template = normalizeTemplate(staff.attendanceTemplateId);
+        const templateDoc = await loadAttendanceTemplateForStaff(staff);
+        const template = normalizeTemplate(templateDoc);
 
         // Salary must be configured to allow check-in (required for fine/late/early storage and payroll)
         const salaryStructure = staff.salary ? calculateSalaryStructure(staff.salary) : null;
@@ -851,13 +852,17 @@ const checkOut = async (req, res) => {
     const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
 
     try {
-        const staff = await Staff.findById(staffId).populate('branchId').populate('attendanceTemplateId');
+        const staff = await Staff.findById(staffId)
+            .populate('branchId')
+            .populate('weeklyHolidayTemplateId')
+            .populate('holidayTemplateId');
         const Company = require('../models/Company');
         const company = await Company.findById(staff.businessId);
         if (!isShiftAssignedForStaff(company, staff)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
-        const template = normalizeTemplate(staff.attendanceTemplateId);
+        const templateDoc = await loadAttendanceTemplateForStaff(staff);
+        const template = normalizeTemplate(templateDoc);
 
         // Find today's attendance
         const attendance = await Attendance.findOne({
@@ -1447,7 +1452,10 @@ const getTodayAttendance = async (req, res) => {
         }
 
         const shiftAssigned = isShiftAssignedForStaff(company, staff);
-        const finalTemplate = staff?.attendanceTemplateId ? normalizeTemplate(staff.attendanceTemplateId) : {};
+        const resolvedAttendanceTemplateDoc = await loadAttendanceTemplateForStaff(staff);
+        const finalTemplate = resolvedAttendanceTemplateDoc
+            ? normalizeTemplate(resolvedAttendanceTemplateDoc)
+            : {};
         
         // Merge shift timings from company settings into template only when shift is assigned
         if (shiftAssigned && dbShiftTimingsForLeave.startTime) {
@@ -1937,30 +1945,28 @@ const getMonthAttendance = async (req, res) => {
         }).select('alternateWorkDate').lean();
         const alternateWorkDatesInMonth = alternateWorkRecords.map(r => formatDateString(r.alternateWorkDate)).filter(Boolean);
 
-        // Attach same-day staff AttendanceLog entries to each attendance (includes break logs too).
-        const performedByIds = [
-            req.staff?._id,
-            req.staff?.userId,
-            req.user?._id
-        ].filter(Boolean);
-        if (attendance.length > 0 && performedByIds.length > 0) {
+        // Attach AttendanceLog rows to each attendance document by attendanceId (punches, breaks,
+        // and admin APPROVED/REJECTED — those use the admin as performedBy, so date-only + staff filter missed them).
+        const attendanceIds = attendance
+            .map(a => a._id)
+            .filter(id => id != null);
+        if (attendanceIds.length > 0) {
             const logs = await AttendanceLog.find({
-                performedBy: { $in: performedByIds },
-                action: { $in: ['PUNCH_IN', 'PUNCH_OUT', 'BREAK_START', 'BREAK_END'] },
+                attendanceId: { $in: attendanceIds },
                 timestamp: { $gte: startOfMonth, $lte: endOfMonth }
             }).sort({ timestamp: 1 }).lean();
 
-            const logsByDate = {};
+            const logsByAttendanceId = {};
             logs.forEach(log => {
-                const dateKey = formatDateStringUTC(log.timestamp);
-                if (!dateKey) return;
-                if (!logsByDate[dateKey]) logsByDate[dateKey] = [];
-                logsByDate[dateKey].push(log);
+                const aid = log.attendanceId?.toString?.() ?? String(log.attendanceId);
+                if (!aid) return;
+                if (!logsByAttendanceId[aid]) logsByAttendanceId[aid] = [];
+                logsByAttendanceId[aid].push(log);
             });
 
             attendance.forEach(a => {
-                const dateKey = formatDateStringUTC(a.date);
-                a.logs = logsByDate[dateKey] || [];
+                const id = a._id?.toString?.() ?? String(a._id);
+                a.logs = id ? (logsByAttendanceId[id] || []) : [];
             });
         }
 

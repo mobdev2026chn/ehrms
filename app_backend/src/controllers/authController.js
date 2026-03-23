@@ -3,6 +3,7 @@ const Staff = require('../models/Staff');
 const Company = require('../models/Company');
 const Branch = require('../models/Branch');
 const Candidate = require('../models/Candidate');
+const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 require('../models/Role');
 const TaskSettings = require('../models/TaskSettings');
 const mongoose = require('mongoose');
@@ -543,6 +544,39 @@ const getProfile = async (req, res) => {
         }
 
         const branchName = fullStaff?.branchId?.branchName ?? null;
+
+        let staffDataPayload = null;
+        if (fullStaff) {
+            const staffPlain = fullStaff.toObject();
+            const atRef = fullStaff.attendanceTemplateId;
+            const attendanceTemplateIdOut = atRef == null
+                ? null
+                : (typeof atRef === 'object' && atRef._id != null
+                    ? String(atRef._id)
+                    : String(atRef));
+            staffDataPayload = {
+                ...staffPlain,
+                attendanceTemplateId: attendanceTemplateIdOut,
+                candidateId: candidateData || fullStaff.candidateId,
+                employmentIds: {
+                    uan: fullStaff.uan,
+                    pan: fullStaff.pan,
+                    aadhaar: fullStaff.aadhaar,
+                    pfNumber: fullStaff.pfNumber,
+                    esiNumber: fullStaff.esiNumber
+                }
+            };
+            // staff.attendanceTemplateId must reference a real attendancetemplates row (and same business when set)
+            if (staffDataPayload.attendanceTemplateId) {
+                const tdoc = await loadAttendanceTemplateForStaff({
+                    _id: fullStaff._id,
+                    businessId: fullStaff.businessId,
+                    attendanceTemplateId: staffDataPayload.attendanceTemplateId
+                });
+                if (!tdoc) staffDataPayload.attendanceTemplateId = null;
+            }
+        }
+
         res.status(200).json({
             success: true,
             data: {
@@ -554,18 +588,7 @@ const getProfile = async (req, res) => {
                     role: fullUser.role
                 },
                 branchName: branchName,
-                staffData: fullStaff ? {
-                    ...fullStaff.toObject(),
-                    candidateId: candidateData || fullStaff.candidateId,
-                    // Preserve nested structure for frontend expectations
-                    employmentIds: {
-                        uan: fullStaff.uan,
-                        pan: fullStaff.pan,
-                        aadhaar: fullStaff.aadhaar,
-                        pfNumber: fullStaff.pfNumber,
-                        esiNumber: fullStaff.esiNumber
-                    }
-                } : null
+                staffData: staffDataPayload
             }
         });
 

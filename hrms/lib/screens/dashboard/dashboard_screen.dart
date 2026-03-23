@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/walking_turtle_emoji.dart';
 import '../../config/constants.dart';
+import '../../utils/break_datetime_util.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../widgets/attendance_success_overlay.dart';
@@ -25,6 +27,8 @@ import '../../services/geo/location_service.dart';
 import '../../services/presence_tracking_service.dart';
 import '../../bloc/attendance/attendance_bloc.dart';
 import '../../utils/face_detection_helper.dart';
+import '../../utils/attendance_template_util.dart';
+import '../../utils/absent_alert_helper.dart';
 import 'home_dashboard_screen.dart';
 import '../attendance/attendance_screen.dart';
 import '../attendance/selfie_camera_screen.dart';
@@ -57,7 +61,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isSubmittingFromFingerprint = false;
   bool _isPunchActionInProgress = false;
   bool _isBreakActionInProgress = false;
-  bool? _isPunchedInToday;
+  /// Starts false so the bottom bar matches the today card (no stale prefs via null).
+  bool _isPunchedInToday = false;
   Map<String, dynamic>? _activeBreak;
   bool _openBreakAfterBuild = false;
 
@@ -77,8 +82,11 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   static bool _isAttendancePunchedIn(Map<String, dynamic>? attendance) {
-    final hasIn = _hasPunchValue(attendance?['punchIn']);
-    final hasOut = _hasPunchValue(attendance?['punchOut']);
+    if (attendance == null) return false;
+    final hasIn = _hasPunchValue(attendance['punchIn']);
+    final hasOut =
+        _hasPunchValue(attendance['punchOut']) ||
+        attendance['hasPunchOut'] == true;
     return hasIn && !hasOut;
   }
 
@@ -133,11 +141,13 @@ class _DashboardScreenState extends State<DashboardScreen>
     final res = await _attendanceService.getTodayAttendance(forceRefresh: true);
     if (!mounted) return;
     final data = res['data'] as Map<String, dynamic>?;
-    if (data != null) {
-      final attendance = _extractAttendanceRecord(data);
+    if (res['success'] == true && data != null) {
+      // Same merge as home dashboard today card (nested `data` + root flags).
+      final attendance =
+          flattenTodayAttendancePayload(data) ?? _extractAttendanceRecord(data) ?? data;
       final isPunchedIn = _isAttendancePunchedIn(attendance);
-      final hasIn = _hasPunchValue(attendance?['punchIn']);
-      final hasOut = _hasPunchValue(attendance?['punchOut']);
+      final hasIn = _hasPunchValue(attendance['punchIn']);
+      final hasOut = _hasPunchValue(attendance['punchOut']);
       if (kDebugMode) {
         debugPrint(
           '[Dashboard] _fetchPunchStatusForNavBar: '
@@ -147,7 +157,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       setState(() {
         _isPunchedInToday = isPunchedIn;
       });
-      await _savePunchStateToPrefs(attendance ?? <String, dynamic>{});
+      await _savePunchStateToPrefs(attendance);
       if (isPunchedIn) {
         PresenceTrackingService().recordAppOpened();
       }
@@ -220,9 +230,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   DateTime? _activeBreakStartTime() {
-    final raw = _activeBreak?['startTime']?.toString();
-    if (raw == null || raw.isEmpty) return null;
-    return DateTime.tryParse(raw)?.toLocal();
+    return parseApiDateTimeToLocal(_activeBreak?['startTime']);
   }
 
   int _normalizeTabIndex(int index) {
@@ -502,11 +510,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
       final templateId = staffData?['attendanceTemplateId'];
-      final staffHasTemplate =
-          templateId != null &&
-          (templateId is String
-              ? templateId.toString().trim().isNotEmpty
-              : true);
 
       final todayStr =
           '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
@@ -515,7 +518,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       if (result['success'] != true || result['data'] == null) return null;
 
       final body = result['data'] as Map<String, dynamic>;
-      final template = body['template'] as Map<String, dynamic>?;
+      final template = asAttendanceTemplateMap(body['template']);
+      final staffHasTemplate = staffHasAssignedAttendanceTemplate(
+        profileAttendanceTemplateRef: templateId,
+        todayAttendanceTemplate: template,
+      );
       final branch = body['branch'];
       final branchData = branch is Map<String, dynamic> ? branch : null;
       final shiftAssigned = body['shiftAssigned'] as bool? ?? true;
@@ -919,10 +926,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
       return false;
     }
-    if (template == null) {
+    if (!isValidAttendanceTemplateMap(template)) {
       await _showValidationAlertDialog('Template not mapped. Contact HR.');
       return false;
     }
+    final Map<String, dynamic> tmpl = template!;
     if (shiftAssigned != true) {
       await _showValidationAlertDialog('Shift not assigned. Contact HR.');
       return false;
@@ -962,14 +970,14 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
       return false;
     }
-    if (template['isActive'] == false) {
+    if (tmpl['isActive'] == false) {
       await _showValidationAlertDialog(
         'Attendance template is not active. Contact HR.',
       );
       return false;
     }
-    final shiftStart = _getShiftStartTimeFromDb(template);
-    final shiftEnd = _getShiftEndTimeFromDb(template);
+    final shiftStart = _getShiftStartTimeFromDb(tmpl);
+    final shiftEnd = _getShiftEndTimeFromDb(tmpl);
     if (shiftStart == null ||
         shiftStart.isEmpty ||
         shiftEnd == null ||
@@ -1022,7 +1030,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
       return false;
     }
-    if (isHoliday && template['allowAttendanceOnHolidays'] == false) {
+    if (isHoliday && tmpl['allowAttendanceOnHolidays'] == false) {
       SnackBarUtils.showSnackBar(context, 'Today is a holiday', isError: true);
       return false;
     }
@@ -1051,7 +1059,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       return false;
     }
     if (isWeeklyOff &&
-        template['allowAttendanceOnWeeklyOff'] == false &&
+        tmpl['allowAttendanceOnWeeklyOff'] == false &&
         !isAlternateWorkDate) {
       SnackBarUtils.showSnackBar(
         context,
@@ -1064,9 +1072,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     final now = DateTime.now();
     if (!isCheckedIn) {
       final sessionTimings = _getWorkingSessionTimings(
-          attendanceData, halfDayLeave, template);
+          attendanceData, halfDayLeave, tmpl);
       final shiftEndStrForBlock =
-          sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(template);
+          sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl);
       if (shiftEndStrForBlock != null &&
           shiftEndStrForBlock.isNotEmpty) {
         try {
@@ -1094,18 +1102,18 @@ class _DashboardScreenState extends State<DashboardScreen>
     String? alertMessage;
     bool shouldBlock = false;
     final allowLateEntry =
-        template['allowLateEntry'] ??
-        template['lateEntryAllowed'] ??
+        tmpl['allowLateEntry'] ??
+        tmpl['lateEntryAllowed'] ??
         true;
     final allowEarlyExit =
-        template['allowEarlyExit'] ??
-        template['earlyExitAllowed'] ??
+        tmpl['allowEarlyExit'] ??
+        tmpl['earlyExitAllowed'] ??
         true;
     if (!isCheckedIn) {
       final sessionTimings = _getWorkingSessionTimings(
-          attendanceData, halfDayLeave, template);
+          attendanceData, halfDayLeave, tmpl);
       final shiftStartStr =
-          sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb(template);
+          sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb(tmpl);
       if (shiftStartStr == null && allowLateEntry == false) {
         alertMessage = 'Shift start time not set. Contact HR.';
         shouldBlock = true;
@@ -1114,7 +1122,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           final parts = shiftStartStr.split(':').map(int.parse).toList();
           final gracePeriod =
               _getGracePeriodMinutesForLateCheckIn(
-                  attendanceData, halfDayLeave, template);
+                  attendanceData, halfDayLeave, tmpl);
           final shiftStartOnly = DateTime(
             now.year,
             now.month,
@@ -1138,9 +1146,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
     if (isCheckedIn && alertMessage == null) {
       final sessionTimings = _getWorkingSessionTimings(
-          attendanceData, halfDayLeave, template);
+          attendanceData, halfDayLeave, tmpl);
       final shiftEndStr =
-          sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(template);
+          sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl);
       if (shiftEndStr == null && allowEarlyExit == false) {
         alertMessage = 'Shift end time not set. Contact HR.';
         shouldBlock = true;
@@ -1181,6 +1189,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     String? area,
     String? city,
     String? pincode,
+    /// When set (e.g. from pre-camera validation), skips an extra GET /attendance/today
+    /// inside submit — faster and avoids redundant network during face/API steps.
+    bool? precomputedIsCheckedIn,
   }) async {
     final result = await FaceDetectionHelper.detectFromFile(file);
     if (!mounted) return;
@@ -1229,9 +1240,14 @@ class _DashboardScreenState extends State<DashboardScreen>
       return;
     }
 
-    final todayRes = await _attendanceService.getTodayAttendance(forceRefresh: true);
-    final todayData = todayRes['data'] as Map<String, dynamic>?;
-    final isCheckedIn = _isAttendancePunchedIn(_extractAttendanceRecord(todayData));
+    final bool isCheckedIn;
+    if (precomputedIsCheckedIn != null) {
+      isCheckedIn = precomputedIsCheckedIn;
+    } else {
+      final todayRes = await _attendanceService.getTodayAttendance(forceRefresh: true);
+      final todayData = todayRes['data'] as Map<String, dynamic>?;
+      isCheckedIn = _isAttendancePunchedIn(_extractAttendanceRecord(todayData));
+    }
 
     List<int> imageBytes = await file.readAsBytes();
     String base64Image = base64Encode(imageBytes);
@@ -1337,45 +1353,62 @@ class _DashboardScreenState extends State<DashboardScreen>
     return BlocListener<AttendanceBloc, AttendanceState>(
       listener: (context, state) async {
         if (state is AttendanceCheckInSuccess) {
-          _setPunchActionInProgress(false);
-          if (_isSubmittingFromFingerprint) {
-            _isSubmittingFromFingerprint = false;
-            if (mounted) Navigator.of(context).pop();
-          }
-          await PresenceTrackingService().ensureTrackingIfPunchedIn(true);
+          // Dismiss loading immediately; presence + nav refresh run in background (they were blocking the dialog for several seconds).
           if (mounted) {
-            final userName = await _authService.getCurrentUserName();
-            if (mounted) {
-              await AttendanceSuccessOverlay.show(
-                context,
-                isCheckIn: true,
-                userName: userName,
-              );
+            if (_isSubmittingFromFingerprint) {
+              _isSubmittingFromFingerprint = false;
+              Navigator.of(context).pop();
             }
+            _setPunchActionInProgress(false);
           }
           _attendanceService.clearCachesForRefresh();
-          await _fetchPunchStatusForNavBar();
+          unawaited(_fetchPunchStatusForNavBar());
           _dashboardRefreshTrigger.value++;
+          unawaited(
+            PresenceTrackingService()
+                .ensureTrackingIfPunchedIn(true)
+                .catchError((Object e, StackTrace st) {
+              if (kDebugMode) {
+                debugPrint('[Dashboard] ensureTrackingIfPunchedIn after check-in: $e');
+              }
+            }),
+          );
+          if (mounted) {
+            final userName = await _authService.getCurrentUserName();
+            if (!mounted) return;
+            await AttendanceSuccessOverlay.show(
+              context,
+              isCheckIn: true,
+              userName: userName,
+            );
+          }
         } else if (state is AttendanceCheckOutSuccess) {
-          _setPunchActionInProgress(false);
-          if (_isSubmittingFromFingerprint) {
-            _isSubmittingFromFingerprint = false;
-            if (mounted) Navigator.of(context).pop();
-          }
-          await PresenceTrackingService().stopTracking();
           if (mounted) {
-            final userName = await _authService.getCurrentUserName();
-            if (mounted) {
-              await AttendanceSuccessOverlay.show(
-                context,
-                isCheckIn: false,
-                userName: userName,
-              );
+            if (_isSubmittingFromFingerprint) {
+              _isSubmittingFromFingerprint = false;
+              Navigator.of(context).pop();
             }
+            _setPunchActionInProgress(false);
           }
           _attendanceService.clearCachesForRefresh();
-          await _fetchPunchStatusForNavBar();
+          unawaited(_fetchPunchStatusForNavBar());
           _dashboardRefreshTrigger.value++;
+          unawaited(
+            PresenceTrackingService().stopTracking().catchError((Object e, StackTrace st) {
+              if (kDebugMode) {
+                debugPrint('[Dashboard] stopTracking after check-out: $e');
+              }
+            }),
+          );
+          if (mounted) {
+            final userName = await _authService.getCurrentUserName();
+            if (!mounted) return;
+            await AttendanceSuccessOverlay.show(
+              context,
+              isCheckIn: false,
+              userName: userName,
+            );
+          }
         } else if (state is AttendanceFailure && _isSubmittingFromFingerprint) {
           _setPunchActionInProgress(false);
           _isSubmittingFromFingerprint = false;
@@ -1539,6 +1572,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ),
                   ),
                 );
+                final attendanceMap =
+                    validationData['attendanceData'] as Map<String, dynamic>?;
                 await _submitAttendanceFromFile(
                   context,
                   file,
@@ -1547,6 +1582,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                   area: location.area,
                   city: location.city,
                   pincode: location.pincode,
+                  precomputedIsCheckedIn:
+                      _isAttendancePunchedIn(attendanceMap),
                 );
                 return;
               }

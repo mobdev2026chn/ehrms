@@ -20,15 +20,24 @@ class BreakStatusCard extends StatefulWidget {
   State<BreakStatusCard> createState() => _BreakStatusCardState();
 }
 
-class _BreakStatusCardState extends State<BreakStatusCard> {
+class _BreakStatusCardState extends State<BreakStatusCard>
+    with WidgetsBindingObserver {
   Timer? _timer;
   Duration _elapsed = Duration.zero;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tick();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _tick();
+    }
   }
 
   @override
@@ -41,23 +50,28 @@ class _BreakStatusCardState extends State<BreakStatusCard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
 
   void _tick() {
     if (!mounted) return;
-    final elapsed = DateTime.now().difference(widget.startTime);
+    final raw = DateTime.now().difference(widget.startTime);
+    // Clock skew / bad parse can make start appear in the future; never show negative.
+    final elapsed = raw.isNegative ? Duration.zero : raw;
     if (elapsed != _elapsed) {
       setState(() => _elapsed = elapsed);
     }
   }
 
   String get _timerText {
-    final hours = _elapsed.inHours;
-    final minutes = _elapsed.inMinutes.remainder(60);
-    final seconds = _elapsed.inSeconds.remainder(60);
-    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')} hrs';
+    final totalSeconds = _elapsed.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    // No trailing " hrs" — saves width next to [End Break] on narrow screens.
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -97,34 +111,10 @@ class _BreakStatusCardState extends State<BreakStatusCard> {
             ),
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Break Ongoing',
-                        style: TextStyle(
-                          color: Colors.green.shade700,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _timerText,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                SizedBox(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final narrow = constraints.maxWidth < 340;
+                final btn = SizedBox(
                   height: 48,
                   child: ElevatedButton.icon(
                     onPressed: widget.isBusy ? null : widget.onEndBreak,
@@ -134,7 +124,7 @@ class _BreakStatusCardState extends State<BreakStatusCard> {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(24),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
                     ),
                     icon: widget.isBusy
                         ? const SizedBox(
@@ -145,11 +135,80 @@ class _BreakStatusCardState extends State<BreakStatusCard> {
                               color: Colors.white,
                             ),
                           )
-                        : const Icon(Icons.timer_off_rounded),
+                        : const Icon(Icons.timer_off_rounded, size: 20),
                     label: Text(widget.isBusy ? 'Ending...' : 'End Break'),
                   ),
-                ),
-              ],
+                );
+
+                final titleStyle = TextStyle(
+                  color: Colors.green.shade700,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                );
+                const timerStyle = TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E293B),
+                );
+
+                if (narrow) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Break Ongoing',
+                        style: titleStyle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _timerText,
+                        style: timerStyle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 12),
+                      btn,
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Break Ongoing',
+                            style: titleStyle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _timerText,
+                            style: timerStyle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      fit: FlexFit.loose,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: btn,
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ],

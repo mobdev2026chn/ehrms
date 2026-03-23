@@ -279,10 +279,13 @@ Future<({bool hasPunchInToday, bool suppressAlert})> _resolveTodayAttendanceStat
   try {
     final response = await AttendanceService().getTodayAttendance();
     if (response['success'] == true && response['data'] is Map<String, dynamic>) {
-      final data = response['data'] as Map<String, dynamic>;
+      final raw = response['data'] as Map<String, dynamic>;
+      final data = flattenTodayAttendancePayload(raw) ?? raw;
       final punchIn = data['punchIn']?.toString().trim();
+      final hasPunchIn = punchIn != null && punchIn.isNotEmpty;
+      final hasPunchInRoot = data['hasPunchIn'] == true;
       return (
-        hasPunchInToday: punchIn != null && punchIn.isNotEmpty,
+        hasPunchInToday: hasPunchIn || hasPunchInRoot,
         suppressAlert: shouldSuppressAbsentAlert(data),
       );
     }
@@ -293,6 +296,41 @@ Future<({bool hasPunchInToday, bool suppressAlert})> _resolveTodayAttendanceStat
   );
 }
 
+/// Merges nested attendance document (`data`) with root-level fields from
+/// GET `/api/attendance/today`. The dashboard previously used only the inner
+/// document, which dropped [isHoliday], [isWeeklyOff], comp-off flags, etc.
+Map<String, dynamic>? flattenTodayAttendancePayload(dynamic apiBody) {
+  if (apiBody is! Map) return null;
+  final root = Map<String, dynamic>.from(apiBody);
+  final out = <String, dynamic>{};
+  final inner = root['data'];
+  if (inner is Map) {
+    out.addAll(Map<String, dynamic>.from(inner as Map));
+  }
+  const keysFromRoot = <String>[
+    'isHoliday',
+    'isWeeklyOff',
+    'isAlternateWorkDate',
+    'isCompensationWeekOff',
+    'isCompensationCompOff',
+    'isOnLeave',
+    'isPaidLeaveToday',
+    'halfDayLeave',
+    'template',
+    'branch',
+    'shiftAssigned',
+    'checkInAllowed',
+    'checkOutAllowed',
+    'hasPunchIn',
+    'hasPunchOut',
+    'checkedIn',
+  ];
+  for (final k in keysFromRoot) {
+    if (root.containsKey(k)) out[k] = root[k];
+  }
+  return out.isEmpty ? null : out;
+}
+
 bool shouldSuppressAbsentAlert(Map<String, dynamic>? todayAttendance) {
   if (todayAttendance == null) return false;
 
@@ -300,8 +338,32 @@ bool shouldSuppressAbsentAlert(Map<String, dynamic>? todayAttendance) {
   final isOnLeave = todayAttendance['isOnLeave'] == true;
   final isPaidLeaveToday = todayAttendance['isPaidLeaveToday'] == true;
   final hasHalfDayLeave = todayAttendance['halfDayLeave'] is Map;
+  final isWeeklyOff = todayAttendance['isWeeklyOff'] == true;
+  final isCompensationWeekOff = todayAttendance['isCompensationWeekOff'] == true;
+  final isCompensationCompOff = todayAttendance['isCompensationCompOff'] == true;
 
-  return isHoliday || isOnLeave || isPaidLeaveToday || hasHalfDayLeave;
+  if (isHoliday ||
+      isOnLeave ||
+      isPaidLeaveToday ||
+      hasHalfDayLeave ||
+      isWeeklyOff ||
+      isCompensationWeekOff ||
+      isCompensationCompOff) {
+    return true;
+  }
+
+  // Fallback when only attendance record / dashboard stats fields exist (no API flags).
+  final statusRaw = todayAttendance['status']?.toString().trim() ?? '';
+  final sl = statusRaw.toLowerCase();
+  if (sl == 'on leave' ||
+      sl == 'holiday' ||
+      sl == 'week off' ||
+      sl == 'comp off' ||
+      sl.contains('compensation week off')) {
+    return true;
+  }
+
+  return false;
 }
 
 Future<_AbsentAlertSchedule?> _loadAbsentAlertSchedule(DateTime now) async {

@@ -18,6 +18,7 @@ import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
 import '../../services/presence_tracking_service.dart';
 import '../../utils/attendance_display_util.dart';
+import '../../utils/attendance_template_util.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../bloc/attendance/attendance_bloc.dart';
 import 'selfie_camera_screen.dart';
@@ -103,7 +104,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   bool _attendanceStatusFetched =
       false; // true only after first fetch completes (avoids flashing "not mapped")
   bool?
-  _staffHasAttendanceTemplate; // from profile/staff collection at load (null = not yet checked)
+  _staffHasAttendanceTemplate; // from profile + /attendance/today (null = not yet checked)
+  /// Latest `staffData.attendanceTemplateId` from profile (for merging with today's API template).
+  dynamic _profileAttendanceTemplateId;
   bool _retryingTemplateFetch = false; // avoid infinite retry
   bool _isOnLeave = false;
   String? _leaveMessage;
@@ -211,7 +214,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
     // Fetch fresh template details on open (profile + today attendance).
     // No re-login needed when templates change; stored in SharedPrefs for check-in alert/selfie.
-    _attendanceService.clearCachesForRefresh();
     await _fetchAllTemplateDetails();
     if (!mounted) return;
 
@@ -234,21 +236,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   Future<void> _fetchAllTemplateDetails() async {
     try {
       debugPrint('[Attendance] Fetching template details...');
+      _attendanceService.clearCachesForRefresh();
       // 1. Fresh profile for staff assignment (attendanceTemplateId, branchId)
       final profileResult = await _authService.getProfile();
       if (!mounted) return;
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
-      final templateId = staffData?['attendanceTemplateId'];
-      final hasTemplate =
-          templateId != null &&
-          (templateId is String
-              ? templateId.toString().trim().isNotEmpty
-              : true);
+      _profileAttendanceTemplateId = staffData?['attendanceTemplateId'];
       debugPrint(
-        '[Attendance] Profile fetched: staffHasTemplate=$hasTemplate, templateId=$templateId',
+        '[Attendance] Profile fetched: profileTemplateRef=$_profileAttendanceTemplateId',
       );
-      if (mounted) setState(() => _staffHasAttendanceTemplate = hasTemplate);
 
       // 2. Fresh today attendance (template, branch, shift, holiday, etc.)
       final todayStr =
@@ -261,11 +258,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         final responseBody = result['data'] as Map<String, dynamic>?;
         Map<String, dynamic>? template;
         if (responseBody != null) {
-          template = responseBody['template'] as Map<String, dynamic>?;
+          template = asAttendanceTemplateMap(responseBody['template']);
           final branch = responseBody['branch'];
           if (mounted) {
             setState(() {
               _attendanceTemplate = template;
+              _staffHasAttendanceTemplate =
+                  staffHasAssignedAttendanceTemplate(
+                profileAttendanceTemplateRef: _profileAttendanceTemplateId,
+                todayAttendanceTemplate: template,
+              );
               _branchData = branch is Map<String, dynamic> ? branch : null;
               _isOnLeave = responseBody['isOnLeave'] ?? false;
               _leaveMessage = responseBody['leaveMessage'] as String?;
@@ -305,7 +307,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                     _isHoliday ||
                     _isOnLeave ||
                     _isPaidLeaveToday ||
-                    _halfDayLeave != null,
+                    _halfDayLeave != null ||
+                    _isWeeklyOff ||
+                    _isCompensationWeekOff ||
+                    _isCompensationCompOff,
               );
             });
           }
@@ -331,8 +336,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         debugPrint(
           '[Attendance] Today attendance fetch failed or empty: success=${result['success']}, hasData=${result['data'] != null}',
         );
+        if (mounted) {
+          setState(() {
+            _staffHasAttendanceTemplate =
+                staffHasAssignedAttendanceTemplate(
+              profileAttendanceTemplateRef: _profileAttendanceTemplateId,
+              todayAttendanceTemplate: _attendanceTemplate,
+            );
+          });
+        }
         if (mounted &&
-            _attendanceTemplate == null &&
+            !isValidAttendanceTemplateMap(_attendanceTemplate) &&
             _staffHasAttendanceTemplate == true &&
             !_retryingTemplateFetch) {
           setState(() => _retryingTemplateFetch = true);
@@ -369,13 +383,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (!mounted) return;
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
-      final templateId = staffData?['attendanceTemplateId'];
-      final hasTemplate =
-          templateId != null &&
-          (templateId is String
-              ? templateId.toString().trim().isNotEmpty
-              : true);
-      if (mounted) setState(() => _staffHasAttendanceTemplate = hasTemplate);
+      _profileAttendanceTemplateId = staffData?['attendanceTemplateId'];
+      if (mounted) {
+        setState(() {
+          _staffHasAttendanceTemplate = staffHasAssignedAttendanceTemplate(
+            profileAttendanceTemplateRef: _profileAttendanceTemplateId,
+            todayAttendanceTemplate: _attendanceTemplate,
+          );
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _staffHasAttendanceTemplate = null);
     }
@@ -674,11 +690,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           if (responseBody is Map<String, dynamic> &&
               responseBody.containsKey('data')) {
             data = responseBody['data'];
-            template = responseBody['template'];
+            template = asAttendanceTemplateMap(responseBody['template']);
             final branch = responseBody['branch'];
 
             setState(() {
               _attendanceTemplate = template;
+              _staffHasAttendanceTemplate =
+                  staffHasAssignedAttendanceTemplate(
+                profileAttendanceTemplateRef: _profileAttendanceTemplateId,
+                todayAttendanceTemplate: template,
+              );
               _branchData = branch is Map<String, dynamic> ? branch : null;
               _isOnLeave = responseBody['isOnLeave'] ?? false;
               _leaveMessage = responseBody['leaveMessage'] as String?;
@@ -732,7 +753,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                     _isHoliday ||
                     _isOnLeave ||
                     _isPaidLeaveToday ||
-                    _halfDayLeave != null,
+                    _halfDayLeave != null ||
+                    _isWeeklyOff ||
+                    _isCompensationWeekOff ||
+                    _isCompensationCompOff,
               );
             });
           }
@@ -759,7 +783,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
         // Staff has template id but response had no template (e.g. first request failed) — retry once so we don't show "Template not mapped" then refresh to punch
         if (mounted &&
-            _attendanceTemplate == null &&
+            !isValidAttendanceTemplateMap(_attendanceTemplate) &&
             _staffHasAttendanceTemplate == true &&
             !_retryingTemplateFetch) {
           didRetry = true;
@@ -1516,7 +1540,38 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final items = <Map<String, dynamic>>[];
     if (logs.isNotEmpty) {
       for (final log in logs) {
-        final action = (log['action'] ?? '').toString();
+        final action = (log['action'] ?? '').toString().trim().toUpperCase();
+        if (const {'APPROVED', 'REJECTED'}.contains(action)) {
+          Map<String, dynamic>? newValueMap;
+          final nv = log['newValue'];
+          if (nv is Map) {
+            newValueMap = Map<String, dynamic>.from(nv);
+          }
+          dynamic when = log['timestamp'];
+          dynamic approvedAtRaw = newValueMap?['approvedAt'];
+          if (approvedAtRaw is Map && approvedAtRaw['\$date'] != null) {
+            approvedAtRaw = approvedAtRaw['\$date'];
+          }
+          if (approvedAtRaw != null) {
+            when = approvedAtRaw;
+          }
+          final statusLabel = (newValueMap?['status'] ?? '').toString().trim();
+          final title = action == 'REJECTED'
+              ? 'Attendance rejected'
+              : 'Attendance approved';
+          final headlineParts = <String>[
+            _formatLogTime(when),
+            if (statusLabel.isNotEmpty) statusLabel,
+          ];
+          items.add({
+            'title': title,
+            'headline': headlineParts.where((e) => e.isNotEmpty).join(' | '),
+            'subtitle': _formatLogByline(log['performedByName']?.toString(), when),
+            'imageUrl': null,
+            'tileIcon': action == 'REJECTED' ? 'rejection' : 'approval',
+          });
+          continue;
+        }
         if (!const {
           'PUNCH_IN',
           'PUNCH_OUT',
@@ -1561,6 +1616,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'headline': headlineParts.whereType<String>().join(' | '),
           'subtitle': _formatLogByline(log['performedByName']?.toString(), when),
           'imageUrl': log['selfieUrl']?.toString(),
+          'tileIcon': null,
         });
       }
     } else {
@@ -1574,6 +1630,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'headline': headlineParts.join(' | '),
           'subtitle': _formatLogByline(null, punchOut),
           'imageUrl': punchOutSelfieUrl,
+          'tileIcon': null,
         });
       }
       if (punchIn != null) {
@@ -1586,6 +1643,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'headline': headlineParts.join(' | '),
           'subtitle': _formatLogByline(null, punchIn),
           'imageUrl': punchInSelfieUrl,
+          'tileIcon': null,
         });
       }
     }
@@ -1605,34 +1663,62 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final hasImage = imageUrl != null && imageUrl.startsWith('http');
     final subtitle = item['subtitle']?.toString();
     final headline = item['headline']?.toString() ?? '';
+    final tileIcon = item['tileIcon']?.toString();
+
+    Widget leading;
+    if (tileIcon == 'rejection') {
+      leading = Container(
+        width: 34,
+        height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          color: Colors.red.shade50,
+        ),
+        child: Icon(Icons.cancel_rounded, size: 20, color: Colors.red.shade700),
+      );
+    } else if (tileIcon == 'approval') {
+      leading = Container(
+        width: 34,
+        height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          color: Colors.green.shade50,
+        ),
+        child: Icon(Icons.check_circle_rounded, size: 20, color: Colors.green.shade700),
+      );
+    } else {
+      leading = GestureDetector(
+        onTap: hasImage ? () => _showSelfieDialog(imageUrl!, item['title']) : null,
+        child: Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(6),
+            color: Colors.orange.shade100,
+            image: hasImage
+                ? DecorationImage(
+                    image: NetworkImage(imageUrl!),
+                    fit: BoxFit.cover,
+                  )
+                : null,
+          ),
+          child: hasImage
+              ? null
+              : Icon(
+                  Icons.access_time_rounded,
+                  size: 18,
+                  color: AppColors.primary,
+                ),
+        ),
+      );
+    }
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        GestureDetector(
-          onTap: hasImage ? () => _showSelfieDialog(imageUrl!, item['title']) : null,
-          child: Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
-              color: Colors.orange.shade100,
-              image: hasImage
-                  ? DecorationImage(
-                      image: NetworkImage(imageUrl!),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
-            ),
-            child: hasImage
-                ? null
-                : Icon(
-                    Icons.access_time_rounded,
-                    size: 18,
-                    color: AppColors.primary,
-                  ),
-          ),
-        ),
+        leading,
         const SizedBox(width: 10),
         Expanded(
           child: Column(
@@ -1640,7 +1726,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             children: [
               Text(
                 '${item['title']} ${headline.isNotEmpty ? 'at $headline' : ''}',
-                maxLines: 2,
+                maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
               ),
@@ -1649,7 +1735,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
                     subtitle,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
                   ),
@@ -2080,7 +2166,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   // Used when attendance settings icon is shown in app bar (currently hidden)
   // ignore: unused_element
   void _showAttendanceSettings() {
-    if (_attendanceTemplate == null) {
+    if (!isValidAttendanceTemplateMap(_attendanceTemplate)) {
       SnackBarUtils.showSnackBar(
         context,
         'Attendance settings not available',
@@ -3724,6 +3810,27 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     );
   }
 
+  /// Logs (punch + admin APPROVED/REJECTED) are attached on GET month attendance only.
+  /// Today's single-day fetch often omits [logs]; merge from [_monthData] when dates match.
+  List<Map<String, dynamic>>? _logsFromMonthAttendanceForDate(String dateStr) {
+    final raw = _monthData?['attendance'];
+    if (raw is! List) return null;
+    List<Map<String, dynamic>>? best;
+    for (final e in raw) {
+      if (e is! Map) continue;
+      if (_dateKey(e) != dateStr) continue;
+      final logs = e['logs'];
+      if (logs is! List || logs.isEmpty) continue;
+      final parsed = <Map<String, dynamic>>[];
+      for (final x in logs) {
+        if (x is Map) parsed.add(Map<String, dynamic>.from(x));
+      }
+      if (parsed.isEmpty) continue;
+      if (best == null || parsed.length > best.length) best = parsed;
+    }
+    return best;
+  }
+
   /// Builds a record for the selected calendar date.
   /// Prefers record from month history (same source as Attendance History list) so both show identical data.
   Map<String, dynamic> _buildSelectedDateRecord() {
@@ -3740,6 +3847,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             rDate.day == selected.day) {
           final record = Map<String, dynamic>.from(r);
           record['date'] = dateStr; // Normalize date for display
+          final monthLogs = _logsFromMonthAttendanceForDate(dateStr);
+          if ((record['logs'] is! List || (record['logs'] as List).isEmpty) &&
+              monthLogs != null &&
+              monthLogs.isNotEmpty) {
+            record['logs'] = monthLogs;
+          }
           return record;
         }
       } catch (_) {}
@@ -3755,6 +3868,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (_attendanceData != null && isDataForSelectedDay) {
       final record = Map<String, dynamic>.from(_attendanceData!);
       record['date'] = dateStr;
+      final monthLogs = _logsFromMonthAttendanceForDate(dateStr);
+      if (monthLogs != null && monthLogs.isNotEmpty) {
+        record['logs'] = monthLogs;
+      }
       return record;
     }
 
@@ -4397,15 +4514,21 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       message: isCheckedIn ? 'Preparing check-out...' : 'Preparing check-in...',
     );
 
+    await _fetchAllTemplateDetails();
+    if (!mounted) return;
+
     // --- Check-in/check-out validation: show popup and block if any check fails ---
-    if (_staffHasAttendanceTemplate != true) {
+    if (!staffHasAssignedAttendanceTemplate(
+      profileAttendanceTemplateRef: _profileAttendanceTemplateId,
+      todayAttendanceTemplate: _attendanceTemplate,
+    )) {
       await _showValidationAlert(
         'Attendance template is not assigned. Contact HR.',
       );
       _setPunchActionInProgress(false);
       return;
     }
-    if (_attendanceTemplate == null) {
+    if (!isValidAttendanceTemplateMap(_attendanceTemplate)) {
       await _showValidationAlert('Template not mapped. Contact HR.');
       _setPunchActionInProgress(false);
       return;
@@ -4923,7 +5046,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
     // Loading: until fetch completed, or staff has template but we're still loading/retrying (never show "Template not mapped" then refresh to punch)
     if (!_attendanceStatusFetched ||
-        (_attendanceTemplate == null && _staffHasAttendanceTemplate == true)) {
+        (!isValidAttendanceTemplateMap(_attendanceTemplate) &&
+            _staffHasAttendanceTemplate == true)) {
       return Card(
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -4940,8 +5064,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       );
     }
 
-    // Template not mapped: only when staff has no attendance template id (from staffs collection at login)
-    if (_attendanceTemplate == null && _staffHasAttendanceTemplate != true) {
+    // Template not mapped: no usable template from API and no assignment signal from profile
+    if (!isValidAttendanceTemplateMap(_attendanceTemplate) &&
+        _staffHasAttendanceTemplate != true) {
       return Card(
         elevation: 0,
         color: Colors.orange.withOpacity(0.05),

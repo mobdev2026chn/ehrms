@@ -464,7 +464,8 @@ class AuthService {
     return prefs.getString('token');
   }
 
-  /// Returns true if staff is still active, false if deactivated (or 401), null on network/error (no logout).
+  /// Returns true if staff is still active, false if deactivated (200 + active: false), null on
+  /// network/error or 401 (no logout — 401 is expired/invalid token, not deactivation).
   Future<bool?> checkStaffActive() async {
     final prefs = await SharedPreferences.getInstance();
     String? token = prefs.getString('token');
@@ -476,8 +477,9 @@ class AuthService {
       final data = response.data;
       if (data == null) return null;
       return data['active'] == true;
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 401) return false;
+    } on DioException catch (_) {
+      // Includes 401 (expired/invalid JWT). Do not map to deactivated — that would clear prefs
+      // and force login on every resume after token issues.
       return null;
     } catch (_) {
       return null;

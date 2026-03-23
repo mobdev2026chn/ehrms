@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart' as gl;
@@ -1550,7 +1551,20 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
     return PiPSwitcher(
       childWhenDisabled: _buildFullScreen(allPolylines),
-      childWhenEnabled: _buildPipView(allPolylines),
+      childWhenEnabled: Builder(
+        builder: (context) {
+          // [PiPSwitcher] uses native isInPictureInPictureMode. That flag can be wrong
+          // briefly after resume or on some devices while the window is still fullscreen,
+          // which would show only the compact PiP map. Real PiP windows are much smaller
+          // than a phone screen; use the short side to decide which layout to show.
+          final size = MediaQuery.sizeOf(context);
+          final minSide = math.min(size.width, size.height);
+          if (minSide >= 300) {
+            return _buildFullScreen(allPolylines);
+          }
+          return _buildPipView(allPolylines);
+        },
+      ),
     );
   }
 

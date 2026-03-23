@@ -186,8 +186,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     if (mounted) _checkLiveTracking();
   }
 
+  /// Uses [flattenTodayAttendancePayload] so holiday / week off / comp-off / leave
+  /// flags from GET /attendance/today are not dropped (they live on the response root).
   Map<String, dynamic>? _extractLiveTodayAttendance(dynamic responseBody) {
     if (responseBody is! Map<String, dynamic>) return null;
+    final merged = flattenTodayAttendancePayload(responseBody);
+    if (merged != null) return merged;
     final nested = responseBody['data'];
     if (nested is Map<String, dynamic>) return Map<String, dynamic>.from(nested);
     if (nested is Map) return Map<String, dynamic>.from(nested);
@@ -306,10 +310,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
             final punchIn = _todayAttendance?['punchIn']?.toString().trim();
-            final hasPunchInToday = punchIn != null && punchIn.isNotEmpty;
+            final hasPunchInStr = punchIn != null && punchIn.isNotEmpty;
+            final hasPunchInFlag = _todayAttendance?['hasPunchIn'] == true;
             showAbsentAlertIfNeeded(
               context,
-              hasPunchInToday: hasPunchInToday,
+              hasPunchInToday: hasPunchInStr || hasPunchInFlag,
               suppressAlert: shouldSuppressAbsentAlert(_todayAttendance),
             );
           });
@@ -859,7 +864,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        mainAxisSize: MainAxisSize.min,
                         children: _buildQuickActionButtons(),
                       ),
                     ),
@@ -1969,12 +1974,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     required VoidCallback onTap,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
+        child: SizedBox(
+          width: 78,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1991,10 +1996,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               const SizedBox(height: 8),
               Text(
                 label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: FontWeight.w600,
                   color: Color(0xFF475569),
+                  height: 1.2,
                 ),
               ),
             ],
