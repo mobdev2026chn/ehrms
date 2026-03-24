@@ -102,12 +102,16 @@ function addSecondsToTimeString(timeStr, secondsToAdd) {
  * @param {number} [logScore] - productivity score from this log (when provided, daily productivityScore = sum of all log scores / number of scores for that date)
  * @param {Object} [existingSettings] - if already fetched (e.g. from activityProcessor), pass to avoid re-fetch; used when computing productivity from formula (no logScore)
  */
+/** Max seconds to add per log; prevents inflation when gap between logs is huge (e.g. agent offline for days). */
+const MAX_DURATION_PER_LOG_SEC = 300;
+
 async function updateFromActivityLog(tenantId, employeeId, timestamp, idleSeconds, durationSeconds = 60, activityTotals = {}, logScore = undefined, existingSettings = null) {
     const date = new Date(timestamp);
     date.setUTCHours(0, 0, 0, 0);
 
-    const idle = Math.min(durationSeconds, Math.max(0, idleSeconds || 0));
-    const productive = Math.max(0, durationSeconds - idle);
+    const durationCapped = Math.min(Math.max(0, durationSeconds || 60), MAX_DURATION_PER_LOG_SEC);
+    const idle = Math.min(durationCapped, Math.max(0, idleSeconds || 0));
+    const productive = Math.max(0, durationCapped - idle);
 
     const doc = await MonitoringDailySummary.findOne({ businessId: tenantId, employeeId, date }).lean();
     const currentProd = toSeconds(doc?.productiveTime);

@@ -633,7 +633,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                   child: ElevatedButton.icon(
                     onPressed: () => _goToMyTasks(context),
                     icon: const Icon(Icons.home_rounded, size: 22),
-                    label: const Text('Return to My Tasks'),
+                    label: const Text('Return to Tasks'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,

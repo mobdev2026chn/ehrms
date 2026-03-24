@@ -237,6 +237,12 @@ class Task {
   /// From progressSteps.formFilled when present.
   final bool? formFilled;
 
+  /// From progressSteps.checkinCustomerPlace when present.
+  final bool? checkinCustomerPlace;
+
+  /// From progressSteps.checkoutCustomerPlace when present.
+  final bool? checkoutCustomerPlace;
+
   /// URL of uploaded photo proof.
   final String? photoProofUrl;
 
@@ -306,6 +312,8 @@ class Task {
     this.otpVerifiedAt,
     this.photoProof,
     this.formFilled,
+    this.checkinCustomerPlace,
+    this.checkoutCustomerPlace,
     this.photoProofUrl,
     this.photoProofUploadedAt,
     this.requireApprovalOnComplete = false,
@@ -381,6 +389,12 @@ class Task {
           : null,
       formFilled: json['progressSteps'] != null
           ? (json['progressSteps']['formFilled'] as bool?)
+          : null,
+      checkinCustomerPlace: json['progressSteps'] != null
+          ? (json['progressSteps']['checkinCustomerPlace'] as bool?)
+          : null,
+      checkoutCustomerPlace: json['progressSteps'] != null
+          ? (json['progressSteps']['checkoutCustomerPlace'] as bool?)
           : null,
       photoProofUrl: json['photoProofUrl'] as String?,
       photoProofUploadedAt: _dateFromJson(json['photoProofUploadedAt']),
@@ -592,6 +606,8 @@ class Task {
     DateTime? otpVerifiedAt,
     bool? photoProof,
     bool? formFilled,
+    bool? checkinCustomerPlace,
+    bool? checkoutCustomerPlace,
     String? photoProofUrl,
     DateTime? photoProofUploadedAt,
     bool? requireApprovalOnComplete,
@@ -631,6 +647,8 @@ class Task {
       otpVerifiedAt: otpVerifiedAt ?? this.otpVerifiedAt,
       photoProof: photoProof ?? this.photoProof,
       formFilled: formFilled ?? this.formFilled,
+      checkinCustomerPlace: checkinCustomerPlace ?? this.checkinCustomerPlace,
+      checkoutCustomerPlace: checkoutCustomerPlace ?? this.checkoutCustomerPlace,
       photoProofUrl: photoProofUrl ?? this.photoProofUrl,
       photoProofUploadedAt: photoProofUploadedAt ?? this.photoProofUploadedAt,
       requireApprovalOnComplete:

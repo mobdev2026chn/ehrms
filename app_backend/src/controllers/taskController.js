@@ -97,6 +97,7 @@ const EXTENDED_TASK_KEYS = [
   'otpVerifiedLat', 'otpVerifiedLng', 'otpVerifiedAddress', 'progressSteps',
   'completedDate', 'completedBy', 'locationHistory', 'travelActivityDuration',
   'approvedAt', 'approvedBy', 'rejectedAt', 'rejectedBy',
+  'arrivedSelfieCheckinUrl', 'arrivedSelfieCheckoutUrl', 'arrivedSelfieCheckinTime', 'arrivedeSelfieCheckoutTime',
 ];
 // exit and restarted are stored in tasks collection and must never be unset
 
@@ -1037,6 +1038,83 @@ exports.uploadPhotoProof = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// POST /tasks/:id/selfie – upload checkin or checkout selfie
+exports.uploadTaskSelfie = async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const file = req.file;
+    const type = req.body?.type; // 'checkin' or 'checkout'
+    if (!file) {
+      return res.status(400).json({ message: 'Selfie file required' });
+    }
+    if (type !== 'checkin' && type !== 'checkout') {
+      return res.status(400).json({ message: 'Type must be checkin or checkout' });
+    }
+    const task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    if (!task) return res.status(404).json({ message: 'Task not found' });
+    const companyId = getCompanyIdFromTask(task);
+    const employeeName = task.assignedTo?.name || 'unknown';
+    const buffer = fs.readFileSync(file.path);
+    const format = file.mimetype?.includes('png') ? 'png' : 'jpg';
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const monthFolder = `${year}-${month}`;
+
+    const doResult = await digitalOceanService.uploadImage(buffer, undefined, {
+      req,
+      companyId: companyId ? String(companyId) : undefined,
+      employeeName,
+      category: 'tasks_selfie',
+      subfolder: monthFolder,
+      fileName: digitalOceanService.generateSecureFileName(`task_${type}`, format),
+      format,
+    });
+
+    if (!doResult.success || !doResult.url) {
+      if (file.path && fs.existsSync(file.path)) {
+        try { fs.unlinkSync(file.path); } catch (e) { /* ignore */ }
+      }
+      return res.status(500).json({ message: 'Selfie upload failed: ' + doResult.error });
+    }
+
+    const photoUrl = doResult.url;
+    if (file.path && fs.existsSync(file.path)) {
+      try { fs.unlinkSync(file.path); } catch (e) { /* ignore */ }
+    }
+
+    const details = await TaskDetails.findOne({ taskId: task._id }).lean();
+    const fullDoc = {
+      ...(details || {}),
+      taskMongoId: task._id,
+      progressSteps: {
+        ...(details?.progressSteps || {}),
+      },
+    };
+
+    if (type === 'checkin') {
+      fullDoc.arrivedSelfieCheckinUrl = photoUrl;
+      fullDoc.arrivedSelfieCheckinTime = new Date();
+      fullDoc.progressSteps.checkinCustomerPlace = true; // Store progress conceptually, even if not fully in schema map yet
+    } else {
+      fullDoc.arrivedSelfieCheckoutUrl = photoUrl;
+      fullDoc.arrivedeSelfieCheckoutTime = new Date();
+      fullDoc.progressSteps.checkoutCustomerPlace = true;
+    }
+
+    await exports.upsertTaskDetails(fullDoc);
+    const merged = await mergeTaskWithDetails(task);
+    const finalMerged = await mergeTaskSettings(merged, companyId);
+    console.log(`[Tasks] Selfie ${type} uploaded for task:`, task.taskId);
+    res.status(200).json(finalMerged);
+  } catch (error) {
+    console.error('[Tasks] uploadTaskSelfie error:', error.message);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 
 // POST /tasks/:id/send-otp – generate 4-digit OTP, send via SendPulse/emailService to customer email.
 exports.sendOtp = async (req, res) => {

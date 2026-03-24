@@ -182,8 +182,14 @@ async function processPayload(jobData) {
         const displayName = (staffForLog?.name || staffForLog?.employeeId || 'Unknown').trim();
         console.log(`activity inserted ${displayName}`);
 
-        // Update monitoringdailysummaries: activity totals + running average of log scores
-        const durationSecForSummary = durationSec != null ? durationSec : 60;
+        // Update monitoringdailysummaries: activity totals + running average of log scores.
+        // Cap durationSec to avoid inflating daily summary when agent was offline (e.g. gap of days).
+        // Each log represents one sync window; cap at 2x upload interval so today only shows today's time.
+        const uploadInterval = monSettings?.syncSettings?.activityUploadIntervalSeconds ?? 60;
+        const maxDurationSec = Math.max(60, uploadInterval * 2);
+        const durationSecForSummary = durationSec != null
+            ? Math.min(durationSec, maxDurationSec)
+            : uploadInterval;
         const activityTotals = {
             keystrokes: log.keystrokes ?? 0,
             mouseClicks: log.mouseClicks ?? 0,

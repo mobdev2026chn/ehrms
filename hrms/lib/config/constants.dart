@@ -2,12 +2,14 @@
 class AppConstants {
   /// Production API – use for release builds.
  // static const String baseUrl = 'https://ehrms.askeva.net/api';
-static const String baseUrl = 'https://ehrms.askeva.net/api';
+//static const String baseUrl = 'https://ehrms.askeva.net/api';
 
-  /// Local dev – backend on port 9001. Use your machine's IP for physical device.
+  /// Local dev – backend on port 9001. Use your machine's **current** LAN IP (USB does not
+  /// carry API traffic; the phone uses Wi‑Fi). On Windows run `ipconfig` and match Wi‑Fi IPv4.
+  /// Quick check: open `http://<that-ip>:9001/api` in the phone browser (same Wi‑Fi).
   /// For LMS (and all) data to match the web for the same user, point [baseUrl]
   /// to the same backend the web frontend uses (e.g. production or same dev server).
-//static const String baseUrl = 'http://192.168.16.104:9001/api';
+  static const String baseUrl = 'http://192.168.16.104:9001/api';
 
   // Android emulator: use 10.0.2.2 to reach host
   // stati

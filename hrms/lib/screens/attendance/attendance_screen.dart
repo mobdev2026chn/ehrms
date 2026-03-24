@@ -1572,6 +1572,37 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           });
           continue;
         }
+        if (action == 'UPDATED') {
+          final changes = log['changes'];
+          if (changes is List) {
+            for (final change in changes) {
+              if (change is! Map) continue;
+              final map = Map<String, dynamic>.from(change);
+              final field = (map['field'] ?? '').toString();
+              if (field != 'fineAmount') continue;
+              final oldNum = _parseLogNumericValue(map['oldValue']);
+              final newNum = _parseLogNumericValue(map['newValue']);
+              if (oldNum != null &&
+                  newNum != null &&
+                  oldNum == newNum) {
+                continue;
+              }
+              final when = log['timestamp'] ?? log['createdAt'];
+              items.add({
+                'title': 'Fine amount updated',
+                'headline': [
+                  _formatLogTime(when),
+                  '${_formatFineAmountForLog(oldNum)} → ${_formatFineAmountForLog(newNum)}',
+                ].where((e) => e.isNotEmpty).join(' | '),
+                'subtitle':
+                    _formatLogByline(log['performedByName']?.toString(), when),
+                'imageUrl': null,
+                'tileIcon': 'fine',
+              });
+            }
+          }
+          continue;
+        }
         if (!const {
           'PUNCH_IN',
           'PUNCH_OUT',
@@ -1688,6 +1719,21 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         ),
         child: Icon(Icons.check_circle_rounded, size: 20, color: Colors.green.shade700),
       );
+    } else if (tileIcon == 'fine') {
+      leading = Container(
+        width: 34,
+        height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          color: Colors.amber.shade50,
+        ),
+        child: Icon(
+          Icons.currency_rupee_rounded,
+          size: 20,
+          color: Colors.amber.shade900,
+        ),
+      );
     } else {
       leading = GestureDetector(
         onTap: hasImage ? () => _showSelfieDialog(imageUrl!, item['title']) : null,
@@ -1792,6 +1838,24 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     } catch (_) {
       return null;
     }
+  }
+
+  double? _parseLogNumericValue(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toDouble();
+    if (v is Map) {
+      final m = Map<String, dynamic>.from(v);
+      final nd = m[r'$numberDouble'];
+      if (nd != null) return double.tryParse(nd.toString());
+      final ni = m[r'$numberInt'];
+      if (ni != null) return (ni as num).toDouble();
+    }
+    return double.tryParse(v.toString());
+  }
+
+  String _formatFineAmountForLog(double? v) {
+    if (v == null) return '—';
+    return '₹${NumberFormat('#,##0.00').format(v)}';
   }
 
   /// Section header + content box (matches salary breakdown form style)

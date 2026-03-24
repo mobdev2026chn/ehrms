@@ -453,6 +453,41 @@ class TaskService {
     return Task.fromJson(data);
   }
 
+  /// Upload check-in or check-out selfie for task. [type] must be 'checkin' or 'checkout'.
+  /// Returns updated task with progressSteps.checkinCustomerPlace or checkoutCustomerPlace set.
+  Future<Task> uploadTaskSelfie(
+    String taskMongoId,
+    String type,
+    String filePath, {
+    double? lat,
+    double? lng,
+    String? fullAddress,
+  }) async {
+    await _setToken();
+    if (type != 'checkin' && type != 'checkout') {
+      throw Exception('Type must be checkin or checkout');
+    }
+    final formData = FormData.fromMap({
+      'photo': await MultipartFile.fromFile(filePath, filename: 'photo.jpg'),
+      'type': type,
+      if (lat != null) 'lat': lat.toString(),
+      if (lng != null) 'lng': lng.toString(),
+      if (fullAddress != null && fullAddress.isNotEmpty)
+        'fullAddress': fullAddress,
+    });
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/tasks/$taskMongoId/selfie',
+      data: formData,
+      options: Options(
+        contentType: 'multipart/form-data',
+        sendTimeout: const Duration(seconds: 30),
+      ),
+    );
+    final data = response.data;
+    if (data == null) throw Exception('Failed to upload selfie');
+    return Task.fromJson(data);
+  }
+
   /// Send OTP to customer email. Returns { success: true/false, message: string } for user-friendly success/failure feedback.
   Future<Map<String, dynamic>> sendOtp(String taskMongoId) async {
     await _setToken();

@@ -62,6 +62,10 @@ const taskDetailsSchema = new mongoose.Schema({
     formFilled: { type: Boolean, default: false },
     otpVerified: { type: Boolean, default: false },
   },
+  arrivedSelfieCheckinUrl: { type: String },
+  arrivedSelfieCheckoutUrl: { type: String },
+  arrivedSelfieCheckinTime: { type: Date },
+  arrivedeSelfieCheckoutTime: { type: Date },
   // isOtpRequired, isGeoFenceRequired, isPhotoRequired, isFormRequired come from TaskSettings only – not stored here
   exit: { type: Array, default: [] },
   restarted: { type: Array, default: [] },

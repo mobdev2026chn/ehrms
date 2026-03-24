@@ -7,7 +7,7 @@ exports.createCustomer = async (req, res) => {
     if (!businessId) {
       return res.status(400).json({ success: false, error: 'Business context required' });
     }
-    const payload = { ...req.body, businessId, addedBy: addedBy || req.body.addedBy };
+    const payload = { ...req.body, businessId, addedBy: addedBy || req.body.addedBy, source: 'app' };
     const newCustomer = new Customer(payload);
     await newCustomer.save();
     res.status(201).json(newCustomer.toObject ? newCustomer.toObject() : newCustomer);

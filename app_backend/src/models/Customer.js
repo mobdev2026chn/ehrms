@@ -20,6 +20,7 @@ const customerSchema = new mongoose.Schema(
     completedDate: { type: Date },
     expectedCompletionDate: { type: Date },
     customFields: { type: mongoose.Schema.Types.Mixed, default: {} },
+    source: { type: String, default: 'web' },
     addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     businessId: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', required: true }
   },
