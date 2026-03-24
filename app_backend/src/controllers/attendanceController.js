@@ -1662,9 +1662,10 @@ const getMonthAttendance = async (req, res) => {
         const Staff = require('../models/Staff');
         const { getRecordFineAmount, calculateAttendanceStats } = require('./payrollController');
         const { getEffectiveFineConfig } = require('../utils/fineCalculationHelper');
-        const { getShiftTimings, calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
+        const { getShiftTimings, calculateWorkHoursFromShift, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
 
         const companyForFine = await Company.findById(req.staff.businessId).lean();
+        const businessTz = getBusinessTimezone(companyForFine);
         const staffWithSalary = await Staff.findById(req.staff._id).select('+salary').lean();
         const fineConfig = companyForFine ? getEffectiveFineConfig(companyForFine) : null;
         const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary) : {};
@@ -1794,19 +1795,51 @@ const getMonthAttendance = async (req, res) => {
             return `${year}-${month}-${day}`;
         };
 
-        // Attendance collection date is stored as UTC; use UTC calendar date so 2026-03-12T00:00:00.000Z → "2026-03-12" everywhere
-        const formatDateStringUTC = (dateObj) => {
+        /** Calendar yyyy-MM-dd for an instant in the **business timezone** (e.g. IST).
+         *  e.g. 2026-03-16T18:30:00.000Z → 2026-03-17 in Asia/Kolkata (midnight boundary).
+         *  If Intl/timezone data fails on the host (seen on some Windows Node builds), use fixed +5:30 for India. */
+        const formatAttendanceCalendarDay = (dateObj) => {
             const d = new Date(dateObj);
-            const year = d.getUTCFullYear();
-            const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-            const day = String(d.getUTCDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
+            const tryTz = (zone) => {
+                if (!zone || !String(zone).trim()) return null;
+                try {
+                    const parts = new Intl.DateTimeFormat('en-CA', {
+                        timeZone: zone.trim(),
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit'
+                    }).formatToParts(d);
+                    const y = parts.find(p => p.type === 'year')?.value;
+                    const m = parts.find(p => p.type === 'month')?.value;
+                    const day = parts.find(p => p.type === 'day')?.value;
+                    if (y && m && day) {
+                        return `${y}-${m.padStart(2, '0')}-${day.padStart(2, '0')}`;
+                    }
+                } catch (e) { /* try next */ }
+                return null;
+            };
+            const primaryTz = (businessTz && String(businessTz).trim()) || 'Asia/Kolkata';
+            let out = tryTz(primaryTz);
+            if (!out && primaryTz !== 'Asia/Kolkata') {
+                out = tryTz('Asia/Kolkata');
+            }
+            if (out) {
+                return out;
+            }
+            const z = primaryTz;
+            if (z === 'Asia/Kolkata' || z === 'Asia/Calcutta') {
+                const istMs = d.getTime() + 330 * 60 * 1000;
+                const u = new Date(istMs);
+                return `${u.getUTCFullYear()}-${String(u.getUTCMonth() + 1).padStart(2, '0')}-${String(u.getUTCDate()).padStart(2, '0')}`;
+            }
+            const u = new Date(dateObj);
+            return `${u.getUTCFullYear()}-${String(u.getUTCMonth() + 1).padStart(2, '0')}-${String(u.getUTCDate()).padStart(2, '0')}`;
         };
 
-        // Create a set of dates that have attendance records (use UTC so calendar date matches DB)
+        // Create a set of dates that have attendance records (business-calendar day)
         const attendanceDateSet = new Set();
         attendance.forEach(a => {
-            const dateStr = formatDateStringUTC(a.date);
+            const dateStr = formatAttendanceCalendarDay(a.date);
             attendanceDateSet.add(dateStr);
         });
 
@@ -1853,10 +1886,8 @@ const getMonthAttendance = async (req, res) => {
         const holidayDates = [];
         const leaveDates = Array.from(leaveDateSet);
 
-        // Today (used to ensure we don't mark future dates as absent)
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const todayStr = formatDateString(today);
+        // Today in business timezone (string compare yyyy-MM-dd)
+        const todayStr = formatAttendanceCalendarDay(new Date());
 
         for (let d = 1; d <= totalDaysInMonth; d++) {
             // Create date string directly in YYYY-MM-DD format (avoids timezone issues)
@@ -1877,7 +1908,7 @@ const getMonthAttendance = async (req, res) => {
             if (attendanceDateSet.has(dateStr)) {
                 // Find the attendance record to get status (match by UTC calendar date)
                 const attRecord = attendance.find(a => {
-                    const attDateStr = formatDateStringUTC(a.date);
+                    const attDateStr = formatAttendanceCalendarDay(a.date);
                     return attDateStr === dateStr;
                 });
                 if (attRecord) {
@@ -1970,10 +2001,10 @@ const getMonthAttendance = async (req, res) => {
             });
         }
 
-        // Normalize attendance date to UTC calendar date (yyyy-MM-dd) so app shows correct day in all timezones
+        // Normalize attendance date to business-calendar yyyy-MM-dd (matches salary/calendar in company TZ)
         const attendanceForResponse = attendance.map(a => {
             const aObj = (a && typeof a.toObject === 'function') ? a.toObject() : { ...a };
-            aObj.date = formatDateStringUTC(a.date);
+            aObj.date = formatAttendanceCalendarDay(a.date);
             return aObj;
         });
 
@@ -2011,7 +2042,7 @@ const getMonthAttendance = async (req, res) => {
 
                         const dateMap = {};
                         attendance.forEach(a => {
-                            const d = formatDateString(a.date);
+                            const d = formatAttendanceCalendarDay(a.date);
                             const status = (a.status || '').trim().toLowerCase();
                             const leaveType = (a.leaveType || '').trim().toLowerCase();
                             const isPaidLeave = a.isPaidLeave === true;
@@ -2053,7 +2084,7 @@ const getMonthAttendance = async (req, res) => {
                         });
                         const dateMap = {};
                         attendance.forEach(a => {
-                            const d = formatDateString(a.date);
+                            const d = formatAttendanceCalendarDay(a.date);
                             const status = (a.status || '').trim().toLowerCase();
                             const leaveType = (a.leaveType || '').trim().toLowerCase();
                             const isPaidLeave = a.isPaidLeave === true;
@@ -2094,7 +2125,7 @@ const getMonthAttendance = async (req, res) => {
 
                         const dateMap = {};
                         attendance.forEach(a => {
-                            const d = formatDateString(a.date);
+                            const d = formatAttendanceCalendarDay(a.date);
                             const status = (a.status || '').trim().toLowerCase();
                             const leaveType = (a.leaveType || '').trim().toLowerCase();
                             const isPaidLeave = a.isPaidLeave === true;

@@ -257,6 +257,15 @@ const getEmployeeDashboardStats = async (req, res) => {
                 const dearnessAllowance = s.dearnessAllowance || 0;
                 const houseRentAllowance = s.houseRentAllowance || 0;
                 const specialAllowance = s.specialAllowance || 0;
+                const basicPlusDA = basicSalary + dearnessAllowance;
+                const basicPlusDAPlusHRA = basicSalary + dearnessAllowance + houseRentAllowance;
+                const isPFApplicable = basicPlusDA < 15000;
+                const isESIApplicable = basicPlusDAPlusHRA < 21000;
+                const employerPFRate = isPFApplicable ? (s.employerPFRate || 0) : 0;
+                const employerESIRate = isESIApplicable ? (s.employerESIRate || 0) : 0;
+                const employeePFRate = isPFApplicable ? (s.employeePFRate || 0) : 0;
+                const employeeESIRate = isESIApplicable ? (s.employeeESIRate || 0) : 0;
+                const pfStaticAmount = isPFApplicable ? 0 : 1800;
                 
                 // STEP 1: Prorate Gross Fixed Components
                 const proratedBasicSalary = basicSalary * prorationFactor;
@@ -266,15 +275,17 @@ const getEmployeeDashboardStats = async (req, res) => {
                 const proratedGrossFixed = proratedBasicSalary + proratedDA + proratedHRA + proratedSpecialAllowance;
                 
                 // STEP 2: Recalculate Employer Contributions on PRORATED amounts
-                const proratedEmployerPF = (s.employerPFRate || 0) / 100 * proratedBasicSalary;
-                const proratedEmployerESI = (s.employerESIRate || 0) / 100 * proratedGrossFixed;
+                const proratedEmployerPF = employerPFRate / 100 * proratedBasicSalary;
+                const proratedEmployerESI = employerESIRate / 100 * proratedGrossFixed;
                 
                 // STEP 3: Calculate Prorated Gross Salary
-                const proratedGrossSalary = proratedGrossFixed + proratedEmployerPF + proratedEmployerESI;
+                const proratedGrossSalary = proratedGrossFixed + proratedEmployerPF + proratedEmployerESI + pfStaticAmount;
                 
                 // STEP 4: Recalculate Employee Deductions on PRORATED gross
-                const proratedEmployeePF = (s.employeePFRate || 0) / 100 * proratedBasicSalary;
-                const proratedEmployeeESI = (s.employeeESIRate || 0) / 100 * proratedGrossSalary;
+                const proratedEmployeePF = employeePFRate > 0
+                    ? (employeePFRate / 100 * proratedBasicSalary)
+                    : pfStaticAmount;
+                const proratedEmployeeESI = employeeESIRate / 100 * proratedGrossSalary;
                 const proratedDeductions = proratedEmployeePF + proratedEmployeeESI;
                 
                 // STEP 5: Calculate Prorated Net Salary (fines are NOT prorated)
@@ -291,20 +302,29 @@ const getEmployeeDashboardStats = async (req, res) => {
             const dearnessAllowance = s.dearnessAllowance || 0;
             const houseRentAllowance = s.houseRentAllowance || 0;
             const specialAllowance = s.specialAllowance || 0;
+            const basicPlusDA = basicSalary + dearnessAllowance;
+            const basicPlusDAPlusHRA = basicSalary + dearnessAllowance + houseRentAllowance;
+            const isPFApplicable = basicPlusDA < 15000;
+            const isESIApplicable = basicPlusDAPlusHRA < 21000;
+            const employerPFRate = isPFApplicable ? (s.employerPFRate || 0) : 0;
+            const employerESIRate = isESIApplicable ? (s.employerESIRate || 0) : 0;
+            const employeePFRate = isPFApplicable ? (s.employeePFRate || 0) : 0;
+            const employeeESIRate = isESIApplicable ? (s.employeeESIRate || 0) : 0;
+            const pfStaticAmount = isPFApplicable ? 0 : 1800;
             
             // Gross Fixed Salary (Before Employer Contributions)
             const grossFixedSalary = basicSalary + dearnessAllowance + houseRentAllowance + specialAllowance;
             
             // Employer Contributions (Part of Gross Salary & CTC)
-            const employerPF = (s.employerPFRate || 0) / 100 * basicSalary;
-            const employerESI = (s.employerESIRate || 0) / 100 * grossFixedSalary;
+            const employerPF = employerPFRate / 100 * basicSalary;
+            const employerESI = employerESIRate / 100 * grossFixedSalary;
             
             // Gross Salary (Monthly) = Fixed Gross + Employer Contributions
-            const grossSalary = grossFixedSalary + employerPF + employerESI;
+            const grossSalary = grossFixedSalary + employerPF + employerESI + pfStaticAmount;
             
             // Employee Deductions (NOT part of CTC)
-            const employeePF = (s.employeePFRate || 0) / 100 * basicSalary;
-            const employeeESI = (s.employeeESIRate || 0) / 100 * grossSalary;
+            const employeePF = employeePFRate > 0 ? (employeePFRate / 100 * basicSalary) : pfStaticAmount;
+            const employeeESI = employeeESIRate / 100 * grossSalary;
             const totalDeductions = employeePF + employeeESI;
             
             // Net Salary = Gross Salary - Employee Deductions
@@ -321,15 +341,17 @@ const getEmployeeDashboardStats = async (req, res) => {
             const proratedGrossFixed = proratedBasicSalary + proratedDA + proratedHRA + proratedSpecialAllowance;
             
             // STEP 2: Recalculate Employer Contributions on PRORATED amounts
-            const proratedEmployerPF = (s.employerPFRate || 0) / 100 * proratedBasicSalary;
-            const proratedEmployerESI = (s.employerESIRate || 0) / 100 * proratedGrossFixed;
+            const proratedEmployerPF = employerPFRate / 100 * proratedBasicSalary;
+            const proratedEmployerESI = employerESIRate / 100 * proratedGrossFixed;
             
             // STEP 3: Calculate Prorated Gross Salary
-            const proratedGrossSalary = proratedGrossFixed + proratedEmployerPF + proratedEmployerESI;
+            const proratedGrossSalary = proratedGrossFixed + proratedEmployerPF + proratedEmployerESI + pfStaticAmount;
             
             // STEP 4: Recalculate Employee Deductions on PRORATED gross
-            const proratedEmployeePF = (s.employeePFRate || 0) / 100 * proratedBasicSalary;
-            const proratedEmployeeESI = (s.employeeESIRate || 0) / 100 * proratedGrossSalary;
+            const proratedEmployeePF = employeePFRate > 0
+                ? (employeePFRate / 100 * proratedBasicSalary)
+                : pfStaticAmount;
+            const proratedEmployeeESI = employeeESIRate / 100 * proratedGrossSalary;
             const proratedDeductions = proratedEmployeePF + proratedEmployeeESI;
             
             // STEP 5: Calculate Prorated Net Salary (fines are NOT prorated)

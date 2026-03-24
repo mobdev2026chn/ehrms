@@ -12,7 +12,6 @@ import 'package:hrms/screens/geo/form_fill_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/screens/geo/otp_verification_screen.dart';
 import 'package:hrms/screens/geo/photo_proof_screen.dart';
-import 'package:hrms/screens/geo/task_selfie_screen.dart';
 import 'package:hrms/screens/geo/task_completed_screen.dart';
 import 'package:hrms/screens/geo/task_history_screen.dart';
 import 'package:hrms/services/auth_service.dart';
@@ -88,8 +87,6 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
   bool _photoProofDone = false;
   bool _storedOtpRequired = false;
   bool _submittingComplete = false;
-  bool _checkinSelfieDone = false;
-  bool _checkoutSelfieDone = false;
   List<Map<String, dynamic>> _assignedTemplates = [];
   List<Map<String, dynamic>> _formResponsesForTask = [];
   String? _staffId;
@@ -167,8 +164,6 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
     super.initState();
     _task = widget.task;
     _photoProofDone = widget.task?.photoProof == true;
-    _checkinSelfieDone = widget.task?.checkinCustomerPlace == true;
-    _checkoutSelfieDone = widget.task?.checkoutCustomerPlace == true;
     _syncArrivalDisplayFromState();
     _loadStoredTaskSettings();
     _loadStaffIdAndForms();
@@ -238,8 +233,6 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
         setState(() {
           _task = t;
           _photoProofDone = t.photoProof == true;
-          _checkinSelfieDone = t.checkinCustomerPlace == true;
-          _checkoutSelfieDone = t.checkoutCustomerPlace == true;
           if (widget.arrivalAtLat == null) _syncArrivalDisplayFromState();
         });
       }
@@ -688,27 +681,6 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                           done: true,
                         ),
                         _nextStepRow(
-                          icon: Icons.camera_front_rounded,
-                          label: 'Check-in customer place',
-                          done: _checkinSelfieDone,
-                          onTap: task != null && widget.taskMongoId != null
-                              ? () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (ctx) => TaskSelfieScreen(
-                                        task: task!,
-                                        type: 'checkin',
-                                        taskMongoId: widget.taskMongoId,
-                                        onSelfieUploaded: () => _refreshTask(),
-                                      ),
-                                    ),
-                                  );
-                                  await _refreshTask();
-                                }
-                              : null,
-                        ),
-                        _nextStepRow(
                           icon: Icons.camera_alt_rounded,
                           label: 'Take photo proof',
                           done: _photoProofDone,
@@ -769,28 +741,6 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                   }
                                 : null,
                           ),
-                        _nextStepRow(
-                          icon: Icons.camera_front_rounded,
-                          label: 'Check-out customer place',
-                          done: _checkoutSelfieDone,
-                          onTap: task != null && widget.taskMongoId != null && 
-                                 (!_isOtpRequiredFromSettings || (task ?? widget.task)?.isOtpVerified == true)
-                              ? () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (ctx) => TaskSelfieScreen(
-                                        task: task!,
-                                        type: 'checkout',
-                                        taskMongoId: widget.taskMongoId,
-                                        onSelfieUploaded: () => _refreshTask(),
-                                      ),
-                                    ),
-                                  );
-                                  await _refreshTask();
-                                }
-                              : null,
-                        ),
                         // Form step: only when form template is assigned to staff
                         if (_hasFormAssigned)
                           _nextStepRow(
@@ -833,8 +783,6 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                             (task ?? widget.task)
                                                     ?.isOtpVerified ==
                                                 true) &&
-                                        _checkinSelfieDone &&
-                                        _checkoutSelfieDone &&
                                         (!_hasFormAssigned || _formFilled)
                                     ? LinearGradient(
                                         colors: [
@@ -851,8 +799,6 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                             (task ?? widget.task)
                                                     ?.isOtpVerified ==
                                                 true) &&
-                                        _checkinSelfieDone &&
-                                        _checkoutSelfieDone &&
                                         (!_hasFormAssigned || _formFilled)
                                     ? null
                                     : Colors.grey.shade300,
@@ -864,8 +810,6 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                             (task ?? widget.task)
                                                     ?.isOtpVerified ==
                                                 true) &&
-                                        _checkinSelfieDone &&
-                                        _checkoutSelfieDone &&
                                         (!_hasFormAssigned || _formFilled)
                                     ? () async {
                                         if (_submittingComplete) return;

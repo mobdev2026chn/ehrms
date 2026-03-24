@@ -467,11 +467,18 @@ class _LoginScreenState extends State<LoginScreen>
                 keyboardType: TextInputType.emailAddress,
                 onTap: _clearHardwareKeyboardState,
                 validator: (value) {
-                  if (value == null || value.isEmpty)
-                    return 'Please enter your email';
-                  if (!RegExp(
-                    r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
-                  ).hasMatch(value)) {
+                  final email = value?.trim() ?? '';
+                  if (email.isEmpty) return 'Please enter your email';
+                  // Keep validation permissive so valid modern domains
+                  // (long TLDs, plus signs, subdomains) are not blocked locally.
+                  final at = email.indexOf('@');
+                  if (at <= 0 || at != email.lastIndexOf('@')) {
+                    return 'Please enter a valid email';
+                  }
+                  final domain = email.substring(at + 1);
+                  if (!domain.contains('.') ||
+                      domain.startsWith('.') ||
+                      domain.endsWith('.')) {
                     return 'Please enter a valid email';
                   }
                   return null;

@@ -369,6 +369,41 @@ class AttendanceService {
     );
   }
 
+  Future<Map<String, dynamic>> getEmployeeAttendance({
+    required String employeeId,
+    required String startDate,
+    required String endDate,
+    int page = 1,
+    int limit = 100,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/attendance/employee/$employeeId',
+        queryParameters: {
+          'startDate': startDate,
+          'endDate': endDate,
+          'page': page,
+          'limit': limit,
+        },
+      );
+      final data = response.data ?? {};
+      if (data['success'] == true && data['data'] is Map) {
+        return {'success': true, 'data': data['data']};
+      }
+      return {'success': false, 'message': 'Failed to fetch employee attendance'};
+    } on DioException catch (e) {
+      return {
+        'success': false,
+        'message': _dioErrorMessage(e) ?? 'Failed to fetch employee attendance',
+      };
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
   Future<Map<String, dynamic>> _getMonthAttendanceWithRetry(
     int year,
     int month, {

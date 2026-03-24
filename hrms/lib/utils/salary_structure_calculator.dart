@@ -48,24 +48,8 @@ class SalaryStructureInputs {
 
   factory SalaryStructureInputs.fromMap(Map<String, dynamic> salary) {
     final basicSalary = (salary['basicSalary'] ?? 0).toDouble();
-    final existingDA = (salary['dearnessAllowance'] ?? 0).toDouble();
-    final existingHRA = (salary['houseRentAllowance'] ?? 0).toDouble();
-
-    // Auto-calculate DA and HRA based on basic salary (50% and 20% respectively)
-    // Logic: If DA/HRA exist in database and are > 0, use them; otherwise auto-calculate from basic
-    // This matches the web component behavior
-
-    final dearnessAllowance = existingDA > 0
-        ? existingDA
-        : (basicSalary > 0
-              ? (basicSalary * 0.5)
-              : 0); // DA = 50% of basic if not set
-
-    final houseRentAllowance = existingHRA > 0
-        ? existingHRA
-        : (basicSalary > 0
-              ? (basicSalary * 0.2)
-              : 0); // HRA = 20% of basic if not set
+    final dearnessAllowance = (salary['dearnessAllowance'] ?? 0).toDouble();
+    final houseRentAllowance = (salary['houseRentAllowance'] ?? 0).toDouble();
 
     return SalaryStructureInputs(
       basicSalary: basicSalary,
@@ -192,32 +176,47 @@ CalculatedSalaryStructure calculateSalaryStructure(
   // ============================================
   // STEP 2: Employer Contributions (Part of Gross Salary & CTC)
   // ============================================
-  // Employer PF = % of Basic Salary
-  final employerPF = inputs.employerPFRate > 0
-      ? (basicSalary * inputs.employerPFRate / 100)
+  // Web component rules:
+  // PF not applicable when Basic+DA > 15000.
+  // ESI not applicable when Basic+DA+HRA > 21000.
+  final basicPlusDA = basicSalary + dearnessAllowance;
+  final basicPlusDAPlusHRA = basicSalary + dearnessAllowance + houseRentAllowance;
+  final isPFApplicable = basicPlusDA < 15000;
+  final isESIApplicable = basicPlusDAPlusHRA < 21000;
+
+  final effectiveEmployerPFRate = isPFApplicable ? inputs.employerPFRate : 0.0;
+  final effectiveEmployerESIRate = isESIApplicable ? inputs.employerESIRate : 0.0;
+  final effectiveEmployeePFRate = isPFApplicable ? inputs.employeePFRate : 0.0;
+  final effectiveEmployeeESIRate = isESIApplicable ? inputs.employeeESIRate : 0.0;
+
+  // Employer PF = % of Basic Salary (when applicable)
+  final employerPF = effectiveEmployerPFRate > 0
+      ? (basicSalary * effectiveEmployerPFRate / 100)
       : 0;
 
-  // Employer ESI = % of Gross Fixed Salary (NOT Gross Salary)
-  final employerESI = inputs.employerESIRate > 0
-      ? (grossFixedSalary * inputs.employerESIRate / 100)
+  // Employer ESI = % of Gross Fixed Salary (when applicable)
+  final employerESI = effectiveEmployerESIRate > 0
+      ? (grossFixedSalary * effectiveEmployerESIRate / 100)
       : 0;
 
-  // Gross Salary (Monthly) = Fixed Gross + Employer Contributions
-  // This is the employer's monthly cost
-  final grossSalary = grossFixedSalary + employerPF + employerESI;
+  // When PF is not applicable, web logic adds a static 1800 to gross
+  final pfStaticAmount = isPFApplicable ? 0.0 : 1800.0;
+
+  // Gross Salary (Monthly) = Fixed Gross + Employer Contributions + static PF amount
+  final grossSalary = grossFixedSalary + employerPF + employerESI + pfStaticAmount;
 
   // ============================================
   // STEP 3: Employee Deductions (NOT part of CTC)
   // ============================================
-  // Employee PF = % of Basic Salary
-  final employeePF = inputs.employeePFRate > 0
-      ? (basicSalary * inputs.employeePFRate / 100)
-      : 0;
+  // Employee PF = % of Basic when applicable; otherwise static PF amount
+  final employeePF = effectiveEmployeePFRate > 0
+      ? (basicSalary * effectiveEmployeePFRate / 100)
+      : pfStaticAmount;
 
   // Employee ESI = % of Gross Salary (NOT Fixed Gross)
   // IMPORTANT: This is calculated on Gross Salary, not Gross Fixed
-  final employeeESI = inputs.employeeESIRate > 0
-      ? (grossSalary * inputs.employeeESIRate / 100)
+  final employeeESI = effectiveEmployeeESIRate > 0
+      ? (grossSalary * effectiveEmployeeESIRate / 100)
       : 0;
 
   final totalMonthlyDeductions = employeePF + employeeESI;
@@ -234,9 +233,10 @@ CalculatedSalaryStructure calculateSalaryStructure(
   // Annual Gross Salary = Monthly Gross × 12
   final annualGrossSalary = grossSalary * 12;
 
-  // Variable Pay: Incentive = % of Annual Gross Salary
+  // Web component logic: Incentive = % of Annual Basic Salary
+  final annualBasicSalary = basicSalary * 12;
   final annualIncentive = inputs.incentiveRate > 0
-      ? (annualGrossSalary * inputs.incentiveRate / 100)
+      ? (annualBasicSalary * inputs.incentiveRate / 100)
       : 0;
 
   // Benefits (Yearly - Employer Cost)
@@ -307,6 +307,52 @@ CalculatedSalaryStructure calculateSalaryStructure(
   );
 }
 
+/// Web EmployeeSalaryOverview legacy branch: staff.salary has `gross` (and optional `net` / `ctcYearly`) but no usable `basicSalary`.
+CalculatedSalaryStructure calculatedSalaryFromLegacyStaffMap(
+  Map<String, dynamic> salary,
+) {
+  final gross = (salary['gross'] as num?)?.toDouble() ?? 0.0;
+  final netRaw = salary['net'];
+  final net = (netRaw is num && netRaw > 0)
+      ? netRaw.toDouble()
+      : gross * 0.8;
+  final ctcRaw = salary['ctcYearly'];
+  final totalCTC = (ctcRaw is num && ctcRaw > 0)
+      ? ctcRaw.toDouble()
+      : gross * 12;
+  final totalMonthlyDeductions = gross - net;
+
+  final monthly = MonthlySalaryStructure(
+    basicSalary: gross * 0.5,
+    dearnessAllowance: 0,
+    houseRentAllowance: 0,
+    specialAllowance: 0,
+    grossFixedSalary: gross * 0.8,
+    employerPF: 0,
+    employerESI: 0,
+    grossSalary: gross,
+    employeePF: 0,
+    employeeESI: 0,
+    totalMonthlyDeductions: totalMonthlyDeductions,
+    netMonthlySalary: net,
+  );
+  final yearly = YearlySalaryStructure(
+    annualGrossSalary: gross * 12,
+    annualIncentive: 0,
+    annualGratuity: 0,
+    annualStatutoryBonus: 0,
+    medicalInsuranceAmount: 0,
+    totalAnnualBenefits: 0,
+    annualMobileAllowance: 0,
+    annualNetSalary: net * 12,
+  );
+  return CalculatedSalaryStructure(
+    monthly: monthly,
+    yearly: yearly,
+    totalCTC: totalCTC,
+  );
+}
+
 /// Calculate prorated salary based on working days and attendance
 class ProratedSalary {
   final double proratedGrossSalary;
@@ -349,64 +395,18 @@ ProratedSalary calculateProratedSalary(
   final attendancePercentage = (presentDays / workingDaysForProration) * 100;
   final prorationFactor = presentDays / workingDaysForProration;
 
-  // CORRECT METHOD: Step 1 - Prorate Gross Fixed Components (Basic, DA, HRA, Special Allowance)
-  final proratedBasicSalary =
-      calculatedSalary.monthly.basicSalary * prorationFactor;
-  final proratedDA =
-      calculatedSalary.monthly.dearnessAllowance * prorationFactor;
-  final proratedHRA =
-      calculatedSalary.monthly.houseRentAllowance * prorationFactor;
-  final proratedSpecialAllowance =
-      calculatedSalary.monthly.specialAllowance * prorationFactor;
-  final proratedGrossFixedSalary =
-      proratedBasicSalary + proratedDA + proratedHRA + proratedSpecialAllowance;
-
-  // CORRECT METHOD: Step 2 - Recalculate Employer Contributions on PRORATED amounts
-  // Calculate rates from original values (since we don't have direct access to rates)
-  final originalBasic = calculatedSalary.monthly.basicSalary;
-  final originalGrossFixed = calculatedSalary.monthly.grossFixedSalary;
-  final originalGross = calculatedSalary.monthly.grossSalary;
-
-  // Calculate rates from original values (backward calculation)
-  final employerPFRate = originalBasic > 0
-      ? (calculatedSalary.monthly.employerPF / originalBasic) * 100
-      : 0;
-  final employerESIRate = originalGrossFixed > 0
-      ? (calculatedSalary.monthly.employerESI / originalGrossFixed) * 100
-      : 0;
-  final employeePFRate = originalBasic > 0
-      ? (calculatedSalary.monthly.employeePF / originalBasic) * 100
-      : 0;
-  final employeeESIRate = originalGross > 0
-      ? (calculatedSalary.monthly.employeeESI / originalGross) * 100
-      : 0;
-
-  // Recalculate Employer PF and ESI on prorated amounts
-  final proratedEmployerPF = employerPFRate > 0
-      ? (proratedBasicSalary * employerPFRate / 100)
-      : 0;
-  final proratedEmployerESI = employerESIRate > 0
-      ? (proratedGrossFixedSalary * employerESIRate / 100)
-      : 0;
-
-  // CORRECT METHOD: Step 3 - Calculate Prorated Gross Salary
+  // Match web formula exactly:
+  // - prorated gross = monthly gross * proration factor
+  // - prorated deductions = monthly deductions * proration factor
+  // - fines are applied after proration
   final proratedGrossSalary =
-      proratedGrossFixedSalary + proratedEmployerPF + proratedEmployerESI;
-
-  // CORRECT METHOD: Step 4 - Recalculate Employee Deductions on PRORATED gross
-  final proratedEmployeePF = employeePFRate > 0
-      ? (proratedBasicSalary * employeePFRate / 100)
-      : 0;
-  final proratedEmployeeESI = employeeESIRate > 0
-      ? (proratedGrossSalary * employeeESIRate / 100)
-      : 0;
-
-  final proratedDeductions = proratedEmployeePF + proratedEmployeeESI;
+      calculatedSalary.monthly.grossSalary * prorationFactor;
+  final proratedDeductions =
+      calculatedSalary.monthly.totalMonthlyDeductions * prorationFactor;
 
   // Fine amount is NOT prorated - it's the actual total from attendance records
   final totalDeductions = proratedDeductions + fineAmount;
 
-  // CORRECT METHOD: Step 5 - Calculate Prorated Net Salary
   final proratedNetSalary = proratedGrossSalary - totalDeductions;
 
   return ProratedSalary(
@@ -450,11 +450,31 @@ WorkingDaysInfo calculateWorkingDays(
   List<DateTime> holidays, // List of holiday dates
   String weeklyOffPattern, [ // 'standard' or 'oddEvenSaturday'
   List<int>? weeklyHolidays, // Day numbers: 0=Sunday, 1=Monday, ..., 6=Saturday
+  DateTime? endDate, // Optional: calculate only till this date for current month
 ]) {
   final weeklyHolidaysList = weeklyHolidays ?? const <int>[];
-  // Create last day of month to get total days
-  final lastDay = DateTime(year, month + 1, 0);
-  final totalDays = lastDay.day;
+  // Create month boundaries
+  final firstDay = DateTime(year, month, 1);
+  final monthLastDay = DateTime(year, month + 1, 0);
+
+  DateTime effectiveEnd = monthLastDay;
+  if (endDate != null) {
+    if (endDate.year == year && endDate.month == month) {
+      effectiveEnd = DateTime(
+        endDate.year,
+        endDate.month,
+        endDate.day,
+        23,
+        59,
+        59,
+        999,
+      );
+    } else {
+      effectiveEnd = monthLastDay;
+    }
+  }
+
+  final totalDays = effectiveEnd.day;
 
   int workingDays = 0;
   int weeklyOffDays = 0; // Days that are weekly off (not holidays)
@@ -501,10 +521,18 @@ WorkingDaysInfo calculateWorkingDays(
         }
       }
     } else {
-      // Standard pattern: Check weeklyHolidays array
+      // Standard pattern — match frontend salaryCalculation.util.ts:
+      // - If weeklyHolidays is non-empty, only those weekday numbers are week off.
+      // - If weeklyHolidays is empty, default Saturday + Sunday as week off (same as web).
       // jsWeekday: 0=Sunday, 1=Monday, ..., 6=Saturday
-      if (weeklyHolidaysList.contains(jsWeekday)) {
-        isWeeklyOff = true;
+      if (weeklyHolidaysList.isNotEmpty) {
+        if (weeklyHolidaysList.contains(jsWeekday)) {
+          isWeeklyOff = true;
+        }
+      } else {
+        if (jsWeekday == 0 || jsWeekday == 6) {
+          isWeeklyOff = true;
+        }
       }
     }
 
@@ -515,11 +543,16 @@ WorkingDaysInfo calculateWorkingDays(
     }
   }
 
+  final holidaysInRange = holidays.where((h) {
+    final d = DateTime(h.year, h.month, h.day);
+    return !d.isBefore(firstDay) && !d.isAfter(effectiveEnd);
+  }).length;
+
   return WorkingDaysInfo(
     totalDays: totalDays,
     workingDays: workingDays,
     weekends:
         weeklyOffDays, // Store weekly off days in weekends field for compatibility
-    holidayCount: holidays.length,
+    holidayCount: holidaysInRange,
   );
 }

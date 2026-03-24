@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import '../../config/constants.dart';
 
 /// Retries on 429 (rate limit) with exponential backoff. Respects Retry-After.
@@ -83,9 +84,21 @@ class DioClient {
         },
       ),
     );
+    if (kDebugMode) {
+      debugPrint('[DioClient] baseUrl: ${dio.options.baseUrl}');
+    }
     dio.interceptors.addAll([
       FormDataContentTypeInterceptor(),
       RetryOnRateLimitInterceptor(dio),
+      if (kDebugMode)
+        LogInterceptor(
+          requestBody: true,
+          responseBody: false,
+          requestHeader: false,
+          responseHeader: false,
+          error: true,
+          logPrint: (obj) => debugPrint('[Dio] $obj'),
+        ),
     ]);
   }
 

@@ -25,7 +25,7 @@
     <application
         android:label="ektaHr"
         android:name="${applicationName}"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher">
         <meta-data android:name="com.google.firebase.messaging.default_notification_icon"

@@ -1,21 +1,20 @@
 // hrms/lib/config/constants.dart
 class AppConstants {
-  /// Production API – use for release builds.
- // static const String baseUrl = 'https://ehrms.askeva.net/api';
-//static const String baseUrl = 'https://ehrms.askeva.net/api';
+  /// Production API - use for release builds.
+  // static const String baseUrl = 'https://ehrms.askeva.net/api';
+  //static const String baseUrl = 'https://ehrms.askeva.net/api';
 
-  /// Local dev – backend on port 9001. Use your machine's **current** LAN IP (USB does not
-  /// carry API traffic; the phone uses Wi‑Fi). On Windows run `ipconfig` and match Wi‑Fi IPv4.
-  /// Quick check: open `http://<that-ip>:9001/api` in the phone browser (same Wi‑Fi).
+  /// Local dev - backend on port 9001. Use your machine's current LAN IP (USB does not
+  /// carry API traffic; the phone uses Wi-Fi). On Windows run `ipconfig` and match Wi-Fi IPv4.
+  /// Quick check: open `http://<that-ip>:9001/api` in the phone browser (same Wi-Fi).
   /// For LMS (and all) data to match the web for the same user, point [baseUrl]
   /// to the same backend the web frontend uses (e.g. production or same dev server).
-  static const String baseUrl = 'http://192.168.16.104:9001/api';
+  static const String baseUrl = 'http://192.168.1.41:9001/api';
 
   // Android emulator: use 10.0.2.2 to reach host
   // stati
 
-
-  /// Google Maps key — enable **Geocoding API** for reverse geocode (lat/lng → address in app).
+  /// Google Maps key - enable Geocoding API for reverse geocode (lat/lng -> address in app).
   /// Also Maps SDK, Places, Directions as needed. Restrict by app + APIs in Google Cloud Console.
   static const String googleMapsApiKey =
       'AIzaSyBcoj_g5hxrsv3mEJCVF1Uev_JZRcFO0F8';
@@ -43,7 +42,7 @@ class AppConstants {
   static const bool showLeadFormAfterCall = false;
 
   /// Absent alert: show "Absent Notification" when user has not logged in by this time (hour, minute).
-  /// E.g. 10 and 11 → show alert from 10:11 onwards if no punch-in today.
+  /// E.g. 10 and 11 -> show alert from 10:11 onwards if no punch-in today.
   static const int absentAlertAfterHour = 10;
   static const int absentAlertAfterMinute = 11;
 
@@ -52,8 +51,9 @@ class AppConstants {
     if (path == null || path.isEmpty) return '';
     if (path.startsWith('http://') ||
         path.startsWith('https://') ||
-        path.startsWith('data:'))
+        path.startsWith('data:')) {
       return path;
+    }
     final p = path.startsWith('/') ? path : '/$path';
     return '$fileBaseUrl$p';
   }

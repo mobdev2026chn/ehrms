@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import '../services/auth_service.dart';
 import 'api_client.dart';
 
@@ -11,6 +12,9 @@ class SalaryService {
     if (token == null) return _getEmptySalaryData();
     try {
       _api.setAuthToken(token);
+      debugPrint(
+        '[SalaryOverview] GET /payrolls/stats month=$month year=$year',
+      );
       final response = await _api.dio.get<Map<String, dynamic>>(
         '/payrolls/stats',
         queryParameters: {
@@ -43,6 +47,41 @@ class SalaryService {
     };
   }
 
+  /// POST `/payrolls/preview` — MTD estimate (same backend as web-style preview).
+  Future<Map<String, dynamic>> previewPayroll({
+    required String employeeId,
+    required int month,
+    required int year,
+  }) async {
+    final token = await _authService.getToken();
+    if (token == null) {
+      return {'success': false, 'error': 'No token found'};
+    }
+    try {
+      _api.setAuthToken(token);
+      debugPrint(
+        '[SalaryOverview] POST /payrolls/preview month=$month year=$year employeeId=$employeeId',
+      );
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/payrolls/preview',
+        data: {
+          'employeeId': employeeId,
+          'month': month,
+          'year': year,
+        },
+      );
+      final data = response.data;
+      if (data != null) return Map<String, dynamic>.from(data);
+      return {'success': false};
+    } on DioException catch (e) {
+      debugPrint('[SalaryOverview] previewPayroll DioException: ${e.message}');
+      return {
+        'success': false,
+        'error': e.response?.data ?? e.message,
+      };
+    }
+  }
+
   Future<Map<String, dynamic>> getPayrolls({
     int? page,
     int? limit,
@@ -59,6 +98,9 @@ class SalaryService {
       };
       if (month != null) q['month'] = month;
       if (year != null) q['year'] = year;
+      debugPrint(
+        '[SalaryOverview] GET /payrolls query=$q',
+      );
       final response = await _api.dio.get<Map<String, dynamic>>(
         '/payrolls',
         queryParameters: q,
