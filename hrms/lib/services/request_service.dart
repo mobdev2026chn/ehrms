@@ -512,12 +512,32 @@ class RequestService {
   /// Fetches PDF bytes from a full URL (e.g. Cloudinary payslipUrl). No auth.
   Future<Map<String, dynamic>> getPdfBytesFromUrl(String url) async {
     try {
-      final response = await _api.dio.get<List<int>>(
-        url,
-        options: Options(responseType: ResponseType.bytes),
+      final uri = Uri.tryParse(url);
+      if (uri == null || !uri.hasScheme) {
+        return {'success': false, 'message': 'Invalid file URL'};
+      }
+
+      // Use a dedicated Dio (no baseUrl / auth interceptors) for absolute URLs.
+      final dio = Dio(
+        BaseOptions(
+          responseType: ResponseType.bytes,
+          followRedirects: true,
+          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 30),
+          connectTimeout: const Duration(seconds: 30),
+          validateStatus: (status) =>
+              status != null && status >= 200 && status < 400,
+          headers: {
+            'Accept': '*/*',
+          },
+        ),
       );
+
+      final response = await dio.get<List<int>>(url);
       final bytes = response.data;
-      if (bytes != null) return {'success': true, 'data': bytes};
+      if (bytes != null && bytes.isNotEmpty) {
+        return {'success': true, 'data': bytes};
+      }
       return {'success': false, 'message': 'No data received'};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};

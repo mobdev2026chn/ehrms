@@ -52,6 +52,7 @@ class AttendanceScreen extends StatefulWidget {
 
 class _AttendanceScreenState extends State<AttendanceScreen>
     with SingleTickerProviderStateMixin {
+  static const Duration _networkTimeout = Duration(seconds: 25);
   Map<String, dynamic>? _attendanceData;
 
   /// Date we last fetched attendance status for (ensures selected-date card shows correct date)
@@ -239,7 +240,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       debugPrint('[Attendance] Fetching template details...');
       _attendanceService.clearCachesForRefresh();
       // 1. Fresh profile for staff assignment (attendanceTemplateId, branchId)
-      final profileResult = await _authService.getProfile();
+      final profileResult = await _authService
+          .getProfile()
+          .timeout(_networkTimeout);
       if (!mounted) return;
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
@@ -252,7 +255,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final todayStr =
           '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
       debugPrint('[Attendance] Fetching today attendance: $todayStr');
-      final result = await _attendanceService.getAttendanceByDate(todayStr);
+      final result = await _attendanceService
+          .getAttendanceByDate(todayStr)
+          .timeout(_networkTimeout);
       if (!mounted) return;
 
       if (result['success'] == true && result['data'] != null) {
@@ -644,7 +649,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   Future<void> _fetchHistory({bool refresh = false, int? page}) async {
-    if (!mounted || _isLoadingHistory) return;
+    if (!mounted) return;
+    // Allow refresh to proceed even when initial loading flag is already true.
+    if (_isLoadingHistory && !refresh) return;
 
     final pageToFetch = page ?? (refresh ? 1 : _page);
 
@@ -661,11 +668,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             page: pageToFetch,
             limit: _limit,
           )
-          .timeout(const Duration(seconds: 25));
+          .timeout(_networkTimeout);
 
       if (result['success'] && mounted) {
-        final List<dynamic> newData = result['data']['data'];
-        final pagination = result['data']['pagination'];
+        final payload = (result['data'] is Map<String, dynamic>)
+            ? result['data'] as Map<String, dynamic>
+            : <String, dynamic>{};
+        final List<dynamic> newData = payload['data'] is List
+            ? List<dynamic>.from(payload['data'] as List)
+            : <dynamic>[];
+        final pagination = payload['pagination'] is Map<String, dynamic>
+            ? payload['pagination'] as Map<String, dynamic>
+            : <String, dynamic>{'total': 0};
 
         setState(() {
           // For refresh or first page, replace the list.

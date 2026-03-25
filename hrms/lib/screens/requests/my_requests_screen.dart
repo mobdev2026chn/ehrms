@@ -12,6 +12,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import '../../config/app_colors.dart';
 import '../../services/request_service.dart';
@@ -3896,7 +3897,15 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     }
     bool loadingShown = false;
     try {
-      String? url = payslipUrl;
+      String? url = payslipUrl?.trim();
+      // If URL is already present, open in browser directly (most reliable on mobile).
+      if (url != null && url.isNotEmpty) {
+        final uri = Uri.tryParse(url);
+        if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
+      }
       if (url == null || url.isEmpty) {
         loadingShown = true;
         showDialog(
@@ -3924,50 +3933,16 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         }
       }
 
-      // View: fetch PDF from link and open in system viewer (don't open URL in browser to avoid download)
-      loadingShown = true;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(child: AppTabLoader()),
-      );
-      final result = await _requestService.getPdfBytesFromUrl(url);
-      if (mounted) {
-        Navigator.pop(context);
-        loadingShown = false;
+      // View: open in browser for consistent and reliable behavior on mobile.
+      final uri = Uri.tryParse(url);
+      if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
       }
-      if (result['success'] == true && result['data'] != null) {
-        final pdfBytes = result['data'] as List<int>;
-        // Ensure we got actual PDF bytes (not HTML error page) to avoid "something went wrong" in viewer
-        const pdfMagic = [0x25, 0x50, 0x44, 0x46]; // %PDF
-        final isPdf =
-            pdfBytes.length >= 4 &&
-            pdfBytes[0] == pdfMagic[0] &&
-            pdfBytes[1] == pdfMagic[1] &&
-            pdfBytes[2] == pdfMagic[2] &&
-            pdfBytes[3] == pdfMagic[3];
-        if (isPdf) {
-          _openPdf(pdfBytes, 'view');
-        } else {
-          if (mounted) {
-            SnackBarUtils.showSnackBar(
-              context,
-              'Payslip could not be loaded. Opening in browser instead.',
-              isError: false,
-            );
-            final uri = Uri.tryParse(url);
-            if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            }
-          }
-        }
-      } else {
+      if (mounted) {
         SnackBarUtils.showSnackBar(
           context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            result['message']?.toString(),
-            fallback: 'Unable to load payslip',
-          ),
+          'Unable to open payslip link.',
           isError: true,
         );
       }
@@ -4037,6 +4012,21 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     bool loadingShown = false;
     try {
       String? url = payslipUrl?.trim();
+      // If URL is already present, download via browser so it lands in device Downloads.
+      if (url != null && url.isNotEmpty) {
+        final uri = Uri.tryParse(url);
+        if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          if (mounted) {
+            SnackBarUtils.showSnackBar(
+              context,
+              'Downloading file… Check your browser downloads.',
+              isError: false,
+            );
+          }
+          return;
+        }
+      }
       if (url == null || url.isEmpty) {
         loadingShown = true;
         showDialog(
@@ -4064,33 +4054,82 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         }
       }
 
-      // Proper download: fetch PDF bytes, save to app storage, then open in system viewer
-      if (!loadingShown) {
-        loadingShown = true;
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) =>
-              const Center(child: AppTabLoader()),
+      // Download: always use browser so it downloads to device Downloads.
+      final uri = Uri.tryParse(url);
+      if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Downloading file… Check your browser downloads.',
+            isError: false,
+          );
+        }
+        return;
+      }
+      if (mounted) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Unable to start download.',
+          isError: true,
         );
       }
-      final result = await _requestService.getPdfBytesFromUrl(url);
+    } catch (e) {
+      if (mounted) {
+        if (loadingShown) Navigator.pop(context);
+        SnackBarUtils.showSnackBar(
+          context,
+          'Error downloading payslip: ${e.toString()}',
+          isError: true,
+        );
+      }
+    }
+  }
+
+  Future<void> _sharePayslipPdf({
+    required String url,
+    required String fileBaseName,
+  }) async {
+    bool loadingShown = false;
+    try {
+      final trimmed = url.trim();
+      if (trimmed.isEmpty) {
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Payslip link not available yet',
+            isError: true,
+          );
+        }
+        return;
+      }
+
+      loadingShown = true;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: AppTabLoader()),
+      );
+
+      final result = await _requestService.getPdfBytesFromUrl(trimmed);
       if (mounted && loadingShown) {
         Navigator.pop(context);
         loadingShown = false;
       }
 
       if (result['success'] != true || result['data'] == null) {
-        _fallbackOpenPayslipInBrowser(url);
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Unable to fetch payslip for sharing.',
+            isError: true,
+          );
+        }
         return;
       }
 
       final bytes = result['data'] as List<int>;
-      if (bytes.length < 4) {
-        _fallbackOpenPayslipInBrowser(url);
-        return;
-      }
-      final isPdf =
+      final isPdf = bytes.length >= 4 &&
           bytes[0] == 0x25 &&
           bytes[1] == 0x50 &&
           bytes[2] == 0x44 &&
@@ -4099,24 +4138,29 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         if (mounted) {
           SnackBarUtils.showSnackBar(
             context,
-            'Payslip could not be downloaded. Opening in browser instead.',
-            isError: false,
+            'Payslip file is not a valid PDF.',
+            isError: true,
           );
         }
-        _fallbackOpenPayslipInBrowser(url);
         return;
       }
 
-      await _openPdf(bytes, 'view', month: month, year: year);
-      if (mounted) {
-        SnackBarUtils.showSnackBar(context, 'Payslip downloaded and opened.');
-      }
+      final dir = await getTemporaryDirectory();
+      final safeBase = fileBaseName.trim().isEmpty ? 'Payslip' : fileBaseName.trim();
+      final file = File('${dir.path}/$safeBase.pdf');
+      await file.writeAsBytes(bytes, flush: true);
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: safeBase,
+        text: safeBase,
+      );
     } catch (e) {
       if (mounted) {
         if (loadingShown) Navigator.pop(context);
         SnackBarUtils.showSnackBar(
           context,
-          'Error downloading payslip: ${e.toString()}',
+          'Error sharing payslip: ${e.toString()}',
           isError: true,
         );
       }
@@ -4309,11 +4353,17 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         ? (payroll['payslipUrl']?.toString().trim())
         : null;
     final bool hasPayslipUrl = payslipUrl != null && payslipUrl.isNotEmpty;
+    if (hasPayslipUrl) {
+      statusColor = AppColors.success;
+    }
 
     // Status label: approved but not yet generated vs approved and viewable
     String statusLabel = req['status'] ?? '';
     if (isApproved && !hasPayslipUrl) {
       statusLabel = 'Approved - wait for generation';
+    }
+    if (hasPayslipUrl) {
+      statusLabel = 'Generated';
     }
 
     final colorScheme = Theme.of(context).colorScheme;
@@ -4424,32 +4474,51 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                         approvedBy,
                       ),
                     ],
-                    // View / Download actions – only when payslip is approved and URL is available
-                    if (isApproved && hasPayslipUrl) ...[
+                    // Download / Share actions – show whenever payslip URL exists
+                    if (hasPayslipUrl) ...[
                       const SizedBox(height: 8),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          // View payslip (opens URL)
                           IconButton(
-                            tooltip: 'View Payslip',
+                            tooltip: 'Share Payslip',
                             icon: const Icon(
-                              Icons.visibility_outlined,
+                              Icons.ios_share_rounded,
                               size: 20,
                             ),
                             color: AppColors.primary,
                             onPressed: () {
-                              _viewPayslip(
-                                req['_id']?.toString(),
-                                payslipUrl: payslipUrl,
+                              String monthName = 'Month';
+                              int year = DateTime.now().year;
+                              if (req['month'] != null && req['year'] != null) {
+                                monthName = _getMonthName(req['month']);
+                                final yr = req['year'];
+                                if (yr is int) {
+                                  year = yr;
+                                } else if (yr is num) {
+                                  year = yr.toInt();
+                                } else if (yr is String) {
+                                  year = int.tryParse(yr) ?? year;
+                                }
+                              } else {
+                                final period = _getPeriodText(req);
+                                final parts = period.split(' ');
+                                if (parts.isNotEmpty) monthName = parts[0];
+                                if (parts.length > 1) {
+                                  final yr = int.tryParse(parts[1]);
+                                  if (yr != null) year = yr;
+                                }
+                              }
+                              _sharePayslipPdf(
+                                url: payslipUrl ?? '',
+                                fileBaseName: 'Payslip_$monthName',
                               );
                             },
                           ),
                           const SizedBox(width: 4),
-                          // Download / Share payslip
                           IconButton(
-                            tooltip: 'Download / Share Payslip',
-                            icon: const Icon(Icons.ios_share_rounded, size: 20),
+                            tooltip: 'Download Payslip',
+                            icon: const Icon(Icons.download_outlined, size: 20),
                             color: AppColors.primary,
                             onPressed: () {
                               final requestId = req['_id']?.toString();

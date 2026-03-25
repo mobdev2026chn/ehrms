@@ -338,8 +338,29 @@ class AttendanceService {
           if (date != null) 'date': date,
         },
       );
-      final data = response.data ?? {};
-      return {'success': true, 'data': data['data'] ?? data};
+      final raw = response.data ?? <String, dynamic>{};
+
+      // Normalize both legacy and wrapped API response shapes to:
+      // { data: { data: <list>, pagination: <map> } }
+      Map<String, dynamic> payload;
+      if (raw['data'] is Map<String, dynamic>) {
+        final nested = raw['data'] as Map<String, dynamic>;
+        payload = {
+          'data': nested['data'] is List ? nested['data'] : <dynamic>[],
+          'pagination': nested['pagination'] is Map<String, dynamic>
+              ? nested['pagination']
+              : <String, dynamic>{},
+        };
+      } else {
+        payload = {
+          'data': raw['data'] is List ? raw['data'] : <dynamic>[],
+          'pagination': raw['pagination'] is Map<String, dynamic>
+              ? raw['pagination']
+              : <String, dynamic>{},
+        };
+      }
+
+      return {'success': true, 'data': payload};
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
         return {

@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -1636,14 +1637,17 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       children: [
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: canOpen
-                ? () => _openPayslipFromPayroll(payroll, download: false)
+            onPressed: hasUrl
+                ? () => _sharePayslipPdfFromUrl(
+                      url,
+                      fileBaseName: 'Payslip_${_selectedMonth}',
+                    )
                 : null,
-            icon: const Icon(Icons.visibility_outlined, size: 20),
-            label: const Text('View Payslip'),
+            icon: const Icon(Icons.ios_share_rounded, size: 20),
+            label: const Text('Share'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: canOpen ? AppColors.primary : Colors.grey,
-              side: BorderSide(color: canOpen ? AppColors.primary : Colors.grey),
+              foregroundColor: hasUrl ? AppColors.primary : Colors.grey,
+              side: BorderSide(color: hasUrl ? AppColors.primary : Colors.grey),
             ),
           ),
         ),
@@ -1809,6 +1813,79 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         SnackBarUtils.showSnackBar(
           context,
           'Error handling PDF: ${e.toString()}',
+          isError: true,
+        );
+      }
+    }
+  }
+
+  Future<void> _sharePayslipPdfFromUrl(
+    String url, {
+    required String fileBaseName,
+  }) async {
+    bool loadingShown = false;
+    try {
+      final trimmed = url.trim();
+      if (trimmed.isEmpty) return;
+
+      loadingShown = true;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: AppTabLoader()),
+      );
+
+      final result = await _requestService.getPdfBytesFromUrl(trimmed);
+      if (mounted && loadingShown) {
+        Navigator.pop(context);
+        loadingShown = false;
+      }
+
+      if (result['success'] != true || result['data'] == null) {
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Unable to fetch payslip for sharing.',
+            isError: true,
+          );
+        }
+        return;
+      }
+
+      final bytes = result['data'] as List<int>;
+      final isPdf = bytes.length >= 4 &&
+          bytes[0] == 0x25 &&
+          bytes[1] == 0x50 &&
+          bytes[2] == 0x44 &&
+          bytes[3] == 0x46; // %PDF
+      if (!isPdf) {
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Payslip file is not a valid PDF.',
+            isError: true,
+          );
+        }
+        return;
+      }
+
+      final dir = await getTemporaryDirectory();
+      final safeBase =
+          fileBaseName.trim().isEmpty ? 'Payslip' : fileBaseName.trim();
+      final file = File('${dir.path}/$safeBase.pdf');
+      await file.writeAsBytes(bytes, flush: true);
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: safeBase,
+        text: safeBase,
+      );
+    } catch (e) {
+      if (mounted) {
+        if (loadingShown) Navigator.pop(context);
+        SnackBarUtils.showSnackBar(
+          context,
+          'Error sharing payslip: ${e.toString()}',
           isError: true,
         );
       }
@@ -2085,12 +2162,15 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                             runSpacing: 6,
                             children: [
                               OutlinedButton.icon(
-                                onPressed: () => _openPayslipFromPayroll(
-                                  p,
-                                  download: false,
-                                ),
-                                icon: const Icon(Icons.visibility_outlined, size: 18),
-                                label: const Text('View'),
+                                onPressed: hasPayslipUrl
+                                    ? () => _sharePayslipPdfFromUrl(
+                                          payslipUrl,
+                                          fileBaseName:
+                                              'Payslip_${_months[(m - 1).clamp(0, 11)]}',
+                                        )
+                                    : null,
+                                icon: const Icon(Icons.ios_share_rounded, size: 18),
+                                label: const Text('Share'),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: AppColors.primary,
                                   visualDensity: VisualDensity.compact,
@@ -2363,12 +2443,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           runSpacing: 4,
                           children: [
                             OutlinedButton.icon(
-                              onPressed: () => _openPayslipFromPayroll(
-                                sel,
-                                download: false,
+                              onPressed: () => _sharePayslipPdfFromUrl(
+                                url,
+                                fileBaseName: 'Payslip_${_selectedMonth}',
                               ),
-                              icon: const Icon(Icons.visibility_outlined, size: 18),
-                              label: const Text('View Payslip'),
+                              icon: const Icon(Icons.ios_share_rounded, size: 18),
+                              label: const Text('Share'),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.primary,
                                 visualDensity: VisualDensity.compact,
