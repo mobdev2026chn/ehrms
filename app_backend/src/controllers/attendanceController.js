@@ -1636,7 +1636,8 @@ const getAttendanceHistory = async (req, res) => {
         const attendance = await Attendance.find(query)
             .sort({ date: -1 })
             .skip(skip)
-            .limit(limit);
+            .limit(limit)
+            .lean();
 
         const total = await Attendance.countDocuments(query);
         const data = await enrichWithLeaveDetails(attendance, req.staff._id);
@@ -1701,7 +1702,8 @@ const getEmployeeAttendance = async (req, res) => {
         const attendanceRaw = await Attendance.find(query)
             .sort({ date: 1 })
             .skip(skip)
-            .limit(l);
+            .limit(l)
+            .lean();
 
         const total = await Attendance.countDocuments(query);
         const attendance = await enrichWithLeaveDetails(attendanceRaw, req.staff._id);
@@ -1741,7 +1743,7 @@ const getMonthAttendance = async (req, res) => {
                 { user: req.staff._id }
             ],
             date: { $gte: startOfMonth, $lte: endOfMonth }
-        }).sort({ date: 1 });
+        }).sort({ date: 1 }).lean();
 
         // Enrich records that have fineHours/lateMinutes but no fineAmount (e.g. Excel import) using payroll fine formula
         const Company = require('../models/Company');
