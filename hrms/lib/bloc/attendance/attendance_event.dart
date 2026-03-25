@@ -24,6 +24,7 @@ class AttendanceCheckInRequested extends AttendanceEvent {
   final String? city;
   final String? pincode;
   final String? selfie;
+  final String? movementType;
   const AttendanceCheckInRequested({
     required this.lat,
     required this.lng,
@@ -32,9 +33,10 @@ class AttendanceCheckInRequested extends AttendanceEvent {
     this.city,
     this.pincode,
     this.selfie,
+    this.movementType,
   });
   @override
-  List<Object?> get props => [lat, lng, address, area, city, pincode, selfie];
+  List<Object?> get props => [lat, lng, address, area, city, pincode, selfie, movementType];
 }
 
 /// Check-out with location and optional selfie.
@@ -46,6 +48,7 @@ class AttendanceCheckOutRequested extends AttendanceEvent {
   final String? city;
   final String? pincode;
   final String? selfie;
+  final String? movementType;
   const AttendanceCheckOutRequested({
     required this.lat,
     required this.lng,
@@ -54,7 +57,8 @@ class AttendanceCheckOutRequested extends AttendanceEvent {
     this.city,
     this.pincode,
     this.selfie,
+    this.movementType,
   });
   @override
-  List<Object?> get props => [lat, lng, address, area, city, pincode, selfie];
+  List<Object?> get props => [lat, lng, address, area, city, pincode, selfie, movementType];
 }

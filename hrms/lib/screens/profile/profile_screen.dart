@@ -16,6 +16,7 @@ import '../../widgets/menu_icon_button.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/face_detection_helper.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class ProfileScreen extends StatefulWidget {
   final int? dashboardTabIndex;
@@ -298,7 +299,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppTabLoader())
           : _userData == null
           ? const Center(child: Text('Failed to load profile'))
           : TabBarView(
@@ -864,7 +865,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(20.0),
-          child: CircularProgressIndicator(),
+          child: AppTabLoader(),
         ),
       );
     }

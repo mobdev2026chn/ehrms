@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/error_message_utils.dart';
 import 'api_client.dart';
 
 class RequestService {
@@ -57,14 +58,7 @@ class RequestService {
   }
 
   String _dioMessage(DioException e) {
-    final d = e.response?.data;
-    if (d is Map) {
-      return (d['error']?['message'] ?? d['message']) as String? ??
-          'Request failed';
-    }
-    if (e.response?.statusCode == 429)
-      return 'Too many requests. Please wait a moment.';
-    return 'Request failed';
+    return ErrorMessageUtils.messageFromDioException(e);
   }
 
   // --- ANNOUNCEMENTS ---
@@ -80,7 +74,10 @@ class RequestService {
       if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? []};
       }
-      return {'success': false, 'message': body?['message'] ?? 'Error fetching announcements'};
+      return {
+        'success': false,
+        'message': body?['message'] ?? 'Error fetching announcements',
+      };
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
@@ -119,8 +116,8 @@ class RequestService {
     }
   }
 
-  /// Fetches leave types for Apply Leave dropdown: from staff's leave template + Unpaid Leave.
-  /// Returns list of { type, days } where days is the limit (null for Unpaid Leave).
+  /// Fetches leave types for Apply Leave dropdown: from staff's leave template + Half Day (static) + Unpaid Leave.
+  /// Returns list of { type, days } where days is the limit (null for Unpaid Leave, 0.5 for Half Day).
   Future<Map<String, dynamic>> getLeaveTypesForApply() async {
     try {
       await _setToken();
@@ -129,6 +126,88 @@ class RequestService {
       );
       final body = response.data;
       return {'success': true, 'data': body?['data'] ?? body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Checks leave dates for conflict. Pass [startDate] and [endDate] (range), and optionally [selectedDates] for calendar selection.
+  /// When [selectedDates] is provided, backend uses it for conflict check; otherwise uses range.
+  /// Returns { success, hasConflict, effectiveDays }.
+  Future<Map<String, dynamic>> checkLeaveDates(
+    DateTime startDate,
+    DateTime endDate, {
+    List<DateTime>? selectedDates,
+  }) async {
+    try {
+      await _setToken();
+      final Map<String, dynamic> data;
+      if (selectedDates != null && selectedDates.isNotEmpty) {
+        data = {
+          'selectedDates': selectedDates
+              .map((d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}')
+              .toList(),
+        };
+      } else {
+        data = {
+          'startDate': startDate.toIso8601String(),
+          'endDate': endDate.toIso8601String(),
+        };
+      }
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/requests/leave/check-dates',
+        data: data,
+      );
+      final body = response.data;
+      if (body == null || body['success'] != true) {
+        return {'success': false, 'hasConflict': false};
+      }
+      final resData = body['data'] as Map<String, dynamic>?;
+      final list = (dynamic value) => value is List ? List<String>.from(value.map((e) => e.toString())) : <String>[];
+      return {
+        'success': true,
+        'hasConflict': resData?['hasConflict'] == true,
+        'effectiveDays': (resData?['effectiveDays'] is int) ? resData!['effectiveDays'] as int : null,
+        'paidLeaveDates': list(resData?['paidLeaveDates']),
+        'pendingLeaveDates': list(resData?['pendingLeaveDates']),
+        'approvedLeaveDates': list(resData?['approvedLeaveDates']),
+        'weekOffDates': list(resData?['weekOffDates']),
+        'holidayDates': list(resData?['holidayDates']),
+      };
+    } on DioException catch (e) {
+      return {'success': false, 'hasConflict': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'hasConflict': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Fetches leave balance: availableCasualLeaves from attendances, totalAllowed from leave template.
+  Future<Map<String, dynamic>> getLeaveBalance() async {
+    try {
+      await _setToken();
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/requests/leave-balance',
+      );
+      final body = response.data;
+      if (body == null || body['success'] != true) {
+        return {
+          'success': false,
+          'message': ErrorMessageUtils.messageFromResponseData(body) ??
+              'Failed to load balance',
+        };
+      }
+      final data = body['data'] as Map<String, dynamic>?;
+      return {
+        'success': true,
+        'availableCasualLeaves': (data?['availableCasualLeaves'] is num)
+            ? (data!['availableCasualLeaves'] as num).toDouble()
+            : 0.0,
+        'totalAllowed': (data?['totalAllowed'] is num)
+            ? (data!['totalAllowed'] as num).toDouble()
+            : 0.0,
+      };
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
@@ -375,7 +454,9 @@ class RequestService {
         '/requests/payslip/$requestId/view',
       );
       final body = response.data;
-      if (body != null && body['success'] == true && body['payslipUrl'] != null) {
+      if (body != null &&
+          body['success'] == true &&
+          body['payslipUrl'] != null) {
         return {'success': true, 'payslipUrl': body['payslipUrl']};
       }
       return {
@@ -387,8 +468,9 @@ class RequestService {
     } on DioException catch (e) {
       final msg = e.response?.data is Map
           ? (e.response?.data as Map)['error'] is Map
-              ? ((e.response?.data as Map)['error'] as Map)['message']?.toString()
-              : null
+                ? ((e.response?.data as Map)['error'] as Map)['message']
+                      ?.toString()
+                : null
           : null;
       return {'success': false, 'message': msg ?? _dioMessage(e)};
     } catch (e) {
@@ -403,7 +485,9 @@ class RequestService {
         '/requests/payslip/$requestId/download',
       );
       final body = response.data;
-      if (body != null && body['success'] == true && body['payslipUrl'] != null) {
+      if (body != null &&
+          body['success'] == true &&
+          body['payslipUrl'] != null) {
         return {'success': true, 'payslipUrl': body['payslipUrl']};
       }
       return {
@@ -415,8 +499,9 @@ class RequestService {
     } on DioException catch (e) {
       final msg = e.response?.data is Map
           ? (e.response?.data as Map)['error'] is Map
-              ? ((e.response?.data as Map)['error'] as Map)['message']?.toString()
-              : null
+                ? ((e.response?.data as Map)['error'] as Map)['message']
+                      ?.toString()
+                : null
           : null;
       return {'success': false, 'message': msg ?? _dioMessage(e)};
     } catch (e) {
@@ -427,12 +512,32 @@ class RequestService {
   /// Fetches PDF bytes from a full URL (e.g. Cloudinary payslipUrl). No auth.
   Future<Map<String, dynamic>> getPdfBytesFromUrl(String url) async {
     try {
-      final response = await _api.dio.get<List<int>>(
-        url,
-        options: Options(responseType: ResponseType.bytes),
+      final uri = Uri.tryParse(url);
+      if (uri == null || !uri.hasScheme) {
+        return {'success': false, 'message': 'Invalid file URL'};
+      }
+
+      // Use a dedicated Dio (no baseUrl / auth interceptors) for absolute URLs.
+      final dio = Dio(
+        BaseOptions(
+          responseType: ResponseType.bytes,
+          followRedirects: true,
+          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 30),
+          connectTimeout: const Duration(seconds: 30),
+          validateStatus: (status) =>
+              status != null && status >= 200 && status < 400,
+          headers: {
+            'Accept': '*/*',
+          },
+        ),
       );
+
+      final response = await dio.get<List<int>>(url);
       final bytes = response.data;
-      if (bytes != null) return {'success': true, 'data': bytes};
+      if (bytes != null && bytes.isNotEmpty) {
+        return {'success': true, 'data': bytes};
+      }
       return {'success': false, 'message': 'No data received'};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};

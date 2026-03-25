@@ -15,6 +15,7 @@ import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../utils/snackbar_utils.dart' show SnackBarUtils;
 import '../../utils/error_message_utils.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class LmsLiveSessionsScreen extends StatefulWidget {
   /// When true, rendered inside LmsShellScreen (no Scaffold, app bar, drawer).
@@ -242,7 +243,7 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
 
   Widget _buildSessionList(List<dynamic> sessions) {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: AppTabLoader());
     }
 
     return RefreshIndicator(
@@ -399,7 +400,7 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
             child: const Text('Delete'),
           ),
         ],

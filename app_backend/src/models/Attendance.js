@@ -25,7 +25,7 @@ const attendanceSchema = new mongoose.Schema(
     },
     leaveType: {
       type: String,
-      enum: ['Sick Leave', 'Casual Leave', 'Earned Leave', 'Unpaid Leave', 'Half Day', 'Maternity Leave', 'Paternity Leave', 'Other Leave', null],
+      enum: ['Sick Leave', 'Casual Leave', 'Earned Leave', 'Unpaid Leave', 'Half Day', 'Maternity Leave', 'Paternity Leave', 'Other Leave', 'Paid Holiday', 'Comp Off', 'Week Off', null],
       default: null
     },
     session: { type: String, enum: ['1', '2', null], default: null },
@@ -85,15 +85,21 @@ const attendanceSchema = new mongoose.Schema(
     punchOutFaceMatch: Number,
     leaveTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveTemplate' },
     leaveId: { type: mongoose.Schema.Types.ObjectId, ref: 'Leave' },
-    compensationType: { type: String, enum: ['paid', 'unpaid', 'weekOff'] },
+    compensationType: { type: String, enum: ['paid', 'unpaid', 'weekOff', 'compOff'] },
     alternateWorkDate: Date,
     availableCasualLeaves: Number,
-    isPaidLeave: { type: Boolean, default: true },
+    isPaidLeave: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     fcmNotificationSentAt: { type: Date },
     fcmRejectionSentAt: { type: Date },
-    fcmStatusChangeSentAt: { type: Date }
+    fcmStatusChangeSentAt: { type: Date },
+    /** Source of punch: app, software, webemp, webadmin */
+    source: {
+      type: String,
+      enum: ['app', 'software', 'webemp', 'webadmin'],
+      default: null
+    }
   },
   { timestamps: true }
 );

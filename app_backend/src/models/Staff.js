@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const MONITORING_STATUSES = require('../constants/monitoringStatus');
 
 const staffSchema = new mongoose.Schema({
     employeeId: { type: String, required: true, unique: true },
@@ -73,6 +74,11 @@ const staffSchema = new mongoose.Schema({
     // Tasks module visibility – when true, show Tasks in app drawer
     locationAccess: { type: Boolean, default: false },
 
+    // Device/app location permission snapshot from the mobile app.
+    isGpsEnabled: { type: Boolean },
+    isGpsAllowed: { type: String }, // "Allow all the time" | "Allow only while using the app" | "Ask every time" | "Don't allow"
+    isEnabledPreciseLocation: { type: Boolean },
+
     // LMS access (employee portal "My Learning" visibility)
     lmsAccessEnabled: { type: Boolean, default: true },
 
@@ -81,6 +87,13 @@ const staffSchema = new mongoose.Schema({
 
     // FCM token for push notifications (set by app via POST /api/notifications/fcm-token)
     fcmToken: { type: String },
+
+    // Desktop monitoring agent status - must match Device.status in monitoringdevices
+    monitoringStatus: {
+        type: String,
+        enum: MONITORING_STATUSES,
+        default: 'inactive'
+    },
 
     salary: {
         // Fixed Salary Components (Monthly)

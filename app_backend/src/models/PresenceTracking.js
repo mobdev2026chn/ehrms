@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
  * Used when staff is checked in (punchIn exists, punchOut does not) and not on leave.
  * Separate from task Tracking – task flow uses Tracking collection with taskId.
  * presenceStatus: 'in_office' | 'task' | 'out_of_office'
- * (task is handled by tasks module; this collection uses in_office | out_of_office only)
+ * (task is handled by tasks module; this collection uses presence-style statuses)
  */
 const presenceTrackingSchema = new mongoose.Schema(
   {

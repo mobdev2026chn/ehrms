@@ -2,12 +2,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:background_location_tracker/background_location_tracker.dart';
 import '../../config/app_colors.dart';
 import '../../services/geo/live_tracking_service.dart';
+import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../geo/live_tracking_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -54,16 +55,26 @@ class _SplashScreenState extends State<SplashScreen> {
     await Future.delayed(const Duration(seconds: 2));
 
     final prefs = await SharedPreferences.getInstance();
+    final sessionReset = await AuthService().clearSessionIfBaseUrlChanged();
     final token = prefs.getString('token');
 
     if (!mounted) return;
+
+    if (sessionReset) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+      return;
+    }
 
     if (token != null && token.isNotEmpty) {
       final activeInfo = await LiveTrackingService().getActiveTaskInfo();
       if (activeInfo != null && mounted) {
         // If user tapped "Stop tracking" in notification, native tracking stopped but we had stale state.
         // Sync: clear LiveTrackingService and go to dashboard.
-        final isTracking = await BackgroundLocationTrackerManager.isTracking();
+        // Retry: on cold start the native plugin often returns false until initialized — don't wipe prefs.
+        final isTracking =
+            await LiveTrackingService().isBackgroundLocationTrackingRunningWithRetry();
         if (!isTracking) {
           await LiveTrackingService().stopTracking();
           Navigator.of(context).pushReplacement(
@@ -116,43 +127,66 @@ class _SplashScreenState extends State<SplashScreen> {
         ? Colors.white
         : Colors.white.withOpacity(0.95);
     final textColor = iconColor;
-    final loadingColor = iconColor;
 
     return Scaffold(
       backgroundColor: _primaryColor,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // App icon (same as launcher icon)
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                shape: BoxShape.circle,
-              ),
-              child: ClipOval(
-                child: Image.asset(
-                  'assets/ekta_logo.jpeg',
-                  width: 80,
-                  height: 80,
-                  fit: BoxFit.cover,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxHeight < 260;
+            final iconSize = compact ? 52.0 : 80.0;
+            final iconPadding = compact ? 12.0 : 20.0;
+            final titleSize = compact ? 22.0 : 32.0;
+            final titleSpacing = compact ? 12.0 : 24.0;
+            final loaderSpacing = compact ? 20.0 : 48.0;
+
+            return Center(
+              child: SingleChildScrollView(
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
+                  ),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Keep the splash compact enough for minimized/app-switcher previews.
+                        Container(
+                          padding: EdgeInsets.all(iconPadding),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: ClipOval(
+                            child: Image.asset(
+                              'assets/ekta_logo.jpeg',
+                              width: iconSize,
+                              height: iconSize,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: titleSpacing),
+                        Text(
+                          'ektaHr',
+                          style: TextStyle(
+                            fontSize: titleSize,
+                            fontWeight: FontWeight.bold,
+                            color: textColor,
+                            letterSpacing: compact ? 1.2 : 2,
+                          ),
+                        ),
+                        SizedBox(height: loaderSpacing),
+                        const AppTabLoader(),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'ektaHr',
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: textColor,
-                letterSpacing: 2,
-              ),
-            ),
-            const SizedBox(height: 48),
-            CircularProgressIndicator(color: loadingColor, strokeWidth: 3),
-          ],
+            );
+          },
         ),
       ),
     );

@@ -4,7 +4,8 @@ import '../config/app_colors.dart';
 
 class ThemeProvider with ChangeNotifier {
   static const String _themeKey = 'theme_color';
-  static const String _themeModeKey = 'theme_mode'; // 'light' | 'dark' | 'system'
+  static const String _themeModeKey =
+      'theme_mode'; // 'light' | 'dark' | 'system'
 
   Color _primaryColor = const Color(0xFFEFAA1F);
   ThemeMode _themeMode = ThemeMode.system;
@@ -26,20 +27,23 @@ class ThemeProvider with ChangeNotifier {
 
   ThemeProvider() {
     _loadTheme();
-    final previous = WidgetsBinding.instance.platformDispatcher.onPlatformBrightnessChanged;
-    WidgetsBinding.instance.platformDispatcher.onPlatformBrightnessChanged = () {
-      previous?.call();
-      if (_themeMode == ThemeMode.system) {
-        _syncAppColorsToTheme();
-        notifyListeners();
-      }
-    };
+    final previous =
+        WidgetsBinding.instance.platformDispatcher.onPlatformBrightnessChanged;
+    WidgetsBinding.instance.platformDispatcher.onPlatformBrightnessChanged =
+        () {
+          previous?.call();
+          if (_themeMode == ThemeMode.system) {
+            _syncAppColorsToTheme();
+            notifyListeners();
+          }
+        };
   }
 
   bool get _effectiveIsDark {
     if (_themeMode == ThemeMode.dark) return true;
     if (_themeMode == ThemeMode.light) return false;
-    return WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
+    return WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+        Brightness.dark;
   }
 
   void _syncAppColorsToTheme() {
@@ -86,8 +90,8 @@ class ThemeProvider with ChangeNotifier {
     final value = mode == ThemeMode.dark
         ? 'dark'
         : mode == ThemeMode.light
-            ? 'light'
-            : 'system';
+        ? 'light'
+        : 'system';
     await prefs.setString(_themeModeKey, value);
   }
 
@@ -96,22 +100,22 @@ class ThemeProvider with ChangeNotifier {
     // This ensures all screens (request, profile, attendance, etc.) are readable
     // even when phone or app is in dark mode.
     final colorScheme = ColorScheme.light(
-            primary: _primaryColor,
-            onPrimary: Colors.white,
-            primaryContainer: _primaryColor.withOpacity(0.2),
-            onPrimaryContainer: const Color(0xFF263238),
-            secondary: _primaryColor.withOpacity(0.8),
-            onSecondary: Colors.white,
-            surface: Colors.white,
-            onSurface: const Color(0xFF263238),
-            onSurfaceVariant: const Color(0xFF78909C),
-            surfaceContainerHighest: const Color(0xFFF5F7FA),
-            error: AppColors.error,
-            onError: Colors.white,
-            errorContainer: AppColors.error.withOpacity(0.15),
-            onErrorContainer: const Color(0xFF263238),
-            outline: const Color(0xFFECEFF1),
-          );
+      primary: _primaryColor,
+      onPrimary: Colors.white,
+      primaryContainer: _primaryColor.withOpacity(0.2),
+      onPrimaryContainer: const Color(0xFF263238),
+      secondary: _primaryColor.withOpacity(0.8),
+      onSecondary: Colors.white,
+      surface: Colors.white,
+      onSurface: const Color(0xFF263238),
+      onSurfaceVariant: const Color(0xFF78909C),
+      surfaceContainerHighest: const Color(0xFFF5F7FA),
+      error: AppColors.error,
+      onError: Colors.white,
+      errorContainer: AppColors.error.withOpacity(0.15),
+      onErrorContainer: const Color(0xFF263238),
+      outline: const Color(0xFFECEFF1),
+    );
 
     return ThemeData(
       useMaterial3: true,
@@ -173,7 +177,10 @@ class ThemeProvider with ChangeNotifier {
         bodyLarge: TextStyle(color: colorScheme.onSurface),
         bodyMedium: TextStyle(color: colorScheme.onSurface),
         bodySmall: TextStyle(color: colorScheme.onSurfaceVariant),
-        titleLarge: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.w600),
+        titleLarge: TextStyle(
+          color: colorScheme.onSurface,
+          fontWeight: FontWeight.w600,
+        ),
         titleMedium: TextStyle(color: colorScheme.onSurface),
         titleSmall: TextStyle(color: colorScheme.onSurfaceVariant),
         labelLarge: TextStyle(color: colorScheme.onSurface),

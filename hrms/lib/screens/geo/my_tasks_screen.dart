@@ -10,6 +10,8 @@ import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/screens/dashboard/dashboard_screen.dart';
 import 'package:hrms/screens/geo/add_task_screen.dart';
+import 'package:hrms/screens/geo/add_customer_screen.dart';
+import 'package:hrms/models/customer.dart';
 import 'package:hrms/widgets/app_drawer.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
 import 'package:hrms/screens/geo/arrived_screen.dart';
@@ -20,6 +22,7 @@ import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MyTasksScreen extends StatefulWidget {
@@ -37,13 +40,17 @@ class MyTasksScreen extends StatefulWidget {
 }
 
 class _MyTasksScreenState extends State<MyTasksScreen>
-    with WidgetsBindingObserver, RouteAware, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, RouteAware, TickerProviderStateMixin {
   String? _loggedInStaffId;
   List<Task> _tasks = [];
   bool _isLoading = true;
   String? _errorMessage;
 
   late TabController _tabController;
+  late TabController _mainTabController;
+  List<Customer> _customers = [];
+  bool _isLoadingCustomers = true;
+
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   DateTime? _filterStartDate;
@@ -60,6 +67,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     _tabController = TabController(length: 7, vsync: this);
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging && mounted) setState(() {});
+    });
+    _mainTabController = TabController(length: 2, vsync: this);
+    _mainTabController.addListener(() {
+      if (!_mainTabController.indexIsChanging && mounted) setState(() {});
     });
     _loadLoggedInStaffId();
   }
@@ -78,13 +89,17 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     appRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
+    _mainTabController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
   @override
   void didPopNext() {
-    if (mounted) _fetchTasks();
+    if (mounted) {
+      _fetchTasks();
+      _fetchCustomers();
+    }
   }
 
   List<Task> get _filteredTasks {
@@ -499,6 +514,26 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     if (_loggedInStaffId != null || _tasks.isNotEmpty) {
       _fetchTasks();
     }
+    _fetchCustomers();
+  }
+
+  Future<void> _fetchCustomers() async {
+    setState(() => _isLoadingCustomers = true);
+    try {
+      final customers = await CustomerService().getAllCustomers();
+      if (mounted) {
+        setState(() {
+          _customers = customers;
+          _isLoadingCustomers = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingCustomers = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadLoggedInStaffId() async {
@@ -545,6 +580,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         }
       }
       await _fetchTasks();
+      await _fetchCustomers();
     } catch (e, st) {
       if (mounted) {
         setState(() {
@@ -878,7 +914,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           title: Text(
             _isSelectionMode
                 ? 'Select tasks to export (${_selectedTaskIds.length})'
-                : 'My Tasks',
+                : 'Tasks',
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           centerTitle: true,
@@ -886,39 +922,17 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           bottom: _isSelectionMode
               ? null
               : TabBar(
-                  controller: _tabController,
-                  isScrollable: true,
-                  padding: EdgeInsets.zero,
-                  tabAlignment: TabAlignment.start,
+                  controller: _mainTabController,
                   labelColor: colorScheme.primary,
                   unselectedLabelColor: colorScheme.onSurfaceVariant,
                   indicatorColor: colorScheme.primary,
-                  indicatorSize: TabBarIndicatorSize.tab,
-                  labelPadding: const EdgeInsets.symmetric(horizontal: 12),
-                  labelStyle: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  unselectedLabelStyle: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  indicator: BoxDecoration(
-                    color: colorScheme.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
                   tabs: const [
-                    Tab(text: 'All Tasks'),
-                    Tab(text: 'In Progress'),
-                    Tab(text: 'Pending'),
-                    Tab(text: 'Hold'),
-                    Tab(text: 'Completed'),
-                    Tab(text: 'Rejected'),
-                    Tab(text: 'Exited'),
+                    Tab(text: 'Tasks'),
+                    Tab(text: 'Customers'),
                   ],
                 ),
           actions: [
-            if (!_isSelectionMode)
+            if (!_isSelectionMode && _mainTabController.index == 0)
               IconButton(
                 icon: Icon(
                   _showFilterSection
@@ -930,53 +944,94 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 onPressed: () =>
                     setState(() => _showFilterSection = !_showFilterSection),
               ),
-            IconButton(
-              icon: _exporting
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      _isSelectionMode
-                          ? Icons.file_download
-                          : Icons.download_outlined,
-                      color: _isSelectionMode ? colorScheme.primary : null,
-                    ),
-              tooltip: _isSelectionMode
-                  ? 'Export selected tasks'
-                  : 'Select tasks to export',
-              onPressed: _exporting
-                  ? null
-                  : () {
-                      if (_isSelectionMode) {
-                        _exportSelectedToExcel();
-                      } else {
-                        setState(() => _isSelectionMode = true);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Select tasks to export, then tap Export again.',
+            if (_isSelectionMode || _mainTabController.index == 0)
+              IconButton(
+                icon: _exporting
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        _isSelectionMode
+                            ? Icons.file_download
+                            : Icons.download_outlined,
+                        color: _isSelectionMode ? colorScheme.primary : null,
+                      ),
+                tooltip: _isSelectionMode
+                    ? 'Export selected tasks'
+                    : 'Select tasks to export',
+                onPressed: _exporting
+                    ? null
+                    : () {
+                        if (_isSelectionMode) {
+                          _exportSelectedToExcel();
+                        } else {
+                          setState(() => _isSelectionMode = true);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Select tasks to export, then tap Export again.',
+                              ),
                             ),
-                          ),
-                        );
-                      }
-                    },
-            ),
+                          );
+                        }
+                      },
+              ),
           ],
         ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _errorMessage != null
-            ? Center(child: Text(_errorMessage!))
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!_isSelectionMode && _tasks.isNotEmpty)
-                    _buildTaskProgressBar(),
-                  if (!_isSelectionMode && _showFilterSection)
-                    _buildFilterSection(),
-                  Expanded(
+        body: TabBarView(
+          controller: _mainTabController,
+          children: [
+            // Tasks Tab
+            _isLoading
+                ? const Center(child: AppTabLoader())
+                : _errorMessage != null
+                    ? Center(child: Text(_errorMessage!))
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (!_isSelectionMode)
+                            Container(
+                              color: colorScheme.surface,
+                              child: TabBar(
+                                controller: _tabController,
+                                isScrollable: true,
+                                padding: EdgeInsets.zero,
+                                tabAlignment: TabAlignment.start,
+                                labelColor: colorScheme.primary,
+                                unselectedLabelColor: colorScheme.onSurfaceVariant,
+                                indicatorColor: colorScheme.primary,
+                                indicatorSize: TabBarIndicatorSize.tab,
+                                labelPadding: const EdgeInsets.symmetric(horizontal: 12),
+                                labelStyle: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                unselectedLabelStyle: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                indicator: BoxDecoration(
+                                  color: colorScheme.primary.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                tabs: const [
+                                  Tab(text: 'All Tasks'),
+                                  Tab(text: 'In Progress'),
+                                  Tab(text: 'Pending'),
+                                  Tab(text: 'Hold'),
+                                  Tab(text: 'Completed'),
+                                  Tab(text: 'Rejected'),
+                                  Tab(text: 'Exited'),
+                                ],
+                              ),
+                            ),
+                          if (!_isSelectionMode && _tasks.isNotEmpty)
+                            _buildTaskProgressBar(),
+                          if (!_isSelectionMode && _showFilterSection)
+                            _buildFilterSection(),
+                          Expanded(
                     child: _tasks.isEmpty
                         ? RefreshIndicator(
                             onRefresh: _fetchTasks,
@@ -1120,6 +1175,13 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                   destAddress: task
                                                       .destinationLocation
                                                       ?.address,
+                                                  arrivalAtLat: task
+                                                      .arrivalLocation?.lat,
+                                                  arrivalAtLng: task
+                                                      .arrivalLocation?.lng,
+                                                  arrivalAtAddress: task
+                                                      .arrivalLocation
+                                                      ?.displayAddress,
                                                 ),
                                               ),
                                             );
@@ -1406,6 +1468,88 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   ),
                 ],
               ),
+            
+            // Customers Tab
+            _isLoadingCustomers
+                ? const Center(child: AppTabLoader())
+                : _customers.isEmpty
+                    ? RefreshIndicator(
+                        onRefresh: _fetchCustomers,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          child: SizedBox(
+                            height: MediaQuery.of(context).size.height * 0.45,
+                            child: Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.people_outline,
+                                    size: 64,
+                                    color: Colors.grey.shade400,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No customers found',
+                                    style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Pull to refresh or tap Add Customer',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _fetchCustomers,
+                        child: ListView.builder(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _customers.length,
+                          itemBuilder: (context, index) {
+                            final customer = _customers[index];
+                            return Card(
+                              elevation: 1,
+                              margin: const EdgeInsets.only(bottom: 8),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: colorScheme.primary.withOpacity(0.1),
+                                  child: Icon(Icons.person, color: colorScheme.primary),
+                                ),
+                                title: Text(
+                                  customer.customerName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  [
+                                    if (customer.companyName != null &&
+                                        customer.companyName!.trim().isNotEmpty)
+                                      customer.companyName!.trim(),
+                                    '${customer.customerNumber ?? 'No number'} · ${customer.city}, ${customer.pincode}',
+                                  ].join('\n'),
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                isThreeLine:
+                                    customer.companyName != null &&
+                                    customer.companyName!.trim().isNotEmpty,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+          ],
+        ),
         bottomNavigationBar: AppBottomNavigationBar(
           currentIndex: -1,
           onTap: (index) {
@@ -1418,9 +1562,31 @@ class _MyTasksScreenState extends State<MyTasksScreen>
             );
           },
         ),
-        floatingActionButton:
-            _loggedInStaffId != null && _loggedInStaffId!.isNotEmpty
-            ? SizedBox(
+        floatingActionButton: _mainTabController.index == 0
+            ? (_loggedInStaffId != null && _loggedInStaffId!.isNotEmpty
+                ? SizedBox(
+                    height: 40,
+                    child: FloatingActionButton.extended(
+                      foregroundColor: Colors.white,
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                AddTaskScreen(staffId: _loggedInStaffId!),
+                          ),
+                        ).then((_) => _fetchTasks());
+                      },
+                      label: const Text(
+                        'Add Task',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                      icon: const Icon(Icons.add, size: 18),
+                      backgroundColor: colorScheme.primary,
+                    ),
+                  )
+                : null)
+            : SizedBox(
                 height: 40,
                 child: FloatingActionButton.extended(
                   foregroundColor: Colors.white,
@@ -1428,20 +1594,18 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) =>
-                            AddTaskScreen(staffId: _loggedInStaffId!),
+                        builder: (context) => const AddCustomerScreen(),
                       ),
-                    ).then((_) => _fetchTasks());
+                    ).then((_) => _fetchCustomers());
                   },
                   label: const Text(
-                    'Add Task',
+                    'Add Customer',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                   ),
-                  icon: const Icon(Icons.add, size: 18),
-                  backgroundColor: colorScheme.primary,
+                  icon: const Icon(Icons.person_add, size: 18),
+                  backgroundColor: colorScheme.secondary,
                 ),
-              )
-            : null,
+              ),
       );
         },
       ),

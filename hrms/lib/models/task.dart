@@ -62,6 +62,33 @@ class TaskLocation {
   };
 }
 
+class TravelActivityDuration {
+  final int driveDuration;
+  final int walkDuration;
+  final int stopDuration;
+
+  const TravelActivityDuration({
+    this.driveDuration = 0,
+    this.walkDuration = 0,
+    this.stopDuration = 0,
+  });
+
+  factory TravelActivityDuration.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const TravelActivityDuration();
+    return TravelActivityDuration(
+      driveDuration: (json['driveDuration'] as num?)?.toInt() ?? 0,
+      walkDuration: (json['walkDuration'] as num?)?.toInt() ?? 0,
+      stopDuration: (json['stopDuration'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'driveDuration': driveDuration,
+    'walkDuration': walkDuration,
+    'stopDuration': stopDuration,
+  };
+}
+
 class TaskExitRecord {
   final double lat;
   final double lng;
@@ -210,6 +237,12 @@ class Task {
   /// From progressSteps.formFilled when present.
   final bool? formFilled;
 
+  /// From progressSteps.checkinCustomerPlace when present.
+  final bool? checkinCustomerPlace;
+
+  /// From progressSteps.checkoutCustomerPlace when present.
+  final bool? checkoutCustomerPlace;
+
   /// URL of uploaded photo proof.
   final String? photoProofUrl;
 
@@ -222,6 +255,8 @@ class Task {
 
   final TaskLocation? sourceLocation;
   final TaskLocation? destinationLocation;
+  /// GPS + address where staff tapped Arrived (TaskDetails / arrived* fields).
+  final TaskLocation? arrivalLocation;
 
   /// Exit history – each exit is a separate record.
   final List<TaskExitRecord> tasksExit;
@@ -239,6 +274,7 @@ class Task {
   final double? tripDistanceKm;
   final int? tripDurationSeconds;
   final DateTime? arrivalTime;
+  final TravelActivityDuration? travelActivityDuration;
 
   /// Start time (when task was started).
   final DateTime? startTime;
@@ -276,12 +312,15 @@ class Task {
     this.otpVerifiedAt,
     this.photoProof,
     this.formFilled,
+    this.checkinCustomerPlace,
+    this.checkoutCustomerPlace,
     this.photoProofUrl,
     this.photoProofUploadedAt,
     this.requireApprovalOnComplete = false,
     this.autoApprove = false,
     this.sourceLocation,
     this.destinationLocation,
+    this.arrivalLocation,
     this.tasksExit = const [],
     this.taskExitStatus,
     this.tasksRestarted = const [],
@@ -289,6 +328,7 @@ class Task {
     this.tripDistanceKm,
     this.tripDurationSeconds,
     this.arrivalTime,
+    this.travelActivityDuration,
     this.startTime,
     this.photoProofAddress,
     this.otpVerifiedAddress,
@@ -350,6 +390,12 @@ class Task {
       formFilled: json['progressSteps'] != null
           ? (json['progressSteps']['formFilled'] as bool?)
           : null,
+      checkinCustomerPlace: json['progressSteps'] != null
+          ? (json['progressSteps']['checkinCustomerPlace'] as bool?)
+          : null,
+      checkoutCustomerPlace: json['progressSteps'] != null
+          ? (json['progressSteps']['checkoutCustomerPlace'] as bool?)
+          : null,
       photoProofUrl: json['photoProofUrl'] as String?,
       photoProofUploadedAt: _dateFromJson(json['photoProofUploadedAt']),
       requireApprovalOnComplete:
@@ -373,6 +419,7 @@ class Task {
               json['destinationLocation'] as Map<String, dynamic>,
             )
           : null,
+      arrivalLocation: _parseArrivalLocation(json),
       tasksExit: _parseList(
         json['exit'] ?? json['tasks_exit'],
         TaskExitRecord.fromJson,
@@ -391,6 +438,11 @@ class Task {
       tripDistanceKm: (json['tripDistanceKm'] as num?)?.toDouble(),
       tripDurationSeconds: json['tripDurationSeconds'] as int?,
       arrivalTime: _dateFromJson(json['arrivalTime']),
+      travelActivityDuration: json['travelActivityDuration'] != null
+          ? TravelActivityDuration.fromJson(
+              json['travelActivityDuration'] as Map<String, dynamic>,
+            )
+          : null,
       startTime: _dateFromJson(json['startTime']),
       photoProofAddress: json['photoProofAddress'] as String?,
       otpVerifiedAddress: json['otpVerifiedAddress'] as String?,
@@ -403,6 +455,21 @@ class Task {
       completedBatteryPercent: (json['completedBatteryPercent'] as num?)
           ?.toInt(),
     );
+  }
+
+  static TaskLocation? _parseArrivalLocation(Map<String, dynamic> json) {
+    final al = json['arrivalLocation'];
+    if (al is Map<String, dynamic>) {
+      final loc = TaskLocation.fromJson(al);
+      if (loc.lat != 0 || loc.lng != 0) return loc;
+    }
+    final lat = (json['arrivedLatitude'] as num?)?.toDouble();
+    final lng = (json['arrivedLongitude'] as num?)?.toDouble();
+    if (lat != null && lng != null && (lat != 0 || lng != 0)) {
+      final addr = json['arrivedFullAddress'] as String?;
+      return TaskLocation(lat: lat, lng: lng, address: addr, fullAddress: addr);
+    }
+    return null;
   }
 
   static String? _stringFromId(dynamic value) {
@@ -511,6 +578,7 @@ class Task {
     'customerId': customerId,
     'expectedCompletionDate': expectedCompletionDate.toIso8601String(),
     'completedDate': completedDate?.toIso8601String(),
+    'travelActivityDuration': travelActivityDuration?.toJson(),
     'status': status.name, // Convert enum to string for JSON
     'isOtpRequired': isOtpRequired,
     'isGeoFenceRequired': isGeoFenceRequired,
@@ -538,18 +606,22 @@ class Task {
     DateTime? otpVerifiedAt,
     bool? photoProof,
     bool? formFilled,
+    bool? checkinCustomerPlace,
+    bool? checkoutCustomerPlace,
     String? photoProofUrl,
     DateTime? photoProofUploadedAt,
     bool? requireApprovalOnComplete,
     bool? autoApprove,
     TaskLocation? sourceLocation,
     TaskLocation? destinationLocation,
+    TaskLocation? arrivalLocation,
     List<TaskExitRecord>? tasksExit,
     List<TaskRestartRecord>? tasksRestarted,
     List<TaskDestinationRecord>? destinations,
     double? tripDistanceKm,
     int? tripDurationSeconds,
     DateTime? arrivalTime,
+    TravelActivityDuration? travelActivityDuration,
     DateTime? startTime,
     String? photoProofAddress,
     String? otpVerifiedAddress,
@@ -575,6 +647,8 @@ class Task {
       otpVerifiedAt: otpVerifiedAt ?? this.otpVerifiedAt,
       photoProof: photoProof ?? this.photoProof,
       formFilled: formFilled ?? this.formFilled,
+      checkinCustomerPlace: checkinCustomerPlace ?? this.checkinCustomerPlace,
+      checkoutCustomerPlace: checkoutCustomerPlace ?? this.checkoutCustomerPlace,
       photoProofUrl: photoProofUrl ?? this.photoProofUrl,
       photoProofUploadedAt: photoProofUploadedAt ?? this.photoProofUploadedAt,
       requireApprovalOnComplete:
@@ -582,12 +656,15 @@ class Task {
       autoApprove: autoApprove ?? this.autoApprove,
       sourceLocation: sourceLocation ?? this.sourceLocation,
       destinationLocation: destinationLocation ?? this.destinationLocation,
+      arrivalLocation: arrivalLocation ?? this.arrivalLocation,
       tasksExit: tasksExit ?? this.tasksExit,
       tasksRestarted: tasksRestarted ?? this.tasksRestarted,
       destinations: destinations ?? this.destinations,
       tripDistanceKm: tripDistanceKm ?? this.tripDistanceKm,
       tripDurationSeconds: tripDurationSeconds ?? this.tripDurationSeconds,
       arrivalTime: arrivalTime ?? this.arrivalTime,
+      travelActivityDuration:
+          travelActivityDuration ?? this.travelActivityDuration,
       startTime: startTime ?? this.startTime,
       photoProofAddress: photoProofAddress ?? this.photoProofAddress,
       otpVerifiedAddress: otpVerifiedAddress ?? this.otpVerifiedAddress,

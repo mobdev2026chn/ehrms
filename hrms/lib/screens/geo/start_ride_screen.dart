@@ -10,6 +10,7 @@ import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/customer_service.dart';
+import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/geo/directions_service.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
 import 'package:hrms/services/task_service.dart';
@@ -18,6 +19,7 @@ import 'package:hrms/screens/geo/live_tracking_screen.dart';
 import 'package:hrms/screens/geo/task_detail_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 
 /// Optional initial destination from Select Source & Destination screen.
 /// When set, use this and do NOT fall back to client address.
@@ -166,23 +168,15 @@ class _StartRideScreenState extends State<StartRideScreen> {
   Future<void> _reverseGeocodeSource() async {
     if (_currentPosition == null) return;
     try {
-      final placemarks = await placemarkFromCoordinates(
+      final resolved = await AddressResolutionService.reverseGeocode(
         _currentPosition!.latitude,
         _currentPosition!.longitude,
       );
-      if (mounted && placemarks.isNotEmpty) {
-        final p = placemarks.first;
+      if (mounted && resolved != null) {
         setState(() {
-          _sourceAddress = [
-            p.street,
-            p.locality,
-            p.administrativeArea,
-            p.country,
-          ].where((e) => e != null && e.isNotEmpty).join(', ');
+          _sourceAddress = resolved.formattedAddress;
           if (_sourceAddress.isEmpty) _sourceAddress = 'Your current location';
-          _sourcePincode = p.postalCode?.isNotEmpty == true
-              ? p.postalCode
-              : null;
+          _sourcePincode = resolved.pincode;
         });
       }
     } catch (_) {
@@ -302,18 +296,10 @@ class _StartRideScreenState extends State<StartRideScreen> {
 
   Future<void> _reverseGeocodeDestination(double lat, double lng) async {
     try {
-      final placemarks = await placemarkFromCoordinates(lat, lng);
-      if (mounted && placemarks.isNotEmpty) {
-        final p = placemarks.first;
+      final resolved = await AddressResolutionService.reverseGeocode(lat, lng);
+      if (mounted && resolved != null) {
         setState(() {
-          _destinationAddress = [
-            p.street,
-            p.subAdministrativeArea,
-            p.locality,
-            p.administrativeArea,
-            p.postalCode,
-            p.country,
-          ].where((e) => e != null && e.isNotEmpty).join(', ');
+          _destinationAddress = resolved.formattedAddress;
           _loadingDestination = false;
         });
         _fetchRouteAndFitBounds();
@@ -525,7 +511,7 @@ class _StartRideScreenState extends State<StartRideScreen> {
                   ),
                   if (_loadingCustomer ||
                       (_loadingDestination && _destinationLatLng == null))
-                    const Center(child: CircularProgressIndicator()),
+                    const Center(child: AppTabLoader()),
                 ],
               ),
             ),

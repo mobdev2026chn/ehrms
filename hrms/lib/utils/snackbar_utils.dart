@@ -40,6 +40,9 @@ class SnackBarUtils {
     });
   }
 
+  /// Dismisses the currently shown snackbar (e.g. when location is captured).
+  static void dismiss() => _removeCurrentSnackBarSync();
+
   static void _removeCurrentSnackBarSync() {
     _timer?.cancel();
     _timer = null;

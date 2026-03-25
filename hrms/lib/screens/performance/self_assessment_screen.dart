@@ -10,6 +10,7 @@ import '../../widgets/menu_icon_button.dart';
 import '../../services/performance_service.dart';
 import 'self_assessment_form_screen.dart';
 import 'my_reviews_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class SelfAssessmentScreen extends StatefulWidget {
   final bool embeddedInModule;
@@ -81,7 +82,7 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
   @override
   Widget build(BuildContext context) {
     final body = _isLoading
-        ? Center(child: CircularProgressIndicator(color: AppColors.primary))
+        ? const Center(child: AppTabLoader())
         : _error != null
         ? _buildErrorState()
         : _pendingReviews.isEmpty

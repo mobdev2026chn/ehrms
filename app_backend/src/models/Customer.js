@@ -1,14 +1,36 @@
 const mongoose = require('mongoose');
 
-const customerSchema = new mongoose.Schema({
-  customerId: { type: String, required: true, unique: true },
-  customerName: { type: String, required: true },
-  customerNumber: { type: String, required: true },
-  email: { type: String },
-  emailId: { type: String }, // Alias used in customers collection
-  address: { type: String, required: true },
-  city: { type: String, required: true },
-  pincode: { type: String, required: true },
-});
+// Align with customers collection / Customer.model.ts: businessId, addedBy, customerName, etc.
+const customerSchema = new mongoose.Schema(
+  {
+    customerName: { type: String, required: true, trim: true },
+    customerNumber: { type: String, required: true, trim: true },
+    companyName: { type: String, trim: true },
+    address: { type: String, required: true, trim: true },
+    emailId: { type: String, required: true, lowercase: true, trim: true },
+    city: { type: String, required: true, trim: true },
+    pincode: { type: String, required: true, trim: true },
+    countryCode: { type: String, trim: true },
+    email: { type: String }, // alias
+    status: {
+      type: String,
+      enum: ['Not yet Started', 'Pending', 'In progress', 'Serving Today', 'Delayed Tasks', 'Completed Tasks', 'Reopened', 'Rejected', 'Hold'],
+      default: 'Not yet Started'
+    },
+    completedDate: { type: Date },
+    expectedCompletionDate: { type: Date },
+    customFields: { type: mongoose.Schema.Types.Mixed, default: {} },
+    source: { type: String, default: 'web' },
+    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    businessId: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', required: true }
+  },
+  { timestamps: true }
+);
+
+customerSchema.index({ businessId: 1 });
+customerSchema.index({ customerNumber: 1, businessId: 1 }, { unique: true });
+customerSchema.index({ emailId: 1, businessId: 1 });
+customerSchema.index({ addedBy: 1 });
+customerSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model('Customer', customerSchema);

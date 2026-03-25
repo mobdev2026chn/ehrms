@@ -12,6 +12,7 @@ import 'my_reviews_screen.dart';
 import 'self_assessment_screen.dart';
 import 'my_goals_screen.dart';
 import 'review_detail_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class MyPerformanceScreen extends StatefulWidget {
   final bool embeddedInModule;
@@ -80,7 +81,7 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
   @override
   Widget build(BuildContext context) {
     final body = _isLoading
-        ? Center(child: CircularProgressIndicator(color: AppColors.primary))
+        ? const Center(child: AppTabLoader())
         : _error != null
         ? _buildErrorState()
         : RefreshIndicator(

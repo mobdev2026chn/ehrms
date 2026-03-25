@@ -13,7 +13,8 @@ const trackingSchema = new mongoose.Schema({
   longitude: { type: Number, required: true },
   timestamp: { type: Date, default: Date.now },
   batteryPercent: { type: Number },
-  movementType: { type: String }, // drive | walk | stop
+  movementType: { type: String }, // driving | walking | stop
+  accuracy: { type: Number }, // horizontal accuracy (meters) from device GPS
   destinationLat: { type: Number },
   destinationLng: { type: Number },
   address: { type: String }, // Reverse-geocoded from lat/lng
@@ -23,8 +24,15 @@ const trackingSchema = new mongoose.Schema({
   pincode: { type: String },
   // Exit ride
   exitStatus: { type: String }, // "exited"
-  // Arrived
-  status: { type: String }, // "arrived"
+  // Arrived / app session
+  status: {
+    type: String,
+    enum: ['arrived', 'app_background', 'app_closed', 'in_progress', 'active', 'inactive', 'checked_in', 'checked_out'],
+  },
+  appStatus: {
+    type: String,
+    enum: ['app_closed', 'app_background', 'active', 'inactive', 'offline'],
+  },
   time: { type: Date },
   exitReason: { type: String },
   exitedAt: { type: Date },

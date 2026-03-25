@@ -83,14 +83,42 @@ class ErrorMessageUtils {
   }
 
   static String? _extractBackendMessage(dynamic data) {
+    return messageFromResponseData(data);
+  }
+
+  /// Parses API error from Dio [response.data]. Safe when `error` is a String
+  /// (e.g. `{ "error": "Unauthorized" }`) — avoids String[int] index crashes.
+  static String? messageFromResponseData(dynamic data) {
+    if (data == null) return null;
+    if (data is String) {
+      final t = data.trim();
+      if (t.isNotEmpty && t.length < 500) return t;
+      return null;
+    }
     if (data is Map) {
-      final err = data['error'];
-      if (err is Map && err['message'] != null) {
-        return err['message'].toString();
+      final message = data['message'];
+      if (message is String && message.isNotEmpty) return message;
+      final error = data['error'];
+      if (error is String && error.isNotEmpty) return error;
+      if (error is Map) {
+        final m = error['message'];
+        if (m is String && m.isNotEmpty) return m;
+        if (m != null) return m.toString();
       }
-      if (data['message'] != null) return data['message'].toString();
+      if (message != null) return message.toString();
     }
     return null;
+  }
+
+  /// User-visible message from a failed Dio call (429 + body parsing).
+  static String messageFromDioException(
+    DioException e, {
+    String fallback = 'Request failed',
+  }) {
+    if (e.response?.statusCode == 429) {
+      return 'Too many requests. Please wait a moment.';
+    }
+    return messageFromResponseData(e.response?.data) ?? fallback;
   }
 
   /// True if string looks like a technical error – don't show to user.

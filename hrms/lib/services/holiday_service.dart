@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/holiday_model.dart';
+import '../utils/error_message_utils.dart';
 import 'api_client.dart';
 
 class HolidayService {
@@ -14,7 +15,11 @@ class HolidayService {
     if (token != null && token.isNotEmpty) _api.setAuthToken(token);
   }
 
-  Future<Map<String, dynamic>> getHolidays({int? year, String? search}) async {
+  Future<Map<String, dynamic>> getHolidays({
+    int? year,
+    int? month,
+    String? search,
+  }) async {
     try {
       await _setToken();
       final response = await _api.dio.get<Map<String, dynamic>>(
@@ -22,6 +27,7 @@ class HolidayService {
         queryParameters: {
           'limit': 100,
           if (year != null) 'year': year,
+          if (month != null) 'month': month,
           if (search != null && search.isNotEmpty) 'search': search,
         },
       );
@@ -38,7 +44,9 @@ class HolidayService {
       }
       return {
         'success': false,
-        'message': body?['error']?['message'] ?? 'Failed to load holidays',
+        'message':
+            ErrorMessageUtils.messageFromResponseData(body) ??
+                'Failed to load holidays',
       };
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) {
@@ -51,12 +59,7 @@ class HolidayService {
   }
 
   String _dioMessage(DioException e) {
-    final d = e.response?.data;
-    if (d is Map) {
-      return (d['error']?['message'] ?? d['message']) as String? ?? 'Request failed';
-    }
-    if (e.response?.statusCode == 429) return 'Too many requests. Please wait a moment.';
-    return 'Request failed';
+    return ErrorMessageUtils.messageFromDioException(e);
   }
 
   String _handleException(dynamic error) {

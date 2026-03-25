@@ -2,9 +2,12 @@ const Leave = require('../models/Leave');
 const Staff = require('../models/Staff');
 const User = require('../models/User');
 const LeaveTemplate = require('../models/LeaveTemplate');
+const HolidayTemplate = require('../models/HolidayTemplate');
 const Attendance = require('../models/Attendance');
+const Company = require('../models/Company');
 const mongoose = require('mongoose');
 const { markAttendanceForApprovedLeave, calculateAvailableLeaves } = require('../utils/leaveAttendanceHelper');
+const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
 
 // Helper for date calculation
 const calculateDays = (start, end) => {
@@ -24,6 +27,147 @@ const normalizeToDateOnlyUTC = (dateInput) => {
     const d = new Date(dateInput);
     if (isNaN(d.getTime())) return dateInput;
     return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0));
+};
+
+/** Format date to YYYY-MM-DD (UTC). */
+const toDateStringUTC = (date) => {
+    const d = new Date(date);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+};
+
+/** All calendar dates between start and end (inclusive), no holiday/weekoff filtering. */
+const getCalendarDatesInRange = (startDate, endDate) => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const dates = [];
+    const current = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 0, 0, 0, 0));
+    const endUtc = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0, 0));
+    while (current <= endUtc) {
+        dates.push(toDateStringUTC(current));
+        current.setUTCDate(current.getUTCDate() + 1);
+    }
+    return dates;
+};
+
+/**
+ * Get list of calendar dates between start and end (inclusive), then remove holidays (staff's holiday template)
+ * and weekoffs (staff's weekly holiday template). Returns array of UTC date strings YYYY-MM-DD.
+ * @param {Object} staff - Staff with populated holidayTemplateId and weeklyHolidayTemplateId (or ids)
+ * @param {Date} startDate - start (UTC midnight)
+ * @param {Date} endDate - end (UTC midnight)
+ * @returns {Promise<string[]>} effective work dates in range
+ */
+const getEffectiveWorkDatesInRange = async (staff, startDate, endDate) => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const dates = [];
+    const current = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 0, 0, 0, 0));
+    const endUtc = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0, 0));
+    while (current <= endUtc) {
+        dates.push(toDateStringUTC(current));
+        current.setUTCDate(current.getUTCDate() + 1);
+    }
+    if (dates.length === 0) return [];
+
+    // Holidays: staff's holidayTemplateId or business fallback
+    let holidayDateSet = new Set();
+    const holidayTemplateId = staff?.holidayTemplateId;
+    if (holidayTemplateId) {
+        const template = typeof holidayTemplateId === 'object' && holidayTemplateId._id
+            ? holidayTemplateId
+            : await HolidayTemplate.findById(holidayTemplateId).lean();
+        if (template?.holidays && Array.isArray(template.holidays)) {
+            template.holidays.forEach((h) => {
+                if (h.date) holidayDateSet.add(toDateStringUTC(h.date));
+            });
+        }
+    }
+    if (holidayDateSet.size === 0 && staff?.businessId) {
+        const bizTemplate = await HolidayTemplate.findOne({ businessId: staff.businessId, isActive: true }).lean();
+        if (bizTemplate?.holidays && Array.isArray(bizTemplate.holidays)) {
+            bizTemplate.holidays.forEach((h) => {
+                if (h.date) holidayDateSet.add(toDateStringUTC(h.date));
+            });
+        }
+    }
+
+    // Week-off: staff's weeklyHolidayTemplateId
+    const company = staff?.businessId ? await Company.findById(staff.businessId).lean() : null;
+    const weekOffConfig = await getWeekOffConfigForStaff(staff || {}, company);
+    const { weeklyOffPattern, weeklyHolidays } = weekOffConfig;
+
+    const effective = dates.filter((dateStr) => {
+        if (holidayDateSet.has(dateStr)) return false;
+        const d = new Date(dateStr + 'T00:00:00.000Z');
+        const dayOfWeek = d.getUTCDay();
+        let isWeekOff = false;
+        if (weeklyOffPattern === 'oddEvenSaturday') {
+            if (dayOfWeek === 0) isWeekOff = true;
+            else if (dayOfWeek === 6) {
+                const dayOfMonth = d.getUTCDate();
+                if (dayOfMonth % 2 === 0) isWeekOff = true;
+            }
+        } else {
+            isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
+        }
+        return !isWeekOff;
+    });
+    return effective;
+};
+
+/**
+ * Filter a list of date strings (YYYY-MM-DD) to only those that are working days (not holiday, not weekoff) for the staff.
+ * Used when client sends selectedDates from calendar picker.
+ * @param {Object} staff - Staff with populated holidayTemplateId and weeklyHolidayTemplateId (or ids)
+ * @param {string[]} dateStrings - Sorted array of YYYY-MM-DD
+ * @returns {Promise<string[]>} subset that are working days
+ */
+const getEffectiveWorkDatesFromList = async (staff, dateStrings) => {
+    if (!dateStrings || dateStrings.length === 0) return [];
+    const unique = [...new Set(dateStrings)];
+
+    let holidayDateSet = new Set();
+    const holidayTemplateId = staff?.holidayTemplateId;
+    if (holidayTemplateId) {
+        const template = typeof holidayTemplateId === 'object' && holidayTemplateId._id
+            ? holidayTemplateId
+            : await HolidayTemplate.findById(holidayTemplateId).lean();
+        if (template?.holidays && Array.isArray(template.holidays)) {
+            template.holidays.forEach((h) => {
+                if (h.date) holidayDateSet.add(toDateStringUTC(h.date));
+            });
+        }
+    }
+    if (holidayDateSet.size === 0 && staff?.businessId) {
+        const bizTemplate = await HolidayTemplate.findOne({ businessId: staff.businessId, isActive: true }).lean();
+        if (bizTemplate?.holidays && Array.isArray(bizTemplate.holidays)) {
+            bizTemplate.holidays.forEach((h) => {
+                if (h.date) holidayDateSet.add(toDateStringUTC(h.date));
+            });
+        }
+    }
+
+    const company = staff?.businessId ? await Company.findById(staff.businessId).lean() : null;
+    const weekOffConfig = await getWeekOffConfigForStaff(staff || {}, company);
+    const { weeklyOffPattern, weeklyHolidays } = weekOffConfig;
+
+    const effective = unique.filter((dateStr) => {
+        if (holidayDateSet.has(dateStr)) return false;
+        const d = new Date(dateStr + 'T00:00:00.000Z');
+        const dayOfWeek = d.getUTCDay();
+        let isWeekOff = false;
+        if (weeklyOffPattern === 'oddEvenSaturday') {
+            if (dayOfWeek === 0) isWeekOff = true;
+            else if (dayOfWeek === 6 && d.getUTCDate() % 2 === 0) isWeekOff = true;
+        } else {
+            isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
+        }
+        return !isWeekOff;
+    });
+    return effective.sort();
 };
 
 const getLeaves = async (req, res) => {
@@ -248,6 +392,83 @@ const getLeaveTypes = async (req, res) => {
  * Returns leave types for the Apply Leave dropdown: from staff's assigned leave template + Unpaid Leave.
  * Each item has { type, days } where days is the limit from template (null for Unpaid Leave).
  */
+/**
+ * Get availableCasualLeaves from the latest attendance record in the current month for this staff.
+ * If the latest monthly attendance row does not carry availableCasualLeaves, caller should
+ * fall back to leave-template-based calculation.
+ * @param {ObjectId} employeeId - Staff/employee id
+ * @returns {Promise<number|null>} available balance from latest current-month attendance row, or null
+ */
+const getAvailableCasualLeavesFromAttendances = async (employeeId) => {
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+    const latest = await Attendance.findOne({
+        $or: [{ employeeId }, { user: employeeId }],
+        date: { $gte: monthStart, $lte: monthEnd }
+    })
+        .sort({ date: -1, updatedAt: -1, createdAt: -1 })
+        .select('availableCasualLeaves')
+        .lean();
+    const val = latest?.availableCasualLeaves;
+    return typeof val === 'number' && !Number.isNaN(val) ? Math.max(0, val) : null;
+};
+
+/**
+ * Get total allowed leave days from staff's leave template. If multiple templates with same name
+ * exist for the business, use the latest (by updatedAt).
+ * @param {Object} staff - Staff document with populated leaveTemplateId
+ * @returns {Promise<number>} sum of leaveTypes[].days from the latest template for that name+business
+ */
+const getTotalAllowedFromTemplate = async (staff) => {
+    if (!staff?.leaveTemplateId) return 0;
+    const assigned = staff.leaveTemplateId;
+    const businessId = assigned.businessId || staff.businessId;
+    const name = assigned.name;
+    if (!businessId || !name) {
+        const days = (assigned.leaveTypes || []).reduce((sum, t) => sum + (Number(t.days) || 0), 0);
+        return days;
+    }
+    const latest = await LeaveTemplate.findOne({ businessId, name, isActive: true })
+        .sort({ updatedAt: -1 })
+        .lean();
+    if (!latest?.leaveTypes || !Array.isArray(latest.leaveTypes)) return 0;
+    return latest.leaveTypes.reduce((sum, t) => sum + (Number(t.days) || 0), 0);
+};
+
+/**
+ * Get total leave days from staff's assigned template (sum of all leaveTypes[].days).
+ * Used when attendances have no availableCasualLeaves - this is the pool for all leave types.
+ * @param {Object} staff - Staff document with populated leaveTemplateId
+ * @returns {number} sum of leaveTypes[].days (0 if no template)
+ */
+const getTotalLeavesFromAssignedTemplate = (staff) => {
+    if (!staff?.leaveTemplateId?.leaveTypes || !Array.isArray(staff.leaveTemplateId.leaveTypes)) return 0;
+    return staff.leaveTemplateId.leaveTypes.reduce(
+        (sum, t) => sum + (Number(t.days) || Number(t.limit) || 0),
+        0
+    );
+};
+
+/**
+ * Get available leave pool for balance validation.
+ * - If current-month attendances have availableCasualLeaves for this staff: use latest document's value.
+ * - If not: get total from template assigned to staff (sum of all leaveTypes[].days).
+ * Do NOT reduce this balance using Approved/Pending leaves here.
+ * @param {ObjectId} employeeId - Staff/employee id
+ * @param {Object} staff - Staff document with populated leaveTemplateId
+ * @returns {Promise<number>} available balance (0 if none)
+ */
+const getAvailableLeavePool = async (employeeId, staff) => {
+    const fromAttendance = await getAvailableCasualLeavesFromAttendances(employeeId);
+    if (typeof fromAttendance === 'number' && !Number.isNaN(fromAttendance)) {
+        return fromAttendance;
+    }
+    // No current-month availableCasualLeaves in attendances: use template assigned to staff.
+    const totalAllowed = getTotalLeavesFromAssignedTemplate(staff);
+    return Math.max(0, totalAllowed);
+};
+
 const getLeaveTypesForApply = async (req, res) => {
     try {
         const staffId = req.staff._id;
@@ -255,9 +476,17 @@ const getLeaveTypesForApply = async (req, res) => {
 
         const list = [];
 
+        // Static option: Half Day always visible (counts as 0.5 day, deducted from availableCasualLeaves)
+        const hasHalfDay = list.some(t => (t.type || '').toLowerCase().replace(/\s+/g, '') === 'halfday');
+        if (!hasHalfDay) {
+            list.push({ type: 'Half Day', days: 0.5 });
+        }
+
         if (staff?.leaveTemplateId?.leaveTypes && Array.isArray(staff.leaveTemplateId.leaveTypes)) {
             staff.leaveTemplateId.leaveTypes.forEach(t => {
                 if (t.type) {
+                    const typeNorm = (t.type || '').toLowerCase().replace(/\s+/g, '');
+                    if (typeNorm === 'halfday') return; // already added as static
                     const days = t.days != null ? t.days : (t.limit != null ? t.limit : null);
                     list.push({ type: t.type, days });
                 }
@@ -276,6 +505,218 @@ const getLeaveTypesForApply = async (req, res) => {
         console.error(error);
         res.status(500).json({ success: false, error: { message: error.message } });
     }
+};
+
+/**
+ * Classify selected date strings into: paid leave, pending leave, approved leave, week off, holiday.
+ * Used by checkLeaveDates to return specific messages to the UI.
+ * @returns {Promise<{ paidLeaveDates: string[], pendingLeaveDates: string[], approvedLeaveDates: string[], weekOffDates: string[], holidayDates: string[] }>}
+ */
+const getLeaveDateCheckDetails = async (employeeId, staff, dateStrings) => {
+    const paidLeaveDates = [];
+    const pendingLeaveDates = [];
+    const approvedLeaveDates = [];
+    const weekOffDates = [];
+    const holidayDates = [];
+    if (!dateStrings || dateStrings.length === 0) {
+        return { paidLeaveDates, pendingLeaveDates, approvedLeaveDates, weekOffDates, holidayDates };
+    }
+    const dateSet = new Set(dateStrings);
+    const objId = new mongoose.Types.ObjectId(employeeId.toString());
+    const startUtc = new Date(dateStrings[0] + 'T00:00:00.000Z');
+    const endUtc = new Date(dateStrings[dateStrings.length - 1] + 'T23:59:59.999Z');
+
+    // Holidays
+    let holidayDateSet = new Set();
+    const holidayTemplateId = staff?.holidayTemplateId;
+    if (holidayTemplateId) {
+        const template = typeof holidayTemplateId === 'object' && holidayTemplateId._id
+            ? holidayTemplateId
+            : await HolidayTemplate.findById(holidayTemplateId).lean();
+        if (template?.holidays && Array.isArray(template.holidays)) {
+            template.holidays.forEach((h) => { if (h.date) holidayDateSet.add(toDateStringUTC(h.date)); });
+        }
+    }
+    if (holidayDateSet.size === 0 && staff?.businessId) {
+        const biz = await HolidayTemplate.findOne({ businessId: staff.businessId, isActive: true }).lean();
+        if (biz?.holidays && Array.isArray(biz.holidays)) {
+            biz.holidays.forEach((h) => { if (h.date) holidayDateSet.add(toDateStringUTC(h.date)); });
+        }
+    }
+    dateStrings.forEach((d) => { if (holidayDateSet.has(d)) holidayDates.push(d); });
+
+    // Week off
+    const company = staff?.businessId ? await Company.findById(staff.businessId).lean() : null;
+    const weekOffConfig = await getWeekOffConfigForStaff(staff || {}, company);
+    const { weeklyOffPattern, weeklyHolidays } = weekOffConfig;
+    dateStrings.forEach((dateStr) => {
+        if (holidayDateSet.has(dateStr)) return;
+        const d = new Date(dateStr + 'T00:00:00.000Z');
+        const dayOfWeek = d.getUTCDay();
+        let isWeekOff = false;
+        if (weeklyOffPattern === 'oddEvenSaturday') {
+            if (dayOfWeek === 0) isWeekOff = true;
+            else if (dayOfWeek === 6 && d.getUTCDate() % 2 === 0) isWeekOff = true;
+        } else {
+            isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
+        }
+        if (isWeekOff) weekOffDates.push(dateStr);
+    });
+
+    // Paid leave (attendances with isPaidLeave)
+    const paidAttendances = await Attendance.find({
+        $or: [{ employeeId: objId }, { user: objId }],
+        date: { $gte: startUtc, $lte: endUtc },
+        isPaidLeave: true
+    }).select('date').lean();
+    paidAttendances.forEach((a) => {
+        if (a.date) {
+            const ds = toDateStringUTC(a.date);
+            if (dateSet.has(ds)) paidLeaveDates.push(ds);
+        }
+    });
+
+    // Pending and Approved leaves
+    const leaves = await Leave.find({
+        employeeId: objId,
+        status: { $in: ['Pending', 'Approved'] },
+        startDate: { $lte: endUtc },
+        endDate: { $gte: startUtc }
+    }).select('startDate endDate status').lean();
+    dateStrings.forEach((dateStr) => {
+        const day = new Date(dateStr + 'T12:00:00.000Z');
+        for (const l of leaves) {
+            const start = new Date(l.startDate);
+            const end = new Date(l.endDate);
+            if (day >= start && day <= end) {
+                if (String(l.status).toLowerCase() === 'approved') {
+                    approvedLeaveDates.push(dateStr);
+                } else {
+                    pendingLeaveDates.push(dateStr);
+                }
+                break;
+            }
+        }
+    });
+
+    return {
+        paidLeaveDates: [...new Set(paidLeaveDates)],
+        pendingLeaveDates: [...new Set(pendingLeaveDates)],
+        approvedLeaveDates: [...new Set(approvedLeaveDates)],
+        weekOffDates: [...new Set(weekOffDates)],
+        holidayDates: [...new Set(holidayDates)]
+    };
+};
+
+/**
+ * Check if any of the given date strings (YYYY-MM-DD) have existing Approved/Pending leave or isPaidLeave in attendances for this employee.
+ * @returns {Promise<boolean>} true if conflict
+ */
+const hasLeaveOrPaidLeaveConflict = async (employeeId, dateStrings) => {
+    if (!dateStrings || dateStrings.length === 0) return false;
+    const objId = new mongoose.Types.ObjectId(employeeId.toString());
+    const startUtc = new Date(dateStrings[0] + 'T00:00:00.000Z');
+    const endStr = dateStrings[dateStrings.length - 1];
+    const endUtc = new Date(endStr + 'T23:59:59.999Z');
+    const existingLeave = await Leave.findOne({
+        employeeId: objId,
+        status: { $in: ['Pending', 'Approved'] },
+        startDate: { $lte: endUtc },
+        endDate: { $gte: startUtc }
+    });
+    if (existingLeave) return true;
+    const dateSet = new Set(dateStrings);
+    const attendances = await Attendance.find({
+        $or: [{ employeeId: objId }, { user: objId }],
+        date: { $gte: startUtc, $lte: endUtc },
+        isPaidLeave: true
+    })
+        .select('date')
+        .lean();
+    for (const a of attendances) {
+        if (a.date && dateSet.has(toDateStringUTC(a.date))) return true;
+    }
+    return false;
+};
+
+/**
+ * POST /leave/check-dates: For leave apply UI. Accepts either startDate+endDate (range) or selectedDates (array).
+ * Returns effective work dates, hasConflict, and details for UI messages: paidLeaveDates, pendingLeaveDates, approvedLeaveDates, weekOffDates, holidayDates.
+ */
+const checkLeaveDates = async (req, res) => {
+    try {
+        const { startDate: startParam, endDate: endParam, selectedDates } = req.body;
+        const staffId = req.staff._id;
+        const staff = await Staff.findById(staffId)
+            .populate('leaveTemplateId')
+            .populate('holidayTemplateId')
+            .populate('weeklyHolidayTemplateId');
+        if (!staff) {
+            return res.status(400).json({ success: false, error: { message: 'Staff not found' } });
+        }
+        let dateStrings;
+        let effectiveDates;
+        if (Array.isArray(selectedDates) && selectedDates.length > 0) {
+            const normalized = selectedDates
+                .map((d) => { const p = new Date(d); return isNaN(p.getTime()) ? null : toDateStringUTC(p); })
+                .filter(Boolean);
+            dateStrings = [...new Set(normalized)].sort();
+            effectiveDates = await getEffectiveWorkDatesFromList(staff, dateStrings);
+        } else if (startParam && endParam) {
+            const startDate = normalizeToDateOnlyUTC(startParam);
+            const endDate = normalizeToDateOnlyUTC(endParam);
+            effectiveDates = await getEffectiveWorkDatesInRange(staff, startDate, endDate);
+            dateStrings = effectiveDates;
+        } else {
+            return res.status(400).json({
+                success: false,
+                error: { message: 'Provide startDate and endDate, or selectedDates array' }
+            });
+        }
+        const hasConflict = await hasLeaveOrPaidLeaveConflict(staffId, effectiveDates);
+        const details = await getLeaveDateCheckDetails(staffId, staff, dateStrings || effectiveDates);
+        res.json({
+            success: true,
+            data: {
+                hasConflict,
+                effectiveDates,
+                effectiveDays: effectiveDates.length,
+                paidLeaveDates: details.paidLeaveDates,
+                pendingLeaveDates: details.pendingLeaveDates,
+                approvedLeaveDates: details.approvedLeaveDates,
+                weekOffDates: details.weekOffDates,
+                holidayDates: details.holidayDates
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: { message: error.message } });
+    }
+};
+
+/**
+ * GET /leave-balance: available pool from attendances (availableCasualLeaves) or from template assigned to staff (sum of leaveTypes.days minus used).
+ */
+const getLeaveBalance = async (req, res) => {
+    try {
+        const staffId = req.staff._id;
+        const staff = await Staff.findById(staffId).populate('leaveTemplateId');
+        const availableCasualLeaves = await getAvailableLeavePool(staffId, staff);
+        const totalAllowed = staff ? await getTotalAllowedFromTemplate(staff) : 0;
+        res.json({
+            success: true,
+            data: { availableCasualLeaves, totalAllowed }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: { message: error.message } });
+    }
+};
+
+/** Normalize leave type to a key for matching (e.g. "Casual Leave" and "Casual" both -> "casual"). */
+const leaveTypeMatchKey = (s) => {
+    if (!s || typeof s !== 'string') return '';
+    return s.toLowerCase().trim().replace(/\s+leave\s*$/i, '').replace(/\s+/g, '');
 };
 
 // Map template/database leave type names to canonical values for consistent storage
@@ -303,12 +744,8 @@ const createLeave = async (req, res) => {
         console.log('[Leave Submit] Request Body:', JSON.stringify(req.body));
         console.log('[Leave Submit] leaveType value:', req.body?.leaveType, '(type:', typeof req.body?.leaveType, ')');
 
-        let { startDate, endDate, leaveType, reason, session, halfDaySession } = req.body;
+        let { startDate, endDate, leaveType, reason, session, halfDaySession, selectedDates } = req.body;
         const currentStaffId = req.staff._id;
-
-        // Normalize dates to calendar day at midnight UTC (no timezone shift)
-        startDate = normalizeToDateOnlyUTC(startDate);
-        endDate = normalizeToDateOnlyUTC(endDate);
 
         leaveType = (leaveType || '').trim();
         if (!leaveType) {
@@ -330,30 +767,112 @@ const createLeave = async (req, res) => {
             session = halfDaySession === 'First Half Day' ? '1' : '2';
         }
 
-        const staff = await Staff.findById(currentStaffId).populate('leaveTemplateId');
+        const staff = await Staff.findById(currentStaffId)
+            .populate('leaveTemplateId')
+            .populate('holidayTemplateId')
+            .populate('weeklyHolidayTemplateId');
 
         if (!staff) {
             return res.status(400).json({ success: false, error: { message: 'Staff profile not found' } });
         }
 
-        // Calculate days - 0.5 for Half Day, otherwise standard calculation
-        const days = leaveType === 'Half Day' ? 0.5 : calculateDays(startDate, endDate);
+        let effectiveDates;
+        let startDateNorm;
+        let endDateNorm;
+
+        if (Array.isArray(selectedDates) && selectedDates.length > 0) {
+            // Calendar selection: client sent list of selected dates (YYYY-MM-DD or ISO)
+            const normalizedStrings = selectedDates
+                .map((d) => {
+                    const parsed = new Date(d);
+                    if (isNaN(parsed.getTime())) return null;
+                    return toDateStringUTC(parsed);
+                })
+                .filter(Boolean);
+            if (normalizedStrings.length === 0) {
+                return res.status(400).json({ success: false, error: { message: 'Invalid selected dates' } });
+            }
+            effectiveDates = await getEffectiveWorkDatesFromList(staff, normalizedStrings);
+            if (leaveType === 'Half Day') {
+                if (effectiveDates.length !== 1) {
+                    return res.status(400).json({
+                        success: false,
+                        error: { message: 'Half Day leave requires exactly one working day. Selected date may be a holiday or week off.' }
+                    });
+                }
+                startDateNorm = normalizeToDateOnlyUTC(effectiveDates[0] + 'T00:00:00.000Z');
+                endDateNorm = startDateNorm;
+            } else {
+                if (effectiveDates.length === 0) {
+                    return res.status(400).json({
+                        success: false,
+                        error: { message: 'Selected dates are all holidays or week offs. No working days to apply leave.' }
+                    });
+                }
+                startDateNorm = normalizeToDateOnlyUTC(effectiveDates[0] + 'T00:00:00.000Z');
+                endDateNorm = normalizeToDateOnlyUTC(effectiveDates[effectiveDates.length - 1] + 'T00:00:00.000Z');
+            }
+        } else {
+            // Start/end range: use all calendar days (no holiday/weekoff filtering). Only check leave already applied.
+            startDate = normalizeToDateOnlyUTC(startDate);
+            endDate = normalizeToDateOnlyUTC(endDate);
+            if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+                return res.status(400).json({ success: false, error: { message: 'startDate and endDate are required' } });
+            }
+            if (startDate > endDate) {
+                return res.status(400).json({ success: false, error: { message: 'Start date must be on or before end date.' } });
+            }
+            effectiveDates = getCalendarDatesInRange(startDate, endDate);
+            if (leaveType === 'Half Day' && effectiveDates.length !== 1) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Half Day leave requires exactly one date (start and end must be the same).' }
+                });
+            }
+            startDateNorm = startDate;
+            endDateNorm = endDate;
+        }
+
+        // Calculate days: Half Day = 0.5, else = count of effective work days
+        const days = leaveType === 'Half Day' ? 0.5 : effectiveDates.length;
+
+        const isUnpaidLeave = /^\s*unpaid(\s+leave)?\s*$/i.test(leaveType);
+
+        // Leave balance validation: use available pool (from attendances or template). Unpaid Leave has no limit.
+        // Pool is shared across all leave types (e.g. 5 total = 3 casual + 2 half-days + 1 sick).
+        if (!isUnpaidLeave) {
+            const availableCasualLeaves = await getAvailableLeavePool(currentStaffId, staff);
+            if (availableCasualLeaves <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: "You don't have enough leave balance." }
+                });
+            }
+            if (availableCasualLeaves === 0.5) {
+                if (leaveType !== 'Half Day') {
+                    return res.status(400).json({
+                        success: false,
+                        error: { message: "You don't have enough leave balance." }
+                    });
+                }
+                // 0.5 balance: only 1 Half Day allowed (days is already 0.5)
+            } else if (days > availableCasualLeaves) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: "You don't have enough leave balance." }
+                });
+            }
+        }
 
         // Validation for Half Day
         if (leaveType === 'Half Day') {
             if (!session || !['1', '2'].includes(session)) {
                 return res.status(400).json({ success: false, error: { message: 'Session (1 or 2) is mandatory for Half Day leave' } });
             }
-            // Ensure start and end date are the same for Half Day (compare UTC date parts)
-            const startUtc = `${startDate.getUTCFullYear()}-${startDate.getUTCMonth()}-${startDate.getUTCDate()}`;
-            const endUtc = `${endDate.getUTCFullYear()}-${endDate.getUTCMonth()}-${endDate.getUTCDate()}`;
-            if (startUtc !== endUtc) {
-                return res.status(400).json({ success: false, error: { message: 'Half Day leave can only be applied for a single date' } });
-            }
             // Session 1 only: block if user has already checked in for that date (attendance has punchIn)
             if (session === '1') {
-                const startOfDay = new Date(startDate);
-                const endOfDay = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate(), 23, 59, 59, 999));
+                const startOfDay = new Date(startDateNorm);
+                const endOfDay = new Date(Date.UTC(startDateNorm.getUTCFullYear(), startDateNorm.getUTCMonth(), startDateNorm.getUTCDate(), 23, 59, 59, 999));
                 const todayAttendance = await Attendance.findOne({
                     $or: [{ employeeId: currentStaffId }, { user: currentStaffId }],
                     date: { $gte: startOfDay, $lte: endOfDay },
@@ -376,18 +895,21 @@ const createLeave = async (req, res) => {
             const template = staff.leaveTemplateId;
             let leaveTypeFound = false;
 
-            // 1. Check leaveTypes array (primary check)
+            // 1. Check leaveTypes array (primary check) — match flexibly so "Casual" in template matches "Casual Leave"
             if (template.leaveTypes && Array.isArray(template.leaveTypes) && template.leaveTypes.length > 0) {
-                leaveConfig = template.leaveTypes.find(t => t.type && t.type.toLowerCase() === leaveType.toLowerCase());
+                const leaveKey = leaveTypeMatchKey(leaveType);
+                leaveConfig = template.leaveTypes.find(t => t.type && leaveTypeMatchKey(t.type) === leaveKey);
                 if (leaveConfig) {
                     limit = leaveConfig.limit || leaveConfig.days;
                     leaveTypeFound = true;
                 }
             }
 
-            // 2. Check limits object (fallback)
+            // 2. Check limits object (fallback) — try both exact and match key
             if (!leaveTypeFound && template.limits && typeof template.limits === 'object') {
-                const limitValue = template.limits[leaveType] || template.limits[leaveType.toLowerCase()];
+                const leaveKey = leaveTypeMatchKey(leaveType);
+                const limitValue = template.limits[leaveType] || template.limits[leaveType.toLowerCase()] ||
+                    (leaveKey && (template.limits[leaveKey] || template.limits[leaveKey + ' leave']));
                 if (limitValue !== undefined && limitValue !== null) {
                     limit = limitValue;
                     leaveConfig = { type: leaveType, days: limitValue };
@@ -395,9 +917,10 @@ const createLeave = async (req, res) => {
                 }
             }
 
-            // 3. Check individual fields (e.g., casualLimit) (fallback)
+            // 3. Check individual fields (e.g., casualLimit) (fallback) — use match key so "Casual Leave" -> casualLimit
             if (!leaveTypeFound) {
-                const fieldName = leaveType.toLowerCase() + 'Limit';
+                const leaveKey = leaveTypeMatchKey(leaveType);
+                const fieldName = (leaveKey || leaveType.toLowerCase().replace(/\s+/g, '')) + 'Limit';
                 const fieldValue = template[fieldName];
                 if (fieldValue !== undefined && fieldValue !== null) {
                     limit = fieldValue;
@@ -406,140 +929,30 @@ const createLeave = async (req, res) => {
                 }
             }
 
-            // IMPORTANT: If staff has a template with leaveTypes array, validate that the leave type exists
-            // Exception: Always allow "Unpaid", "Half Day", "First Half", "Second Half" even if not in template
-            const isAlwaysAllowed = /^\s*unpaid(\s+leave)?\s*$/i.test(leaveType) ||
-                /^\s*half\s*day\s*$/i.test(leaveType) ||
-                /^\s*first\s*half\s*$/i.test(leaveType) ||
-                /^\s*second\s*half\s*$/i.test(leaveType);
-
-            // Only reject if template has leaveTypes array defined (not empty/null) AND leave type is not always allowed
-            if (!leaveTypeFound && !isAlwaysAllowed && template.leaveTypes && Array.isArray(template.leaveTypes) && template.leaveTypes.length > 0) {
-                const availableTypes = template.leaveTypes
-                    .filter(t => t.type)
-                    .map(t => t.type);
-                
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: `${leaveType} leave is not available in your leave template. Please contact HR to update your leave template.`,
-                        details: {
-                            leaveType: leaveType,
-                            availableTypes: availableTypes.length > 0 ? availableTypes : ['No leave types configured']
-                        }
-                    }
-                });
-            }
-
-            // If it's an always-allowed type (Paid/Unpaid), set limit to null (unrestricted)
-            if (isAlwaysAllowed && !leaveTypeFound) {
-                limit = null;
+            // Use overall template count for any leave name: if type not found by name, use total pool from template
+            // (Balance validation already uses getAvailableLeavePool = attendance or template total − used.)
+            if (!leaveTypeFound) {
+                const isUnpaid = /^\s*unpaid(\s+leave)?\s*$/i.test(leaveType);
+                const isHalfDay = /^\s*half\s*day\s*$/i.test(leaveType) ||
+                    /^\s*first\s*half\s*$/i.test(leaveType) || /^\s*second\s*half\s*$/i.test(leaveType);
+                if (isUnpaid || isHalfDay) {
+                    limit = null;
+                } else {
+                    limit = getTotalLeavesFromAssignedTemplate(staff);
+                }
             }
         }
 
-        // If limit is not null, enforce it. If null and no template, allow without restriction
-        if (limit !== null) {
-            // Use the template type name for checking (handles "Casual Leave" vs "Casual")
-            const templateTypeName = leaveConfig && leaveConfig.type ? leaveConfig.type : leaveType;
-            
-            // Use calculateAvailableLeaves to handle carryForward logic
-            const leaveDate = new Date(startDate);
-            const leaveInfo = await calculateAvailableLeaves(staff, templateTypeName, leaveDate);
+        // Balance validation is done above using availableCasualLeaves from attendances.
+        // Template limit is used only for type validation and display (totalAllowed).
 
-            // Check if leave type exists in template and has a limit
-            if (leaveInfo.baseLimit === null) {
-                // This shouldn't happen if limit is not null, but handle edge case
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: `Leave type ${leaveType} not found in template or has no limit configured.`,
-                    }
-                });
-            }
-
-            // Strict validation: Check if balance is already 0 or would become negative
-            // This prevents applying when limit is already fully used
-            if (leaveInfo.balance <= 0) {
-                const rangeType = leaveInfo.isMonthly ? 'month' : 'year';
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: `You have already used all available ${leaveType} leave for this ${rangeType}. Available: ${leaveInfo.totalAvailable} days, Used: ${leaveInfo.used} days.`,
-                        details: {
-                            baseLimit: leaveInfo.baseLimit,
-                            carriedForward: leaveInfo.carriedForward,
-                            totalAvailable: leaveInfo.totalAvailable,
-                            used: leaveInfo.used,
-                            requested: days,
-                            balance: leaveInfo.balance,
-                            range: rangeType
-                        }
-                    }
-                });
-            }
-
-            // Check if requested days exceed available balance
-            if (days > leaveInfo.balance) {
-                const rangeType = leaveInfo.isMonthly ? 'month' : 'year';
-                const message = leaveInfo.carryForwardEnabled
-                    ? `Leave request exceeds available balance for ${leaveType}. Available: ${leaveInfo.balance} days, Requested: ${days} days. Max ${leaveInfo.totalAvailable} days per ${rangeType} (${leaveInfo.baseLimit} base + ${leaveInfo.carriedForward} carried forward).`
-                    : `Leave request exceeds available balance for ${leaveType}. Available: ${leaveInfo.balance} days, Requested: ${days} days. Max ${leaveInfo.baseLimit} days allowed per ${rangeType}.`;
-
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: message,
-                        details: {
-                            baseLimit: leaveInfo.baseLimit,
-                            carriedForward: leaveInfo.carriedForward,
-                            totalAvailable: leaveInfo.totalAvailable,
-                            used: leaveInfo.used,
-                            requested: days,
-                            balance: leaveInfo.balance,
-                            range: rangeType
-                        }
-                    }
-                });
-            }
-
-            // Final check: Ensure used + requested doesn't exceed total available
-            if (leaveInfo.used + days > leaveInfo.totalAvailable) {
-                const rangeType = leaveInfo.isMonthly ? 'month' : 'year';
-                const message = leaveInfo.carryForwardEnabled
-                    ? `Leave limit exceeded for ${leaveType}. Max ${leaveInfo.totalAvailable} days available (${leaveInfo.baseLimit} base + ${leaveInfo.carriedForward} carried forward) per ${rangeType}. Used: ${leaveInfo.used} days, Requested: ${days} days.`
-                    : `Leave limit exceeded for ${leaveType}. Max ${leaveInfo.baseLimit} days allowed per ${rangeType}. Used: ${leaveInfo.used} days, Requested: ${days} days.`;
-
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: message,
-                        details: {
-                            baseLimit: leaveInfo.baseLimit,
-                            carriedForward: leaveInfo.carriedForward,
-                            totalAvailable: leaveInfo.totalAvailable,
-                            used: leaveInfo.used,
-                            requested: days,
-                            balance: leaveInfo.balance,
-                            range: rangeType
-                        }
-                    }
-                });
-            }
-        }
-
-        // Check if employee already has leave (Pending or Approved) on any of the requested dates
-        const existingLeave = await Leave.findOne({
-            employeeId: staff._id,
-            status: { $in: ['Pending', 'Approved'] },
-            startDate: { $lte: endDate },
-            endDate: { $gte: startDate }
-        });
-
-        if (existingLeave) {
+        // Check conflict: existing Approved/Pending leave or isPaidLeave in attendances on any effective date
+        const conflict = await hasLeaveOrPaidLeaveConflict(currentStaffId, effectiveDates);
+        if (conflict) {
             return res.status(400).json({
                 success: false,
                 error: {
-                    message: 'You have already applied for leave on one or more of these dates. Please choose different dates or check your existing leave requests.'
+                    message: 'You already have leave on one or more of these days. Please choose different dates.'
                 }
             });
         }
@@ -549,8 +962,8 @@ const createLeave = async (req, res) => {
             employeeId: staff._id,
             businessId: staff.businessId,
             leaveType,
-            startDate,
-            endDate,
+            startDate: startDateNorm,
+            endDate: endDateNorm,
             days,
             reason,
             session: leaveType === 'Half Day' ? session : null,
@@ -691,6 +1104,8 @@ module.exports = {
     getLeaves,
     getLeaveTypes,
     getLeaveTypesForApply,
+    getLeaveBalance,
+    checkLeaveDates,
     createLeave,
     updateLeaveStatus
 };

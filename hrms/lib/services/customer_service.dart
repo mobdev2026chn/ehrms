@@ -36,7 +36,15 @@ class CustomerService {
 
   Future<Customer> createCustomer(Customer customer) async {
     await _setToken();
-    final response = await _api.dio.post<Map<String, dynamic>>('/customers', data: customer.toJson());
+    final raw = Map<String, dynamic>.from(customer.toJson());
+    raw.removeWhere(
+      (k, v) =>
+          v == null || (v is String && v.trim().isEmpty),
+    );
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/customers',
+      data: raw,
+    );
     final data = response.data;
     if (data == null) throw Exception('Failed to create customer');
     return Customer.fromJson(data);

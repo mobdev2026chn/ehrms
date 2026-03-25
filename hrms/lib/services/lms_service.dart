@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/error_message_utils.dart';
 import 'api_client.dart';
 
 class LmsService {
@@ -22,14 +23,10 @@ class LmsService {
   }
 
   static String _dioMessage(DioException e) {
-    final body = e.response?.data;
-    if (body is Map && body['message'] != null)
-      return body['message'].toString();
-    if (body is Map && body['error'] is Map) {
-      final msg = (body['error'] as Map)['message'];
-      if (msg != null) return msg.toString();
-    }
-    return e.message ?? 'Request failed';
+    return ErrorMessageUtils.messageFromDioException(
+      e,
+      fallback: e.message ?? 'Request failed',
+    );
   }
 
   /// Fetches PDF bytes from a full URL (e.g. from getLmsFileUrl). Uses auth token. For in-app PDF viewer.

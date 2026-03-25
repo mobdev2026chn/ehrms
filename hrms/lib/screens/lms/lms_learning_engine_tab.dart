@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
 import '../../services/lms_service.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class LmsLearningEngineTab extends StatefulWidget {
   final VoidCallback? onRefresh;
@@ -225,7 +226,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                       const Center(
                         child: Padding(
                           padding: EdgeInsets.all(24),
-                          child: CircularProgressIndicator(),
+                          child: AppTabLoader(),
                         ),
                       )
                     else if (_heatmap.isEmpty)
@@ -361,8 +362,8 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Center(
-            child: CircularProgressIndicator(color: AppColors.primary),
+          child: const Center(
+            child: AppTabLoader(),
           ),
         ),
       );

@@ -51,7 +51,9 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     const totalWorkingDays = attendanceStats.workingDays || 0;
     const thisMonthWorkingDays = attendanceStats.workingDaysFullMonth ?? totalWorkingDays;
     const presentDays = attendanceStats.presentDays || 0;
-    const absentDays = attendanceStats.absentDays ?? Math.max(0, totalWorkingDays - presentDays);
+    const paidLeaveDays = attendanceStats.paidLeaveDays || 0;
+    const effectivePaidDays = presentDays + paidLeaveDays;
+    const absentDays = attendanceStats.absentDays ?? Math.max(0, totalWorkingDays - effectivePaidDays);
 
     console.log(`[_generatePayrollForPayslip] Attendance (same as salary overview/payroll): thisMonthWD=${thisMonthWorkingDays}, presentDays=${presentDays}, absentDays=${absentDays}`);
 
@@ -71,27 +73,36 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     const dearnessAllowance = s.dearnessAllowance || 0;
     const houseRentAllowance = s.houseRentAllowance || 0;
     const specialAllowance = s.specialAllowance || 0;
+    const basicPlusDA = basicSalary + dearnessAllowance;
+    const basicPlusDAPlusHRA = basicSalary + dearnessAllowance + houseRentAllowance;
+    const isPFApplicable = basicPlusDA < 15000;
+    const isESIApplicable = basicPlusDAPlusHRA < 21000;
+    const employerPFRate = isPFApplicable ? (s.employerPFRate || 0) : 0;
+    const employerESIRate = isESIApplicable ? (s.employerESIRate || 0) : 0;
+    const employeePFRate = isPFApplicable ? (s.employeePFRate || 0) : 0;
+    const employeeESIRate = isESIApplicable ? (s.employeeESIRate || 0) : 0;
+    const pfStaticAmount = isPFApplicable ? 0 : 1800;
     
     // Gross Fixed Salary (Before Employer Contributions)
     const grossFixedSalary = basicSalary + dearnessAllowance + houseRentAllowance + specialAllowance;
     
     // Employer Contributions (Part of Gross Salary & CTC)
-    const employerPF = (s.employerPFRate || 0) / 100 * basicSalary;
-    const employerESI = (s.employerESIRate || 0) / 100 * grossFixedSalary;
+    const employerPF = employerPFRate / 100 * basicSalary;
+    const employerESI = employerESIRate / 100 * grossFixedSalary;
     
     // Gross Salary (Monthly) = Fixed Gross + Employer Contributions
-    const grossSalary = grossFixedSalary + employerPF + employerESI;
+    const grossSalary = grossFixedSalary + employerPF + employerESI + pfStaticAmount;
     
     // Employee Deductions (NOT part of CTC)
-    const employeePF = (s.employeePFRate || 0) / 100 * basicSalary;
-    const employeeESI = (s.employeeESIRate || 0) / 100 * grossSalary;
+    const employeePF = employeePFRate > 0 ? (employeePFRate / 100 * basicSalary) : pfStaticAmount;
+    const employeeESI = employeeESIRate / 100 * grossSalary;
     const totalDeductions = employeePF + employeeESI;
     
     // Net Salary = Gross Salary - Employee Deductions
     const netSalary = grossSalary - totalDeductions;
     
-    // Same as salary overview & payroll: proration = presentDays / this month WD (1 day salary = net/this month WD)
-    const prorationFactor = thisMonthWorkingDays > 0 ? presentDays / thisMonthWorkingDays : 0;
+    // Same as salary overview & payroll: proration = (presentDays + paidLeaveDays) / this month WD
+    const prorationFactor = thisMonthWorkingDays > 0 ? effectivePaidDays / thisMonthWorkingDays : 0;
     
     // STEP 1: Prorate Gross Fixed Components
     const proratedBasicSalary = basicSalary * prorationFactor;
@@ -101,11 +112,11 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     const proratedGrossFixed = proratedBasicSalary + proratedDA + proratedHRA + proratedSpecialAllowance;
     
     // STEP 2: Recalculate Employer Contributions on PRORATED amounts
-    const proratedEmployerPF = (s.employerPFRate || 0) / 100 * proratedBasicSalary;
-    const proratedEmployerESI = (s.employerESIRate || 0) / 100 * proratedGrossFixed;
+    const proratedEmployerPF = employerPFRate / 100 * proratedBasicSalary;
+    const proratedEmployerESI = employerESIRate / 100 * proratedGrossFixed;
     
     // STEP 3: Calculate Prorated Gross Salary
-    const proratedGrossSalary = proratedGrossFixed + proratedEmployerPF + proratedEmployerESI;
+    const proratedGrossSalary = proratedGrossFixed + proratedEmployerPF + proratedEmployerESI + pfStaticAmount;
     
     // Fine amount from Present, Approved, or Half Day (late login fine applies to half day too)
     const totalFineAmount = monthAttendance
@@ -119,8 +130,10 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     console.log(`[_generatePayrollForPayslip] Fine Amount: ${totalFineAmount}`);
     
     // STEP 4: Recalculate Employee Deductions on PRORATED gross
-    const proratedEmployeePF = (s.employeePFRate || 0) / 100 * proratedBasicSalary;
-    const proratedEmployeeESI = (s.employeeESIRate || 0) / 100 * proratedGrossSalary;
+    const proratedEmployeePF = employeePFRate > 0
+        ? (employeePFRate / 100 * proratedBasicSalary)
+        : pfStaticAmount;
+    const proratedEmployeeESI = employeeESIRate / 100 * proratedGrossSalary;
     const proratedDeductions = proratedEmployeePF + proratedEmployeeESI;
     
     // STEP 5: Calculate Prorated Net Salary (fines are NOT prorated)
@@ -210,9 +223,9 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     console.log(`[_generatePayrollForPayslip] Employee: ${staff.name} (${staff.employeeId})`);
     console.log(`[_generatePayrollForPayslip] Period: ${month}/${year}`);
     console.log(`[_generatePayrollForPayslip] Working Days: ${totalWorkingDays}`);
-    console.log(`[_generatePayrollForPayslip] Present Days: ${presentDays}`);
+    console.log(`[_generatePayrollForPayslip] Present Days: ${presentDays}, Paid Leave: ${paidLeaveDays}`);
     console.log(`[_generatePayrollForPayslip] Absent Days: ${absentDays}`);
-    console.log(`[_generatePayrollForPayslip] Proration Factor: ${prorationFactor.toFixed(6)} (presentDays=${presentDays} / thisMonthWD=${thisMonthWorkingDays})`);
+    console.log(`[_generatePayrollForPayslip] Proration Factor: ${prorationFactor.toFixed(6)} (effectivePaidDays=${effectivePaidDays} / thisMonthWD=${thisMonthWorkingDays})`);
     console.log(`[_generatePayrollForPayslip] Fine Amount: ${totalFineAmount.toFixed(2)}`);
     console.log(`[_generatePayrollForPayslip] Base Salary Structure:`);
     console.log(`[_generatePayrollForPayslip]   - Basic Salary: ${basicSalary}`);

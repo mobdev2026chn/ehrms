@@ -4,6 +4,7 @@ import '../../config/app_colors.dart';
 import '../../services/attendance_service.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../utils/attendance_display_util.dart';
+import '../../widgets/app_tab_loader.dart';
 
 /// Month Salary Details Screen
 ///
@@ -209,7 +210,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppTabLoader())
           : _error.isNotEmpty
           ? Center(
               child: Padding(
@@ -641,17 +642,23 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
               final date = DateTime(widget.year, widget.month, day);
               final dateStr = DateFormat('yyyy-MM-dd').format(date);
 
-              // Find attendance record for this date
-              final record = _attendanceRecords.firstWhere((r) {
+              // Find attendance record for this date (date-only match to avoid timezone issues)
+              dynamic record;
+              for (final r in _attendanceRecords) {
+                if (r == null || r is! Map) continue;
                 try {
-                  final d = DateTime.parse(r['date']).toLocal();
-                  return d.year == widget.year &&
-                      d.month == widget.month &&
-                      d.day == day;
+                  final recDateStr = r['date']?.toString() ?? '';
+                  final recDateOnly = recDateStr.contains('T')
+                      ? recDateStr.split('T')[0]
+                      : recDateStr.split(' ')[0];
+                  if (recDateOnly == dateStr) {
+                    record = r;
+                    break;
+                  }
                 } catch (e) {
-                  return false;
+                  // skip
                 }
-              }, orElse: () => null);
+              }
 
               // Determine if it's a holiday, week off, or leave
               final isHoliday = holidayDateSet.contains(dateStr);
@@ -692,15 +699,8 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
         0; // From attendances collection: fineHours (total min) or lateMinutes
     IconData statusIcon = Icons.help_outline;
 
-    if (isHoliday) {
-      status = 'Holiday';
-      statusColor = Colors.orange;
-      statusIcon = Icons.celebration;
-    } else if (isWeekOff) {
-      status = 'Week Off';
-      statusColor = Colors.purple;
-      statusIcon = Icons.weekend;
-    } else if (record != null) {
+    // Attendance record takes precedence – use status from attendance when available
+    if (record != null) {
       final recordStatus = (record['status'] as String? ?? '')
           .trim()
           .toLowerCase();
@@ -709,17 +709,14 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
           .toLowerCase();
       final isHalfDay = recordStatus == 'half day' || leaveType == 'half day';
 
+      status = AttendanceDisplayUtil.getDailyBreakdownStatus(record);
+
       if (recordStatus == 'present' || recordStatus == 'approved') {
         if (isHalfDay) {
-          status = 'Half Day';
           statusColor = Colors.blue;
           statusIcon = Icons.schedule;
           salaryForDay = widget.dailySalary * 0.5;
         } else {
-          status = AttendanceDisplayUtil.formatAttendanceDisplayStatus(
-            record['status'],
-            record['leaveType'],
-          );
           statusColor = Colors.green;
           statusIcon = Icons.check_circle;
           salaryForDay = widget.dailySalary;
@@ -737,27 +734,43 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             (record['fineHours'] as num?)?.toInt() ??
             0;
       } else if (recordStatus == 'on leave') {
-        status = 'On Leave';
-        statusColor = Colors.blue;
-        statusIcon = Icons.event_busy;
-        // No salary for on leave
-        salaryForDay = 0;
+        if (status == 'Comp Off') {
+          statusColor = Colors.purple;
+          statusIcon = Icons.event_busy;
+        } else if (status == 'Week Off') {
+          statusColor = Colors.purple;
+          statusIcon = Icons.weekend;
+        } else if (status == 'Paid Leave') {
+          statusColor = Colors.blue;
+          statusIcon = Icons.event_busy;
+          salaryForDay = widget.dailySalary;
+        } else {
+          statusColor = Colors.blue;
+          statusIcon = Icons.event_busy;
+        }
+        if (status != 'Paid Leave') {
+          salaryForDay = 0;
+        }
         fineAmount = 0;
       } else if (recordStatus == 'absent' || recordStatus == 'rejected') {
-        status = 'Absent';
         statusColor = Colors.red;
         statusIcon = Icons.cancel;
-        // NO salary and NO FINE for absent
         salaryForDay = 0;
         fineAmount = 0;
       } else if (recordStatus == 'pending') {
-        status = 'Pending';
         statusColor = Colors.orange;
         statusIcon = Icons.pending;
-        // NO salary and NO FINE for pending
         salaryForDay = 0;
         fineAmount = 0;
       }
+    } else if (isHoliday) {
+      status = 'Holiday';
+      statusColor = Colors.orange;
+      statusIcon = Icons.celebration;
+    } else if (isWeekOff) {
+      status = 'Week Off';
+      statusColor = Colors.purple;
+      statusIcon = Icons.weekend;
     } else if (isLeave) {
       status = 'On Leave';
       statusColor = Colors.blue;

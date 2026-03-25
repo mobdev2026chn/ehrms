@@ -6,6 +6,10 @@ import 'package:hrms/screens/geo/completed_task_detail_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
+import 'package:hrms/utils/task_movement_summary_util.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
+import 'package:hrms/widgets/notification_reaction_overlay.dart';
 
 /// One event in the task track timeline.
 class _TimelineEvent {
@@ -44,6 +48,7 @@ class TaskCompletedScreen extends StatefulWidget {
   final double? drivingDistanceKm;
   final Duration? walkingDuration;
   final double? walkingDistanceKm;
+  final Duration? stopDuration;
 
   const TaskCompletedScreen({
     super.key,
@@ -66,6 +71,7 @@ class TaskCompletedScreen extends StatefulWidget {
     this.drivingDistanceKm,
     this.walkingDuration,
     this.walkingDistanceKm,
+    this.stopDuration,
   });
 
   @override
@@ -74,7 +80,9 @@ class TaskCompletedScreen extends StatefulWidget {
 
 class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
   Task? _fetchedTask;
+  TaskMovementSummary? _movementSummary;
   bool _loading = true;
+  bool _didShowCompletionFeedback = false;
 
   @override
   void initState() {
@@ -83,27 +91,49 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
   }
 
   Future<void> _fetchTask() async {
+    final fallbackSummary = TaskMovementSummary.fromDurations(
+      drivingDuration: widget.drivingDuration,
+      walkingDuration: widget.walkingDuration,
+      stopDuration: widget.stopDuration,
+    );
     if (widget.taskMongoId == null || widget.taskMongoId!.isEmpty) {
       setState(() {
         _fetchedTask = widget.task;
+        _movementSummary = fallbackSummary.hasData ? fallbackSummary : null;
         _loading = false;
       });
+      _showCompletionFeedbackIfNeeded();
       return;
     }
     try {
       final t = await TaskService().getTaskById(widget.taskMongoId!);
+      TaskMovementSummary? summary;
+      try {
+        final report = await TaskService().getTaskCompletionReport(
+          widget.taskMongoId!,
+        );
+        final computed = TaskMovementSummary.fromRoutePoints(
+          report.routePoints,
+          endTime: t.arrivalTime ?? widget.arrivalTime,
+        );
+        if (computed.hasData) summary = computed;
+      } catch (_) {}
       if (mounted) {
         setState(() {
           _fetchedTask = t;
+          _movementSummary = summary ?? (fallbackSummary.hasData ? fallbackSummary : null);
           _loading = false;
         });
+        _showCompletionFeedbackIfNeeded();
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _fetchedTask = widget.task;
+          _movementSummary = fallbackSummary.hasData ? fallbackSummary : null;
           _loading = false;
         });
+        _showCompletionFeedbackIfNeeded();
       }
     }
   }
@@ -114,7 +144,10 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
       _task?.status == TaskStatus.waitingForApproval;
 
   double get _displayDistanceKm =>
-      _task?.tripDistanceKm ?? widget.totalDistanceKm;
+      ((_task?.tripDistanceKm != null && _task!.tripDistanceKm! > 0)
+              ? _task!.tripDistanceKm!
+              : null) ??
+      widget.totalDistanceKm;
 
   /// Travel duration: time from journey started to arrived, or (if exited) from resumed to arrived.
   Duration get _displayDuration {
@@ -136,6 +169,44 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
 
   bool get _displayPhotoProof => _task?.photoProof ?? widget.photoProof;
 
+  Future<void> _showCompletionFeedbackIfNeeded() async {
+    if (!mounted || _didShowCompletionFeedback) return;
+    _didShowCompletionFeedback = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, 'Wuhu! Task completed!');
+      await NotificationReactionOverlay.show(
+        context,
+        emoji: '😎',
+      );
+    });
+  }
+
+  /// Only true when a form was actually submitted (had assigned forms and filled them).
+  bool get _displayFormSubmitted {
+    if (_task != null && _task!.formFilled != null) return _task!.formFilled!;
+    return widget.formSubmitted;
+  }
+
+  TaskMovementSummary? get _displayMovementSummary {
+    final stored = _task?.travelActivityDuration;
+    if (stored != null) {
+      final summary = TaskMovementSummary.fromDurations(
+        drivingDuration: Duration(seconds: stored.driveDuration),
+        walkingDuration: Duration(seconds: stored.walkDuration),
+        stopDuration: Duration(seconds: stored.stopDuration),
+      );
+      if (summary.hasData) return summary;
+    }
+    if (_movementSummary?.hasData == true) return _movementSummary;
+    final fallback = TaskMovementSummary.fromDurations(
+      drivingDuration: widget.drivingDuration,
+      walkingDuration: widget.walkingDuration,
+      stopDuration: widget.stopDuration,
+    );
+    return fallback.hasData ? fallback : null;
+  }
+
   static String _formatDuration(Duration d) {
     final secs = d.inSeconds;
     if (secs < 60) return secs == 1 ? '1 sec' : '$secs secs';
@@ -149,6 +220,11 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
     }
     if (remainderSecs > 0) return '${mins} min${mins == 1 ? '' : 's'} ${remainderSecs} secs';
     return mins == 1 ? '1 min' : '$mins mins';
+  }
+
+  static String _formatDistanceKm(double distanceKm) {
+    final decimals = distanceKm < 1 ? 2 : 1;
+    return '${distanceKm.toStringAsFixed(decimals)} km';
   }
 
   List<_TimelineEvent> _buildTimelineEvents() {
@@ -174,7 +250,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           time: widget.startedAt,
           title: 'Driving (${_formatDuration(widget.drivingDuration!)})',
           subtitle:
-              '${widget.drivingDistanceKm!.toStringAsFixed(1)} km covered',
+              '${_formatDistanceKm(widget.drivingDistanceKm!)} covered',
           icon: Icons.directions_car_rounded,
           iconColor: Colors.red.shade400,
         ),
@@ -188,7 +264,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           time: arrival.subtract(widget.walkingDuration!),
           title: 'Walking (${_formatDuration(widget.walkingDuration!)})',
           subtitle:
-              '${widget.walkingDistanceKm!.toStringAsFixed(1)} km covered',
+              '${_formatDistanceKm(widget.walkingDistanceKm!)} covered',
           icon: Icons.directions_walk_rounded,
           iconColor: Colors.amber.shade700,
         ),
@@ -202,7 +278,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
         _TimelineEvent(
           time: widget.startedAt,
           title: 'Travel (${_formatDuration(_displayDuration)})',
-          subtitle: '${_displayDistanceKm.toStringAsFixed(1)} km covered',
+          subtitle: '${_formatDistanceKm(_displayDistanceKm)} covered',
           icon: Icons.route_rounded,
           iconColor: AppColors.secondary,
         ),
@@ -219,7 +295,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
       ),
     );
 
-    if (widget.formSubmitted &&
+    if (_displayFormSubmitted &&
         (widget.formSubmittedAt != null || widget.otpVerifiedAt != null)) {
       events.add(
         _TimelineEvent(
@@ -284,7 +360,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           centerTitle: true,
           elevation: 0,
         ),
-        body: const Center(child: CircularProgressIndicator()),
+        body: const Center(child: AppTabLoader()),
       );
     }
 
@@ -400,6 +476,27 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                         _formatDuration(_displayDuration),
                       ),
                       _divider(),
+                      if (_displayMovementSummary != null) ...[
+                        _detailRow(
+                          'Drive Duration',
+                          _formatDuration(
+                            _displayMovementSummary!.drivingDuration,
+                          ),
+                        ),
+                        _divider(),
+                        _detailRow(
+                          'Walk Duration',
+                          _formatDuration(
+                            _displayMovementSummary!.walkingDuration,
+                          ),
+                        ),
+                        _divider(),
+                        _detailRow(
+                          'Stop Duration',
+                          _formatDuration(_displayMovementSummary!.stopDuration),
+                        ),
+                        _divider(),
+                      ],
                       _detailRow(
                         'Total Task Duration',
                         _formatDuration(_totalTaskDuration),
@@ -417,13 +514,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                       _divider(),
                       _verificationRow('OTP Verified', _displayOtpVerified),
                       _divider(),
-                      _verificationRow(
-                        'Geo-Fence',
-                        widget.geoFence,
-                        value: widget.geoFence ? 'Inside' : 'Outside',
-                      ),
-                      _divider(),
-                      _verificationRow('Form Submitted', widget.formSubmitted),
+                      _verificationRow('Form Submitted', _displayFormSubmitted),
                       _divider(),
                       _verificationRow(
                         'Photo Proof',
@@ -543,7 +634,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                   child: ElevatedButton.icon(
                     onPressed: () => _goToMyTasks(context),
                     icon: const Icon(Icons.home_rounded, size: 22),
-                    label: const Text('Return to My Tasks'),
+                    label: const Text('Return to Tasks'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,

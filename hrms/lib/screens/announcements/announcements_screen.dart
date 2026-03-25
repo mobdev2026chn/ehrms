@@ -7,6 +7,7 @@ import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/request_service.dart';
 import 'announcement_detail_screen.dart';
 import '../../utils/error_message_utils.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class AnnouncementsScreen extends StatefulWidget {
   const AnnouncementsScreen({super.key});
@@ -100,14 +101,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          SizedBox(
-            width: 40,
-            height: 40,
-            child: CircularProgressIndicator(
-              strokeWidth: 3,
-              color: colorScheme.primary,
-            ),
-          ),
+          const AppTabLoader(),
           const SizedBox(height: 16),
           Text(
             'Loading announcements...',

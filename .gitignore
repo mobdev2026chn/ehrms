@@ -30,6 +30,7 @@ app_backend/.env
 hs_err_*.log
 **/hs_err_*.log
 
+
 # OS
 .DS_Store
 Thumbs.db
@@ -68,8 +69,12 @@ app_backend/face_verify/__pycache__/
 **/__pycache__/
 
 # Test/sample data (may contain sensitive info)
-app_backend/customer_data.json
+ektahr_desktop/output
+ektahr_desktop/publish
 
+app_backend/customer_data.json
+ektahr_desktop/EktaHR.DesktopAgent/
+ektahr_desktop/EktaHR.DesktopAgent/installer_output/
 # Firebase/Google Cloud credentials (never commit)
 app_backend/firebase-service-account.json
 **/firebase-service-account*.json
@@ -91,9 +96,12 @@ frontend/
 new_app/
 
 
+
+
 # iOS temporary asset directories
 **/AppIcon.appiconset/_/
 **/Assets.xcassets/**/_/
+<<<<<<< HEAD
 
 
 
@@ -102,3 +110,9 @@ ektahr_desktop/EktaHR.DesktopAgent/
 ektahr_desktop/EktaHR.DesktopAgent/installer_output/
 ektahr_desktop/output
 ektahr_desktop/publish
+=======
+frontend/node_modules/
+frontend/
+
+backend/
+>>>>>>> development

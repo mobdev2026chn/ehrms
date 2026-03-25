@@ -4,8 +4,9 @@ const leaveSchema = new mongoose.Schema({
     employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff', required: true },
     leaveType: {
         type: String,
-        required: true
-        // No enum - templates can define custom names; createLeave normalizes before save
+        required: true,
+        trim: true
+        // No enum - validated against template leaveTypes only
     },
     session: {
         type: String,

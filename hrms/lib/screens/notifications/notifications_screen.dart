@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_route_observer.dart';
 import '../../services/fcm_service.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
+import '../../widgets/app_tab_loader.dart';
 
-/// Lists FCM notifications received in foreground or background, stored in SharedPreferences for 24 hours.
+/// Lists FCM notifications received in foreground, background, or when app was closed.
+/// All received notifications appear here (no need to tap them). Stored for 24 hours.
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
 
@@ -14,9 +17,11 @@ class NotificationsScreen extends StatefulWidget {
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
 
-class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsBindingObserver {
+class _NotificationsScreenState extends State<NotificationsScreen>
+    with WidgetsBindingObserver, RouteAware {
   List<Map<String, dynamic>> _notifications = [];
   bool _isLoading = true;
+  ModalRoute<void>? _route;
 
   @override
   void initState() {
@@ -26,9 +31,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute && route != _route) {
+      appRouteObserver.unsubscribe(this);
+      _route = route;
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    appRouteObserver.unsubscribe(this);
     super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    // User returned to this screen from another; refresh so background/closed notifications appear.
+    _load();
   }
 
   @override
@@ -39,15 +62,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
   }
 
   Future<void> _load() async {
+    debugPrint('[FCM] NotificationsScreen: _load() started');
     setState(() => _isLoading = true);
     final list = await FcmService.getStoredNotifications();
+    final filtered = list.where((e) {
+      final title = (e['title']?.toString() ?? '').trim();
+      final body = (e['body']?.toString() ?? '').trim();
+      return title.isNotEmpty || body.isNotEmpty;
+    }).toList();
+    debugPrint('[FCM] NotificationsScreen: _load() got ${list.length} stored, ${filtered.length} after filter (title/body not empty)');
     if (mounted) {
       setState(() {
-        _notifications = list.where((e) {
-          final title = (e['title']?.toString() ?? '').trim();
-          final body = (e['body']?.toString() ?? '').trim();
-          return title.isNotEmpty || body.isNotEmpty;
-        }).toList();
+        _notifications = filtered;
         _isLoading = false;
       });
     }
@@ -76,7 +102,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
       body: RefreshIndicator(
         onRefresh: _load,
         child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: AppTabLoader())
             : _notifications.isEmpty
                 ? _buildEmpty()
                 : ListView.builder(
@@ -105,7 +131,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
           ),
           const SizedBox(height: 8),
           Text(
-            'Notifications received in foreground or background\nappear here for 24 hours.',
+            'Notifications received in foreground, background, or when the app was closed\nappear here for 24 hours. You don\'t need to tap them.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
           ),

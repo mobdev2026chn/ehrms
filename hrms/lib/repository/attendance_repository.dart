@@ -19,8 +19,18 @@ class AttendanceRepository {
     String? city,
     String? pincode,
     String? selfie,
+    String? movementType,
   }) async {
-    return _attendance.checkIn(lat, lng, address, area: area, city: city, pincode: pincode, selfie: selfie);
+    return _attendance.checkIn(
+      lat,
+      lng,
+      address,
+      area: area,
+      city: city,
+      pincode: pincode,
+      selfie: selfie,
+      movementType: movementType,
+    );
   }
 
   /// Check out. Returns { success, data?, message? }.
@@ -32,8 +42,18 @@ class AttendanceRepository {
     String? city,
     String? pincode,
     String? selfie,
+    String? movementType,
   }) async {
-    return _attendance.checkOut(lat, lng, address, area: area, city: city, pincode: pincode, selfie: selfie);
+    return _attendance.checkOut(
+      lat,
+      lng,
+      address,
+      area: area,
+      city: city,
+      pincode: pincode,
+      selfie: selfie,
+      movementType: movementType,
+    );
   }
 
   /// Get today's attendance. Returns { success, data?, message? }.

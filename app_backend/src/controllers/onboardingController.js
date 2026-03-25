@@ -6,6 +6,7 @@ const DocumentRequirement = require('../models/DocumentRequirement');
 const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
 const fs = require('fs');
+const digitalOceanService = require('../services/digitalOceanService');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -339,53 +340,51 @@ const uploadDocument = async (req, res) => {
             });
         }
 
+        let fileUrl;
+        const buffer = fs.readFileSync(file.path);
+        const fileExt = (file.originalname && file.originalname.match(/\.[a-zA-Z0-9]+$/)) ? file.originalname.match(/\.[a-zA-Z0-9]+$/)[0].slice(1) : (file.mimetype && file.mimetype.includes('png') ? 'png' : file.mimetype && file.mimetype.includes('jpeg') ? 'jpg' : 'pdf');
 
-        // Upload to Cloudinary
-        let uploadResult;
-        try {
-            // Upload file to Cloudinary
-            uploadResult = await cloudinary.uploader.upload(file.path, {
-                folder: 'hrms/onboarding',
-                resource_type: 'auto',
-                public_id: `onboarding_${onboardingId}_${documentId}_${Date.now()}`,
-            });
+        // Prefer Digital Ocean Spaces (HRMS folder structure: employees/{employeeName}/documents/onboarding/)
+        const staff = await Staff.findById(onboarding.staffId).select('name businessId').lean();
+        const companyId = staff?.businessId ? String(staff.businessId) : undefined;
+        const employeeName = staff?.name || 'unknown';
+        const doResult = await digitalOceanService.uploadOnboardingDocument(buffer, req, companyId, employeeName, onboardingId, documentId, fileExt);
 
-            console.log('[uploadDocument] Cloudinary upload successful:', {
-                url: uploadResult.secure_url,
-                publicId: uploadResult.public_id
-            });
-
-            // Delete local file after upload
+        if (doResult.success) {
+            fileUrl = doResult.url;
             if (file.path && fs.existsSync(file.path)) {
-                fs.unlinkSync(file.path);
+                try { fs.unlinkSync(file.path); } catch (e) { /* ignore */ }
             }
-        } catch (uploadError) {
-            console.error('[uploadDocument] Cloudinary upload failed:', uploadError.message);
-            
-            // Clean up local file
-            if (file.path && fs.existsSync(file.path)) {
-                try {
-                    fs.unlinkSync(file.path);
-                } catch (cleanupError) {
-                    console.error('[uploadDocument] Failed to cleanup local file:', cleanupError.message);
+        } else {
+            // Fallback to Cloudinary
+            let uploadResult;
+            try {
+                uploadResult = await cloudinary.uploader.upload(file.path, {
+                    folder: 'hrms/onboarding',
+                    resource_type: 'auto',
+                    public_id: `onboarding_${onboardingId}_${documentId}_${Date.now()}`,
+                });
+                fileUrl = uploadResult?.secure_url;
+                if (file.path && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+            } catch (uploadError) {
+                console.error('[uploadDocument] Cloudinary upload failed:', uploadError.message);
+                if (file.path && fs.existsSync(file.path)) {
+                    try { fs.unlinkSync(file.path); } catch (cleanupError) { /* ignore */ }
                 }
+                return res.status(500).json({
+                    success: false,
+                    error: { message: 'Failed to upload document: ' + (doResult.error || uploadError.message) }
+                });
             }
-
-            return res.status(500).json({
-                success: false,
-                error: { message: 'Failed to upload document to Cloudinary: ' + uploadError.message }
-            });
+            if (!fileUrl) {
+                return res.status(500).json({
+                    success: false,
+                    error: { message: 'Failed to upload document' }
+                });
+            }
         }
 
-        if (!uploadResult || !uploadResult.secure_url) {
-            return res.status(500).json({
-                success: false,
-                error: { message: 'Failed to upload document to Cloudinary' }
-            });
-        }
-
-        // Update document with Cloudinary URL
-        const fileUrl = uploadResult.secure_url;
+        // Update document with uploaded URL
         document.url = fileUrl;
         document.status = 'PENDING';
         document.uploadedAt = new Date();

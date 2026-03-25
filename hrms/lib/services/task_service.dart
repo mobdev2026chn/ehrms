@@ -1,7 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:hrms/config/constants.dart';
 import 'package:hrms/models/task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hrms/services/geo/live_tracking_service.dart';
+import 'package:hrms/services/geo/movement_classification_service.dart';
+import 'package:hrms/services/geo/tracking_outlier_filter_service.dart';
 import 'api_client.dart';
 
 class TaskService {
@@ -121,6 +125,79 @@ class TaskService {
     }
   }
 
+  /// GPS points from Tracking until Arrived (for task detail map polyline).
+  /// Returns [{lat, lng}, ...] sorted by time, trimmed at first `status: arrived` or [arrivalTime].
+  Future<List<Map<String, double>>> getTravelledPathUntilArrived(
+    String taskMongoId, {
+    DateTime? arrivalTime,
+  }) async {
+    try {
+      await _setToken();
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/tasks/$taskMongoId/tracking-path',
+      );
+      final path = response.data?['path'] as List<dynamic>? ?? [];
+      return _filterTrackingPathUntilArrived(path, arrivalTime);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static List<Map<String, double>> _filterTrackingPathUntilArrived(
+    List<dynamic> path,
+    DateTime? arrivalTime,
+  ) {
+    DateTime? parseTs(dynamic v) {
+      if (v == null) return null;
+      if (v is String) return DateTime.tryParse(v);
+      if (v is Map && v[r'$date'] != null) {
+        return DateTime.tryParse(v[r'$date'].toString());
+      }
+      return null;
+    }
+
+    final rows = <Map<String, dynamic>>[];
+    for (final r in path) {
+      if (r is! Map) continue;
+      final lat = (r['latitude'] as num?)?.toDouble();
+      final lng = (r['longitude'] as num?)?.toDouble();
+      if (lat == null || lng == null) continue;
+      rows.add({
+        'lat': lat,
+        'lng': lng,
+        'ts': parseTs(r['timestamp']) ?? DateTime.fromMillisecondsSinceEpoch(0),
+        'status': r['status']?.toString().toLowerCase(),
+      });
+    }
+    if (rows.isEmpty) return [];
+    rows.sort((a, b) => (a['ts'] as DateTime).compareTo(b['ts'] as DateTime));
+
+    int endExclusive = rows.length;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i]['status'] == 'arrived') {
+        endExclusive = i + 1;
+        break;
+      }
+    }
+    if (endExclusive == rows.length && arrivalTime != null) {
+      endExclusive = 0;
+      for (var i = 0; i < rows.length; i++) {
+        final t = rows[i]['ts'] as DateTime;
+        if (t.isAfter(arrivalTime)) break;
+        endExclusive = i + 1;
+      }
+    }
+
+    final out = <Map<String, double>>[];
+    for (var i = 0; i < endExclusive; i++) {
+      out.add({
+        'lat': rows[i]['lat'] as double,
+        'lng': rows[i]['lng'] as double,
+      });
+    }
+    return out;
+  }
+
   /// Fetch full task completion report: task, timeline, route points from DB.
   Future<TaskCompletionReport> getTaskCompletionReport(String taskId) async {
     try {
@@ -199,6 +276,11 @@ class TaskService {
     double lng, {
     int? batteryPercent,
     String? movementType,
+    String? address,
+    String? fullAddress,
+    String? city,
+    String? area,
+    String? pincode,
   }) async {
     await _setToken();
     final body = <String, dynamic>{
@@ -208,33 +290,112 @@ class TaskService {
     };
     if (batteryPercent != null) body['batteryPercent'] = batteryPercent;
     if (movementType != null) body['movementType'] = movementType;
+    if (address != null && address.isNotEmpty) body['address'] = address;
+    if (fullAddress != null && fullAddress.isNotEmpty) {
+      body['fullAddress'] = fullAddress;
+    }
+    if (city != null && city.isNotEmpty) body['city'] = city;
+    if (area != null && area.isNotEmpty) body['area'] = area;
+    if (pincode != null && pincode.isNotEmpty) body['pincode'] = pincode;
     await _api.dio.post<dynamic>('/tasks/$taskMongoId/location', data: body);
   }
 
   /// Store tracking point in Tracking collection (separate route, not socket.io).
   /// Call on Start Ride and every 15 sec during Live Tracking.
   /// Payload includes currentLat, currentLng, destinationLat, destinationLng.
-  Future<void> storeTracking(
+  Future<bool> storeTracking(
     String taskMongoId,
     double lat,
     double lng, {
     int? batteryPercent,
     String? movementType,
+    double? accuracyM,
+    double? speedMps,
+    int consecutiveLowSpeed = 0,
     double? destinationLat,
     double? destinationLng,
+    String? address,
+    String? fullAddress,
+    String? city,
+    String? area,
+    String? pincode,
   }) async {
     await _setToken();
+    final capturedAt = DateTime.now().toUtc();
+    final outlierDecision = await TrackingOutlierFilterService.evaluate(
+      scope: TrackingOutlierFilterService.taskScope(taskMongoId),
+      lat: lat,
+      lng: lng,
+      timestamp: capturedAt,
+      movementType: movementType ?? kMovementStop,
+      accuracyM: accuracyM,
+      sensorSpeedMps: speedMps,
+    );
+    if (outlierDecision.shouldSkip) {
+      if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        debugPrint(
+          '[Trackings] task_store SKIP outlier (fg) taskId=$taskMongoId '
+          'reason=${outlierDecision.reason} '
+          'distance=${outlierDecision.distanceM?.toStringAsFixed(2) ?? "—"}m '
+          'speed=${outlierDecision.speedKmh?.toStringAsFixed(2) ?? "—"}kmh',
+        );
+      }
+      return false;
+    }
+    final resolvedMovementType = outlierDecision.movementType;
     final body = <String, dynamic>{
       'taskId': taskMongoId,
       'lat': lat,
       'lng': lng,
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'timestamp': capturedAt.toIso8601String(),
     };
     if (batteryPercent != null) body['batteryPercent'] = batteryPercent;
-    if (movementType != null) body['movementType'] = movementType;
+    body['movementType'] = resolvedMovementType;
     if (destinationLat != null) body['destinationLat'] = destinationLat;
     if (destinationLng != null) body['destinationLng'] = destinationLng;
-    await _api.dio.post<dynamic>('/tracking/store', data: body);
+    if (address != null && address.isNotEmpty) body['address'] = address;
+    if (fullAddress != null && fullAddress.isNotEmpty) {
+      body['fullAddress'] = fullAddress;
+    }
+    if (city != null && city.isNotEmpty) body['city'] = city;
+    if (area != null && area.isNotEmpty) body['area'] = area;
+    if (pincode != null && pincode.isNotEmpty) body['pincode'] = pincode;
+    try {
+      await _api.dio.post<dynamic>('/tracking/store', data: body);
+      await LiveTrackingService.persistStoredTrackingPoint(taskMongoId, lat, lng);
+      await LiveTrackingService.persistLastSentPosition(
+        lat,
+        lng,
+        movementType: resolvedMovementType,
+        consecutiveLowSpeed:
+            resolvedMovementType == kMovementStop ? consecutiveLowSpeed : 0,
+      );
+      await TrackingOutlierFilterService.rememberValidRecord(
+        scope: TrackingOutlierFilterService.taskScope(taskMongoId),
+        lat: lat,
+        lng: lng,
+        timestamp: capturedAt,
+        movementType: resolvedMovementType,
+        accuracyM: accuracyM,
+      );
+      if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        debugPrint(
+          '[Trackings] task_store OK (fg) taskId=$taskMongoId '
+          'lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)} '
+          'movement=$resolvedMovementType '
+          'acc=${accuracyM?.toStringAsFixed(1) ?? "—"}m',
+        );
+      }
+      return true;
+    } on DioException catch (e) {
+      if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        debugPrint(
+          '[Trackings] task_store FAIL (fg) taskId=$taskMongoId '
+          '${e.response?.statusCode} ${e.response?.data}',
+        );
+      }
+      rethrow;
+    }
   }
 
   /// Update task progress steps (reachedLocation, photoProof, formFilled, otpVerified).
@@ -292,6 +453,41 @@ class TaskService {
     return Task.fromJson(data);
   }
 
+  /// Upload check-in or check-out selfie for task. [type] must be 'checkin' or 'checkout'.
+  /// Returns updated task with progressSteps.checkinCustomerPlace or checkoutCustomerPlace set.
+  Future<Task> uploadTaskSelfie(
+    String taskMongoId,
+    String type,
+    String filePath, {
+    double? lat,
+    double? lng,
+    String? fullAddress,
+  }) async {
+    await _setToken();
+    if (type != 'checkin' && type != 'checkout') {
+      throw Exception('Type must be checkin or checkout');
+    }
+    final formData = FormData.fromMap({
+      'photo': await MultipartFile.fromFile(filePath, filename: 'photo.jpg'),
+      'type': type,
+      if (lat != null) 'lat': lat.toString(),
+      if (lng != null) 'lng': lng.toString(),
+      if (fullAddress != null && fullAddress.isNotEmpty)
+        'fullAddress': fullAddress,
+    });
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/tasks/$taskMongoId/selfie',
+      data: formData,
+      options: Options(
+        contentType: 'multipart/form-data',
+        sendTimeout: const Duration(seconds: 30),
+      ),
+    );
+    final data = response.data;
+    if (data == null) throw Exception('Failed to upload selfie');
+    return Task.fromJson(data);
+  }
+
   /// Send OTP to customer email. Returns { success: true/false, message: string } for user-friendly success/failure feedback.
   Future<Map<String, dynamic>> sendOtp(String taskMongoId) async {
     await _setToken();
@@ -303,7 +499,8 @@ class TaskService {
       final success = data?['success'] == true;
       return {
         'success': success,
-        'message': data?['message'] as String? ??
+        'message':
+            data?['message'] as String? ??
             (success ? 'OTP sent to customer email' : 'Failed to send OTP'),
       };
     } on DioException catch (e) {
@@ -311,12 +508,13 @@ class TaskService {
       final msg = body is Map ? (body['message'] as String?) : null;
       return {
         'success': false,
-        'message': msg ??
+        'message':
+            msg ??
             (e.response?.statusCode == 404
                 ? 'Task not found.'
                 : e.response?.statusCode == 400
-                    ? 'Customer email is required. Please add email to customer.'
-                    : 'We couldn\'t deliver the OTP to the customer email. Please try again or check email configuration.'),
+                ? 'Customer email is required. Please add email to customer.'
+                : 'We couldn\'t deliver the OTP to the customer email. Please try again or check email configuration.'),
       };
     } catch (e) {
       return {
@@ -357,6 +555,8 @@ class TaskService {
     required String exitType,
     double? lat,
     double? lng,
+    String? fullAddress,
+    String? pincode,
   }) async {
     await _setToken();
     final data = <String, dynamic>{
@@ -366,6 +566,10 @@ class TaskService {
     };
     if (lat != null) data['lat'] = lat;
     if (lng != null) data['lng'] = lng;
+    if (fullAddress != null && fullAddress.isNotEmpty) {
+      data['fullAddress'] = fullAddress;
+    }
+    if (pincode != null && pincode.isNotEmpty) data['pincode'] = pincode;
     await _api.dio.post<dynamic>('/tracking/exit', data: data);
   }
 
@@ -380,6 +584,7 @@ class TaskService {
     double? tripDistanceKm,
     int? tripDurationSeconds,
     Map<String, dynamic>? sourceLocation,
+    Map<String, dynamic>? travelActivityDuration,
   }) async {
     await _setToken();
     final data = <String, dynamic>{
@@ -396,6 +601,9 @@ class TaskService {
     if (tripDurationSeconds != null)
       data['tripDurationSeconds'] = tripDurationSeconds;
     if (sourceLocation != null) data['sourceLocation'] = sourceLocation;
+    if (travelActivityDuration != null) {
+      data['travelActivityDuration'] = travelActivityDuration;
+    }
     await _api.dio.post<dynamic>('/tracking/arrived', data: data);
   }
 
@@ -418,10 +626,16 @@ class TaskService {
   }
 
   /// Mark task as completed (sets status and completedDate).
-  Future<Task> endTask(String taskMongoId) async {
+  Future<Task> endTask(
+    String taskMongoId, {
+    Map<String, dynamic>? travelActivityDuration,
+  }) async {
     await _setToken();
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/tasks/$taskMongoId/end',
+      data: travelActivityDuration == null
+          ? null
+          : {'travelActivityDuration': travelActivityDuration},
     );
     final data = response.data;
     if (data == null) throw Exception('Failed to end task');
@@ -443,9 +657,7 @@ class TaskService {
     if (data == null) return [];
     final list = data['data']?['templates'] as List?;
     if (list == null) return [];
-    return list
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
   /// Check if form response exists for task+staff.
@@ -462,9 +674,7 @@ class TaskService {
     if (data == null) return [];
     final list = data['data']?['responses'] as List?;
     if (list == null) return [];
-    return list
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
   /// Submit form response. Returns created response.

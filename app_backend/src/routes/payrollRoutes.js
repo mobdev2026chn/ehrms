@@ -5,6 +5,7 @@ const {
     getPayrolls,
     getPayrollById,
     getPayrollStats,
+    previewPayrollEmployee,
     createPayroll,
     exportPayroll,
     generatePayroll,
@@ -18,6 +19,7 @@ const {
 // Routes from the screenshot and reference implementation
 router.get('/', protect, getPayrolls);
 router.get('/stats', protect, getPayrollStats);
+router.post('/preview', protect, previewPayrollEmployee);
 router.get('/export', protect, exportPayroll);
 router.get('/:id', protect, getPayrollById);
 router.post('/', protect, createPayroll);

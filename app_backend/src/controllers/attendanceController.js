@@ -1,21 +1,38 @@
 const Attendance = require('../models/Attendance');
+const AttendanceLog = require('../models/AttendanceLog');
 const Staff = require('../models/Staff');
 const User = require('../models/User'); // Import if needed
-const AttendanceTemplate = require('../models/AttendanceTemplate'); // Register model
+require('../models/AttendanceTemplate'); // ensure model registered for populate/lean paths via utils
 const WeeklyHolidayTemplate = require('../models/WeeklyHolidayTemplate');
 const Tracking = require('../models/Tracking');
 const { reverseGeocode } = require('../services/geocodingService');
+const { logTrackingWrite } = require('../utils/trackingLogger');
 const { calculateAttendanceStats } = require('./payrollController');
-const cloudinary = require('cloudinary').v2;
+const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
+const { getHolidayTemplateForStaff, getHolidayForDate, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
+const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
+const digitalOceanService = require('../services/digitalOceanService');
 
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-});
+/** Build a single address string from address, area, city, pincode. */
+function buildAddressString(address, area, city, pincode) {
+  const parts = [address, area, city, pincode].filter(Boolean);
+  return parts.length ? parts.join(', ') : '';
+}
 
-/** Insert presence tracking into trackings collection (presenceStatus: in_office on check-in, out_of_office on check-out). */
-async function insertAttendanceTracking(staffId, staffName, lat, lng, presenceStatus, address, area, city, pincode) {
+/** Insert attendance punch tracking into trackings collection. */
+async function insertAttendanceTracking(
+    staffId,
+    staffName,
+    lat,
+    lng,
+    presenceStatus,
+    trackingStatus,
+    movementType,
+    address,
+    area,
+    city,
+    pincode
+) {
     try {
         let fullAddress = address || '';
         if (!fullAddress && (area || city || pincode)) {
@@ -33,18 +50,30 @@ async function insertAttendanceTracking(staffId, staffName, lat, lng, presenceSt
             }
         }
         const now = new Date();
-        await Tracking.create({
+        const doc = {
             staffId,
             staffName: staffName || undefined,
             latitude: Number(lat),
             longitude: Number(lng),
             timestamp: now,
             time: now,
-            status: 'arrived',
+            status: trackingStatus,
             presenceStatus,
+            movementType: movementType || undefined,
             address: address || fullAddress || undefined,
             fullAddress: fullAddress || address || undefined,
+            area: area || undefined,
+            city: city || undefined,
             pincode: pincode || undefined,
+        };
+        const created = await Tracking.create(doc);
+        logTrackingWrite('attendance_punch', {
+            _id: String(created._id),
+            staffId: String(staffId),
+            staffName: staffName || undefined,
+            latitude: doc.latitude,
+            longitude: doc.longitude,
+            presenceStatus,
         });
     } catch (e) {
         console.error('[AttendanceTracking] Insert failed:', e.message);
@@ -113,48 +142,6 @@ function isShiftAssignedForStaff(company, staff) {
     return match;
 }
 
-/**
- * Get week-off config for a staff from staff's WeeklyHolidayTemplate only.
- * Uses weeklyholidaytemplates collection via staff.weeklyHolidayTemplateId.
- * Does NOT use business/company collection for week-off.
- * @param {Object} staff - Staff doc (must have weeklyHolidayTemplateId populated or as ObjectId)
- * @param {Object} [company] - Unused; kept for API compatibility
- * @returns {Promise<{ weeklyOffPattern: string, weeklyHolidays: Array<{day: number, name?: string}> }>}
- */
-async function getWeekOffConfigForStaff(staff, company) {
-    const defaultConfig = {
-        weeklyOffPattern: 'standard',
-        weeklyHolidays: [{ day: 0, name: 'Sunday' }],
-    };
-
-    const templateId = staff?.weeklyHolidayTemplateId;
-    if (!templateId) return defaultConfig;
-
-    // Use populated template if already loaded
-    let template = staff.weeklyHolidayTemplateId;
-    if (template && typeof template === 'object' && template._id != null) {
-        if (template.isActive === false) return defaultConfig;
-        const s = template.settings || {};
-        return {
-            weeklyOffPattern: s.weeklyOffPattern || defaultConfig.weeklyOffPattern,
-            weeklyHolidays: Array.isArray(s.weeklyHolidays) && s.weeklyHolidays.length > 0
-                ? s.weeklyHolidays
-                : defaultConfig.weeklyHolidays,
-        };
-    }
-
-    // Fetch from WeeklyHolidayTemplate collection
-    const doc = await WeeklyHolidayTemplate.findById(templateId).lean();
-    if (!doc || doc.isActive === false) return defaultConfig;
-    const s = doc.settings || {};
-    return {
-        weeklyOffPattern: s.weeklyOffPattern || defaultConfig.weeklyOffPattern,
-        weeklyHolidays: Array.isArray(s.weeklyHolidays) && s.weeklyHolidays.length > 0
-            ? s.weeklyHolidays
-            : defaultConfig.weeklyHolidays,
-    };
-}
-
 function normalizeTemplate(templateDoc) {
     if (!templateDoc) return {};
     let t = templateDoc.toObject ? templateDoc.toObject() : templateDoc;
@@ -175,24 +162,30 @@ function normalizeTemplate(templateDoc) {
     };
 }
 
-const uploadToCloudinary = async (base64String) => {
+/** Upload attendance selfie to Digital Ocean S3. Returns public URL or null. */
+async function uploadAttendanceSelfie(base64String, req, companyId, employeeName, type) {
     try {
         if (!base64String) return null;
-        let uploadStr = base64String;
-        if (!base64String.startsWith('data:image')) {
-            uploadStr = 'data:image/jpeg;base64,' + base64String;
+        let base64Data = base64String;
+        if (base64String.startsWith('data:image')) {
+            base64Data = base64String.replace(/^data:image\/\w+;base64,/, '');
+        } else if (!base64String.startsWith('/9j/') && !base64String.startsWith('iVBOR')) {
+            base64Data = base64String;
         }
-
-        const uploadResponse = await cloudinary.uploader.upload(uploadStr, {
-            folder: 'attendance_selfies',
-            resource_type: 'image'
-        });
-        return uploadResponse.secure_url;
+        const buffer = Buffer.from(base64Data, 'base64');
+        const result = await digitalOceanService.uploadAttendanceImage(
+            buffer,
+            req,
+            companyId,
+            employeeName || 'unknown',
+            type || 'punch-in'
+        );
+        return result.success ? result.url : null;
     } catch (error) {
-        console.error('Cloudinary Upload Error:', error.message);
-        return null; // Should we fail? For now, allow check-in but log error
+        console.error('[Attendance] Selfie upload error:', error.message);
+        return null;
     }
-};
+}
 
 // Helper function to calculate salary structure
 function calculateSalaryStructure(salary) {
@@ -385,14 +378,8 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 const attendanceMonth0Based = attendanceDate.getMonth();
                 let monthHolidays = [];
                 if (staff.businessId) {
-                    const HolidayTemplate = require('../models/HolidayTemplate');
-                    const holidayTemplate = await HolidayTemplate.findOne({ businessId: staff.businessId, isActive: true });
-                    if (holidayTemplate && holidayTemplate.holidays) {
-                        monthHolidays = holidayTemplate.holidays.filter(h => {
-                            const d = new Date(h.date);
-                            return d.getMonth() === attendanceMonth0Based && d.getFullYear() === attendanceYear;
-                        });
-                    }
+                    const holidayTemplate = await getHolidayTemplateForStaff(staff);
+                    monthHolidays = getHolidaysForMonth(holidayTemplate, attendanceYear, attendanceMonth1Based);
                 }
                 const businessSettings = company?.settings?.business || {};
                 const weeklyOffPattern = businessSettings.weeklyOffPattern || 'standard';
@@ -472,7 +459,12 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
 // @route   POST /api/attendance/checkin
 // @access  Private
 const checkIn = async (req, res) => {
-    const { latitude, longitude, address, area, city, pincode, selfie, businessId: bodyBusinessId } = req.body;
+    const { latitude, longitude, address, area, city, pincode, selfie, movementType, businessId: bodyBusinessId, source: bodySource } = req.body;
+
+    const VALID_SOURCES = ['app', 'software', 'webemp', 'webadmin'];
+    const source = (bodySource && VALID_SOURCES.includes(String(bodySource).toLowerCase()))
+        ? String(bodySource).toLowerCase()
+        : null;
 
     // Use req.staff from middleware
     if (!req.staff) {
@@ -499,9 +491,13 @@ const checkIn = async (req, res) => {
     const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
 
     try {
-        // Re-fetch staff with populated branch and template
-        const staff = await Staff.findById(staffId).populate('branchId').populate('attendanceTemplateId').populate('weeklyHolidayTemplateId');
-        const template = normalizeTemplate(staff.attendanceTemplateId);
+        // Re-fetch staff (keep attendanceTemplateId as ObjectId; resolve template via collection lookup)
+        const staff = await Staff.findById(staffId)
+            .populate('branchId')
+            .populate('weeklyHolidayTemplateId')
+            .populate('holidayTemplateId');
+        const templateDoc = await loadAttendanceTemplateForStaff(staff);
+        const template = normalizeTemplate(templateDoc);
 
         // Salary must be configured to allow check-in (required for fine/late/early storage and payroll)
         const salaryStructure = staff.salary ? calculateSalaryStructure(staff.salary) : null;
@@ -546,18 +542,8 @@ const checkIn = async (req, res) => {
         }
 
         // 2. Check for Holiday
-        const HolidayTemplate = require('../models/HolidayTemplate');
-        const holidayTemplate = await HolidayTemplate.findOne({
-            businessId: staff.businessId,
-            isActive: true
-        });
-        let isHoliday = false;
-        if (holidayTemplate) {
-            isHoliday = (holidayTemplate.holidays || []).some(h => {
-                const hd = new Date(h.date);
-                return hd.getDate() === now.getDate() && hd.getMonth() === now.getMonth() && hd.getFullYear() === now.getFullYear();
-            });
-        }
+        const holidayTemplate = await getHolidayTemplateForStaff(staff);
+        const isHoliday = !!getHolidayForDate(holidayTemplate, now);
         if (isHoliday && template.allowAttendanceOnHolidays === false) {
             return res.status(403).json({ message: 'Today is a Holiday. Check-in not allowed.' });
         }
@@ -671,7 +657,7 @@ const checkIn = async (req, res) => {
             // Update existing Half Day record with punchIn (do not create new, do not return "Already checked in")
             let selfieUrl = null;
             if (selfie && template.requireSelfie !== false) {
-                selfieUrl = await uploadToCloudinary(selfie);
+                selfieUrl = await uploadAttendanceSelfie(selfie, req, staff.businessId ? String(staff.businessId) : undefined, staff.name, 'punch-in');
             }
             const fineShiftStartTime = shiftTiming?.startTime || template.shiftStartTime || '09:30';
             const fineShiftEndTime = shiftTiming?.endTime || template.shiftEndTime || '18:30';
@@ -682,8 +668,13 @@ const checkIn = async (req, res) => {
                 shiftEndTime: fineShiftEndTime,
                 gracePeriodMinutes: fineGracePeriod
             };
-            // Always calculate fine so lateMinutes/fineAmount respect grace period
-            let fineResult = await calculateCombinedFine(now, null, startOfDay, fineTemplate, staff, company, activeLeave);
+            /*
+             * Fine calculation is handled by web/server flows.
+             * App check-in/out should NOT calculate or store fine fields in attendances.
+             *
+             * Always calculate fine so lateMinutes/fineAmount respect grace period
+             * let fineResult = await calculateCombinedFine(now, null, startOfDay, fineTemplate, staff, company, activeLeave);
+             */
             existing.punchIn = now;
 
             // Update location using Mongoose set() method for nested paths to avoid validation issues
@@ -713,17 +704,35 @@ const checkIn = async (req, res) => {
                 existing.businessId = staff.businessId;
                 console.log('[Attendance checkIn] (half-day update) storing businessId in attendances:', staff.businessId?.toString());
             }
-            existing.lateMinutes = fineResult.lateMinutes;
-            existing.earlyMinutes = fineResult.earlyMinutes ?? 0;
-            existing.fineHours = fineResult.fineHours ?? 0;
-            existing.fineAmount = fineResult.fineAmount ?? 0;
+            /*
+             * App flow: do not set fine fields into attendances collection.
+             * existing.lateMinutes = fineResult.lateMinutes;
+             * existing.earlyMinutes = fineResult.earlyMinutes ?? 0;
+             * existing.fineHours = fineResult.fineHours ?? 0;
+             * existing.fineAmount = fineResult.fineAmount ?? 0;
+             */
             existing.workHours = 0;
-            console.log('[Fine CHECK-IN] (half-day update) INSERTING: checkInTime=', existing.punchIn?.toISOString?.(), 'checkOutTime=null', 'lateMinutes=', existing.lateMinutes, 'earlyMinutes=', existing.earlyMinutes, 'fineAmount=', existing.fineAmount);
+            existing.isPaidLeave = false;  // check-in: set false
+            if (source) existing.source = source;
+            // console.log('[Fine CHECK-IN] (half-day update) fine fields are not stored for app punch flow');
             await existing.save();
-            await insertAttendanceTracking(staffId, staff.name, userLat, userLng, 'in_office', address, area, city, pincode);
             const response = existing.toObject ? existing.toObject() : existing;
             if (warnings.length > 0) response.warnings = warnings;
             console.log('[Attendance checkIn] success (half-day update)', { staffId: staffId?.toString(), attendanceId: existing._id?.toString() });
+            void Promise.allSettled([
+                AttendanceLog.create({
+                    attendanceId: existing._id,
+                    action: 'PUNCH_IN',
+                    performedBy: staffId,
+                    performedByName: staff.name || undefined,
+                    performedByEmail: staff.email || undefined,
+                    selfieUrl: selfieUrl || undefined,
+                    punchInDateTime: now,
+                    punchInAddress: buildAddressString(address, area, city, pincode) || undefined,
+                    timestamp: now
+                }),
+                insertAttendanceTracking(staffId, staff.name, userLat, userLng, 'in_office', 'checked_in', movementType, address, area, city, pincode)
+            ]);
             return res.status(200).json(response);
         }
 
@@ -731,10 +740,10 @@ const checkIn = async (req, res) => {
             return res.status(400).json({ message: 'Already checked in today' });
         }
 
-        // Upload Selfie
+        // Upload Selfie to S3 (attendance folder)
         let selfieUrl = null;
         if (selfie && template.requireSelfie !== false) {
-            selfieUrl = await uploadToCloudinary(selfie);
+            selfieUrl = await uploadAttendanceSelfie(selfie, req, staff.businessId ? String(staff.businessId) : undefined, staff.name, 'punch-in');
         }
 
         const locationData = {
@@ -768,10 +777,15 @@ const checkIn = async (req, res) => {
             gracePeriodMinutes: fineGracePeriod
         };
         
-        // Always calculate fine so lateMinutes/fineAmount are set (0 when on time or within grace)
-        const fineResult = await calculateCombinedFine(now, null, startOfDay, fineTemplate, staff, company, activeLeave);
-
-        console.log('[Fine CHECK-IN] INSERTING: checkInTime=', now.toISOString(), 'checkOutTime=null', 'lateMinutes=', fineResult.lateMinutes, 'earlyMinutes=', fineResult.earlyMinutes, 'fineAmount=', fineResult.fineAmount);
+        /*
+         * Fine calculation is handled by web/server flows.
+         * App check-in/out should NOT calculate or store fine fields in attendances.
+         *
+         * Always calculate fine so lateMinutes/fineAmount are set (0 when on time or within grace)
+         * const fineResult = await calculateCombinedFine(now, null, startOfDay, fineTemplate, staff, company, activeLeave);
+         *
+         * console.log('[Fine CHECK-IN] INSERTING:', fineResult);
+         */
         // Create initial attendance record. Store businessId from staff (staffs collection).
         const businessIdToStore = staff.businessId;
         console.log('[Attendance checkIn] storing in attendances: businessId=', businessIdToStore?.toString(), '(from staffs collection; body businessId=', bodyBusinessId ?? 'not sent', ')');
@@ -782,19 +796,21 @@ const checkIn = async (req, res) => {
             date: startOfDay,
             punchIn: now,
             status: (isHoliday || isWeeklyOff) ? 'Present' : 'Pending',
+            isPaidLeave: false,  // check-in attendance: default false
             location: locationData,
             punchInSelfie: selfieUrl,
             ipAddress: req.ip || req.connection.remoteAddress,
             punchInIpAddress: req.ip || req.connection.remoteAddress,
+            ...(source && { source }),
             // Fine calculation fields
             workHours: 0,
-            fineHours: fineResult.fineHours,
-            lateMinutes: fineResult.lateMinutes,
-            earlyMinutes: fineResult.earlyMinutes,
-            fineAmount: fineResult.fineAmount
+            /*
+             * fineHours: fineResult.fineHours,
+             * lateMinutes: fineResult.lateMinutes,
+             * earlyMinutes: fineResult.earlyMinutes,
+             * fineAmount: fineResult.fineAmount
+             */
         });
-
-        await insertAttendanceTracking(staffId, staff.name, userLat, userLng, 'in_office', address, area, city, pincode);
 
         // Include warnings in response if any
         const response = attendance.toObject ? attendance.toObject() : attendance;
@@ -803,6 +819,20 @@ const checkIn = async (req, res) => {
         }
 
         console.log('[Attendance checkIn] success', { staffId: staffId?.toString(), attendanceId: response?._id?.toString?.() || response?.id, businessIdStored: response?.businessId?.toString?.() ?? response?.businessId });
+        void Promise.allSettled([
+            AttendanceLog.create({
+                attendanceId: attendance._id,
+                action: 'PUNCH_IN',
+                performedBy: staffId,
+                performedByName: staff.name || undefined,
+                performedByEmail: staff.email || undefined,
+                selfieUrl: selfieUrl || undefined,
+                punchInDateTime: now,
+                punchInAddress: buildAddressString(address, area, city, pincode) || undefined,
+                timestamp: now
+            }),
+            insertAttendanceTracking(staffId, staff.name, userLat, userLng, 'in_office', 'checked_in', movementType, address, area, city, pincode)
+        ]);
         res.status(201).json(response);
 
     } catch (error) {
@@ -815,7 +845,12 @@ const checkIn = async (req, res) => {
 // @route   PUT /api/attendance/checkout
 // @access  Private
 const checkOut = async (req, res) => {
-    const { latitude, longitude, address, area, city, pincode, selfie } = req.body;
+    const { latitude, longitude, address, area, city, pincode, selfie, movementType, source: bodySource } = req.body;
+
+    const VALID_SOURCES = ['app', 'software', 'webemp', 'webadmin'];
+    const source = (bodySource && VALID_SOURCES.includes(String(bodySource).toLowerCase()))
+        ? String(bodySource).toLowerCase()
+        : null;
 
     if (!req.staff) {
         return res.status(404).json({ message: 'Staff record not found' });
@@ -832,13 +867,17 @@ const checkOut = async (req, res) => {
     const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
 
     try {
-        const staff = await Staff.findById(staffId).populate('branchId').populate('attendanceTemplateId');
+        const staff = await Staff.findById(staffId)
+            .populate('branchId')
+            .populate('weeklyHolidayTemplateId')
+            .populate('holidayTemplateId');
         const Company = require('../models/Company');
         const company = await Company.findById(staff.businessId);
         if (!isShiftAssignedForStaff(company, staff)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
-        const template = normalizeTemplate(staff.attendanceTemplateId);
+        const templateDoc = await loadAttendanceTemplateForStaff(staff);
+        const template = normalizeTemplate(templateDoc);
 
         // Find today's attendance
         const attendance = await Attendance.findOne({
@@ -855,10 +894,10 @@ const checkOut = async (req, res) => {
             if (!legacyAttendance) {
                 return res.status(404).json({ message: 'No check-in record found for today' });
             }
-            return processCheckOut(legacyAttendance, req, res, staff, now, { latitude, longitude, address, area, city, pincode, selfie }, template);
+            return processCheckOut(legacyAttendance, req, res, staff, now, { latitude, longitude, address, area, city, pincode, selfie, movementType }, template);
         }
 
-        return processCheckOut(attendance, req, res, staff, now, { latitude, longitude, address, area, city, pincode, selfie }, template);
+        return processCheckOut(attendance, req, res, staff, now, { latitude, longitude, address, area, city, pincode, selfie, movementType }, template);
 
     } catch (error) {
         console.error('[Attendance checkOut] error', error);
@@ -867,7 +906,7 @@ const checkOut = async (req, res) => {
 };
 
 async function processCheckOut(attendance, req, res, staff, now, data, template = {}) {
-    const { latitude, longitude, address, area, city, pincode, selfie } = data;
+    const { latitude, longitude, address, area, city, pincode, selfie, source, movementType } = data;
 
     // Half Day: allow updating punchOut even if already set (update existing record)
     const isHalfDayStatus = attendance && String(attendance.status || '').trim().toLowerCase() === 'half day';
@@ -979,15 +1018,17 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         }
     }
 
-    // Upload Selfie
+    // Upload Selfie to S3 (attendance folder)
     if (selfie && template.requireSelfie !== false) {
-        const selfieUrl = await uploadToCloudinary(selfie);
+        const companyId = staff.businessId ? String(staff.businessId) : undefined;
+        const selfieUrl = await uploadAttendanceSelfie(selfie, req, companyId, staff.name, 'punch-out');
         attendance.punchOutSelfie = selfieUrl;
     }
 
     // Update Fields
     attendance.punchOut = now;
     attendance.punchOutIpAddress = req.ip || req.connection.remoteAddress;
+    if (source) attendance.source = source;
 
     if (latitude && longitude) {
         if (!attendance.location) attendance.location = {};
@@ -1042,30 +1083,31 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         };
     }
     
-    const fineResult = await calculateCombinedFine(
-        attendance.punchIn,
-        now,
-        attendance.date,
-        fineTemplate,
-        staff,
-        company,
-        leaveForFine
-    );
-
-    // Use current calculation total (late + early) so fine is consistent with same shift/daily salary.
-    // Do not add early to previous stored fine — check-in may have used different shift hours.
-    const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
-    const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
-    const totalFineAmount = lateFineAmount + earlyFineAmount;
-
-    // Set all fine fields from combined result so attendance collection has consistent fine amount and fine hours
-    attendance.lateMinutes = fineResult.lateMinutes ?? attendance.lateMinutes ?? 0;
-    attendance.earlyMinutes = fineResult.earlyMinutes ?? 0;
-    attendance.fineHours = fineResult.fineHours ?? ((Number(attendance.lateMinutes) || 0) + (Number(attendance.earlyMinutes) || 0));
-    attendance.fineAmount = totalFineAmount;
-
-    console.log('[Fine CHECK-OUT] checkInTime=', attendance.punchIn?.toISOString?.(), 'checkOutTime=', now.toISOString(), 'lateFineAmount=', lateFineAmount, 'earlyFineAmount=', earlyFineAmount, 'totalFineAmount=', totalFineAmount, 'INSERTING: lateMinutes=', attendance.lateMinutes, 'earlyMinutes=', attendance.earlyMinutes, 'fineHours=', attendance.fineHours, 'fineAmount=', attendance.fineAmount);
-    console.log('[Fine AMOUNT TEST] CHECK-OUT stored: lateMinutes=' + attendance.lateMinutes + ' lateFineAmount=' + lateFineAmount + ', earlyMinutes=' + attendance.earlyMinutes + ' earlyFineAmount=' + earlyFineAmount + ', totalFineAmount=' + totalFineAmount + ' (formula: lateFine + earlyFine)');
+    /*
+     * Fine calculation is handled by web/server flows.
+     * App check-in/out should NOT calculate or store fine fields in attendances.
+     *
+     * const fineResult = await calculateCombinedFine(
+     *   attendance.punchIn,
+     *   now,
+     *   attendance.date,
+     *   fineTemplate,
+     *   staff,
+     *   company,
+     *   leaveForFine
+     * );
+     *
+     * const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
+     * const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
+     * const totalFineAmount = lateFineAmount + earlyFineAmount;
+     *
+     * attendance.lateMinutes = fineResult.lateMinutes ?? attendance.lateMinutes ?? 0;
+     * attendance.earlyMinutes = fineResult.earlyMinutes ?? 0;
+     * attendance.fineHours = fineResult.fineHours ?? ((Number(attendance.lateMinutes) || 0) + (Number(attendance.earlyMinutes) || 0));
+     * attendance.fineAmount = totalFineAmount;
+     *
+     * console.log('[Fine CHECK-OUT] INSERTING fine fields', { totalFineAmount });
+     */
 
     await attendance.save();
 
@@ -1082,12 +1124,6 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         fineAmount: attendance.fineAmount,
     });
 
-    const userLat = latitude != null ? parseFloat(latitude) : (attendance.location?.punchOut?.latitude ?? attendance.location?.punchIn?.latitude ?? 0);
-    const userLng = longitude != null ? parseFloat(longitude) : (attendance.location?.punchOut?.longitude ?? attendance.location?.punchIn?.longitude ?? 0);
-    if (userLat !== 0 || userLng !== 0) {
-        await insertAttendanceTracking(staff._id, staff.name, userLat, userLng, 'out_of_office', address, area, city, pincode);
-    }
-
     // Include warnings in response if any
     const response = attendance.toObject ? attendance.toObject() : attendance;
     if (warnings.length > 0) {
@@ -1095,6 +1131,26 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     }
 
     console.log('[Attendance checkOut] success', { staffId: staff._id?.toString(), attendanceId: attendance._id?.toString(), punchIn: attendance.punchIn, punchOut: attendance.punchOut });
+    const userLat = latitude != null ? parseFloat(latitude) : (attendance.location?.punchOut?.latitude ?? attendance.location?.punchIn?.latitude ?? 0);
+    const userLng = longitude != null ? parseFloat(longitude) : (attendance.location?.punchOut?.longitude ?? attendance.location?.punchIn?.longitude ?? 0);
+    void Promise.allSettled([
+        AttendanceLog.create({
+            attendanceId: attendance._id,
+            action: 'PUNCH_OUT',
+            performedBy: staff._id,
+            performedByName: staff.name || undefined,
+            performedByEmail: staff.email || undefined,
+            selfieUrl: attendance.punchOutSelfie || undefined,
+            punchInDateTime: attendance.punchIn || undefined,
+            punchOutDateTime: now,
+            punchInAddress: (attendance.location?.punchIn && buildAddressString(attendance.location.punchIn.address, attendance.location.punchIn.area, attendance.location.punchIn.city, attendance.location.punchIn.pincode)) || undefined,
+            punchOutAddress: buildAddressString(address, area, city, pincode) || undefined,
+            timestamp: now
+        }),
+        (userLat !== 0 || userLng !== 0)
+            ? insertAttendanceTracking(staff._id, staff.name, userLat, userLng, 'out_of_office', 'checked_out', movementType, address, area, city, pincode)
+            : Promise.resolve()
+    ]);
     res.json(response);
 }
 
@@ -1149,7 +1205,8 @@ const getTodayAttendance = async (req, res) => {
         const staff = await Staff.findById(req.staff._id)
             .populate('branchId')
             .populate('attendanceTemplateId')
-            .populate('weeklyHolidayTemplateId');
+            .populate('weeklyHolidayTemplateId')
+            .populate('holidayTemplateId');
 
         // Fetch Company to get shift settings
         const Company = require('../models/Company');
@@ -1411,7 +1468,10 @@ const getTodayAttendance = async (req, res) => {
         }
 
         const shiftAssigned = isShiftAssignedForStaff(company, staff);
-        const finalTemplate = staff?.attendanceTemplateId ? normalizeTemplate(staff.attendanceTemplateId) : {};
+        const resolvedAttendanceTemplateDoc = await loadAttendanceTemplateForStaff(staff);
+        const finalTemplate = resolvedAttendanceTemplateDoc
+            ? normalizeTemplate(resolvedAttendanceTemplateDoc)
+            : {};
         
         // Merge shift timings from company settings into template only when shift is assigned
         if (shiftAssigned && dbShiftTimingsForLeave.startTime) {
@@ -1424,17 +1484,9 @@ const getTodayAttendance = async (req, res) => {
             finalTemplate.gracePeriodMinutes = dbShiftTimingsForLeave.gracePeriodMinutes;
         }
         
-        let holidayInfo = null;
         let isWeeklyOff = false;
-        const HolidayTemplate = require('../models/HolidayTemplate');
-        const holidayTemplate = await HolidayTemplate.findOne({ businessId: req.staff.businessId, isActive: true });
-        if (holidayTemplate && holidayTemplate.holidays && holidayTemplate.holidays.length > 0) {
-            const dayMatch = holidayTemplate.holidays.find(h => {
-                const d = new Date(h.date);
-                return d.getFullYear() === queryDate.getFullYear() && d.getMonth() === queryDate.getMonth() && d.getDate() === queryDate.getDate();
-            });
-            if (dayMatch) holidayInfo = dayMatch;
-        }
+        const holidayTemplate = await getHolidayTemplateForStaff(staff);
+        const holidayInfo = getHolidayForDate(holidayTemplate, queryDate);
         const dayOfWeek = queryDate.getDay();
         const weekOffConfig = await getWeekOffConfigForStaff(staff, company);
         if (weekOffConfig.weeklyOffPattern === 'oddEvenSaturday') {
@@ -1445,18 +1497,28 @@ const getTodayAttendance = async (req, res) => {
         }
 
         // If this date is a week-off (or we're checking), see if it's an alternate work date for this employee
-        // (compensation: employee took week-off on a weekday and will work on this date instead)
+        // (compensation: employee took week-off or comp-off on another day and will work on this date instead)
         let isAlternateWorkDate = false;
         const alternateWorkRecord = await Attendance.findOne({
             $or: [{ employeeId: req.staff._id }, { user: req.staff._id }],
             alternateWorkDate: { $gte: startOfDay, $lte: endOfDay },
-            compensationType: 'weekOff'
+            compensationType: { $in: ['weekOff', 'compOff'] }
         }).lean();
         if (alternateWorkRecord) isAlternateWorkDate = true;
 
-        // Today is the "off" day when employee has compensationType weekOff (they work on alternateWorkDate instead)
+        // Today is the "off" day when employee has compensationType weekOff or compOff (they work on alternateWorkDate instead)
         const isCompensationWeekOff = !!(attendance && attendance.compensationType === 'weekOff');
-        if (isCompensationWeekOff) {
+        const isCompensationCompOff = !!(attendance && attendance.compensationType === 'compOff');
+        if (isCompensationWeekOff || isCompensationCompOff) {
+            checkInAllowed = false;
+            checkOutAllowed = false;
+        }
+        // Paid leave day: On Leave + isPaidLeave, not comp off/week off - block check-in/check-out
+        const compType = (attendance?.compensationType || '').toString().toLowerCase();
+        const isPaidLeaveToday = !!(attendance && (attendance.status === 'On Leave' || String(attendance.status || '').toLowerCase() === 'on leave') &&
+            attendance.isPaidLeave === true &&
+            compType !== 'weekoff' && compType !== 'compoff');
+        if (isPaidLeaveToday) {
             checkInAllowed = false;
             checkOutAllowed = false;
         }
@@ -1497,6 +1559,8 @@ const getTodayAttendance = async (req, res) => {
             isWeeklyOff: isWeeklyOff,
             isAlternateWorkDate: isAlternateWorkDate,
             isCompensationWeekOff: isCompensationWeekOff,
+            isCompensationCompOff: isCompensationCompOff,
+            isPaidLeaveToday: isPaidLeaveToday,
             hasPunchIn,
             hasPunchOut,
             checkedIn
@@ -1572,7 +1636,8 @@ const getAttendanceHistory = async (req, res) => {
         const attendance = await Attendance.find(query)
             .sort({ date: -1 })
             .skip(skip)
-            .limit(limit);
+            .limit(limit)
+            .lean();
 
         const total = await Attendance.countDocuments(query);
         const data = await enrichWithLeaveDetails(attendance, req.staff._id);
@@ -1587,6 +1652,77 @@ const getAttendanceHistory = async (req, res) => {
     } catch (error) {
         console.error(error); // Log error
         res.status(500).json({ message: 'Server Error' });
+    }
+};
+
+// @desc    Employee attendance in a date range (same collection/query shape as month view; used by web salary overview)
+// @route   GET /api/attendance/employee/:employeeId
+// @access  Private — only own staff id
+const getEmployeeAttendance = async (req, res) => {
+    try {
+        const { employeeId } = req.params;
+        const { startDate, endDate, page = 1, limit = 100 } = req.query;
+
+        if (!req.staff) {
+            return res.status(404).json({ success: false, message: 'Staff record not found' });
+        }
+        if (String(employeeId) !== String(req.staff._id)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        if (!startDate || !endDate) {
+            return res.status(400).json({ success: false, message: 'startDate and endDate are required' });
+        }
+
+        const parseYmd = (ymd) => {
+            const parts = String(ymd).split('-').map(Number);
+            if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+            const [y, m, d] = parts;
+            return new Date(y, m - 1, d);
+        };
+        const start = parseYmd(startDate);
+        const end = parseYmd(endDate);
+        if (!start || !end) {
+            return res.status(400).json({ success: false, message: 'Invalid startDate or endDate' });
+        }
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+
+        const query = {
+            $or: [
+                { employeeId: req.staff._id },
+                { user: req.staff._id }
+            ],
+            date: { $gte: start, $lte: end }
+        };
+
+        const p = Math.max(1, parseInt(page, 10) || 1);
+        const l = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
+        const skip = (p - 1) * l;
+
+        const attendanceRaw = await Attendance.find(query)
+            .sort({ date: 1 })
+            .skip(skip)
+            .limit(l)
+            .lean();
+
+        const total = await Attendance.countDocuments(query);
+        const attendance = await enrichWithLeaveDetails(attendanceRaw, req.staff._id);
+
+        return res.json({
+            success: true,
+            data: {
+                attendance,
+                pagination: {
+                    page: p,
+                    limit: l,
+                    total,
+                    pages: Math.ceil(total / l) || 0
+                }
+            }
+        });
+    } catch (error) {
+        console.error('[getEmployeeAttendance]', error);
+        return res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
 
@@ -1607,16 +1743,17 @@ const getMonthAttendance = async (req, res) => {
                 { user: req.staff._id }
             ],
             date: { $gte: startOfMonth, $lte: endOfMonth }
-        }).sort({ date: 1 });
+        }).sort({ date: 1 }).lean();
 
         // Enrich records that have fineHours/lateMinutes but no fineAmount (e.g. Excel import) using payroll fine formula
         const Company = require('../models/Company');
         const Staff = require('../models/Staff');
         const { getRecordFineAmount, calculateAttendanceStats } = require('./payrollController');
         const { getEffectiveFineConfig } = require('../utils/fineCalculationHelper');
-        const { getShiftTimings, calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
+        const { getShiftTimings, calculateWorkHoursFromShift, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
 
         const companyForFine = await Company.findById(req.staff.businessId).lean();
+        const businessTz = getBusinessTimezone(companyForFine);
         const staffWithSalary = await Staff.findById(req.staff._id).select('+salary').lean();
         const fineConfig = companyForFine ? getEffectiveFineConfig(companyForFine) : null;
         const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary) : {};
@@ -1652,24 +1789,15 @@ const getMonthAttendance = async (req, res) => {
 
         const attendance = await enrichWithLeaveDetails(attendanceRaw, req.staff._id);
 
-        // Fetch holidays
-        const HolidayTemplate = require('../models/HolidayTemplate');
-        const holidayTemplate = await HolidayTemplate.findOne({
-            businessId: req.staff.businessId,
-            isActive: true
-        });
-
-        let holidays = [];
-        if (holidayTemplate) {
-            holidays = (holidayTemplate.holidays || []).filter(h => {
-                const d = new Date(h.date);
-                return d.getFullYear() == year && (d.getMonth() + 1) == month;
-            });
-        }
+        const staffForCalendar = await Staff.findById(req.staff._id)
+            .populate('weeklyHolidayTemplateId')
+            .populate('holidayTemplateId')
+            .lean();
+        const holidayTemplate = await getHolidayTemplateForStaff(staffForCalendar || req.staff);
+        const holidays = getHolidaysForMonth(holidayTemplate, year, month);
 
         // Week-off from staff's WeeklyHolidayTemplate only (weeklyholidaytemplates collection via staff.weeklyHolidayTemplateId)
-        const staffForWeekOff = await Staff.findById(req.staff._id).populate('weeklyHolidayTemplateId').lean();
-        const weekOffConfig = await getWeekOffConfigForStaff(staffForWeekOff || req.staff, companyForFine);
+        const weekOffConfig = await getWeekOffConfigForStaff(staffForCalendar || req.staff, companyForFine);
         const weeklyOffPattern = weekOffConfig.weeklyOffPattern;
         const weeklyHolidays = weekOffConfig.weeklyHolidays;
 
@@ -1746,7 +1874,7 @@ const getMonthAttendance = async (req, res) => {
             }
         }
 
-        // Helper function to format date string consistently (YYYY-MM-DD)
+        // Helper function to format date string consistently (YYYY-MM-DD) in server local time
         const formatDateString = (dateObj) => {
             const d = new Date(dateObj);
             const year = d.getFullYear();
@@ -1755,10 +1883,51 @@ const getMonthAttendance = async (req, res) => {
             return `${year}-${month}-${day}`;
         };
 
-        // Create a set of dates that have attendance records
+        /** Calendar yyyy-MM-dd for an instant in the **business timezone** (e.g. IST).
+         *  e.g. 2026-03-16T18:30:00.000Z → 2026-03-17 in Asia/Kolkata (midnight boundary).
+         *  If Intl/timezone data fails on the host (seen on some Windows Node builds), use fixed +5:30 for India. */
+        const formatAttendanceCalendarDay = (dateObj) => {
+            const d = new Date(dateObj);
+            const tryTz = (zone) => {
+                if (!zone || !String(zone).trim()) return null;
+                try {
+                    const parts = new Intl.DateTimeFormat('en-CA', {
+                        timeZone: zone.trim(),
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit'
+                    }).formatToParts(d);
+                    const y = parts.find(p => p.type === 'year')?.value;
+                    const m = parts.find(p => p.type === 'month')?.value;
+                    const day = parts.find(p => p.type === 'day')?.value;
+                    if (y && m && day) {
+                        return `${y}-${m.padStart(2, '0')}-${day.padStart(2, '0')}`;
+                    }
+                } catch (e) { /* try next */ }
+                return null;
+            };
+            const primaryTz = (businessTz && String(businessTz).trim()) || 'Asia/Kolkata';
+            let out = tryTz(primaryTz);
+            if (!out && primaryTz !== 'Asia/Kolkata') {
+                out = tryTz('Asia/Kolkata');
+            }
+            if (out) {
+                return out;
+            }
+            const z = primaryTz;
+            if (z === 'Asia/Kolkata' || z === 'Asia/Calcutta') {
+                const istMs = d.getTime() + 330 * 60 * 1000;
+                const u = new Date(istMs);
+                return `${u.getUTCFullYear()}-${String(u.getUTCMonth() + 1).padStart(2, '0')}-${String(u.getUTCDate()).padStart(2, '0')}`;
+            }
+            const u = new Date(dateObj);
+            return `${u.getUTCFullYear()}-${String(u.getUTCMonth() + 1).padStart(2, '0')}-${String(u.getUTCDate()).padStart(2, '0')}`;
+        };
+
+        // Create a set of dates that have attendance records (business-calendar day)
         const attendanceDateSet = new Set();
         attendance.forEach(a => {
-            const dateStr = formatDateString(a.date);
+            const dateStr = formatAttendanceCalendarDay(a.date);
             attendanceDateSet.add(dateStr);
         });
 
@@ -1793,25 +1962,11 @@ const getMonthAttendance = async (req, res) => {
             }
         });
 
-        // Filter weekOffDates: exclude dates that have attendance records
-        // If someone marked attendance on a week off day, it should be treated as a working day
-        // BUT: Always include Sundays (day 0) even if they have attendance, as they are always week off
-        const filteredWeekOffDates = weekOffDates.filter(dateStr => {
-            const hasAttendance = attendanceDateSet.has(dateStr);
-            if (hasAttendance) {
-                // Check if it's a Sunday - if so, still include it as week off
-                // Parse date string to get day of week
-                const [y, m, day] = dateStr.split('-').map(Number);
-                const date = new Date(y, m - 1, day);
-                const dayOfWeek = date.getDay();
-                if (dayOfWeek === 0) {
-                    return true; // Always include Sundays
-                }
-                return false; // Exclude other week offs that have attendance
-            }
-            return true; // Include week offs without attendance
-        });
-        
+        // Week-off dates for calendar: always use full template-based list so that week-off always
+        // displays as week-off (not as leave). Alternate work dates are sent separately and the
+        // frontend shows those as working days (not violet).
+        // (Previously we filtered out week-off dates that had attendance, which caused week-off
+        // days with "On Leave" to show as leave instead of week off.)
 
         // Calculate absent dates: working days without attendance records
         const absentDates = [];
@@ -1819,10 +1974,8 @@ const getMonthAttendance = async (req, res) => {
         const holidayDates = [];
         const leaveDates = Array.from(leaveDateSet);
 
-        // Today (used to ensure we don't mark future dates as absent)
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const todayStr = formatDateString(today);
+        // Today in business timezone (string compare yyyy-MM-dd)
+        const todayStr = formatAttendanceCalendarDay(new Date());
 
         for (let d = 1; d <= totalDaysInMonth; d++) {
             // Create date string directly in YYYY-MM-DD format (avoids timezone issues)
@@ -1841,9 +1994,9 @@ const getMonthAttendance = async (req, res) => {
 
             // Check if attendance exists - attendance takes precedence over week off/holiday (but not over leave)
             if (attendanceDateSet.has(dateStr)) {
-                // Find the attendance record to get status
+                // Find the attendance record to get status (match by UTC calendar date)
                 const attRecord = attendance.find(a => {
-                    const attDateStr = formatDateString(a.date);
+                    const attDateStr = formatAttendanceCalendarDay(a.date);
                     return attDateStr === dateStr;
                 });
                 if (attRecord) {
@@ -1903,19 +2056,51 @@ const getMonthAttendance = async (req, res) => {
             absentDates.push(dateStr);
         }
 
-        // Dates in this month that are alternate work dates for this employee (compensation week-off: they work on these days)
+        // Dates in this month that are alternate work dates for this employee (compensation week-off or comp-off: they work on these days)
         const alternateWorkRecords = await Attendance.find({
             $or: [{ employeeId: req.staff._id }, { user: req.staff._id }],
-            compensationType: 'weekOff',
+            compensationType: { $in: ['weekOff', 'compOff'] },
             alternateWorkDate: { $gte: startOfMonth, $lte: endOfMonth }
         }).select('alternateWorkDate').lean();
         const alternateWorkDatesInMonth = alternateWorkRecords.map(r => formatDateString(r.alternateWorkDate)).filter(Boolean);
 
+        // Attach AttendanceLog rows to each attendance document by attendanceId (punches, breaks,
+        // and admin APPROVED/REJECTED — those use the admin as performedBy, so date-only + staff filter missed them).
+        const attendanceIds = attendance
+            .map(a => a._id)
+            .filter(id => id != null);
+        if (attendanceIds.length > 0) {
+            const logs = await AttendanceLog.find({
+                attendanceId: { $in: attendanceIds },
+                timestamp: { $gte: startOfMonth, $lte: endOfMonth }
+            }).sort({ timestamp: 1 }).lean();
+
+            const logsByAttendanceId = {};
+            logs.forEach(log => {
+                const aid = log.attendanceId?.toString?.() ?? String(log.attendanceId);
+                if (!aid) return;
+                if (!logsByAttendanceId[aid]) logsByAttendanceId[aid] = [];
+                logsByAttendanceId[aid].push(log);
+            });
+
+            attendance.forEach(a => {
+                const id = a._id?.toString?.() ?? String(a._id);
+                a.logs = id ? (logsByAttendanceId[id] || []) : [];
+            });
+        }
+
+        // Normalize attendance date to business-calendar yyyy-MM-dd (matches salary/calendar in company TZ)
+        const attendanceForResponse = attendance.map(a => {
+            const aObj = (a && typeof a.toObject === 'function') ? a.toObject() : { ...a };
+            aObj.date = formatAttendanceCalendarDay(a.date);
+            return aObj;
+        });
+
         res.json({
             data: {
-                attendance,
+                attendance: attendanceForResponse,
                 holidays,
-                weekOffDates: filteredWeekOffDates,
+                weekOffDates: weekOffDates,
                 alternateWorkDatesInMonth,
                 absentDates,
                 presentDates,
@@ -1945,10 +2130,17 @@ const getMonthAttendance = async (req, res) => {
 
                         const dateMap = {};
                         attendance.forEach(a => {
-                            const d = formatDateString(a.date);
+                            const d = formatAttendanceCalendarDay(a.date);
                             const status = (a.status || '').trim().toLowerCase();
                             const leaveType = (a.leaveType || '').trim().toLowerCase();
-                            dateMap[d] = { attendanceStatus: status, attendanceLeaveType: leaveType };
+                            const isPaidLeave = a.isPaidLeave === true;
+                            const compensationType = (a.compensationType || '').trim().toLowerCase();
+                            dateMap[d] = {
+                                attendanceStatus: status,
+                                attendanceLeaveType: leaveType,
+                                isPaidLeave,
+                                compensationType
+                            };
                         });
                         leaveDateSetHalf.forEach(d => {
                             if (!dateMap[d]) dateMap[d] = {};
@@ -1962,6 +2154,46 @@ const getMonthAttendance = async (req, res) => {
                             const isHalfDay = status === 'half day' || attLeaveType === 'half day' || data.hasHalfDayLeave === true;
                             if (isHalfDay) return sum + 0.5;
                             if (status === 'present' || status === 'approved') return sum + 1;
+                            return sum;
+                        }, 0);
+                    })(),
+                    paidLeaveDays: (() => {
+                        const leaveRecords = leaves.filter(l => l.isHalfDay === true || (l.leaveType || '').trim().toLowerCase() === 'half day');
+                        const leaveDateSetHalf = new Set();
+                        leaveRecords.forEach(leave => {
+                            let curr = new Date(leave.startDate);
+                            const end = new Date(leave.endDate);
+                            while (curr <= end) {
+                                if (curr >= startOfMonth && curr <= endOfMonth) {
+                                    leaveDateSetHalf.add(formatDateString(curr));
+                                }
+                                curr.setDate(curr.getDate() + 1);
+                            }
+                        });
+                        const dateMap = {};
+                        attendance.forEach(a => {
+                            const d = formatAttendanceCalendarDay(a.date);
+                            const status = (a.status || '').trim().toLowerCase();
+                            const leaveType = (a.leaveType || '').trim().toLowerCase();
+                            const isPaidLeave = a.isPaidLeave === true;
+                            const compensationType = (a.compensationType || '').trim().toLowerCase();
+                            dateMap[d] = {
+                                attendanceStatus: status,
+                                attendanceLeaveType: leaveType,
+                                isPaidLeave,
+                                compensationType
+                            };
+                        });
+                        leaveDateSetHalf.forEach(d => {
+                            if (!dateMap[d]) dateMap[d] = {};
+                            dateMap[d].hasHalfDayLeave = true;
+                        });
+                        return Object.entries(dateMap).reduce((sum, [date, data]) => {
+                            if (date > todayStr) return sum;
+                            const status = (data.attendanceStatus || '').trim().toLowerCase();
+                            const isPaid = data.isPaidLeave === true;
+                            const comp = (data.compensationType || '').trim().toLowerCase();
+                            if (status === 'on leave' && isPaid && comp !== 'weekoff' && comp !== 'compoff') return sum + 1;
                             return sum;
                         }, 0);
                     })(),
@@ -1981,18 +2213,25 @@ const getMonthAttendance = async (req, res) => {
 
                         const dateMap = {};
                         attendance.forEach(a => {
-                            const d = formatDateString(a.date);
+                            const d = formatAttendanceCalendarDay(a.date);
                             const status = (a.status || '').trim().toLowerCase();
                             const leaveType = (a.leaveType || '').trim().toLowerCase();
-                            dateMap[d] = { attendanceStatus: status, attendanceLeaveType: leaveType };
+                            const isPaidLeave = a.isPaidLeave === true;
+                            const compensationType = (a.compensationType || '').trim().toLowerCase();
+                            dateMap[d] = {
+                                attendanceStatus: status,
+                                attendanceLeaveType: leaveType,
+                                isPaidLeave,
+                                compensationType
+                            };
                         });
                         leaveDateSetHalf.forEach(d => {
                             if (!dateMap[d]) dateMap[d] = {};
                             dateMap[d].hasHalfDayLeave = true;
                         });
 
-                        return Object.entries(dateMap).reduce((sum, [date, data]) => {
-                            if (date > todayStr) return sum; // Only count dates up to today
+                        const presentOnly = Object.entries(dateMap).reduce((sum, [date, data]) => {
+                            if (date > todayStr) return sum;
                             const status = data.attendanceStatus || '';
                             const attLeaveType = data.attendanceLeaveType || '';
                             const isHalfDay = status === 'half day' || attLeaveType === 'half day' || data.hasHalfDayLeave === true;
@@ -2000,6 +2239,15 @@ const getMonthAttendance = async (req, res) => {
                             if (status === 'present' || status === 'approved') return sum + 1;
                             return sum;
                         }, 0);
+                        const paidLeaveOnly = Object.entries(dateMap).reduce((sum, [date, data]) => {
+                            if (date > todayStr) return sum;
+                            const status = (data.attendanceStatus || '').trim().toLowerCase();
+                            const isPaid = data.isPaidLeave === true;
+                            const comp = (data.compensationType || '').trim().toLowerCase();
+                            if (status === 'on leave' && isPaid && comp !== 'weekoff' && comp !== 'compoff') return sum + 1;
+                            return sum;
+                        }, 0);
+                        return presentOnly + paidLeaveOnly;
                     })())
                 }
             }
@@ -2030,4 +2278,4 @@ const getFineCalculation = async (req, res) => {
     }
 };
 
-module.exports = { checkIn, checkOut, getTodayAttendance, getAttendanceHistory, getMonthAttendance, getFineCalculation };
+module.exports = { checkIn, checkOut, getTodayAttendance, getAttendanceHistory, getEmployeeAttendance, getMonthAttendance, getFineCalculation };

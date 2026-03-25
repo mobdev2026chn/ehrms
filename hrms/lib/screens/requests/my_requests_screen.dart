@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'dart:io';
 import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/utils/error_message_utils.dart';
+import 'package:hrms/utils/request_success_dialog.dart';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -11,16 +12,29 @@ import 'package:open_filex/open_filex.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 import '../../config/app_colors.dart';
 import '../../services/request_service.dart';
 import '../../services/auth_service.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 
+/// Returns true if [s] is half-day leave type (case and space insensitive).
+/// Backend may send "half day", "Half Day", "halfday", "half", "Half", etc.
+bool _isHalfDayLeave(String? s) {
+  if (s == null || s.isEmpty) return false;
+  final n = s.toLowerCase().replaceAll(RegExp(r'\s+'), '');
+  return n == 'halfday' || n == 'half';
+}
+
 class MyRequestsScreen extends StatefulWidget {
   final int initialTabIndex;
   final int? dashboardTabIndex;
   final void Function(int index)? onNavigateToIndex;
+
+  /// Called when user changes tab so dashboard can keep requested tab in sync for quick-action navigation.
+  final void Function(int index)? onTabIndexChanged;
 
   /// When true, this screen is the visible tab (e.g. user tapped Request in bottom nav).
   final bool? isActiveTab;
@@ -30,6 +44,7 @@ class MyRequestsScreen extends StatefulWidget {
     this.initialTabIndex = 0,
     this.dashboardTabIndex,
     this.onNavigateToIndex,
+    this.onTabIndexChanged,
     this.isActiveTab,
   });
 
@@ -55,6 +70,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
     );
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
+        widget.onTabIndexChanged?.call(_tabController.index);
         setState(() {});
       }
     });
@@ -63,7 +79,26 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
   @override
   void didUpdateWidget(MyRequestsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Optional: refresh when becoming active tab (e.g. pull-to-refresh or tab refetch can be added here)
+    if (widget.isActiveTab == true && oldWidget.isActiveTab != true) {
+      _refreshCurrentTab();
+    }
+  }
+
+  void _refreshCurrentTab() {
+    switch (_tabController.index) {
+      case 0:
+        _leaveTabKey.currentState?.refresh();
+        break;
+      case 1:
+        _loanTabKey.currentState?.refresh();
+        break;
+      case 2:
+        _expenseTabKey.currentState?.refresh();
+        break;
+      case 3:
+        _payslipTabKey.currentState?.refresh();
+        break;
+    }
   }
 
   @override
@@ -506,6 +541,10 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
     });
   }
 
+  void refresh() {
+    _fetchLeaves();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -683,7 +722,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
         iconColor: AppColors.primary,
         children: [
           _detailRow('Leave Type', leave['leaveType'] ?? ''),
-          if (leave['leaveType'] == 'Half Day')
+          if (_isHalfDayLeave(leave['leaveType']))
             _detailRow('Half day on', halfDayOnValue),
           _detailRow('Start Date', start),
           _detailRow('End Date', end),
@@ -1078,7 +1117,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
               await _fetchLeaves();
             },
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _leaves.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
@@ -1196,29 +1235,57 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   final RequestService _requestService = RequestService();
 
   String? _leaveType;
-  String? _session; // New field for Half Day
+  String? _session; // For Half Day
   List<dynamic> _allowedTypes = [];
   DateTime? _startDate;
   DateTime? _endDate;
+  bool _isOneDay = true;
   final TextEditingController _reasonController = TextEditingController();
   bool _isSubmitting = false;
   bool _isLoadingTypes = true;
-  bool _isOneDay = false; // Toggle for single day leave
+  double _availableCasualLeaves = 0.0;
+  double _totalAllowed = 0.0;
 
   @override
   void initState() {
     super.initState();
     _fetchLeaveTypes();
+    _fetchLeaveBalance();
+  }
+
+  @override
+  void dispose() {
+    SnackBarUtils.dismiss();
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchLeaveBalance() async {
+    final result = await _requestService.getLeaveBalance();
+    if (mounted && result['success'] == true) {
+      setState(() {
+        _availableCasualLeaves =
+            (result['availableCasualLeaves'] as num?)?.toDouble() ?? 0.0;
+        _totalAllowed = (result['totalAllowed'] as num?)?.toDouble() ?? 0.0;
+      });
+    }
   }
 
   Future<void> _fetchLeaveTypes() async {
     final result = await _requestService.getLeaveTypesForApply();
     if (mounted) {
       if (result['success']) {
+        final raw = List<dynamic>.from(result['data'] as List? ?? []);
+        // Ensure Half Day is always present as static option (backend sends it; add if missing)
+        final hasHalfDay = raw.any((e) {
+          final t = (e is Map ? e['type'] as String? : null) ?? '';
+          return t.toLowerCase().replaceAll(RegExp(r'\s+'), '') == 'halfday';
+        });
+        if (!hasHalfDay) {
+          raw.insert(0, {'type': 'Half Day', 'days': 0.5});
+        }
         setState(() {
-          // Leave types from staff's leave template + Unpaid Leave (from backend)
-          _allowedTypes = List<dynamic>.from(result['data'] as List? ?? []);
-
+          _allowedTypes = raw;
           if (_allowedTypes.isNotEmpty) {
             _leaveType = _allowedTypes.first['type'] as String?;
           }
@@ -1230,72 +1297,48 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     }
   }
 
-  /// Max days allowed for currently selected leave type (null = no limit, e.g. Unpaid Leave).
-  int? get _maxDaysForCurrentType {
-    if (_leaveType == null) return null;
-    for (final e in _allowedTypes) {
-      if (e is Map && (e['type'] as String?) == _leaveType) {
-        final d = e['days'];
-        if (d == null) return null;
-        if (d is int) return d;
-        if (d is num) return d.toInt();
-        return null;
-      }
-    }
-    return null;
-  }
-
   int get _days {
     if (_startDate == null) return 0;
-    if (_leaveType == 'Half Day') return 0; // Handled as 0.5 on backend
+    if (_isHalfDayLeave(_leaveType)) return 0; // 0.5 on backend
     if (_isOneDay) return 1;
-    if (_endDate == null) return 0;
+    if (_endDate == null) return 1;
     return _endDate!.difference(_startDate!).inDays + 1;
   }
 
   Future<void> _pickDate(bool isStart) async {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final DateTime firstDate;
-    final DateTime initialDate;
-    if (isStart) {
-      firstDate = today;
-      initialDate = _startDate ?? now;
-    } else {
-      final startOrToday = _startDate != null && !_startDate!.isBefore(today)
-          ? _startDate!
-          : today;
-      firstDate = startOrToday;
-      initialDate = _endDate ?? _startDate ?? now;
-    }
+    final today = DateTime(
+      DateTime.now().year,
+      DateTime.now().month,
+      DateTime.now().day,
+    );
     final picked = await showDatePicker(
       context: context,
-      initialDate: initialDate.isBefore(firstDate) ? firstDate : initialDate,
-      firstDate: firstDate,
-      lastDate: DateTime(2030),
+      initialDate: (isStart ? _startDate : _endDate) ?? today,
+      firstDate: today,
+      lastDate: DateTime(2030, 12, 31),
     );
-    if (picked != null) {
-      setState(() {
-        if (isStart) {
-          _startDate = picked;
-          if (_isOneDay) {
-            _endDate = picked;
-          } else {
-            if (_endDate != null && _endDate!.isBefore(_startDate!)) {
-              _endDate = null;
-            }
-          }
-        } else {
+    if (picked == null || !mounted) return;
+    setState(() {
+      if (isStart) {
+        _startDate = picked;
+        if (_isOneDay || _isHalfDayLeave(_leaveType)) {
+          _endDate = picked;
+        } else if (_endDate != null && _endDate!.isBefore(picked)) {
           _endDate = picked;
         }
-      });
-    }
+      } else {
+        _endDate = picked;
+        if (_startDate != null && picked.isBefore(_startDate!)) {
+          _startDate = picked;
+        }
+      }
+    });
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_startDate == null) {
-      SnackBarUtils.showSnackBar(context, 'Please select a date');
+      SnackBarUtils.showSnackBar(context, 'Please select date');
       return;
     }
     final today = DateTime(
@@ -1306,26 +1349,25 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     if (_startDate!.isBefore(today)) {
       SnackBarUtils.showSnackBar(
         context,
-        'Start date cannot be in the past. Please select today or a future date.',
+        'Cannot select past dates. Please select today or future dates.',
         isError: true,
       );
       return;
     }
-    if (!_isOneDay && _endDate == null) {
-      SnackBarUtils.showSnackBar(context, 'Please select an end date');
-      return;
-    }
-    if (_endDate != null && _endDate!.isBefore(today)) {
+    final effectiveEnd = _isOneDay || _isHalfDayLeave(_leaveType)
+        ? _startDate!
+        : _endDate;
+    if (!_isOneDay &&
+        !_isHalfDayLeave(_leaveType) &&
+        (effectiveEnd == null || effectiveEnd.isBefore(today))) {
       SnackBarUtils.showSnackBar(
         context,
-        'End date cannot be in the past. Please select today or a future date.',
+        'End date cannot be in the past.',
         isError: true,
       );
       return;
     }
-    if (_endDate != null &&
-        _startDate != null &&
-        _endDate!.isBefore(_startDate!)) {
+    if (!_isOneDay && _endDate != null && _endDate!.isBefore(_startDate!)) {
       SnackBarUtils.showSnackBar(
         context,
         'End date must be on or after start date.',
@@ -1333,13 +1375,18 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       );
       return;
     }
-
-    // Ensure end date is set for one day leave or half day
-    if ((_isOneDay || _leaveType == 'Half Day') && _endDate == null) {
-      _endDate = _startDate;
+    if (_isHalfDayLeave(_leaveType) &&
+        !_isOneDay &&
+        _endDate != null &&
+        _endDate != _startDate) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Half Day leave allows only one date.',
+        isError: true,
+      );
+      return;
     }
-
-    if (_leaveType == 'Half Day' && _session == null) {
+    if (_isHalfDayLeave(_leaveType) && _session == null) {
       SnackBarUtils.showSnackBar(
         context,
         'Please select a session for Half Day leave',
@@ -1348,54 +1395,57 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       return;
     }
 
-    final daysValue = _leaveType == 'Half Day' ? 1 : _days;
+    final daysValue = _isHalfDayLeave(_leaveType) ? 0.5 : _days;
+    final requestedDays = _isHalfDayLeave(_leaveType) ? 0.5 : _days.toDouble();
+    final rangeEnd = effectiveEnd ?? _startDate!;
 
-    // Control by template days: if this leave type has a day limit, enforce it
-    final maxDays = _maxDaysForCurrentType;
-    if (maxDays != null && daysValue > maxDays) {
-      SnackBarUtils.showSnackBar(
-        context,
-        '$_leaveType allows maximum $maxDays day${maxDays == 1 ? '' : 's'}. You selected $daysValue day${daysValue == 1 ? '' : 's'}.',
-        isError: true,
-      );
-      return;
-    }
-    // Check if employee already has leave (Pending or Approved) on any of the requested dates
-    final reqEnd = _endDate ?? _startDate!;
-    final existingResult = await _requestService.getLeaveRequests(
-      startDate: _startDate,
-      endDate: reqEnd,
-      limit: 100,
-    );
-    if (existingResult['success'] == true) {
-      List<dynamic> leaves = [];
-      if (existingResult['data'] is Map) {
-        leaves = (existingResult['data'] as Map)['leaves'] ?? [];
-      } else if (existingResult['data'] is List) {
-        leaves = existingResult['data'] as List;
-      }
-      final hasExisting = leaves.any((l) {
-        if (l is! Map) return false;
-        final status = (l['status'] as String?)?.trim();
-        return status == 'Pending' || status == 'Approved';
-      });
-      if (hasExisting && mounted) {
+    // Unpaid Leave: no balance validation
+    final isUnpaidLeave =
+        _leaveType != null &&
+        _leaveType!.toLowerCase().replaceAll(RegExp(r'\s+'), '') ==
+            'unpaidleave';
+    if (!isUnpaidLeave) {
+      await _fetchLeaveBalance();
+      if (!mounted) return;
+      if (_availableCasualLeaves <= 0) {
         SnackBarUtils.showSnackBar(
           context,
-          'You have already applied for leave on one or more of these dates. Please choose different dates or check your existing leave requests.',
+          "You don't have enough leave balance.",
+          isError: true,
+        );
+        return;
+      }
+      if (_availableCasualLeaves == 0.5) {
+        if (!_isHalfDayLeave(_leaveType)) {
+          SnackBarUtils.showSnackBar(
+            context,
+            "You don't have enough leave balance.",
+            isError: true,
+          );
+          return;
+        }
+      } else if (requestedDays > _availableCasualLeaves) {
+        SnackBarUtils.showSnackBar(
+          context,
+          "You don't have enough leave balance.",
           isError: true,
         );
         return;
       }
     }
 
+    // Backend checks "leave already applied" and returns a single error message
     final payload = {
       'leaveType': _leaveType,
       'startDate': _startDate!.toIso8601String(),
-      'endDate': _endDate!.toIso8601String(),
+      'endDate': rangeEnd.toIso8601String(),
       'days': daysValue,
       'reason': _reasonController.text,
-      'session': _leaveType == 'Half Day' ? _session : null,
+      'session': _isHalfDayLeave(_leaveType) ? _session : null,
+      if (_isHalfDayLeave(_leaveType) && _session != null)
+        'halfDaySession': _session == '1'
+            ? 'First Half Day'
+            : 'Second Half Day',
     };
 
     setState(() => _isSubmitting = true);
@@ -1410,10 +1460,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
           Navigator.of(context).pop();
           widget.onSuccess();
           if (overlay != null && overlay.context.mounted) {
-            SnackBarUtils.showSnackBar(
-              overlay.context,
-              'Leave request submitted',
-            );
+            showRequestSubmittedSuccessDialog(overlay.context);
           }
         });
       } else {
@@ -1513,7 +1560,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     if (_isLoadingTypes)
                       const Padding(
                         padding: EdgeInsets.only(bottom: 20),
-                        child: Center(child: CircularProgressIndicator()),
+                        child: const Center(child: AppTabLoader()),
                       )
                     else if (_allowedTypes.isEmpty)
                       const Padding(
@@ -1530,21 +1577,17 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           initialValue: _leaveType,
                           items: _allowedTypes.map((e) {
                             final type = e['type'] as String? ?? '';
-                            final days = e['days'];
-                            final label = days != null
-                                ? '$type (${days == 1 ? '1 day' : '$days days'})'
-                                : type;
                             return DropdownMenuItem<String>(
                               value: type,
-                              child: Text(label),
+                              child: Text(type),
                             );
                           }).toList(),
                           onChanged: (val) {
                             setState(() {
                               _leaveType = val!;
-                              if (_leaveType == 'Half Day') {
-                                _isOneDay = true;
+                              if (_isHalfDayLeave(_leaveType)) {
                                 _session = '1';
+                                _isOneDay = true;
                                 if (_startDate != null) _endDate = _startDate;
                               }
                             });
@@ -1555,209 +1598,135 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           ),
                         ),
                       ),
-
-                    if (_leaveType == 'Half Day') ...[
-                      Text(
-                        'Select Session',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: InkWell(
-                              onTap: () => setState(() => _session = '1'),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _session == '1'
-                                      ? AppColors.primary.withOpacity(0.1)
-                                      : Colors.white,
-                                  border: Border.all(
-                                    color: _session == '1'
-                                        ? AppColors.primary
-                                        : Colors.grey.shade300,
-                                  ),
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Text(
-                                      'Session 1',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: _session == '1'
-                                            ? AppColors.primary
-                                            : Colors.black87,
-                                      ),
-                                    ),
-                                    Text(
-                                      'First Half',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: InkWell(
-                              onTap: () => setState(() => _session = '2'),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _session == '2'
-                                      ? AppColors.primary.withOpacity(0.1)
-                                      : Colors.white,
-                                  border: Border.all(
-                                    color: _session == '2'
-                                        ? AppColors.primary
-                                        : Colors.grey.shade300,
-                                  ),
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Text(
-                                      'Session 2',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: _session == '2'
-                                            ? AppColors.primary
-                                            : Colors.black87,
-                                      ),
-                                    ),
-                                    Text(
-                                      'Second Half',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-
-                    if (_leaveType != 'Half Day')
+                    if (_allowedTypes.isNotEmpty &&
+                        _leaveType != null &&
+                        _leaveType!.toLowerCase().replaceAll(
+                              RegExp(r'\s+'),
+                              '',
+                            ) !=
+                            'unpaidleave') ...[
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'One Day Leave',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 16,
-                              ),
-                            ),
-                            Switch.adaptive(
-                              value: _isOneDay,
-                              activeColor: AppColors.primary,
-                              onChanged: (val) {
-                                setState(() {
-                                  _isOneDay = val;
-                                  if (_isOneDay && _startDate != null) {
-                                    _endDate = _startDate;
-                                  }
-                                });
-                              },
-                            ),
-                          ],
+                        child: Text(
+                          'Leave balance: ${_availableCasualLeaves.toStringAsFixed(1)} days${_totalAllowed > 0 ? ' (of ${_totalAllowed.toStringAsFixed(0)} total)' : ''}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
                         ),
                       ),
+                    ],
 
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 20),
-                      child: InkWell(
-                        onTap: () => _pickDate(true),
-                        child: InputDecorator(
-                          decoration:
-                              _inputDecoration(
-                                'Start Date *',
-                                Icons.calendar_today,
-                              ).copyWith(
-                                helperText:
-                                    'Select the start date of your leave',
-                                helperStyle: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                          child: Text(
-                            _startDate == null
-                                ? 'dd-mm-yyyy'
-                                : DateFormat('dd-MM-yyyy').format(_startDate!),
-                            style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                              color: _startDate == null
-                                  ? Colors.grey
-                                  : Colors.black,
-                            ),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'Date',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Expanded(child: Text('One day')),
+                        Switch(
+                          value: _isHalfDayLeave(_leaveType) ? true : _isOneDay,
+                          onChanged: _isHalfDayLeave(_leaveType)
+                              ? null
+                              : (v) {
+                                  setState(() {
+                                    _isOneDay = v;
+                                    if (_isOneDay && _startDate != null)
+                                      _endDate = _startDate;
+                                  });
+                                },
+                          activeColor: AppColors.primary,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: () => _pickDate(true),
+                      child: InputDecorator(
+                        decoration: _inputDecoration(
+                          _isOneDay || _isHalfDayLeave(_leaveType)
+                              ? 'Date *'
+                              : 'Start Date *',
+                          Icons.calendar_today,
+                        ),
+                        child: Text(
+                          _startDate != null
+                              ? DateFormat('dd-MM-yyyy').format(_startDate!)
+                              : 'Select date',
+                          style: TextStyle(
+                            color: _startDate != null
+                                ? Colors.black87
+                                : Colors.grey,
                           ),
                         ),
                       ),
                     ),
-                    if (!_isOneDay && _leaveType != 'Half Day') ...[
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 20),
-                        child: InkWell(
-                          onTap: () => _pickDate(false),
-                          child: InputDecorator(
-                            decoration:
-                                _inputDecoration(
-                                  'End Date *',
-                                  Icons.calendar_today,
-                                ).copyWith(
-                                  helperText:
-                                      'End date must be after start date',
-                                  helperStyle: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                            child: Text(
-                              _endDate == null
-                                  ? 'dd-mm-yyyy'
-                                  : DateFormat('dd-MM-yyyy').format(_endDate!),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                color: _endDate == null
-                                    ? Colors.grey
-                                    : Colors.black,
-                              ),
+                    if (!_isOneDay && !_isHalfDayLeave(_leaveType)) ...[
+                      const SizedBox(height: 12),
+                      InkWell(
+                        onTap: () => _pickDate(false),
+                        child: InputDecorator(
+                          decoration: _inputDecoration(
+                            'End Date *',
+                            Icons.calendar_today,
+                          ),
+                          child: Text(
+                            _endDate != null
+                                ? DateFormat('dd-MM-yyyy').format(_endDate!)
+                                : 'Select end date',
+                            style: TextStyle(
+                              color: _endDate != null
+                                  ? Colors.black87
+                                  : Colors.grey,
                             ),
                           ),
                         ),
                       ),
                     ],
-                    if (_days > 0 || _leaveType == 'Half Day')
+                    if (_startDate != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                          _leaveType == 'Half Day'
-                              ? 'Total Days: 0.5'
-                              : 'Total Days: $_days',
+                          _isHalfDayLeave(_leaveType)
+                              ? 'Total: 0.5 day — ${_availableCasualLeaves.toStringAsFixed(1)} days remaining'
+                              : 'Total: $_days day${_days == 1 ? '' : 's'} — ${_availableCasualLeaves.toStringAsFixed(1)} days remaining',
                           style: TextStyle(
                             color: AppColors.primary,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
+                    if (_isHalfDayLeave(_leaveType) && _startDate != null) ...[
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Session for Half Day *',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('First Half Day'),
+                            selected: _session == '1',
+                            onSelected: (v) => setState(() => _session = '1'),
+                            selectedColor: AppColors.primary.withOpacity(0.3),
+                          ),
+                          const SizedBox(width: 12),
+                          ChoiceChip(
+                            label: const Text('Second Half Day'),
+                            selected: _session == '2',
+                            onSelected: (v) => setState(() => _session = '2'),
+                            selectedColor: AppColors.primary.withOpacity(0.3),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _reasonController,
@@ -1865,6 +1834,10 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
     setState(() {
       _showFilters = !_showFilters;
     });
+  }
+
+  void refresh() {
+    _fetchLoans();
   }
 
   @override
@@ -2336,7 +2309,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
               await _fetchLoans();
             },
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _loans.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
@@ -2475,9 +2448,12 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
 
     if (mounted) {
       if (result['success']) {
+        final overlay = Navigator.of(context, rootNavigator: true).overlay;
         widget.onSuccess();
         Navigator.pop(context);
-        SnackBarUtils.showSnackBar(context, 'Loan request submitted');
+        if (overlay != null && overlay.context.mounted) {
+          showRequestSubmittedSuccessDialog(overlay.context);
+        }
       } else {
         SnackBarUtils.showSnackBar(
           context,
@@ -2736,6 +2712,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
     });
   }
 
+  void refresh() {
+    _fetchExpenses();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2827,14 +2807,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                 url,
                 loadingBuilder: (ctx, child, loadingProgress) {
                   if (loadingProgress == null) return child;
-                  return Center(
-                    child: CircularProgressIndicator(
-                      value: loadingProgress.expectedTotalBytes != null
-                          ? loadingProgress.cumulativeBytesLoaded /
-                                loadingProgress.expectedTotalBytes!
-                          : null,
-                    ),
-                  );
+                  return const Center(child: AppTabLoader());
                 },
                 errorBuilder: (ctx, error, stackTrace) => const Center(
                   child: Padding(
@@ -2917,27 +2890,15 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
         ),
         const SizedBox(height: 6),
         ...proofs.asMap().entries.map((entry) {
-          final index = entry.key;
           final proof = entry.value;
-          String fileName;
           String proofUrl;
           if (proof is Map) {
-            fileName = proof['fileName']?.toString() ?? 'Proof ${index + 1}';
             proofUrl =
                 proof['url']?.toString() ??
                 proof['fileUrl']?.toString() ??
                 proof.toString();
           } else {
-            final urlString = proof.toString();
-            proofUrl = urlString;
-            try {
-              final uri = Uri.parse(urlString);
-              fileName = uri.pathSegments.isNotEmpty
-                  ? uri.pathSegments.last
-                  : 'Proof ${index + 1}';
-            } catch (e) {
-              fileName = 'Proof ${index + 1}';
-            }
+            proofUrl = proof.toString();
           }
           return Padding(
             padding: const EdgeInsets.only(bottom: 6),
@@ -2950,7 +2911,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      fileName,
+                      'View Proof',
                       style: TextStyle(
                         color: Colors.blue,
                         fontWeight: FontWeight.w500,
@@ -3333,7 +3294,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
         // List Content
         Expanded(
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
+              ? const Center(child: AppTabLoader())
               : _expenses.isEmpty
               ? Center(
                   child: Column(
@@ -3573,9 +3534,12 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
 
     if (mounted) {
       if (result['success']) {
+        final overlay = Navigator.of(context, rootNavigator: true).overlay;
         widget.onSuccess();
         Navigator.pop(context);
-        SnackBarUtils.showSnackBar(context, 'Expense claim submitted');
+        if (overlay != null && overlay.context.mounted) {
+          showRequestSubmittedSuccessDialog(overlay.context);
+        }
       } else {
         SnackBarUtils.showSnackBar(
           context,
@@ -3861,6 +3825,10 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     });
   }
 
+  void refresh() {
+    _fetchRequests();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -3929,14 +3897,22 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     }
     bool loadingShown = false;
     try {
-      String? url = payslipUrl;
+      String? url = payslipUrl?.trim();
+      // If URL is already present, open in browser directly (most reliable on mobile).
+      if (url != null && url.isNotEmpty) {
+        final uri = Uri.tryParse(url);
+        if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
+      }
       if (url == null || url.isEmpty) {
         loadingShown = true;
         showDialog(
           context: context,
           barrierDismissible: false,
           builder: (context) =>
-              const Center(child: CircularProgressIndicator()),
+              const Center(child: AppTabLoader()),
         );
         final result = await _requestService.viewPayslipRequest(requestId);
         if (mounted) {
@@ -3957,50 +3933,16 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         }
       }
 
-      // View: fetch PDF from link and open in system viewer (don't open URL in browser to avoid download)
-      loadingShown = true;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
-      );
-      final result = await _requestService.getPdfBytesFromUrl(url);
-      if (mounted) {
-        Navigator.pop(context);
-        loadingShown = false;
+      // View: open in browser for consistent and reliable behavior on mobile.
+      final uri = Uri.tryParse(url);
+      if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
       }
-      if (result['success'] == true && result['data'] != null) {
-        final pdfBytes = result['data'] as List<int>;
-        // Ensure we got actual PDF bytes (not HTML error page) to avoid "something went wrong" in viewer
-        const pdfMagic = [0x25, 0x50, 0x44, 0x46]; // %PDF
-        final isPdf =
-            pdfBytes.length >= 4 &&
-            pdfBytes[0] == pdfMagic[0] &&
-            pdfBytes[1] == pdfMagic[1] &&
-            pdfBytes[2] == pdfMagic[2] &&
-            pdfBytes[3] == pdfMagic[3];
-        if (isPdf) {
-          _openPdf(pdfBytes, 'view');
-        } else {
-          if (mounted) {
-            SnackBarUtils.showSnackBar(
-              context,
-              'Payslip could not be loaded. Opening in browser instead.',
-              isError: false,
-            );
-            final uri = Uri.tryParse(url);
-            if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            }
-          }
-        }
-      } else {
+      if (mounted) {
         SnackBarUtils.showSnackBar(
           context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            result['message']?.toString(),
-            fallback: 'Unable to load payslip',
-          ),
+          'Unable to open payslip link.',
           isError: true,
         );
       }
@@ -4070,13 +4012,28 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     bool loadingShown = false;
     try {
       String? url = payslipUrl?.trim();
+      // If URL is already present, download via browser so it lands in device Downloads.
+      if (url != null && url.isNotEmpty) {
+        final uri = Uri.tryParse(url);
+        if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          if (mounted) {
+            SnackBarUtils.showSnackBar(
+              context,
+              'Downloading file… Check your browser downloads.',
+              isError: false,
+            );
+          }
+          return;
+        }
+      }
       if (url == null || url.isEmpty) {
         loadingShown = true;
         showDialog(
           context: context,
           barrierDismissible: false,
           builder: (context) =>
-              const Center(child: CircularProgressIndicator()),
+              const Center(child: AppTabLoader()),
         );
         final result = await _requestService.downloadPayslipRequest(requestId);
         if (mounted) {
@@ -4097,33 +4054,82 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         }
       }
 
-      // Proper download: fetch PDF bytes, save to app storage, then open in system viewer
-      if (!loadingShown) {
-        loadingShown = true;
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) =>
-              const Center(child: CircularProgressIndicator()),
+      // Download: always use browser so it downloads to device Downloads.
+      final uri = Uri.tryParse(url);
+      if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Downloading file… Check your browser downloads.',
+            isError: false,
+          );
+        }
+        return;
+      }
+      if (mounted) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Unable to start download.',
+          isError: true,
         );
       }
-      final result = await _requestService.getPdfBytesFromUrl(url);
+    } catch (e) {
+      if (mounted) {
+        if (loadingShown) Navigator.pop(context);
+        SnackBarUtils.showSnackBar(
+          context,
+          'Error downloading payslip: ${e.toString()}',
+          isError: true,
+        );
+      }
+    }
+  }
+
+  Future<void> _sharePayslipPdf({
+    required String url,
+    required String fileBaseName,
+  }) async {
+    bool loadingShown = false;
+    try {
+      final trimmed = url.trim();
+      if (trimmed.isEmpty) {
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Payslip link not available yet',
+            isError: true,
+          );
+        }
+        return;
+      }
+
+      loadingShown = true;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: AppTabLoader()),
+      );
+
+      final result = await _requestService.getPdfBytesFromUrl(trimmed);
       if (mounted && loadingShown) {
         Navigator.pop(context);
         loadingShown = false;
       }
 
       if (result['success'] != true || result['data'] == null) {
-        _fallbackOpenPayslipInBrowser(url);
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Unable to fetch payslip for sharing.',
+            isError: true,
+          );
+        }
         return;
       }
 
       final bytes = result['data'] as List<int>;
-      if (bytes.length < 4) {
-        _fallbackOpenPayslipInBrowser(url);
-        return;
-      }
-      final isPdf =
+      final isPdf = bytes.length >= 4 &&
           bytes[0] == 0x25 &&
           bytes[1] == 0x50 &&
           bytes[2] == 0x44 &&
@@ -4132,24 +4138,29 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         if (mounted) {
           SnackBarUtils.showSnackBar(
             context,
-            'Payslip could not be downloaded. Opening in browser instead.',
-            isError: false,
+            'Payslip file is not a valid PDF.',
+            isError: true,
           );
         }
-        _fallbackOpenPayslipInBrowser(url);
         return;
       }
 
-      await _openPdf(bytes, 'view', month: month, year: year);
-      if (mounted) {
-        SnackBarUtils.showSnackBar(context, 'Payslip downloaded and opened.');
-      }
+      final dir = await getTemporaryDirectory();
+      final safeBase = fileBaseName.trim().isEmpty ? 'Payslip' : fileBaseName.trim();
+      final file = File('${dir.path}/$safeBase.pdf');
+      await file.writeAsBytes(bytes, flush: true);
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: safeBase,
+        text: safeBase,
+      );
     } catch (e) {
       if (mounted) {
         if (loadingShown) Navigator.pop(context);
         SnackBarUtils.showSnackBar(
           context,
-          'Error downloading payslip: ${e.toString()}',
+          'Error sharing payslip: ${e.toString()}',
           isError: true,
         );
       }
@@ -4342,11 +4353,17 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         ? (payroll['payslipUrl']?.toString().trim())
         : null;
     final bool hasPayslipUrl = payslipUrl != null && payslipUrl.isNotEmpty;
+    if (hasPayslipUrl) {
+      statusColor = AppColors.success;
+    }
 
     // Status label: approved but not yet generated vs approved and viewable
     String statusLabel = req['status'] ?? '';
     if (isApproved && !hasPayslipUrl) {
       statusLabel = 'Approved - wait for generation';
+    }
+    if (hasPayslipUrl) {
+      statusLabel = 'Generated';
     }
 
     final colorScheme = Theme.of(context).colorScheme;
@@ -4457,32 +4474,51 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                         approvedBy,
                       ),
                     ],
-                    // View / Download actions – only when payslip is approved and URL is available
-                    if (isApproved && hasPayslipUrl) ...[
+                    // Download / Share actions – show whenever payslip URL exists
+                    if (hasPayslipUrl) ...[
                       const SizedBox(height: 8),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          // View payslip (opens URL)
                           IconButton(
-                            tooltip: 'View Payslip',
+                            tooltip: 'Share Payslip',
                             icon: const Icon(
-                              Icons.visibility_outlined,
+                              Icons.ios_share_rounded,
                               size: 20,
                             ),
                             color: AppColors.primary,
                             onPressed: () {
-                              _viewPayslip(
-                                req['_id']?.toString(),
-                                payslipUrl: payslipUrl,
+                              String monthName = 'Month';
+                              int year = DateTime.now().year;
+                              if (req['month'] != null && req['year'] != null) {
+                                monthName = _getMonthName(req['month']);
+                                final yr = req['year'];
+                                if (yr is int) {
+                                  year = yr;
+                                } else if (yr is num) {
+                                  year = yr.toInt();
+                                } else if (yr is String) {
+                                  year = int.tryParse(yr) ?? year;
+                                }
+                              } else {
+                                final period = _getPeriodText(req);
+                                final parts = period.split(' ');
+                                if (parts.isNotEmpty) monthName = parts[0];
+                                if (parts.length > 1) {
+                                  final yr = int.tryParse(parts[1]);
+                                  if (yr != null) year = yr;
+                                }
+                              }
+                              _sharePayslipPdf(
+                                url: payslipUrl ?? '',
+                                fileBaseName: 'Payslip_$monthName',
                               );
                             },
                           ),
                           const SizedBox(width: 4),
-                          // Download / Share payslip
                           IconButton(
-                            tooltip: 'Download / Share Payslip',
-                            icon: const Icon(Icons.ios_share_rounded, size: 20),
+                            tooltip: 'Download Payslip',
+                            icon: const Icon(Icons.download_outlined, size: 20),
                             color: AppColors.primary,
                             onPressed: () {
                               final requestId = req['_id']?.toString();
@@ -4704,7 +4740,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
               await _fetchRequests();
             },
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _requests.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
@@ -5051,14 +5087,12 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
 
       if (mounted) {
         if (result['success']) {
+          final overlay = Navigator.of(context, rootNavigator: true).overlay;
           widget.onSuccess();
           Navigator.pop(context);
-          final createdCount =
-              result['data']?['created']?.length ?? _selectedMonths.length;
-          SnackBarUtils.showSnackBar(
-            context,
-            'Created $createdCount payslip request(s)',
-          );
+          if (overlay != null && overlay.context.mounted) {
+            showRequestSubmittedSuccessDialog(overlay.context);
+          }
         } else {
           SnackBarUtils.showSnackBar(
             context,
@@ -5093,9 +5127,12 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
 
       if (mounted) {
         if (result['success']) {
+          final overlay = Navigator.of(context, rootNavigator: true).overlay;
           widget.onSuccess();
           Navigator.pop(context);
-          SnackBarUtils.showSnackBar(context, 'Payslip request submitted');
+          if (overlay != null && overlay.context.mounted) {
+            showRequestSubmittedSuccessDialog(overlay.context);
+          }
         } else {
           SnackBarUtils.showSnackBar(
             context,

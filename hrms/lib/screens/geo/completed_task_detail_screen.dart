@@ -10,6 +10,7 @@ import 'package:hrms/screens/dashboard/dashboard_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
 
 class CompletedTaskDetailScreen extends StatefulWidget {
@@ -193,7 +194,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           elevation: 0,
         ),
         body: _loading
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: AppTabLoader())
             : RefreshIndicator(
                 onRefresh: _fetchReport,
                 child: SingleChildScrollView(
@@ -269,7 +270,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                         child: ElevatedButton.icon(
                           onPressed: () => _goToMyTasks(context),
                           icon: const Icon(Icons.list_rounded, size: 22),
-                          label: const Text('Return to My Tasks'),
+                          label: const Text('Return to Tasks'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
                             foregroundColor: Colors.white,
@@ -318,15 +319,20 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('🆔', style: TextStyle(fontSize: 18)),
               const SizedBox(width: 8),
-              Text(
-                'Task #${task.taskId}',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
+              Expanded(
+                child: Text(
+                  'Task #${task.taskId}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
                 ),
               ),
             ],
@@ -381,13 +387,17 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: LinearGradient(
+          colors: [AppColors.primary, AppColors.primaryDark],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+            color: AppColors.primary.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -399,7 +409,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
+              color: Colors.white,
             ),
           ),
           const SizedBox(height: 8),
@@ -416,14 +426,17 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                       'Source',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Colors.grey.shade600,
+                        color: Colors.white.withOpacity(0.9),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       source,
-                      style: const TextStyle(fontSize: 13, color: Colors.black),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white,
+                      ),
                     ),
                   ],
                 ),
@@ -444,14 +457,17 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                       'Destination',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Colors.grey.shade600,
+                        color: Colors.white.withOpacity(0.9),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       dest,
-                      style: const TextStyle(fontSize: 13, color: Colors.black),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white,
+                      ),
                     ),
                   ],
                 ),
@@ -581,7 +597,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           if (task.otpVerifiedAddress != null &&
               task.otpVerifiedAddress!.isNotEmpty)
             _proofRow('OTP Verified At', task.otpVerifiedAddress!),
-          if (task.photoProofUrl != null) ...[
+          if (task.photoProofUrl != null && task.photoProofUrl!.isNotEmpty) ...[
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
@@ -591,10 +607,50 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                 width: double.infinity,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => Container(
-                  height: 80,
+                  height: 120,
+                  width: double.infinity,
                   color: Colors.grey.shade200,
-                  child: const Icon(Icons.broken_image, size: 40),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.broken_image_outlined, size: 40, color: Colors.grey.shade600),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Image not found',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+              ),
+            ),
+          ] else if (task.photoProofUrl == null || task.photoProofUrl!.isEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              height: 120,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.image_not_supported_outlined, size: 40, color: Colors.grey.shade600),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Image not found',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -853,8 +909,19 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
     );
   }
 
+  /// Removes consecutive duplicate events with the same type (e.g. two "arrived" in a row).
+  List<TimelineEvent> _deduplicateTimelineByType(List<TimelineEvent> timeline) {
+    if (timeline.isEmpty) return timeline;
+    final result = <TimelineEvent>[];
+    for (final e in timeline) {
+      if (result.isEmpty || result.last.type != e.type) result.add(e);
+    }
+    return result;
+  }
+
   Widget _buildTimelineSection(TaskCompletionReport? report) {
-    final timeline = report?.timeline ?? _buildFallbackTimeline();
+    final raw = report?.timeline ?? _buildFallbackTimeline();
+    final timeline = _deduplicateTimelineByType(raw);
     if (timeline.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(16),

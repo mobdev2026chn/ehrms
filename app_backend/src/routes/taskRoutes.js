@@ -16,6 +16,7 @@ const {
   getCompletionReport,
   endTask,
   uploadPhotoProof,
+  uploadTaskSelfie,
   sendOtp,
   verifyOtp,
 } = require('../controllers/taskController');
@@ -53,6 +54,7 @@ router.patch('/:id', protect, updateTask);
 router.post('/:id/location', protect, updateLocation);
 router.patch('/:id/steps', protect, updateSteps);
 router.post('/:id/photo', protect, upload.single('photo'), uploadPhotoProof);
+router.post('/:id/selfie', protect, upload.single('photo'), uploadTaskSelfie);
 router.post('/:id/send-otp', protect, sendOtp);
 router.post('/:id/verify-otp', protect, verifyOtp);
 router.post('/:id/end', protect, endTask);

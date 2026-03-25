@@ -62,6 +62,10 @@ const taskDetailsSchema = new mongoose.Schema({
     formFilled: { type: Boolean, default: false },
     otpVerified: { type: Boolean, default: false },
   },
+  arrivedSelfieCheckinUrl: { type: String },
+  arrivedSelfieCheckoutUrl: { type: String },
+  arrivedSelfieCheckinTime: { type: Date },
+  arrivedeSelfieCheckoutTime: { type: Date },
   // isOtpRequired, isGeoFenceRequired, isPhotoRequired, isFormRequired come from TaskSettings only – not stored here
   exit: { type: Array, default: [] },
   restarted: { type: Array, default: [] },
@@ -89,9 +93,11 @@ const taskDetailsSchema = new mongoose.Schema({
   // Per-segment ride distance & duration. segment: travel_started | travel_resumed; endType: travel_exited | arrived
   taskTravelDuration: { type: Array, default: [] }, // [{ segment, endType, durationSeconds, endTime }]
   taskTravelDistance: { type: Array, default: [] }, // [{ segment, endType, distanceKm, endTime }]
+  travelActivityDuration: {
+    driveDuration: { type: Number, default: 0 },
+    walkDuration: { type: Number, default: 0 },
+    stopDuration: { type: Number, default: 0 },
+  },
 }, { timestamps: true, strict: false });
-
-// Upsert by taskId
-taskDetailsSchema.index({ taskId: 1 }, { unique: true });
 
 module.exports = mongoose.model('TaskDetails', taskDetailsSchema);

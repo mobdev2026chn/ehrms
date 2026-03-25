@@ -9,11 +9,13 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/services/customer_service.dart';
+import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/geo/places_service.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/screens/geo/live_tracking_screen.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String staffId;
@@ -84,22 +86,14 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
-      final placemarks = await placemarkFromCoordinates(
+      final resolved = await AddressResolutionService.reverseGeocode(
         position.latitude,
         position.longitude,
       );
-      if (mounted && placemarks.isNotEmpty) {
-        final p = placemarks.first;
-        final addr = [
-          p.street,
-          p.subLocality,
-          p.locality,
-          p.administrativeArea,
-          p.country,
-        ].where((e) => e != null && e.isNotEmpty).join(', ');
+      if (mounted && resolved != null) {
         setState(() {
-          _currentLocationAddress = addr.isNotEmpty
-              ? addr
+          _currentLocationAddress = resolved.formattedAddress.isNotEmpty
+              ? resolved.formattedAddress
               : 'Current location (GPS)';
           _loadingCurrentLocation = false;
         });
@@ -311,7 +305,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             onChanged: (bool? value) {
               setState(() {
                 _useCustomerAddressAsDestination = value ?? false;
-                if (_useCustomerAddressAsDestination && _selectedCustomer != null) {
+                if (_useCustomerAddressAsDestination &&
+                    _selectedCustomer != null) {
                   _applyCustomerAddressAsDestination(_selectedCustomer!);
                 }
               });
@@ -511,13 +506,12 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         dropoff = LatLng(destLocs.first.latitude, destLocs.first.longitude);
         if (destPincode == null) {
           try {
-            final placemarks = await placemarkFromCoordinates(
+            final resolved = await AddressResolutionService.reverseGeocode(
               dropoff.latitude,
               dropoff.longitude,
             );
-            if (placemarks.isNotEmpty &&
-                placemarks.first.postalCode?.isNotEmpty == true) {
-              destPincode = placemarks.first.postalCode;
+            if (resolved?.pincode?.isNotEmpty == true) {
+              destPincode = resolved!.pincode;
             }
           } catch (_) {}
         }
@@ -582,7 +576,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         final msg = e.response?.data is Map
             ? (e.response!.data as Map)['message'] as String?
             : null;
-        final displayMsg = msg != null && !ErrorMessageUtils.isTechnicalMessage(msg)
+        final displayMsg =
+            msg != null && !ErrorMessageUtils.isTechnicalMessage(msg)
             ? msg
             : ErrorMessageUtils.toUserFriendlyMessage(e);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -906,7 +901,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             child: _loadingCustomers
                 ? const Padding(
                     padding: EdgeInsets.all(24),
-                    child: Center(child: CircularProgressIndicator()),
+                    child: const Center(child: AppTabLoader()),
                   )
                 : _filteredCustomers.isEmpty
                 ? Padding(

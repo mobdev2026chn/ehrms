@@ -8,6 +8,7 @@ import '../../models/asset_model.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import 'asset_details_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class AssetsListingScreen extends StatefulWidget {
   const AssetsListingScreen({super.key});
@@ -449,7 +450,7 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
           // Assets cards
           Expanded(
             child: _isLoading && _assets.isEmpty
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _assets.isEmpty
                     ? RefreshIndicator(
                         onRefresh: () async {

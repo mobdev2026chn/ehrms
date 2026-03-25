@@ -1,16 +1,19 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:geocoding/geocoding.dart' hide Location;
 import 'package:geolocator/geolocator.dart' as gl;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/location_data.dart';
 import 'package:hrms/models/tracking_event.dart';
+import 'package:hrms/services/geo/address_resolution_service.dart';
+import 'package:hrms/services/geo/accurate_location_helper.dart';
 import 'package:hrms/services/geo/directions_service.dart';
 import 'package:hrms/services/geo/location_service.dart'
     show LocationService, GeofenceEvent;
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
+import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/services/geo/live_tracking_service.dart';
@@ -52,6 +55,7 @@ class LiveTrackingScreen extends StatefulWidget {
 class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     with WidgetsBindingObserver {
   GoogleMapController? mapController;
+  Task? _taskState;
 
   Marker? _staffMarker;
 
@@ -65,11 +69,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   String _dropoffAddress = '';
   bool _updatingDestination = false;
 
+  Task? get _task => _taskState ?? widget.task;
+
   /// Path built ONLY from actual GPS coordinates (List<LatLng> from location stream).
   Polyline? _routePolyline;
 
   /// Road route from current/last position to destination (fetched from Directions API).
   Polyline? _shortestRoutePolyline;
+  double _plannedTripDistanceKm = 0.0;
   double _remainingDistanceKm = 0.0;
   DateTime? _lastRouteFetchTime;
   static const _routeRefreshInterval = Duration(seconds: 60);
@@ -84,12 +91,58 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   final List<TrackingEvent> _trackingEvents = [];
 
   Location? _lastLocation;
+  ResolvedAddress? _lastResolvedTrackingAddress;
+  double? _lastResolvedTrackingLat;
+  double? _lastResolvedTrackingLng;
+
+  int _addressDetailScore(ResolvedAddress? address) {
+    if (address == null) return -1;
+    final text = address.formattedAddress.trim();
+    if (text.isEmpty) return -1;
+
+    var score = 0;
+    if (address.area != null && address.area!.trim().isNotEmpty) score += 2;
+    if (address.city != null && address.city!.trim().isNotEmpty) score += 1;
+    if (address.pincode != null && address.pincode!.trim().isNotEmpty)
+      score += 1;
+    if (RegExp(r'\d').hasMatch(text)) score += 2;
+    if (RegExp(
+      r'\b(road|rd|street|st|lane|ln|nagar|main)\b',
+      caseSensitive: false,
+    ).hasMatch(text)) {
+      score += 2;
+    }
+    score += ','.allMatches(text).length.clamp(0, 3);
+    return score;
+  }
+
+  bool _hasDetailedTrackingAddress(ResolvedAddress? address) {
+    return _addressDetailScore(address) >= 5;
+  }
+
+  Future<gl.Position> _captureTrackingPosition() {
+    // Match attendance-style capture until we have a strong road-level address.
+    if (_hasDetailedTrackingAddress(_lastResolvedTrackingAddress)) {
+      return getPositionForTrackings(
+        primaryTimeout: const Duration(seconds: 8),
+        sampleWindow: const Duration(seconds: 2),
+        stopEarlyWhenAccuracyMeters: 10,
+        maxSamples: 8,
+      );
+    }
+    return getAccuratePositionForUi();
+  }
 
   String _currentActivity = "Standing";
 
   double _totalDistanceCovered = 0.0;
 
-  Duration _totalTimeElapsed = Duration.zero;
+  /// Resolved after [LiveTrackingService.startTracking] (wall clock; not timer-based).
+  DateTime? _tripStartUtc;
+
+  Duration _drivingDuration = Duration.zero;
+  Duration _walkingDuration = Duration.zero;
+  Duration _stopDuration = Duration.zero;
 
   Timer? _timer;
 
@@ -98,7 +151,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   /// Geofence status for UX: null = inside/no message, else soft or warning message.
   String? _geofenceStatusMessage;
 
-  final DateTime _taskStartTime = DateTime.now();
+  /// Elapsed time for the trip — uses wall clock so it stays correct after sleep / app restart.
+  Duration get _elapsedDuration {
+    final start = _tripStartUtc;
+    if (start == null) return Duration.zero;
+    final d = DateTime.now().difference(start);
+    return d.isNegative ? Duration.zero : d;
+  }
 
   // Step-based progress (Next Steps card).
   bool _reachedLocation = false;
@@ -107,6 +166,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   final bool _otpVerified = false;
   bool _updatingSteps = false;
   bool _submittingArrived = false;
+
+  /// True once arrived has been successfully sent; keeps Arrived button disabled.
+  bool _arrivedSent = false;
   Timer? _locationUploadTimer;
 
   final Floating _floating = Floating();
@@ -115,10 +177,19 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _taskState = widget.task;
+    // Provisional; [_bootstrapTripClock] refines from prefs / API for accurate wall-clock elapsed.
+    _tripStartUtc = widget.task?.startTime;
+    if (_task?.status == TaskStatus.arrived) _arrivedSent = true;
+    final initialDestination = _task?.destinationLocation;
+    if (initialDestination != null &&
+        (initialDestination.lat != 0 || initialDestination.lng != 0)) {
+      _dropoffLatLngState = LatLng(initialDestination.lat, initialDestination.lng);
+    }
     _dropoffAddress =
-        widget.task?.destinationLocation?.address ??
-        (widget.task?.customer != null
-            ? '${widget.task!.customer!.address}, ${widget.task!.customer!.city} ${widget.task!.customer!.pincode}'
+        _task?.destinationLocation?.displayAddress ??
+        (_task?.customer != null
+            ? '${_task!.customer!.address}, ${_task!.customer!.city} ${_task!.customer!.pincode}'
             : 'Drop-off location');
     _initializeMarkers();
 
@@ -157,29 +228,61 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       widget.pickupLocation.latitude,
       widget.pickupLocation.longitude,
     );
+    _fetchPlannedTripRoute();
 
-    // Send GPS point every 15 sec: updateLocation (task path) + storeTracking (Tracking collection).
-    // Persist for background tracking (continues when app closed or in background).
-    if (widget.taskMongoId != null && widget.taskMongoId!.isNotEmpty) {
-      LiveTrackingService().startTracking(
-        taskMongoId: widget.taskMongoId!,
-        taskId: widget.taskId,
-        pickupLat: widget.pickupLocation.latitude,
-        pickupLng: widget.pickupLocation.longitude,
-        dropoffLat: _dropoffLatLng.latitude,
-        dropoffLng: _dropoffLatLng.longitude,
-      );
-      // Send first point after 2 sec, then every 15 sec.
-      Future.delayed(const Duration(seconds: 2), () {
-        _sendLocationToDb();
-        _syncPendingDestinationIfAny();
-      });
-      _locationUploadTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-        if (!mounted) return;
-        _sendLocationToDb();
-      });
-    }
+    // Persist trip start + start GPS uploads after first frame (async; needs awaited startTracking).
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapTripClock());
+
     _enablePipOnMinimize();
+  }
+
+  /// Starts background tracking, restores wall-clock trip start from prefs / server, then timers.
+  Future<void> _bootstrapTripClock() async {
+    if (widget.taskMongoId == null || widget.taskMongoId!.isEmpty) {
+      _tripStartUtc = widget.task?.startTime ?? DateTime.now();
+      if (mounted) setState(() {});
+      return;
+    }
+    await LiveTrackingService().startTracking(
+      taskMongoId: widget.taskMongoId!,
+      taskId: widget.taskId,
+      pickupLat: widget.pickupLocation.latitude,
+      pickupLng: widget.pickupLocation.longitude,
+      dropoffLat: _dropoffLatLng.latitude,
+      dropoffLng: _dropoffLatLng.longitude,
+    );
+    // Server startTime is authoritative if prefs were cleared on cold start (race) or mistaken sync.
+    DateTime? serverStart;
+    try {
+      final t = await TaskService().getTaskById(widget.taskMongoId!);
+      serverStart = t.startTime;
+      if (mounted) _taskState = t;
+    } catch (_) {}
+
+    DateTime? resolved = serverStart ?? widget.task?.startTime;
+    final ms = await LiveTrackingService().getTripStartMs();
+    if (resolved == null && ms != null) {
+      resolved = DateTime.fromMillisecondsSinceEpoch(ms);
+    }
+    if (resolved == null) {
+      resolved = DateTime.now();
+    } else {
+      await LiveTrackingService().persistTripStartMs(
+        resolved.millisecondsSinceEpoch,
+      );
+    }
+    _tripStartUtc = resolved;
+    if (mounted) setState(() {});
+
+    // Send first point after 2 sec, then every 15 sec.
+    Future.delayed(const Duration(seconds: 2), () {
+      _sendLocationToDb();
+      _syncPendingDestinationIfAny();
+    });
+    _locationUploadTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!mounted) return;
+      _sendLocationToDb();
+    });
   }
 
   Future<void> _enablePipOnMinimize() async {
@@ -279,19 +382,22 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     double lat;
     double lng;
     double? accuracyM;
+    double? speedMps;
     try {
-      final pos = await gl.Geolocator.getCurrentPosition(
-        desiredAccuracy: gl.LocationAccuracy.high,
-      );
+      final pos = await _captureTrackingPosition();
       lat = pos.latitude;
       lng = pos.longitude;
       accuracyM = pos.accuracy;
+      speedMps = (pos.speed.isFinite && pos.speed >= 0) ? pos.speed : null;
     } catch (e) {
       final loc = _lastLocation;
       if (loc != null && loc.latitude != null && loc.longitude != null) {
         lat = loc.latitude!;
         lng = loc.longitude!;
         accuracyM = loc.accuracy;
+        speedMps = (loc.speed != null && loc.speed!.isFinite && loc.speed! >= 0)
+            ? loc.speed
+            : null;
       } else {
         lat = widget.pickupLocation.latitude;
         lng = widget.pickupLocation.longitude;
@@ -301,7 +407,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     try {
       battery = await Battery().batteryLevel;
     } catch (_) {}
-    final movementType = MovementClassificationService().addLocationAndClassify(
+    final resolvedAddress = await _resolveTrackingAddress(lat, lng);
+    final movementClassifier = MovementClassificationService();
+    final movementType = movementClassifier.addLocationAndClassify(
       lat: lat,
       lng: lng,
       time: DateTime.now(),
@@ -316,6 +424,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           lng,
           batteryPercent: battery,
           movementType: movementType,
+          address: resolvedAddress?.formattedAddress,
+          fullAddress: resolvedAddress?.formattedAddress,
+          city: resolvedAddress?.city ?? resolvedAddress?.state,
+          area: resolvedAddress?.area,
+          pincode: resolvedAddress?.pincode,
         )
         .catchError((e) {});
     taskSvc
@@ -325,27 +438,73 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           lng,
           batteryPercent: battery,
           movementType: movementType,
+          accuracyM: accuracyM,
+          speedMps: speedMps,
+          consecutiveLowSpeed: movementClassifier.consecutiveLowSpeedCount,
           destinationLat: _dropoffLatLng.latitude,
           destinationLng: _dropoffLatLng.longitude,
+          address: resolvedAddress?.formattedAddress,
+          fullAddress: resolvedAddress?.formattedAddress,
+          city: resolvedAddress?.city ?? resolvedAddress?.state,
+          area: resolvedAddress?.area,
+          pincode: resolvedAddress?.pincode,
         )
-        .then((_) {
-          final classifier = MovementClassificationService();
-          LiveTrackingService.persistLastSentPosition(
-            lat,
-            lng,
-            movementType: movementType,
-            consecutiveLowSpeed: classifier.consecutiveLowSpeedCount,
-          );
+        .then((stored) {
           _syncPendingDestinationIfAny();
         })
         .catchError((e) {});
   }
 
+  Future<ResolvedAddress?> _resolveTrackingAddress(
+    double lat,
+    double lng,
+  ) async {
+    final cached = _lastResolvedTrackingAddress;
+    if (_lastResolvedTrackingAddress != null &&
+        _lastResolvedTrackingLat != null &&
+        _lastResolvedTrackingLng != null) {
+      final distance = gl.Geolocator.distanceBetween(
+        _lastResolvedTrackingLat!,
+        _lastResolvedTrackingLng!,
+        lat,
+        lng,
+      );
+      if (distance <= 30 && _hasDetailedTrackingAddress(cached)) {
+        return cached;
+      }
+    }
+
+    final resolved = await AddressResolutionService.reverseGeocode(lat, lng);
+    final resolvedScore = _addressDetailScore(resolved);
+    final cachedScore = _addressDetailScore(cached);
+    final bestResolved = cachedScore > resolvedScore && cached != null
+        ? cached
+        : resolved;
+
+    if (bestResolved != null) {
+      _lastResolvedTrackingAddress = bestResolved;
+      _lastResolvedTrackingLat = lat;
+      _lastResolvedTrackingLng = lng;
+      await LiveTrackingService.persistResolvedAddress(
+        lat,
+        lng,
+        address: bestResolved.formattedAddress,
+        fullAddress: bestResolved.formattedAddress,
+        city: bestResolved.city ?? bestResolved.state,
+        area: bestResolved.area,
+        pincode: bestResolved.pincode,
+      );
+    }
+    return bestResolved;
+  }
+
   TrackingEventType _movementTypeToEventType(String movementType) {
     switch (movementType) {
       case 'drive':
+      case 'driving':
         return TrackingEventType.drive;
       case 'walk':
+      case 'walking':
         return TrackingEventType.walk;
       case 'stop':
       default:
@@ -356,8 +515,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   String _getMovementDisplay() {
     switch (_currentActivity.toLowerCase()) {
       case 'drive':
+      case 'driving':
         return 'Driving';
       case 'walk':
+      case 'walking':
         return 'Walking';
       case 'stop':
       case 'standing':
@@ -393,62 +554,26 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   }
 
   /// Total trip distance (pickup to dropoff) in km, for progress bar denominator.
-  double get _totalTripDistanceKm {
-    final m = gl.Geolocator.distanceBetween(
-      widget.pickupLocation.latitude,
-      widget.pickupLocation.longitude,
-      _dropoffLatLng.latitude,
-      _dropoffLatLng.longitude,
-    );
-    return m / 1000;
-  }
+  double get _totalTripDistanceKm => _plannedTripDistanceKm;
 
   void _onDropoffMarkerDragEnd(LatLng newPosition) {
-    setState(() {
-      _dropoffLatLngState = newPosition;
-      _dropoffAddress = 'Dropped pin';
-      _updatingDestination = true;
-    });
-    LocationService().updateGeofenceCenter(newPosition);
-    _reverseGeocodeDropoff(newPosition.latitude, newPosition.longitude);
-    _updateDestinationOnBackend();
-    _lastRouteFetchTime = null;
-    _fetchRoadRoute(
-      _lastLocation?.latitude ?? widget.pickupLocation.latitude,
-      _lastLocation?.longitude ?? widget.pickupLocation.longitude,
+    _applyDestinationChange(
+      newPosition,
+      initialAddress: 'Dropped pin',
+      resolveAddress: true,
     );
-    _updateDropoffMarker();
   }
 
-  Future<void> _reverseGeocodeDropoff(double lat, double lng) async {
+  Future<String> _resolveDropoffAddress(double lat, double lng) async {
     try {
-      final placemarks = await placemarkFromCoordinates(lat, lng);
-      if (mounted && placemarks.isNotEmpty) {
-        final p = placemarks.first;
-        setState(() {
-          _dropoffAddress = [
-            p.street,
-            p.subAdministrativeArea,
-            p.locality,
-            p.administrativeArea,
-            p.postalCode,
-            p.country,
-          ].where((e) => e != null && e.isNotEmpty).join(', ');
-        });
-      } else if (mounted) {
-        setState(
-          () => _dropoffAddress =
-              '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}',
-        );
+      final resolved = await AddressResolutionService.reverseGeocode(lat, lng);
+      if (resolved != null && resolved.formattedAddress.trim().isNotEmpty) {
+        return resolved.formattedAddress;
       }
     } catch (_) {
-      if (mounted) {
-        setState(
-          () => _dropoffAddress =
-              '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}',
-        );
-      }
+      // Fall back to coordinates below.
     }
+    return '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}';
   }
 
   void _updateDropoffMarker() {
@@ -468,21 +593,72 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     });
   }
 
-  Future<void> _updateDestinationOnBackend() async {
+  Future<void> _applyDestinationChange(
+    LatLng newPosition, {
+    required String initialAddress,
+    required bool resolveAddress,
+  }) async {
+    setState(() {
+      _dropoffLatLngState = newPosition;
+      _dropoffAddress = initialAddress;
+      _updatingDestination = true;
+    });
+    LocationService().updateGeofenceCenter(newPosition);
+    await LiveTrackingService().updateDestination(
+      dropoffLat: newPosition.latitude,
+      dropoffLng: newPosition.longitude,
+    );
+    _lastRouteFetchTime = null;
+    _plannedTripDistanceKm = 0.0;
+    _updateDropoffMarker();
+    _fetchPlannedTripRoute();
+    _fetchRoadRoute(
+      _lastLocation?.latitude ?? widget.pickupLocation.latitude,
+      _lastLocation?.longitude ?? widget.pickupLocation.longitude,
+    );
+
+    final resolvedAddress = resolveAddress
+        ? await _resolveDropoffAddress(newPosition.latitude, newPosition.longitude)
+        : initialAddress;
+    if (!mounted) return;
+    setState(() {
+      _dropoffAddress = resolvedAddress;
+    });
+    _updateDropoffMarker();
+    await _updateDestinationOnBackend(addressOverride: resolvedAddress);
+  }
+
+  void _applyUpdatedTask(Task updatedTask) {
+    _taskState = updatedTask;
+    final destination = updatedTask.destinationLocation;
+    if (destination != null && (destination.lat != 0 || destination.lng != 0)) {
+      _dropoffLatLngState = LatLng(destination.lat, destination.lng);
+      if ((destination.displayAddress ?? '').trim().isNotEmpty) {
+        _dropoffAddress = destination.displayAddress!.trim();
+      }
+    }
+  }
+
+  Future<void> _updateDestinationOnBackend({String? addressOverride}) async {
     if (widget.taskMongoId == null || widget.taskMongoId!.isEmpty) return;
     final payload = {
       'lat': _dropoffLatLng.latitude,
       'lng': _dropoffLatLng.longitude,
-      'address': _dropoffAddress,
+      'address': addressOverride ?? _dropoffAddress,
     };
     try {
-      await TaskService().updateTask(
+      final updatedTask = await TaskService().updateTask(
         widget.taskMongoId!,
         destinationLocation: payload,
         destinationChanged: true,
       );
       await _clearPendingDestinationCache();
-      if (mounted) setState(() => _updatingDestination = false);
+      if (mounted) {
+        setState(() {
+          _applyUpdatedTask(updatedTask);
+          _updatingDestination = false;
+        });
+      }
     } catch (e) {
       await _cachePendingDestination(payload);
       if (mounted) {
@@ -555,18 +731,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     );
     if (result != null && mounted) {
       final newDest = LatLng(result.lat, result.lng);
-      setState(() {
-        _dropoffLatLngState = newDest;
-        _dropoffAddress = result.address;
-        _updatingDestination = true;
-      });
-      LocationService().updateGeofenceCenter(newDest);
-      _updateDropoffMarker();
-      _updateDestinationOnBackend();
-      _lastRouteFetchTime = null;
-      _fetchRoadRoute(
-        _lastLocation?.latitude ?? widget.pickupLocation.latitude,
-        _lastLocation?.longitude ?? widget.pickupLocation.longitude,
+      await _applyDestinationChange(
+        newDest,
+        initialAddress: result.address,
+        resolveAddress: false,
       );
     }
   }
@@ -622,6 +790,25 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     }
   }
 
+  Future<void> _fetchPlannedTripRoute() async {
+    try {
+      final result = await DirectionsService.getRouteBetweenCoordinates(
+        originLat: widget.pickupLocation.latitude,
+        originLng: widget.pickupLocation.longitude,
+        destLat: _dropoffLatLng.latitude,
+        destLng: _dropoffLatLng.longitude,
+      );
+      if (mounted && result.distanceKm > 0) {
+        setState(() {
+          _plannedTripDistanceKm = result.distanceKm;
+          if (_remainingDistanceKm <= 0) {
+            _remainingDistanceKm = result.distanceKm;
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
   void _updateRoutePolyline(LatLng newLatLng) {
     if (_routePolyline == null) {
       _routePolyline = Polyline(
@@ -646,6 +833,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   }
 
   void _updateRemainingEta() {
+    if (_remainingDistanceKm > 0) return;
+
     // Use last known location, or pickup if no location yet
     final fromLat = _lastLocation?.latitude ?? widget.pickupLocation.latitude;
     final fromLng = _lastLocation?.longitude ?? widget.pickupLocation.longitude;
@@ -660,7 +849,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       setState(() {
         _remainingDistanceKm = km;
         // Shortest distance from live location to destination; ETA based on speed
-        final speedKmh = _currentActivity.toLowerCase() == 'walk' ? 5.0 : 30.0;
+        final normalized = _currentActivity.toLowerCase();
+        final speedKmh = normalized == 'walk' || normalized == 'walking'
+            ? 5.0
+            : 30.0;
         final min = (km / speedKmh * 60).round().clamp(0, 999);
         _etaMinutes = min;
         _etaText = min > 60 ? '~${min ~/ 60} h' : '~$min min';
@@ -672,7 +864,22 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
-          _totalTimeElapsed = _totalTimeElapsed + const Duration(seconds: 1);
+          // Elapsed uses [_elapsedDuration] (wall clock), not tick counting — survives background/sleep.
+          switch (_currentActivity.toLowerCase()) {
+            case 'drive':
+            case 'driving':
+              _drivingDuration += const Duration(seconds: 1);
+              break;
+            case 'walk':
+            case 'walking':
+              _walkingDuration += const Duration(seconds: 1);
+              break;
+            case 'stop':
+            case 'standing':
+            default:
+              _stopDuration += const Duration(seconds: 1);
+              break;
+          }
         });
       }
     });
@@ -710,6 +917,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       final fromLng =
           _lastLocation?.longitude ?? widget.pickupLocation.longitude;
       _fetchRoadRoute(fromLat, fromLng);
+      setState(() {}); // Refresh wall-clock elapsed immediately when returning from background.
     }
   }
 
@@ -737,7 +945,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       builder: (ctx) => const ExitRideBottomSheet(),
     );
     if (result == null || !mounted) return;
-    final exitType = result['exitType'] as String?;
+    final exitType = result['exitType'];
     final reason = result['reason']?.trim();
     if (exitType == null ||
         exitType.isEmpty ||
@@ -785,9 +993,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       }
     }
     if (mounted) {
-      await _floating.cancelOnLeavePiP();
-      await Future.delayed(const Duration(milliseconds: 150));
-      if (mounted) Navigator.of(context).pop();
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MyTasksScreen()),
+        (route) => false,
+      );
     }
   }
 
@@ -813,10 +1022,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   }
 
   Future<void> _onArrived() async {
-    if (_submittingArrived) return;
+    if (_submittingArrived || _arrivedSent) return;
     final totalKm = _totalDistanceCovered / 1000;
     final arrival = DateTime.now();
-    final durationSeconds = _totalTimeElapsed.inSeconds;
+    final durationSeconds = _elapsedDuration.inSeconds;
+    Task? arrivedTask = _task;
 
     double? lat = _lastLocation?.latitude ?? widget.pickupLocation.latitude;
     double? lng = _lastLocation?.longitude ?? widget.pickupLocation.longitude;
@@ -834,23 +1044,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         lng != null) {
       if (mounted) setState(() => _submittingArrived = true);
       try {
-        final destAddress = _dropoffAddress.isNotEmpty
-            ? _dropoffAddress
-            : (widget.task?.destinationLocation?.address ??
-                  (widget.task?.customer != null
-                      ? '${widget.task!.customer!.address}, ${widget.task!.customer!.city} ${widget.task!.customer!.pincode}'
-                      : null));
+        // Arrival lat/lng = staff GPS here (above). Do not send destination as fullAddress —
+        // DB arrival fields must describe this point; backend reverse-geocodes lat/lng.
         final sourceAddress =
-            widget.task?.sourceLocation?.address ??
-            (widget.task?.customer != null
-                ? '${widget.task!.customer!.address}, ${widget.task!.customer!.city}'
+            _task?.sourceLocation?.address ??
+            (_task?.customer != null
+                ? '${_task!.customer!.address}, ${_task!.customer!.city}'
                 : null);
         await TaskService().arrivedRide(
           widget.taskMongoId!,
           lat: lat,
           lng: lng,
-          fullAddress: destAddress,
-          pincode: widget.task?.customer?.pincode,
           sourceFullAddress: sourceAddress,
           tripDistanceKm: totalKm,
           tripDurationSeconds: durationSeconds,
@@ -860,14 +1064,38 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             'address': sourceAddress,
             'fullAddress': sourceAddress,
           },
+          travelActivityDuration: {
+            'driveDuration': _drivingDuration.inSeconds,
+            'walkDuration': _walkingDuration.inSeconds,
+            'stopDuration': _stopDuration.inSeconds,
+          },
         );
-        if (mounted) setState(() => _reachedLocation = true);
+        try {
+          arrivedTask = await TaskService().getTaskById(widget.taskMongoId!);
+          _taskState = arrivedTask;
+        } catch (_) {}
+        if (mounted)
+          setState(() {
+            _reachedLocation = true;
+            _arrivedSent = true;
+          });
         await LiveTrackingService().stopTracking();
       } catch (_) {
         if (mounted) setState(() => _submittingArrived = false);
         return;
       }
-      // Keep _submittingArrived true until navigation; prevents double-tap
+      // _arrivedSent and _submittingArrived keep Arrived button disabled
+    }
+    if (!mounted) return;
+    String? arrivalAddr;
+    if (lat != null && lng != null) {
+      try {
+        arrivalAddr = (await AddressResolutionService.reverseGeocode(
+          lat,
+          lng,
+        ))?.formattedAddress;
+      } catch (_) {}
+      arrivalAddr ??= '${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}';
     }
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -875,22 +1103,30 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         builder: (context) => ArrivedScreen(
           taskMongoId: widget.taskMongoId,
           taskId: widget.taskId,
-          task: widget.task,
-          totalDuration: _totalTimeElapsed,
-          totalDistanceKm: totalKm,
+          task: arrivedTask,
+          totalDuration: Duration(
+            seconds: arrivedTask?.tripDurationSeconds ?? _elapsedDuration.inSeconds,
+          ),
+          totalDistanceKm: arrivedTask?.tripDistanceKm ?? totalKm,
           isWithinGeofence: _isInsideGeofence,
           arrivalTime: arrival,
           sourceLat: widget.pickupLocation.latitude,
           sourceLng: widget.pickupLocation.longitude,
-          sourceAddress: widget.task?.sourceLocation?.address,
+          sourceAddress: _task?.sourceLocation?.address,
           destLat: _dropoffLatLng.latitude,
           destLng: _dropoffLatLng.longitude,
           destAddress: _dropoffAddress.isNotEmpty
               ? _dropoffAddress
-              : (widget.task?.destinationLocation?.address ??
-                    (widget.task?.customer != null
-                        ? '${widget.task!.customer!.address}, ${widget.task!.customer!.city} ${widget.task!.customer!.pincode}'
+              : (_task?.destinationLocation?.displayAddress ??
+                    (_task?.customer != null
+                        ? '${_task!.customer!.address}, ${_task!.customer!.city} ${_task!.customer!.pincode}'
                         : null)),
+          arrivalAtLat: lat,
+          arrivalAtLng: lng,
+          arrivalAtAddress: arrivalAddr,
+          drivingDuration: _drivingDuration,
+          walkingDuration: _walkingDuration,
+          stopDuration: _stopDuration,
         ),
       ),
     );
@@ -963,7 +1199,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               _buildTravelRow(
                 Icons.timer_outlined,
                 'Elapsed',
-                _formatDuration(_totalTimeElapsed),
+                _formatDuration(_elapsedDuration),
               ),
               const SizedBox(height: 4),
               _buildTravelRow(
@@ -1077,11 +1313,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               if (_currentActivity.toLowerCase() == 'stop' ||
                   _currentActivity.toLowerCase() == 'standing') ...[
                 const SizedBox(width: 12),
-                if (widget.task?.customer?.customerNumber != null &&
-                    widget.task!.customer!.customerNumber!.trim().isNotEmpty)
+                if (_task?.customer?.customerNumber != null &&
+                    _task!.customer!.customerNumber!.trim().isNotEmpty)
                   IconButton(
                     onPressed: () async {
-                      final number = widget.task!.customer!.customerNumber!
+                      final number = _task!.customer!.customerNumber!
                           .trim();
                       final uri = Uri.parse('tel:$number');
                       if (await canLaunchUrl(uri)) {
@@ -1136,7 +1372,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 onPressed: _onExitRide,
                 icon: const Icon(Icons.exit_to_app_rounded, size: 18),
                 label: const Text(
-                  'Exit Ride',
+                  'Exit Task',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
                 style: OutlinedButton.styleFrom(
@@ -1153,7 +1389,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             Expanded(
               flex: 2,
               child: ElevatedButton.icon(
-                onPressed: _submittingArrived ? null : _onArrived,
+                onPressed: (_submittingArrived || _arrivedSent)
+                    ? null
+                    : _onArrived,
                 icon: _submittingArrived
                     ? const SizedBox(
                         width: 18,
@@ -1163,13 +1401,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                           color: Colors.white,
                         ),
                       )
-                    : const Icon(
-                        Icons.location_on_rounded,
+                    : Icon(
+                        _arrivedSent
+                            ? Icons.check_circle_rounded
+                            : Icons.location_on_rounded,
                         color: Colors.white,
                         size: 18,
                       ),
                 label: Text(
-                  _submittingArrived ? 'Submitting...' : 'Arrived',
+                  _arrivedSent
+                      ? 'Arrived'
+                      : (_submittingArrived ? 'Submitting...' : 'Arrived'),
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -1200,6 +1442,12 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             _lastLocation!.longitude != null
         ? LatLng(_lastLocation!.latitude!, _lastLocation!.longitude!)
         : widget.pickupLocation;
+    final pipTitle = _dropoffAddress.isNotEmpty
+        ? _dropoffAddress
+        : 'Towards destination';
+    final pipSubtitle = _etaText != null
+        ? 'Arrive $_etaText'
+        : '${_remainingDistanceKm.toStringAsFixed(1)} km';
     return Container(
       color: Colors.white,
       child: Stack(
@@ -1221,47 +1469,71 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             left: 0,
             right: 0,
             bottom: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              color: Colors.white.withOpacity(0.95),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.navigation_rounded,
-                        size: 16,
-                        color: AppColors.primary,
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: ClipRect(
+                    child: Container(
+                      constraints: const BoxConstraints(maxHeight: 52),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
                       ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          _dropoffAddress.isNotEmpty
-                              ? (_dropoffAddress.length > 35
-                                    ? '${_dropoffAddress.substring(0, 35)}...'
-                                    : _dropoffAddress)
-                              : 'Towards destination',
-                          style: const TextStyle(fontSize: 11),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _etaText != null
-                        ? 'Arrive $_etaText'
-                        : '${_remainingDistanceKm.toStringAsFixed(2)} km',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.navigation_rounded,
+                            size: 14,
+                            color: AppColors.primary,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  pipTitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 10.5),
+                                ),
+                                const SizedBox(height: 2),
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    pipSubtitle,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -1279,7 +1551,20 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
     return PiPSwitcher(
       childWhenDisabled: _buildFullScreen(allPolylines),
-      childWhenEnabled: _buildPipView(allPolylines),
+      childWhenEnabled: Builder(
+        builder: (context) {
+          // [PiPSwitcher] uses native isInPictureInPictureMode. That flag can be wrong
+          // briefly after resume or on some devices while the window is still fullscreen,
+          // which would show only the compact PiP map. Real PiP windows are much smaller
+          // than a phone screen; use the short side to decide which layout to show.
+          final size = MediaQuery.sizeOf(context);
+          final minSide = math.min(size.width, size.height);
+          if (minSide >= 300) {
+            return _buildFullScreen(allPolylines);
+          }
+          return _buildPipView(allPolylines);
+        },
+      ),
     );
   }
 
@@ -1320,13 +1605,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                   );
                 },
               ),
-            if (widget.task?.customer?.customerNumber != null &&
-                widget.task!.customer!.customerNumber!.trim().isNotEmpty)
+            if (_task?.customer?.customerNumber != null &&
+                _task!.customer!.customerNumber!.trim().isNotEmpty)
               IconButton(
                 icon: Icon(Icons.call_rounded, color: AppColors.primary),
                 tooltip: 'Call customer',
                 onPressed: () async {
-                  final number = widget.task!.customer!.customerNumber!.trim();
+                  final number = _task!.customer!.customerNumber!.trim();
                   final uri = Uri.parse('tel:$number');
                   if (await canLaunchUrl(uri)) {
                     await launchUrl(uri);

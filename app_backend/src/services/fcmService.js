@@ -38,8 +38,9 @@ function init() {
 
 /**
  * Send a notification to a single device token.
- * Uses DATA-ONLY payload so the Flutter app's background handler runs when app is closed,
- * allowing notifications to be stored and shown in the in-app Notifications screen.
+ * Uses DATA-ONLY payload so the Flutter app's background handler runs when app is closed or in background,
+ * so every notification is stored and shown in the in-app Notifications screen even if the user never taps it.
+ * Do not add a top-level "notification" payload – that would prevent the app from storing when not tapped.
  * @param {string} token - FCM device token
  * @param {object} options - { title, body, data, androidTag? } (androidTag: same tag = replace previous notification on device)
  * @returns {Promise<{ success: boolean, error?: string }>}
@@ -74,7 +75,13 @@ async function sendToToken(token, { title, body, data = {}, ...options } = {}) {
             data: dataObj,
             android: {
                 priority: 'high',
+                // Required so data-only messages are delivered when app is in background or killed.
                 ...(androidTag ? { notification: { tag: androidTag } } : {}),
+            },
+            // Optional: help delivery when app is in background (iOS).
+            apns: {
+                headers: { 'apns-priority': '10' },
+                payload: { aps: { 'content-available': 1 } },
             },
         };
         const msgId = await admin.messaging().send(payload);

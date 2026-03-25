@@ -65,8 +65,12 @@ exports.uploadActivity = async (req, res) => {
                 const result = await inlineQueue(() => activityProcessor.processPayload(payload));
                 return res.status(200).json({ success: true });
             } catch (err) {
+<<<<<<< HEAD
                 const isScreenshotTooSoon = metadata?.type === 'screenshot' && /too soon|too soon/i.test(err.message || '');
                 if (isScreenshotTooSoon) {
+=======
+                if (activityProcessor.isSkippableTrackingError(err)) {
+>>>>>>> development
                     return res.status(200).json({ success: true, skipped: true });
                 }
                 console.error('Error (activity upload):', err.message || err);
@@ -88,9 +92,13 @@ exports.uploadActivity = async (req, res) => {
                 await inlineQueue(() => activityProcessor.processPayload(req.body));
                 return res.status(200).json({ success: true });
             } catch (fallbackErr) {
+<<<<<<< HEAD
                 const meta = req.body?.metadata || {};
                 const isScreenshotTooSoon = meta?.type === 'screenshot' && /too soon/i.test(fallbackErr.message || '');
                 if (isScreenshotTooSoon) {
+=======
+                if (activityProcessor.isSkippableTrackingError(fallbackErr)) {
+>>>>>>> development
                     return res.status(200).json({ success: true, skipped: true });
                 }
                 console.error('Error (activity upload fallback):', fallbackErr.message || fallbackErr);

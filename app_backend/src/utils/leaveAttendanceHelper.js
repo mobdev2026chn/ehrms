@@ -311,11 +311,14 @@ const canCheckInWithHalfDayLeave = (leave, now, shiftStartTime, shiftEndTime, ti
 
 /**
  * Check if check-out is allowed given an approved Half Day leave and current time.
+ * Uses halfDaySettings from business/company shift:
+ * - firstHalfLogoutGraceMinutes: for Session 2 (Second Half Day leave), employee can logout up to this many minutes AFTER the midpoint. E.g. 60 => can logout until mid + 60 mins.
+ *
  * - Session 1 (First Half Day leave): employee works SECOND HALF (midpoint to shift end)
- *   - Check-out allowed from midpoint to shift end. They can checkout before shift end time (early checkout allowed).
+ *   - Check-out allowed from midpoint to shift end.
  *
  * - Session 2 (Second Half Day leave): employee works FIRST HALF (shift start to midpoint)
- *   - Check-out allowed during the entire working first half (shift start to midpoint). Do not hide/disable checkout till full-day shift end; they can checkout before session (first half) end.
+ *   - Check-out allowed from shift start to (midpoint + firstHalfLogoutGraceMinutes). If grace is 0/null: logout at midpoint only.
  */
 const canCheckOutWithHalfDayLeave = (leave, now, shiftStartTime, shiftEndTime, timeZone, halfDaySettings = null) => {
     if (!leave || !isHalfDayLeaveType(leave.leaveType)) return { allowed: true };
@@ -326,11 +329,10 @@ const canCheckOutWithHalfDayLeave = (leave, now, shiftStartTime, shiftEndTime, t
     const shiftEndMin = toMinutesOfDay(shiftEndTime || DEFAULT_SHIFT_END);
     const effectiveTz = timeZone || DEFAULT_BUSINESS_TIMEZONE;
     const { currentMinutes } = getLocalHoursMinutes(now, effectiveTz);
-    // Mid = boundary between first and second half. bounds for 'First Half Day' = first half (start..end=mid); for 'Second Half Day' = second half (start=mid..end).
     const midMin = session === 'First Half Day' ? bounds.end : bounds.start;
 
     if (session === 'First Half Day') {
-        // First Half Day leave: work SECOND HALF (midpoint to shift end). Check-out allowed from mid to shift end (can checkout before shift end).
+        // First Half Day leave: work SECOND HALF (midpoint to shift end). Check-out allowed from mid to shift end.
         if (currentMinutes < midMin) {
             return { allowed: false, message: 'You are on leave for the first half and cannot check in/out during this time.' };
         }
@@ -340,12 +342,15 @@ const canCheckOutWithHalfDayLeave = (leave, now, shiftStartTime, shiftEndTime, t
         return { allowed: true };
     }
     if (session === 'Second Half Day') {
-        // Second Half Day leave: work FIRST HALF (shift start to midpoint). Check-out allowed during entire first half — do not hide till full-day shift end; they can checkout before session end.
+        // Second Half Day leave: work FIRST HALF. Check-out allowed from shift start until (midpoint + firstHalfLogoutGraceMinutes).
+        const graceMins = halfDaySettings?.firstHalfLogoutGraceMinutes ?? 0;
+        const logoutUntil = midMin + graceMins;
         if (currentMinutes < shiftStartMin) {
             return { allowed: false, message: 'Check-out not allowed before shift start: ' + shiftStartTime + '.' };
         }
-        if (currentMinutes >= midMin) {
-            return { allowed: false, message: 'You are on leave for the second half and cannot check in/out during this time.' };
+        if (currentMinutes > logoutUntil) {
+            const untilTime = formatMinutesToTime(logoutUntil);
+            return { allowed: false, message: 'Check-out allowed only until ' + untilTime + ' (midpoint + ' + graceMins + ' min grace).' };
         }
         return { allowed: true };
     }

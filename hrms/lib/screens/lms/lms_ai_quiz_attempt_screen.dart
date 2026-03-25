@@ -8,6 +8,7 @@ import '../../utils/snackbar_utils.dart' show SnackBarUtils;
 import '../../utils/error_message_utils.dart';
 import 'lms_course_detail_screen.dart';
 import 'lms_dashboard_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class LmsAiQuizAttemptScreen extends StatefulWidget {
   final String quizId;
@@ -98,7 +99,7 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
           backgroundColor: AppColors.surface,
           foregroundColor: AppColors.textPrimary,
         ),
-        body: const Center(child: CircularProgressIndicator()),
+        body: const Center(child: AppTabLoader()),
       );
     }
 

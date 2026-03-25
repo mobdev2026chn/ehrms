@@ -2,22 +2,24 @@
 // Full-screen map: tap or long-press to drop pin, reverse-geocode, confirm.
 
 import 'package:flutter/material.dart';
-import 'package:geocoding/geocoding.dart' hide Location;
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/services/geo/address_resolution_service.dart';
 
 class PinDestinationResult {
   final double lat;
   final double lng;
   final String address;
   final String? pincode;
+  final String? city;
 
   const PinDestinationResult({
     required this.lat,
     required this.lng,
     required this.address,
     this.pincode,
+    this.city,
   });
 }
 
@@ -45,6 +47,7 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
   LatLng? _pinnedLocation;
   String _pinnedAddress = '';
   String? _pinnedPincode;
+  String? _pinnedCity;
   bool _loadingAddress = false;
   bool _loadingCurrentLocation = true;
 
@@ -93,18 +96,12 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
   Future<void> _reverseGeocode(double lat, double lng) async {
     setState(() => _loadingAddress = true);
     try {
-      final placemarks = await placemarkFromCoordinates(lat, lng);
-      if (mounted && placemarks.isNotEmpty) {
-        final p = placemarks.first;
+      final resolved = await AddressResolutionService.reverseGeocode(lat, lng);
+      if (mounted && resolved != null) {
         setState(() {
-          _pinnedAddress = [
-            p.street,
-            p.subAdministrativeArea,
-            p.locality,
-            p.administrativeArea,
-            p.postalCode,
-            p.country,
-          ].where((e) => e != null && e.isNotEmpty).join(', ');
+          _pinnedAddress = resolved.formattedAddress;
+          _pinnedPincode = resolved.pincode;
+          _pinnedCity = resolved.city;
           _loadingAddress = false;
         });
       } else if (mounted) {
@@ -149,6 +146,7 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
         lng: _pinnedLocation!.longitude,
         address: _pinnedAddress.isNotEmpty ? _pinnedAddress : 'Dropped pin',
         pincode: _pinnedPincode,
+        city: _pinnedCity,
       ),
     );
   }

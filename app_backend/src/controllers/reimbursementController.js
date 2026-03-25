@@ -1,13 +1,7 @@
 const Reimbursement = require('../models/Reimbursement');
 const Staff = require('../models/Staff');
 const User = require('../models/User');
-const cloudinary = require('cloudinary').v2;
-
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-});
+const digitalOceanService = require('../services/digitalOceanService');
 
 const getReimbursements = async (req, res) => {
     try {
@@ -74,9 +68,6 @@ const getReimbursements = async (req, res) => {
     }
 };
 
-// Cloudinary folder for expense request proof files
-const EXPENSE_PROOF_FOLDER = 'hrms/expense-proofs';
-
 const createReimbursement = async (req, res) => {
     try {
         const { type, amount, date, description, proofFiles } = req.body;
@@ -86,17 +77,13 @@ const createReimbursement = async (req, res) => {
             return res.status(400).json({ success: false, error: { message: 'Staff profile not found' } });
         }
 
-        const needsCloudinary = proofFiles && Array.isArray(proofFiles) && proofFiles.length > 0 &&
+        const needsUpload = proofFiles && Array.isArray(proofFiles) && proofFiles.length > 0 &&
             proofFiles.some(f => typeof f === 'string' && !f.startsWith('http://') && !f.startsWith('https://'));
-        if (needsCloudinary && (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET)) {
-            return res.status(503).json({
-                success: false,
-                error: { message: 'Proof upload is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in .env.' }
-            });
-        }
 
         let uploadedProofUrls = [];
         if (proofFiles && Array.isArray(proofFiles) && proofFiles.length > 0) {
+            const companyId = currentStaff.businessId ? String(currentStaff.businessId) : undefined;
+            const employeeName = currentStaff.name || 'unknown';
             for (let i = 0; i < proofFiles.length; i++) {
                 const fileStr = proofFiles[i];
                 if (typeof fileStr !== 'string') continue;
@@ -105,17 +92,46 @@ const createReimbursement = async (req, res) => {
                     continue;
                 }
                 try {
-                    const result = await cloudinary.uploader.upload(fileStr, {
-                        folder: EXPENSE_PROOF_FOLDER,
-                        resource_type: 'auto',
-                        public_id: `expense_${currentStaff._id}_${Date.now()}_${i}`
-                    });
-                    uploadedProofUrls.push(result.secure_url);
+                    let buffer;
+                    let ext = 'pdf';
+                    if (fileStr.startsWith('data:')) {
+                        const mimeMatch = fileStr.match(/^data:([^;]+);/);
+                        if (mimeMatch) {
+                            const mime = mimeMatch[1].toLowerCase();
+                            if (mime.includes('png')) ext = 'png';
+                            else if (mime.includes('jpeg') || mime.includes('jpg')) ext = 'jpg';
+                            else if (mime.includes('pdf')) ext = 'pdf';
+                        }
+                        const base64Data = fileStr.replace(/^data:[^;]+;base64,/, '');
+                        buffer = Buffer.from(base64Data, 'base64');
+                    } else {
+                        buffer = Buffer.from(fileStr, 'base64');
+                    }
+                    const result = await digitalOceanService.uploadDocument(
+                        buffer,
+                        undefined,
+                        `reimbursement_proof.${ext}`,
+                        {
+                            req,
+                            companyId,
+                            employeeName,
+                            category: 'employees',
+                            subfolder: 'documents/reimbursements',
+                            filePrefix: 'reimbursement_proof',
+                        }
+                    );
+                    if (!result.success) {
+                        return res.status(500).json({
+                            success: false,
+                            error: { message: result.error || 'Failed to upload proof file' }
+                        });
+                    }
+                    uploadedProofUrls.push(result.url);
                 } catch (uploadError) {
-                    console.error('Cloudinary upload failed for expense proof:', uploadError.message);
+                    console.error('Proof upload failed:', uploadError.message);
                     return res.status(500).json({
                         success: false,
-                        error: { message: 'Failed to upload proof file to Cloudinary: ' + uploadError.message }
+                        error: { message: 'Failed to upload proof file: ' + uploadError.message }
                     });
                 }
             }

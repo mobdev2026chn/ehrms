@@ -1,4 +1,5 @@
 // Arrived screen – trip summary, "You've Arrived!", Within Geo-Fence, Next Steps.
+import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:hrms/config/constants.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/exit_ride_bottom_sheet.dart';
 import 'package:hrms/screens/geo/form_fill_screen.dart';
+import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/screens/geo/otp_verification_screen.dart';
 import 'package:hrms/screens/geo/photo_proof_screen.dart';
 import 'package:hrms/screens/geo/task_completed_screen.dart';
@@ -17,6 +19,7 @@ import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/utils/error_message_utils.dart';
+import 'package:hrms/utils/task_movement_summary_util.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ArrivedScreen extends StatefulWidget {
@@ -33,16 +36,22 @@ class ArrivedScreen extends StatefulWidget {
   final double? sourceLng;
   final String? sourceAddress;
 
-  /// Destination (dropoff) location - lat, lng, address.
+  /// Task map destination (exit-ride fallback only). Not shown in Trip Details "Destination".
   final double? destLat;
   final double? destLng;
   final String? destAddress;
+
+  /// Where staff tapped Arrived (GPS + address). Shown as Destination in Trip Details.
+  final double? arrivalAtLat;
+  final double? arrivalAtLng;
+  final String? arrivalAtAddress;
 
   /// Optional: driving duration/distance if available from tracking.
   final Duration? drivingDuration;
   final double? drivingDistanceKm;
   final Duration? walkingDuration;
   final double? walkingDistanceKm;
+  final Duration? stopDuration;
 
   const ArrivedScreen({
     super.key,
@@ -59,10 +68,14 @@ class ArrivedScreen extends StatefulWidget {
     this.destLat,
     this.destLng,
     this.destAddress,
+    this.arrivalAtLat,
+    this.arrivalAtLng,
+    this.arrivalAtAddress,
     this.drivingDuration,
     this.drivingDistanceKm,
     this.walkingDuration,
     this.walkingDistanceKm,
+    this.stopDuration,
   });
 
   @override
@@ -73,14 +86,35 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
   Task? _task;
   bool _photoProofDone = false;
   bool _storedOtpRequired = false;
-  bool _submittingExit = false;
   bool _submittingComplete = false;
   List<Map<String, dynamic>> _assignedTemplates = [];
   List<Map<String, dynamic>> _formResponsesForTask = [];
   String? _staffId;
   bool _formLoading = false;
+  TaskMovementSummary? _movementSummary;
+  double? _routeDistanceKm;
+
+  /// Physical arrival point (Trip Details "Destination" row).
+  String? _arrivalDisplayAddress;
+  double? _arrivalDisplayLat;
+  double? _arrivalDisplayLng;
 
   Task? get task => _task;
+
+  void _syncArrivalDisplayFromState() {
+    if (widget.arrivalAtLat != null && widget.arrivalAtLng != null) {
+      _arrivalDisplayLat = widget.arrivalAtLat;
+      _arrivalDisplayLng = widget.arrivalAtLng;
+      _arrivalDisplayAddress = widget.arrivalAtAddress;
+      return;
+    }
+    final a = _task?.arrivalLocation ?? widget.task?.arrivalLocation;
+    if (a != null && (a.lat != 0 || a.lng != 0)) {
+      _arrivalDisplayLat = a.lat;
+      _arrivalDisplayLng = a.lng;
+      _arrivalDisplayAddress = a.displayAddress;
+    }
+  }
 
   /// Form is required when staff has assigned templates. Shown only when > 0.
   bool get _hasFormAssigned => _assignedTemplates.isNotEmpty;
@@ -130,9 +164,11 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
     super.initState();
     _task = widget.task;
     _photoProofDone = widget.task?.photoProof == true;
+    _syncArrivalDisplayFromState();
     _loadStoredTaskSettings();
     _loadStaffIdAndForms();
     _refreshTask();
+    _loadMovementSummary();
   }
 
   Future<void> _loadStaffIdAndForms() async {
@@ -197,12 +233,35 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
         setState(() {
           _task = t;
           _photoProofDone = t.photoProof == true;
+          if (widget.arrivalAtLat == null) _syncArrivalDisplayFromState();
         });
       }
       final staffId = _staffId ?? t.assignedTo;
       if (staffId != null && staffId.isNotEmpty) {
         if (_staffId == null && mounted) setState(() => _staffId = staffId);
         await _loadFormTemplatesAndResponses(staffId);
+      }
+      await _loadMovementSummary();
+    } catch (_) {}
+  }
+
+  Future<void> _loadMovementSummary() async {
+    final taskId = widget.taskMongoId ?? task?.id;
+    if (taskId == null || taskId.isEmpty) return;
+    try {
+      final report = await TaskService().getTaskCompletionReport(taskId);
+      final summary = TaskMovementSummary.fromRoutePoints(
+        report.routePoints,
+        endTime: _travelEndTime ?? widget.arrivalTime,
+      );
+      if (mounted) {
+        setState(() {
+          _movementSummary = summary.hasData ? summary : null;
+          _routeDistanceKm = computeRouteDistanceKm(
+            report.routePoints,
+            endTime: _travelEndTime ?? widget.arrivalTime,
+          );
+        });
       }
     } catch (_) {}
   }
@@ -217,13 +276,89 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
     return '${d.inSeconds} secs';
   }
 
+  DateTime? get _travelStartTime => task?.startTime ?? widget.task?.startTime;
+
+  DateTime? get _travelEndTime =>
+      task?.arrivalTime ?? widget.task?.arrivalTime ?? widget.arrivalTime;
+
+  Duration get _travelDuration {
+    final secs = task?.tripDurationSeconds ?? widget.task?.tripDurationSeconds;
+    if (secs != null && secs > 0) {
+      return Duration(seconds: secs);
+    }
+    final start = _travelStartTime;
+    final end = _travelEndTime;
+    if (start != null && end != null && !end.isBefore(start)) {
+      return end.difference(start);
+    }
+    return widget.totalDuration;
+  }
+
+  String? get _sourceDisplayAddress =>
+      task?.sourceLocation?.displayAddress ??
+      widget.task?.sourceLocation?.displayAddress ??
+      widget.sourceAddress;
+
+  double? get _sourceDisplayLat =>
+      task?.sourceLocation?.lat ??
+      widget.task?.sourceLocation?.lat ??
+      widget.sourceLat;
+
+  double? get _sourceDisplayLng =>
+      task?.sourceLocation?.lng ??
+      widget.task?.sourceLocation?.lng ??
+      widget.sourceLng;
+
+  String? get _destinationDisplayAddress =>
+      _arrivalDisplayAddress ??
+      task?.arrivalLocation?.displayAddress ??
+      widget.task?.arrivalLocation?.displayAddress ??
+      widget.arrivalAtAddress;
+
+  double? get _destinationDisplayLat =>
+      _arrivalDisplayLat ??
+      task?.arrivalLocation?.lat ??
+      widget.task?.arrivalLocation?.lat ??
+      widget.arrivalAtLat;
+
+  double? get _destinationDisplayLng =>
+      _arrivalDisplayLng ??
+      task?.arrivalLocation?.lng ??
+      widget.task?.arrivalLocation?.lng ??
+      widget.arrivalAtLng;
+
+  double get _displayDistanceKm {
+    final taskDistance = task?.tripDistanceKm;
+    if (taskDistance != null && taskDistance > 0) return taskDistance;
+    final widgetTaskDistance = widget.task?.tripDistanceKm;
+    if (widgetTaskDistance != null && widgetTaskDistance > 0) {
+      return widgetTaskDistance;
+    }
+    if (_routeDistanceKm != null && _routeDistanceKm! > 0) return _routeDistanceKm!;
+    return widget.totalDistanceKm;
+  }
+
+  TaskMovementSummary? get _displayMovementSummary {
+    final stored = task?.travelActivityDuration ?? widget.task?.travelActivityDuration;
+    if (stored != null) {
+      final summary = TaskMovementSummary.fromDurations(
+        drivingDuration: Duration(seconds: stored.driveDuration),
+        walkingDuration: Duration(seconds: stored.walkDuration),
+        stopDuration: Duration(seconds: stored.stopDuration),
+      );
+      if (summary.hasData) return summary;
+    }
+    if (_movementSummary?.hasData == true) return _movementSummary;
+    final fallback = TaskMovementSummary.fromDurations(
+      drivingDuration: widget.drivingDuration,
+      walkingDuration: widget.walkingDuration,
+      stopDuration: widget.stopDuration,
+    );
+    return fallback.hasData ? fallback : null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final drivingDur = widget.drivingDuration ?? widget.totalDuration;
-    final drivingKm = widget.drivingDistanceKm ?? widget.totalDistanceKm;
-    final walkingDur = widget.walkingDuration ?? Duration.zero;
-    final walkingKm = widget.walkingDistanceKm ?? 0.0;
-
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
@@ -271,7 +406,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Task info card – Task Name, ID, Description
+                  // Task info card – same bg as dashboard Recent Leaves card
                   if ((task ?? widget.task) != null)
                     Builder(
                       builder: (context) {
@@ -280,13 +415,20 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                           padding: const EdgeInsets.all(16),
                           margin: const EdgeInsets.only(bottom: 16),
                           decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
+                            gradient: LinearGradient(
+                              colors: [
+                                AppColors.primary,
+                                AppColors.primaryDark,
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(16),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.06),
+                                color: AppColors.primary.withOpacity(0.3),
                                 blurRadius: 8,
-                                offset: const Offset(0, 2),
+                                offset: const Offset(0, 4),
                               ),
                             ],
                           ),
@@ -295,10 +437,10 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                             children: [
                               Text(
                                 t.taskTitle,
-                                style: TextStyle(
+                                style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.grey.shade800,
+                                  color: Colors.white,
                                 ),
                               ),
                               const SizedBox(height: 6),
@@ -306,7 +448,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                 'ID: ${t.taskId}',
                                 style: TextStyle(
                                   fontSize: 13,
-                                  color: Colors.grey.shade600,
+                                  color: Colors.white.withOpacity(0.95),
                                 ),
                               ),
                               if (t.description.isNotEmpty) ...[
@@ -315,7 +457,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                   t.description,
                                   style: TextStyle(
                                     fontSize: 13,
-                                    color: Colors.grey.shade700,
+                                    color: Colors.white.withOpacity(0.95),
                                   ),
                                 ),
                               ],
@@ -442,28 +584,38 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                         const SizedBox(height: 16),
                         _row(
                           'Total Distance',
-                          '${widget.totalDistanceKm.toStringAsFixed(2)} km',
+                          '${_displayDistanceKm.toStringAsFixed(2)} km',
                         ),
                         _row(
-                          'Time Taken',
-                          _formatDuration(widget.totalDuration),
+                          'Travel Start Time',
+                          DateDisplayUtil.formatTime(_travelStartTime),
                         ),
                         _row(
-                          'Arrival Time',
-                          DateDisplayUtil.formatTime(widget.arrivalTime),
+                          'Travel End Time',
+                          DateDisplayUtil.formatTime(_travelEndTime),
                         ),
-                        if (drivingKm > 0 || walkingKm > 0) ...[
+                        _row(
+                          'Total Travel Duration',
+                          _formatDuration(_travelDuration),
+                        ),
+                        if (_displayMovementSummary != null) ...[
                           _row(
-                            'Driving',
-                            drivingKm > 0
-                                ? '${_formatDuration(drivingDur)} (${drivingKm.toStringAsFixed(1)} km)'
-                                : '—',
+                            'Drive Duration',
+                            _formatDuration(
+                              _displayMovementSummary!.drivingDuration,
+                            ),
                           ),
                           _row(
-                            'Walking',
-                            walkingKm > 0
-                                ? '${_formatDuration(walkingDur)} (${walkingKm.toStringAsFixed(1)} km)'
-                                : '—',
+                            'Walk Duration',
+                            _formatDuration(
+                              _displayMovementSummary!.walkingDuration,
+                            ),
+                          ),
+                          _row(
+                            'Stop Duration',
+                            _formatDuration(
+                              _displayMovementSummary!.stopDuration,
+                            ),
                           ),
                         ],
                         const SizedBox(height: 12),
@@ -471,17 +623,16 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                         const SizedBox(height: 12),
                         _locationSection(
                           'Source',
-                          widget.sourceAddress ?? task?.sourceLocation?.address,
-                          widget.sourceLat ?? task?.sourceLocation?.lat,
-                          widget.sourceLng ?? task?.sourceLocation?.lng,
+                          _sourceDisplayAddress,
+                          _sourceDisplayLat,
+                          _sourceDisplayLng,
                         ),
                         const SizedBox(height: 12),
                         _locationSection(
                           'Destination',
-                          widget.destAddress ??
-                              task?.destinationLocation?.address,
-                          widget.destLat ?? task?.destinationLocation?.lat,
-                          widget.destLng ?? task?.destinationLocation?.lng,
+                          _destinationDisplayAddress,
+                          _destinationDisplayLat,
+                          _destinationDisplayLng,
                         ),
                       ],
                     ),
@@ -622,113 +773,193 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                         const SizedBox(height: 20),
                         SizedBox(
                           width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed:
-                                !_submittingComplete &&
-                                    (!_isOtpRequiredFromSettings ||
-                                        (task ?? widget.task)?.isOtpVerified ==
-                                            true) &&
-                                    (!_hasFormAssigned || _formFilled)
-                                ? () async {
-                                    if (_submittingComplete) return;
-                                    setState(() => _submittingComplete = true);
-                                    final t = task ?? widget.task;
-                                    final startedAt = widget.arrivalTime
-                                        .subtract(widget.totalDuration);
-                                    final otpVerified =
-                                        (task ?? widget.task)?.isOtpVerified ==
-                                        true;
-                                    Task? refreshed = task ?? t;
-                                    if (widget.taskMongoId != null &&
-                                        widget.taskMongoId!.isNotEmpty) {
-                                      try {
-                                        refreshed = await TaskService().endTask(
-                                          widget.taskMongoId!,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                gradient:
+                                    !_submittingComplete &&
+                                        (!_isOtpRequiredFromSettings ||
+                                            (task ?? widget.task)
+                                                    ?.isOtpVerified ==
+                                                true) &&
+                                        (!_hasFormAssigned || _formFilled)
+                                    ? LinearGradient(
+                                        colors: [
+                                          AppColors.primary,
+                                          AppColors.primaryDark,
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      )
+                                    : null,
+                                color:
+                                    !_submittingComplete &&
+                                        (!_isOtpRequiredFromSettings ||
+                                            (task ?? widget.task)
+                                                    ?.isOtpVerified ==
+                                                true) &&
+                                        (!_hasFormAssigned || _formFilled)
+                                    ? null
+                                    : Colors.grey.shade300,
+                              ),
+                              child: ElevatedButton.icon(
+                                onPressed:
+                                    !_submittingComplete &&
+                                        (!_isOtpRequiredFromSettings ||
+                                            (task ?? widget.task)
+                                                    ?.isOtpVerified ==
+                                                true) &&
+                                        (!_hasFormAssigned || _formFilled)
+                                    ? () async {
+                                        if (_submittingComplete) return;
+                                        setState(
+                                          () => _submittingComplete = true,
                                         );
-                                        await PresenceTrackingService()
-                                            .resumePresenceTracking();
-                                      } catch (e) {
-                                        if (mounted) {
-                                          setState(
-                                              () => _submittingComplete = false);
-                                          String msg =
-                                              'Failed to complete task';
-                                          if (e is DioException &&
-                                              e.response?.data != null) {
-                                            final d = e.response!.data;
-                                            if (d is Map) {
-                                              msg =
-                                                  (d['message'] ?? d['error'])
-                                                      ?.toString() ??
-                                                  msg;
+                                        final t = task ?? widget.task;
+                                        final startedAt = widget.arrivalTime
+                                            .subtract(widget.totalDuration);
+                                        final otpVerified =
+                                            (task ?? widget.task)
+                                                ?.isOtpVerified ==
+                                            true;
+                                        Task? refreshed = task ?? t;
+                                        if (widget.taskMongoId != null &&
+                                            widget.taskMongoId!.isNotEmpty) {
+                                          try {
+                                            refreshed = await TaskService()
+                                                .endTask(
+                                                  widget.taskMongoId!,
+                                                  travelActivityDuration:
+                                                      _displayMovementSummary ==
+                                                          null
+                                                      ? null
+                                                      : {
+                                                          'driveDuration':
+                                                              _displayMovementSummary!
+                                                                  .drivingDuration
+                                                                  .inSeconds,
+                                                          'walkDuration':
+                                                              _displayMovementSummary!
+                                                                  .walkingDuration
+                                                                  .inSeconds,
+                                                          'stopDuration':
+                                                              _displayMovementSummary!
+                                                                  .stopDuration
+                                                                  .inSeconds,
+                                                        },
+                                                );
+                                            await PresenceTrackingService()
+                                                .resumePresenceTracking();
+                                          } catch (e) {
+                                            if (mounted) {
+                                              setState(
+                                                () =>
+                                                    _submittingComplete = false,
+                                              );
+                                              String msg =
+                                                  'Failed to complete task';
+                                              if (e is DioException &&
+                                                  e.response?.data != null) {
+                                                final d = e.response!.data;
+                                                if (d is Map) {
+                                                  msg =
+                                                      (d['message'] ??
+                                                              d['error'])
+                                                          ?.toString() ??
+                                                      msg;
+                                                }
+                                              } else {
+                                                msg = '$msg: ${e.toString()}';
+                                              }
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(content: Text(msg)),
+                                              );
                                             }
-                                          } else {
-                                            msg = '$msg: ${e.toString()}';
+                                            return;
                                           }
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            SnackBar(content: Text(msg)),
+                                        }
+                                        if (mounted) {
+                                          Navigator.of(context).pushReplacement(
+                                            MaterialPageRoute(
+                                              builder: (context) =>
+                                                  TaskCompletedScreen(
+                                                    task:
+                                                        refreshed ?? task ?? t,
+                                                    taskMongoId:
+                                                        widget.taskMongoId,
+                                                    taskId: widget.taskId,
+                                                    startedAt: startedAt,
+                                                    completedAt: DateTime.now(),
+                                                    totalDuration:
+                                                        widget.totalDuration,
+                                                    totalDistanceKm:
+                                                        widget.totalDistanceKm,
+                                                    otpVerified: otpVerified,
+                                                    geoFence:
+                                                        widget.isWithinGeofence,
+                                                    formSubmitted:
+                                                        _hasFormAssigned &&
+                                                        _formFilled,
+                                                    photoProof: _photoProofDone,
+                                                    arrivalTime:
+                                                        widget.arrivalTime,
+                                                    otpVerifiedAt:
+                                                        (refreshed ?? task ?? t)
+                                                            ?.otpVerifiedAt,
+                                                    verifiedOtp: null,
+                                                    drivingDuration:
+                                                        _displayMovementSummary
+                                                            ?.drivingDuration,
+                                                    walkingDuration:
+                                                        _displayMovementSummary
+                                                            ?.walkingDuration,
+                                                    stopDuration:
+                                                        _displayMovementSummary
+                                                            ?.stopDuration,
+                                                  ),
+                                            ),
                                           );
                                         }
-                                        return;
                                       }
-                                    }
-                                    if (mounted) {
-                                      Navigator.of(context).pushReplacement(
-                                        MaterialPageRoute(
-                                          builder: (context) =>
-                                              TaskCompletedScreen(
-                                                task: refreshed ?? task ?? t,
-                                                taskMongoId: widget.taskMongoId,
-                                                taskId: widget.taskId,
-                                                startedAt: startedAt,
-                                                completedAt: DateTime.now(),
-                                                totalDuration:
-                                                    widget.totalDuration,
-                                                totalDistanceKm:
-                                                    widget.totalDistanceKm,
-                                                otpVerified: otpVerified,
-                                                geoFence:
-                                                    widget.isWithinGeofence,
-                                                formSubmitted: _formFilled,
-                                                photoProof: _photoProofDone,
-                                                arrivalTime: widget.arrivalTime,
-                                                otpVerifiedAt:
-                                                    (refreshed ?? task ?? t)
-                                                        ?.otpVerifiedAt,
-                                                verifiedOtp: null,
-                                              ),
+                                    : null,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.transparent,
+                                  shadowColor: Colors.transparent,
+                                  surfaceTintColor: Colors.transparent,
+                                  foregroundColor: Colors.white,
+                                  disabledBackgroundColor: Colors.transparent,
+                                  disabledForegroundColor: Colors.grey.shade600,
+                                  minimumSize: const Size.fromHeight(52),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                icon: _submittingComplete
+                                    ? SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
                                         ),
-                                      );
-                                    }
-                                  }
-                                : null,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.secondary,
-                              foregroundColor: Colors.white,
-                              disabledBackgroundColor: Colors.grey.shade300,
-                              disabledForegroundColor: Colors.grey.shade600,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                                      )
+                                    : const Icon(
+                                        Icons.check_circle_rounded,
+                                        size: 22,
+                                      ),
+                                label: Text(
+                                  _submittingComplete
+                                      ? 'Completing...'
+                                      : 'Complete Task',
+                                ),
                               ),
                             ),
-                            icon: _submittingComplete
-                                ? SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.check_circle_rounded,
-                                    size: 22,
-                                  ),
-                            label: Text(
-                                _submittingComplete ? 'Completing...' : 'Complete Task'),
                           ),
                         ),
                       ],
@@ -746,78 +977,94 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
   /// Exit Ride: open bottom sheet with reason form (same as live tracking).
   /// Calls exitRide API with current GPS, then pops.
   Future<void> _onExitRide() async {
-    if (_submittingExit) return;
-    final result = await showModalBottomSheet<Map<String, String>>(
+    final exited = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => const ExitRideBottomSheet(),
+      builder: (ctx) => ExitRideBottomSheet(onSubmit: _submitExitRide),
     );
-    if (result == null || !mounted) return;
-    final exitType = result['exitType'] as String?;
-    final reason = result['reason']?.trim();
-    if (exitType == null ||
-        exitType.isEmpty ||
-        reason == null ||
-        reason.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select exit type and provide a reason'),
-        ),
+    if (exited != true || !mounted) return;
+    // Do not only [Navigator.pop]: Arrived may be the sole route (e.g. Splash→Live→Arrived
+    // via pushReplacement), so pop would leave an empty stack → black screen. Match
+    // LiveTrackingScreen exit: land on Tasks list.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MyTasksScreen()),
+        (route) => false,
       );
-      return;
-    }
+    });
+  }
+
+  Future<void> _submitExitRide(String exitType, String reason) async {
     final mongoId = widget.taskMongoId ?? task?.id;
-    if (mongoId != null && mongoId.isNotEmpty) {
-      if (mounted) setState(() => _submittingExit = true);
-      try {
-        double? lat;
-        double? lng;
-        try {
-          final pos = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.high,
-          );
-          lat = pos.latitude;
-          lng = pos.longitude;
-        } catch (_) {
-          lat = widget.destLat ?? task?.destinationLocation?.lat;
-          lng = widget.destLng ?? task?.destinationLocation?.lng;
-        }
-        await TaskService().exitRide(
-          mongoId,
-          reason,
-          exitType: exitType,
-          lat: lat,
-          lng: lng,
-        );
-        await PresenceTrackingService().resumePresenceTracking();
-      } catch (e) {
-        if (mounted) {
-          setState(() => _submittingExit = false);
-          String msg = 'Failed to exit ride';
-          if (e is DioException && e.response?.data != null) {
-            final data = e.response!.data;
-            if (data is Map) {
-              msg = (data['message'] ?? data['error'])?.toString() ?? msg;
-            } else if (data is String && data.isNotEmpty) {
-              msg = data;
-            }
-          } else {
-            msg = ErrorMessageUtils.toUserFriendlyMessage(e);
-          }
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg)),
+    if (mongoId == null || mongoId.isEmpty) return;
+    try {
+      final exitLocation = await _resolveExitLocation();
+      await TaskService().exitRide(
+        mongoId,
+        reason,
+        exitType: exitType,
+        lat: exitLocation.lat,
+        lng: exitLocation.lng,
+        fullAddress: exitLocation.address,
+        pincode: exitLocation.pincode,
+      );
+      unawaited(PresenceTrackingService().resumePresenceTracking());
+    } catch (e) {
+      if (e is DioException && e.response?.data != null) {
+        final data = e.response!.data;
+        if (data is Map) {
+          throw Exception(
+            (data['message'] ?? data['error'])?.toString() ??
+                'Failed to exit ride',
           );
         }
-        return;
+        if (data is String && data.isNotEmpty) {
+          throw Exception(data);
+        }
       }
-      if (mounted) setState(() => _submittingExit = false);
+      throw Exception(ErrorMessageUtils.toUserFriendlyMessage(e));
     }
-    if (mounted) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.of(context).pop();
-      });
-    }
+  }
+
+  Future<({double? lat, double? lng, String? address, String? pincode})>
+  _resolveExitLocation() async {
+    double? lat =
+        widget.arrivalAtLat ??
+        _task?.arrivalLocation?.lat ??
+        widget.destLat ??
+        task?.destinationLocation?.lat;
+    double? lng =
+        widget.arrivalAtLng ??
+        _task?.arrivalLocation?.lng ??
+        widget.destLng ??
+        task?.destinationLocation?.lng;
+    final address = _arrivalDisplayAddress;
+    final pincode = _extractPincodeFromAddress(address);
+
+    try {
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      lat ??= lastKnown?.latitude;
+      lng ??= lastKnown?.longitude;
+    } catch (_) {}
+
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 3),
+      );
+      lat = pos.latitude;
+      lng = pos.longitude;
+    } catch (_) {}
+
+    return (lat: lat, lng: lng, address: address, pincode: pincode);
+  }
+
+  String? _extractPincodeFromAddress(String? address) {
+    if (address == null || address.isEmpty) return null;
+    final match = RegExp(r'\b\d{6}\b').firstMatch(address);
+    return match?.group(0);
   }
 
   Widget _row(String label, String value) {
@@ -897,7 +1144,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                   ? Icons.gps_fixed_rounded
                   : Icons.location_on_rounded,
               size: 18,
-             // color: title == 'Source' ? Colors.green : Colors.red,
+              // color: title == 'Source' ? Colors.green : Colors.red,
             ),
             const SizedBox(width: 6),
             Text(
@@ -911,23 +1158,14 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
           ],
         ),
         const SizedBox(height: 6),
-        if (hasAddress)
-          Text(
-            address!,
-            style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
-          ),
-        if (hasCoords)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              '${lat!.toStringAsFixed(6)}, ${lng!.toStringAsFixed(6)}',
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.grey.shade500,
-                fontFamily: 'monospace',
-              ),
-            ),
-          ),
+        Text(
+          hasAddress
+              ? address!
+              : (hasCoords
+                    ? '${lat!.toStringAsFixed(6)}, ${lng!.toStringAsFixed(6)}'
+                    : '—'),
+          style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+        ),
       ],
     );
   }

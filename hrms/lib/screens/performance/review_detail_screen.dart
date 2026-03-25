@@ -7,6 +7,7 @@ import '../../config/app_colors.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/performance_service.dart';
 import 'self_assessment_form_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class ReviewDetailScreen extends StatefulWidget {
   final String reviewId;
@@ -90,7 +91,7 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator(color: AppColors.primary))
+          ? const Center(child: AppTabLoader())
           : _error != null
           ? _buildErrorState()
           : _review == null

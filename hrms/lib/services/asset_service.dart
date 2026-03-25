@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/asset_model.dart';
+import '../utils/error_message_utils.dart';
 import 'api_client.dart';
 
 class AssetService {
@@ -148,12 +149,7 @@ class AssetService {
   }
 
   String _dioMessage(DioException e) {
-    final d = e.response?.data;
-    if (d is Map) {
-      return (d['error']?['message'] ?? d['message']) as String? ?? 'Request failed';
-    }
-    if (e.response?.statusCode == 429) return 'Too many requests. Please wait a moment.';
-    return 'Request failed';
+    return ErrorMessageUtils.messageFromDioException(e);
   }
 
   String _handleException(dynamic error) {

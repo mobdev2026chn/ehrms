@@ -3,7 +3,10 @@ const Staff = require('../models/Staff');
 const Company = require('../models/Company');
 const Branch = require('../models/Branch');
 const Candidate = require('../models/Candidate');
+const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
+require('../models/Role');
 const TaskSettings = require('../models/TaskSettings');
+const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const fs = require('fs').promises;
 const path = require('path');
@@ -13,6 +16,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const { sendOTPEmail } = require('../services/emailService');
 const cloudinary = require('cloudinary').v2;
+const digitalOceanService = require('../services/digitalOceanService');
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -30,6 +34,29 @@ const generateToken = (id) => {
 const buildEmailRegex = (email) => {
     const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`^${escaped}$`, 'i');
+};
+
+const getRoleIdValue = (user) => {
+    const roleId = user?.roleId;
+    if (!roleId) return null;
+    if (typeof roleId === 'object' && roleId._id) return roleId._id;
+    return roleId;
+};
+
+const populateRoleIfPresent = async (user) => {
+    if (!user) return user;
+
+    const roleId = getRoleIdValue(user);
+    if (!roleId || !mongoose.isValidObjectId(roleId)) {
+        return user;
+    }
+
+    try {
+        return await user.populate('roleId');
+    } catch (err) {
+        console.warn('[Auth] roleId populate skipped:', err?.message);
+        return user;
+    }
 };
 
 // Helper to find or create a user by email, with Candidate fallback
@@ -122,8 +149,8 @@ const login = async (req, res) => {
 
         // 1. Try to find User (explicitly select password field to ensure it's included)
         let user = await User.findOne({ email: emailRegex })
-            .select('+password')
-            .populate('roleId');
+            .select('+password');
+        user = await populateRoleIfPresent(user);
         let staff = null;
 
         if (user) {
@@ -158,8 +185,8 @@ const login = async (req, res) => {
                 if (!staff.password) {
                     if (staff.userId) {
                         user = await User.findById(staff.userId)
-                            .select('+password')
-                            .populate('roleId');
+                            .select('+password');
+                        user = await populateRoleIfPresent(user);
                         
                         if (!user || !user.password) {
                             return res.status(401).json({ success: false, error: { message: 'Password not set for this account' } });
@@ -181,7 +208,8 @@ const login = async (req, res) => {
                     // Staff has password, check it
                     const staffPasswordMatch = await staff.matchPassword(password);
                     if (staffPasswordMatch) {
-                        user = await User.findById(staff.userId).populate('roleId');
+                        user = await User.findById(staff.userId);
+                        user = await populateRoleIfPresent(user);
                     } else {
                         return res.status(401).json({ success: false, error: { message: 'Invalid credentials' } });
                     }
@@ -193,6 +221,16 @@ const login = async (req, res) => {
 
         if (!user) {
             return res.status(401).json({ success: false, error: { message: 'User record not found' } });
+        }
+
+        // Mobile app flows require a linked staff profile. Without it, downstream
+        // attendance/dashboard/protected endpoints will fail and the app may
+        // immediately force logout.
+        if (!staff) {
+            return res.status(401).json({
+                success: false,
+                error: { message: 'Staff profile not found for this account. Please contact your administrator.' }
+            });
         }
 
         // Only Active (or On Leave) staff can login; block Deactivated
@@ -345,7 +383,8 @@ const googleLogin = async (req, res) => {
         const { email } = req.body;
 
         // Find User
-        let user = await User.findOne({ email }).populate('roleId');
+        let user = await User.findOne({ email });
+        user = await populateRoleIfPresent(user);
         let staff = null;
 
         if (user) {
@@ -359,12 +398,20 @@ const googleLogin = async (req, res) => {
             // Check Staff by email
             staff = await Staff.findOne({ email }).populate('branchId');
             if (staff && staff.userId) {
-                user = await User.findById(staff.userId).populate('roleId');
+                user = await User.findById(staff.userId);
+                user = await populateRoleIfPresent(user);
             }
         }
 
         if (!user) {
             return res.status(401).json({ success: false, error: { message: 'User not registered. Please sign up first.' } });
+        }
+
+        if (!staff) {
+            return res.status(401).json({
+                success: false,
+                error: { message: 'Staff profile not found for this account. Please contact your administrator.' }
+            });
         }
 
         // Only Active (or On Leave) staff can login; block Deactivated
@@ -469,7 +516,8 @@ const getProfile = async (req, res) => {
         }
 
         // Re-fetch to ensure latest data and populated fields
-        const fullUser = await User.findById(user._id).populate('roleId');
+        let fullUser = await User.findById(user._id);
+        fullUser = await populateRoleIfPresent(fullUser);
 
         let fullStaff = null;
         let candidateData = null;
@@ -478,6 +526,7 @@ const getProfile = async (req, res) => {
             fullStaff = await Staff.findById(staff._id)
                 .populate('branchId')
                 .populate('businessId')
+                .populate('weeklyHolidayTemplateId')
                 .populate('candidateId') // Populate candidate to get education, experience, documents
                 .populate('department') // Assuming department might be a ref or string, populating just in case
                 .populate('designation'); // Same here
@@ -495,6 +544,39 @@ const getProfile = async (req, res) => {
         }
 
         const branchName = fullStaff?.branchId?.branchName ?? null;
+
+        let staffDataPayload = null;
+        if (fullStaff) {
+            const staffPlain = fullStaff.toObject();
+            const atRef = fullStaff.attendanceTemplateId;
+            const attendanceTemplateIdOut = atRef == null
+                ? null
+                : (typeof atRef === 'object' && atRef._id != null
+                    ? String(atRef._id)
+                    : String(atRef));
+            staffDataPayload = {
+                ...staffPlain,
+                attendanceTemplateId: attendanceTemplateIdOut,
+                candidateId: candidateData || fullStaff.candidateId,
+                employmentIds: {
+                    uan: fullStaff.uan,
+                    pan: fullStaff.pan,
+                    aadhaar: fullStaff.aadhaar,
+                    pfNumber: fullStaff.pfNumber,
+                    esiNumber: fullStaff.esiNumber
+                }
+            };
+            // staff.attendanceTemplateId must reference a real attendancetemplates row (and same business when set)
+            if (staffDataPayload.attendanceTemplateId) {
+                const tdoc = await loadAttendanceTemplateForStaff({
+                    _id: fullStaff._id,
+                    businessId: fullStaff.businessId,
+                    attendanceTemplateId: staffDataPayload.attendanceTemplateId
+                });
+                if (!tdoc) staffDataPayload.attendanceTemplateId = null;
+            }
+        }
+
         res.status(200).json({
             success: true,
             data: {
@@ -506,18 +588,7 @@ const getProfile = async (req, res) => {
                     role: fullUser.role
                 },
                 branchName: branchName,
-                staffData: fullStaff ? {
-                    ...fullStaff.toObject(),
-                    candidateId: candidateData || fullStaff.candidateId,
-                    // Preserve nested structure for frontend expectations
-                    employmentIds: {
-                        uan: fullStaff.uan,
-                        pan: fullStaff.pan,
-                        aadhaar: fullStaff.aadhaar,
-                        pfNumber: fullStaff.pfNumber,
-                        esiNumber: fullStaff.esiNumber
-                    }
-                } : null
+                staffData: staffDataPayload
             }
         });
 
@@ -549,7 +620,8 @@ const updateProfile = async (req, res) => {
             const {
                 gender, maritalStatus, dob, bloodGroup, address, bankDetails,
                 employmentIds, uan, pan, aadhaar, pfNumber, esiNumber,
-                designation, department, shiftName, status
+                designation, department, shiftName, status,
+                isGpsEnabled, isGpsAllowed, isEnabledPreciseLocation
             } = req.body;
 
             const updateData = {};
@@ -571,6 +643,15 @@ const updateProfile = async (req, res) => {
             if (department) updateData.department = department;
             if (shiftName) updateData.shiftName = shiftName;
             if (status) updateData.status = status;
+            if (typeof isGpsEnabled === 'boolean') {
+                updateData.isGpsEnabled = isGpsEnabled;
+            }
+            if (typeof isGpsAllowed === 'string' && isGpsAllowed.trim()) {
+                updateData.isGpsAllowed = isGpsAllowed.trim();
+            }
+            if (typeof isEnabledPreciseLocation === 'boolean') {
+                updateData.isEnabledPreciseLocation = isEnabledPreciseLocation;
+            }
 
             // Handle employment IDs
             if (employmentIds) {
@@ -1071,7 +1152,7 @@ const changePassword = async (req, res) => {
 };
 
 // -------------------------------
-// Update profile photo (Cloudinary)
+// Update profile photo (Digital Ocean S3)
 // -------------------------------
 
 const updateProfilePhoto = async (req, res) => {
@@ -1091,16 +1172,26 @@ const updateProfilePhoto = async (req, res) => {
             });
         }
 
-        // Convert buffer to base64 data URL for Cloudinary
-        const base64 = req.file.buffer.toString('base64');
-        const dataUri = `data:${req.file.mimetype || 'image/jpeg'};base64,${base64}`;
+        const companyId = req.staff?.businessId ? String(req.staff.businessId) : undefined;
+        const employeeName = req.staff?.name || req.user?.name;
 
-        const uploadResult = await cloudinary.uploader.upload(dataUri, {
-            folder: 'hrms/profile_photos',
-            resource_type: 'image'
+        const uploadResult = await digitalOceanService.uploadImage(req.file.buffer, undefined, {
+            req,
+            companyId,
+            employeeName,
+            category: 'employees',
+            subfolder: 'avatar',
+            format: req.file.mimetype?.includes('png') ? 'png' : 'jpg',
         });
 
-        const photoUrl = uploadResult.secure_url;
+        if (!uploadResult.success) {
+            return res.status(500).json({
+                success: false,
+                error: { message: uploadResult.error || 'Failed to upload profile photo' }
+            });
+        }
+
+        const photoUrl = uploadResult.url;
 
         // Update User avatar
         const user = await User.findById(userId);

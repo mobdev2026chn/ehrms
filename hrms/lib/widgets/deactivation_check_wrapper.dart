@@ -8,6 +8,9 @@ import '../bloc/auth/auth_bloc.dart';
 import '../screens/auth/login_screen.dart';
 import '../services/auth_service.dart';
 import '../services/fcm_service.dart';
+import '../services/geo/live_tracking_service.dart';
+import '../services/geo/location_service.dart';
+import '../services/presence_tracking_service.dart';
 
 class DeactivationCheckWrapper extends StatefulWidget {
   const DeactivationCheckWrapper({
@@ -32,6 +35,7 @@ class _DeactivationCheckWrapperState extends State<DeactivationCheckWrapper> wit
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _scheduleNextCheck();
+    unawaited(_handleResumeForLoggedInUser());
   }
 
   @override
@@ -44,13 +48,33 @@ class _DeactivationCheckWrapperState extends State<DeactivationCheckWrapper> wit
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _scheduleNextCheck();
-      // Re-sync FCM token so backend has current token after reinstall/refresh
-      FcmService.sendTokenToBackend();
+      unawaited(_handleResumeForLoggedInUser());
+    } else if (state == AppLifecycleState.detached) {
+      PresenceTrackingService().recordAppClosed();
+      LiveTrackingService().markAppClosed();
+      _timer?.cancel();
+      _timer = null;
     } else {
+      PresenceTrackingService().markAppBackground();
+      LiveTrackingService().markAppBackground();
       _timer?.cancel();
       _timer = null;
     }
+  }
+
+  Future<void> _handleResumeForLoggedInUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    if (token == null || token.isEmpty || !mounted) return;
+
+    PresenceTrackingService().markAppForeground();
+    LiveTrackingService().markAppForeground();
+    _scheduleNextCheck();
+    FcmService.sendTokenToBackend();
+    LocationService.syncLocationPermissionStatusToBackend();
+    // Resume presence tracking timer and insert one "active" record.
+    PresenceTrackingService().recordAppOpened();
+    PresenceTrackingService().onAppLifecycleResumed();
   }
 
   void _scheduleNextCheck() {

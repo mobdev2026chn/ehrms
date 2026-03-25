@@ -91,6 +91,7 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
       city: event.city,
       pincode: event.pincode,
       selfie: event.selfie,
+      movementType: event.movementType,
     );
     if (result['success'] == true) {
       emit(AttendanceCheckInSuccess());
@@ -116,6 +117,7 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
       city: event.city,
       pincode: event.pincode,
       selfie: event.selfie,
+      movementType: event.movementType,
     );
     if (result['success'] == true) {
       emit(AttendanceCheckOutSuccess());

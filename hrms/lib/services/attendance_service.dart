@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import '../config/constants.dart';
+import '../utils/error_message_utils.dart';
 import 'api_client.dart';
 
 class AttendanceService {
@@ -69,6 +70,7 @@ class AttendanceService {
     String? city,
     String? pincode,
     String? selfie,
+    String? movementType,
   }) async {
     try {
       final headers = await _getHeaders();
@@ -84,6 +86,8 @@ class AttendanceService {
         'city': city,
         'pincode': pincode,
         'selfie': selfie,
+        'movementType': movementType,
+        'source': 'app',
       };
       if (businessId != null && businessId.isNotEmpty) {
         body['businessId'] = businessId;
@@ -107,14 +111,10 @@ class AttendanceService {
   }
 
   String? _dioErrorMessage(DioException e) {
-    final data = e.response?.data;
-    if (data is Map) {
-      return (data['error']?['message'] ?? data['message']) as String?;
-    }
     if (e.response?.statusCode == 429) {
       return 'Too many requests. Please wait a moment.';
     }
-    return null;
+    return ErrorMessageUtils.messageFromResponseData(e.response?.data);
   }
 
   Future<Map<String, dynamic>> checkOut(
@@ -125,6 +125,7 @@ class AttendanceService {
     String? city,
     String? pincode,
     String? selfie,
+    String? movementType,
   }) async {
     try {
       final headers = await _getHeaders();
@@ -138,6 +139,8 @@ class AttendanceService {
         'city': city,
         'pincode': pincode,
         'selfie': selfie,
+        'movementType': movementType,
+        'source': 'app',
       };
       final response = await _api.dio.put<Map<String, dynamic>>(
         '/attendance/checkout',
@@ -335,8 +338,29 @@ class AttendanceService {
           if (date != null) 'date': date,
         },
       );
-      final data = response.data ?? {};
-      return {'success': true, 'data': data['data'] ?? data};
+      final raw = response.data ?? <String, dynamic>{};
+
+      // Normalize both legacy and wrapped API response shapes to:
+      // { data: { data: <list>, pagination: <map> } }
+      Map<String, dynamic> payload;
+      if (raw['data'] is Map<String, dynamic>) {
+        final nested = raw['data'] as Map<String, dynamic>;
+        payload = {
+          'data': nested['data'] is List ? nested['data'] : <dynamic>[],
+          'pagination': nested['pagination'] is Map<String, dynamic>
+              ? nested['pagination']
+              : <String, dynamic>{},
+        };
+      } else {
+        payload = {
+          'data': raw['data'] is List ? raw['data'] : <dynamic>[],
+          'pagination': raw['pagination'] is Map<String, dynamic>
+              ? raw['pagination']
+              : <String, dynamic>{},
+        };
+      }
+
+      return {'success': true, 'data': payload};
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
         return {
@@ -364,6 +388,41 @@ class AttendanceService {
       forceRefresh: forceRefresh,
       retryCount: 0,
     );
+  }
+
+  Future<Map<String, dynamic>> getEmployeeAttendance({
+    required String employeeId,
+    required String startDate,
+    required String endDate,
+    int page = 1,
+    int limit = 100,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/attendance/employee/$employeeId',
+        queryParameters: {
+          'startDate': startDate,
+          'endDate': endDate,
+          'page': page,
+          'limit': limit,
+        },
+      );
+      final data = response.data ?? {};
+      if (data['success'] == true && data['data'] is Map) {
+        return {'success': true, 'data': data['data']};
+      }
+      return {'success': false, 'message': 'Failed to fetch employee attendance'};
+    } on DioException catch (e) {
+      return {
+        'success': false,
+        'message': _dioErrorMessage(e) ?? 'Failed to fetch employee attendance',
+      };
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
   }
 
   Future<Map<String, dynamic>> _getMonthAttendanceWithRetry(

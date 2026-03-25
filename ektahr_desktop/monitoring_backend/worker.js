@@ -16,7 +16,19 @@ const queue = new Bull(QUEUE_NAME, REDIS_URL, {
 
 const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY, 10) || 8;
 queue.process(WORKER_CONCURRENCY, async (job) => {
+<<<<<<< HEAD
     await activityProcessor.processPayload(job.data);
+=======
+    try {
+        await activityProcessor.processPayload(job.data);
+    } catch (err) {
+        if (activityProcessor.isSkippableTrackingError(err)) {
+            console.log('Worker job skipped:', err?.message || err);
+            return { skipped: true, reason: err?.message || String(err) };
+        }
+        throw err;
+    }
+>>>>>>> development
 });
 
 queue.on('failed', (job, err) => {

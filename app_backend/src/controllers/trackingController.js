@@ -4,9 +4,16 @@ const Task = require('../models/Task');
 const TaskDetails = require('../models/TaskDetails');
 const Branch = require('../models/Branch');
 const Attendance = require('../models/Attendance');
-const { upsertTaskDetails, buildUnsetExtended } = require('./taskController');
+const {
+  upsertTaskDetails,
+  buildUnsetExtended,
+  normalizeTravelActivityDuration,
+  computePersistedTravelMetrics,
+} = require('./taskController');
 const { reverseGeocode } = require('../services/geocodingService');
+const { markLatestPresenceTrackingInactiveForStaff } = require('../services/presenceTrackingStatusService');
 const { parseTimestamp } = require('../utils/dateUtils');
+const { logTrackingWrite, shouldLogTrackings } = require('../utils/trackingLogger');
 
 /** Build location object per spec: { lat, lng, address?, pincode?, recordedAt } */
 function buildLocationObject(lat, lng, address, pincode) {
@@ -33,6 +40,170 @@ function haversineDistanceM(lat1, lng1, lat2, lng2) {
       Math.sin(dLng / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+function cleanAddressValue(value) {
+  if (value == null) return '';
+  const out = String(value).trim();
+  return out;
+}
+
+function buildAddressSnapshot(source) {
+  if (!source || typeof source !== 'object') return null;
+  const address = cleanAddressValue(source.address);
+  const fullAddress = cleanAddressValue(source.fullAddress);
+  const city = cleanAddressValue(source.city);
+  const area = cleanAddressValue(source.area);
+  const pincode = cleanAddressValue(source.pincode);
+  if (!address && !fullAddress && !city && !area && !pincode) return null;
+  return {
+    address,
+    fullAddress,
+    city,
+    area,
+    pincode,
+  };
+}
+
+function scoreAddressSnapshot(snapshot) {
+  if (!snapshot) return -1;
+  const text = snapshot.fullAddress || snapshot.address || '';
+  let score = 0;
+  if (snapshot.address) score += 2;
+  if (snapshot.fullAddress) score += 2;
+  if (snapshot.area) score += 1;
+  if (snapshot.city) score += 1;
+  if (snapshot.pincode) score += 1;
+  if (/\d/.test(text)) score += 2;
+  const commaCount = (text.match(/,/g) || []).length;
+  score += Math.min(commaCount, 3);
+  return score;
+}
+
+function selectBestAddressSnapshot(...snapshots) {
+  let best = null;
+  let bestScore = -1;
+  for (const snapshot of snapshots) {
+    const normalized = buildAddressSnapshot(snapshot);
+    const score = scoreAddressSnapshot(normalized);
+    if (score > bestScore) {
+      best = normalized;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function hasUsableAddressSnapshot(snapshot) {
+  if (!snapshot) return false;
+  return Boolean(
+    snapshot.address ||
+    snapshot.fullAddress ||
+    snapshot.city ||
+    snapshot.area ||
+    snapshot.pincode
+  );
+}
+
+async function findNearbyRecentAddress({ staffId, lat, lng, taskId = null, maxDistanceM = 30, maxAgeMinutes = 15 }) {
+  if (!staffId || lat == null || lng == null) return null;
+  const since = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+  const query = {
+    staffId,
+    timestamp: { $gte: since },
+    $or: [
+      { address: { $exists: true, $ne: '' } },
+      { fullAddress: { $exists: true, $ne: '' } },
+    ],
+  };
+
+  if (taskId == null) {
+    query.$and = [{ $or: [{ taskId: null }, { taskId: { $exists: false } }] }];
+  } else {
+    query.taskId = taskId;
+  }
+
+  const recentRecords = await Tracking.find(query)
+    .select('latitude longitude address fullAddress city area pincode timestamp')
+    .sort({ timestamp: -1 })
+    .limit(10)
+    .lean();
+
+  for (const record of recentRecords) {
+    if (record?.latitude == null || record?.longitude == null) continue;
+    const distanceM = haversineDistanceM(
+      Number(lat),
+      Number(lng),
+      Number(record.latitude),
+      Number(record.longitude)
+    );
+    if (distanceM <= maxDistanceM) {
+      return buildAddressSnapshot(record);
+    }
+  }
+
+  return null;
+}
+
+async function normalizePresenceMovementType({
+  staffId,
+  lat,
+  lng,
+  timestamp,
+  movementType,
+  accuracy,
+}) {
+  const requested = String(movementType || '').trim().toLowerCase();
+  if (!['stop', 'walking', 'driving'].includes(requested)) return movementType || undefined;
+
+  const now = timestamp ? new Date(timestamp) : new Date();
+  const since = new Date(now.getTime() - 10 * 60 * 1000);
+  const latestPresence = await Tracking.findOne({
+    staffId,
+    timestamp: { $gte: since, $lt: now },
+    $or: [{ taskId: null }, { taskId: { $exists: false } }],
+  })
+    .select('latitude longitude timestamp movementType accuracy')
+    .sort({ timestamp: -1 })
+    .lean();
+
+  if (!latestPresence?.latitude || !latestPresence?.longitude || !latestPresence?.timestamp) {
+    if (requested === 'driving' || requested === 'walking') {
+      const acc = accuracy != null ? Number(accuracy) : null;
+      if (acc != null && acc > 25) return 'stop';
+    }
+    return requested;
+  }
+
+  const distanceM = haversineDistanceM(
+    Number(lat),
+    Number(lng),
+    Number(latestPresence.latitude),
+    Number(latestPresence.longitude)
+  );
+  const elapsedSeconds = Math.max(
+    1,
+    Math.round((now.getTime() - new Date(latestPresence.timestamp).getTime()) / 1000)
+  );
+  const speedKmh = (distanceM / elapsedSeconds) * 3.6;
+  const currentAccuracy = accuracy != null ? Number(accuracy) : null;
+
+  if (requested === 'driving') {
+    if (distanceM < 25 || speedKmh < 10 || (currentAccuracy != null && currentAccuracy > 25)) {
+      return distanceM >= 8 && speedKmh >= 2 ? 'walking' : 'stop';
+    }
+    return 'driving';
+  }
+
+  if (requested === 'walking') {
+    if (distanceM < 6 || speedKmh < 1.5 || (currentAccuracy != null && currentAccuracy > 30)) {
+      return 'stop';
+    }
+    if (speedKmh >= 12 && distanceM >= 25) return 'driving';
+    return 'walking';
+  }
+
+  return 'stop';
 }
 
 /**
@@ -134,6 +305,28 @@ async function validateAttendanceForPresence(staffId) {
     }).lean();
   }
 
+  // Fallback: open punch (no punchOut) within 48h — fixes UTC vs local date mismatch on attendance.date
+  if (!attendance) {
+    const since = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+    attendance = await Attendance.findOne({
+      employeeId: staffId,
+      punchIn: { $ne: null, $gte: since },
+      punchOut: null,
+    })
+      .sort({ punchIn: -1 })
+      .lean();
+  }
+  if (!attendance) {
+    const since = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+    attendance = await Attendance.findOne({
+      user: staffId,
+      punchIn: { $ne: null, $gte: since },
+      punchOut: null,
+    })
+      .sort({ punchIn: -1 })
+      .lean();
+  }
+
   if (!attendance) return { canTrack: false, reason: 'no_attendance' };
 
   const punchIn = attendance.punchIn;
@@ -149,13 +342,30 @@ async function validateAttendanceForPresence(staffId) {
 
 /**
  * POST /api/tracking/presence/store
- * Body: { lat, lng, timestamp?, batteryPercent?, movementType?, accuracy?, presenceStatus? }
+ * Body: { lat, lng, timestamp?, batteryPercent?, movementType?, accuracy?, presenceStatus?, status?, appStatus?, address?, fullAddress?, city?, area?, pincode? }
  * Stores presence tracking point. Attendance-validated: only when checked in, not checked out, not on leave.
- * presenceStatus: 'in_office' | 'out_of_office' (server computes if not sent)
+ * presenceStatus: 'in_office' | 'out_of_office' | 'task' (server computes if not sent)
+ * status: backend-managed active/inactive for fresh/stale presence tracking
+ * appStatus: app lifecycle state from client (active | inactive | offline | app_background | app_closed)
  */
 exports.storePresenceTracking = async (req, res) => {
   try {
-    const { lat, lng, timestamp, batteryPercent, movementType, accuracy, presenceStatus: clientPresenceStatus } = req.body;
+    const {
+      lat,
+      lng,
+      timestamp,
+      batteryPercent,
+      movementType,
+      accuracy,
+      presenceStatus: clientPresenceStatus,
+      status: clientStatus,
+      appStatus: clientAppStatus,
+      address,
+      fullAddress,
+      city,
+      area,
+      pincode,
+    } = req.body;
     const staffId = req.staff?._id;
     const staffName = req.staff?.name;
 
@@ -174,18 +384,53 @@ exports.storePresenceTracking = async (req, res) => {
 
     const branchId = req.staff?.branchId;
     const resolvedPresenceStatus =
-      clientPresenceStatus && ['in_office', 'out_of_office'].includes(clientPresenceStatus)
+      clientPresenceStatus && ['in_office', 'out_of_office', 'task'].includes(clientPresenceStatus)
         ? clientPresenceStatus
         : await computePresenceStatusForOffice(Number(lat), Number(lng), branchId);
 
+    const hasClientAddress =
+      [address, fullAddress, city, area, pincode].some(
+        (value) => value != null && String(value).trim() !== '',
+      );
     let geo = null;
-    try {
-      geo = await reverseGeocode(Number(lat), Number(lng));
-    } catch (e) {
-      console.log('[PresenceTracking] Geocode failed:', e.message);
+    if (!hasClientAddress) {
+      try {
+        geo = await reverseGeocode(Number(lat), Number(lng));
+      } catch (e) {
+        console.log('[PresenceTracking] Geocode failed:', e.message);
+      }
+    }
+
+    const clientAddress = buildAddressSnapshot({ address, fullAddress, city, area, pincode });
+    let resolvedAddress = clientAddress;
+
+    if (!hasUsableAddressSnapshot(resolvedAddress)) {
+      const nearbyAddress = await findNearbyRecentAddress({
+        staffId,
+        lat: Number(lat),
+        lng: Number(lng),
+        taskId: null,
+      });
+      resolvedAddress = selectBestAddressSnapshot(nearbyAddress, geo);
     }
 
     const now = parseTimestamp(timestamp);
+    const normalizedClientStatus = String(clientStatus || '').trim();
+    const normalizedClientAppStatus = String(clientAppStatus || '').trim();
+    const validAppStatuses = ['app_closed', 'app_background', 'active', 'inactive', 'offline'];
+    const appStatusValue = validAppStatuses.includes(normalizedClientAppStatus)
+      ? normalizedClientAppStatus
+      : validAppStatuses.includes(normalizedClientStatus)
+        ? normalizedClientStatus
+        : 'active';
+    const normalizedMovementType = await normalizePresenceMovementType({
+      staffId,
+      lat: Number(lat),
+      lng: Number(lng),
+      timestamp: now,
+      movementType,
+      accuracy,
+    });
     const doc = {
       staffId,
       staffName: staffName || undefined,
@@ -193,16 +438,17 @@ exports.storePresenceTracking = async (req, res) => {
       longitude: Number(lng),
       presenceStatus: resolvedPresenceStatus,
       timestamp: now,
-      status: 'arrived',
+      status: 'active',
+      appStatus: appStatusValue,
       time: now,
       batteryPercent: batteryPercent != null ? Number(batteryPercent) : undefined,
-      movementType: movementType || undefined,
+      movementType: normalizedMovementType || undefined,
       accuracy: accuracy != null ? Number(accuracy) : undefined,
-      address: geo?.address || undefined,
-      fullAddress: geo?.address || geo?.fullAddress || undefined,
-      city: geo?.city || undefined,
-      area: geo?.area || undefined,
-      pincode: geo?.pincode || undefined,
+      address: resolvedAddress?.address || resolvedAddress?.fullAddress || undefined,
+      fullAddress: resolvedAddress?.fullAddress || resolvedAddress?.address || undefined,
+      city: resolvedAddress?.city || undefined,
+      area: resolvedAddress?.area || undefined,
+      pincode: resolvedAddress?.pincode || undefined,
     };
 
     const saved = await Tracking.create(doc);
@@ -217,6 +463,7 @@ exports.storePresenceTracking = async (req, res) => {
           latitude: doc.latitude,
           longitude: doc.longitude,
           presenceStatus: resolvedPresenceStatus,
+          movementType: doc.movementType,
           timestamp: doc.timestamp,
           address: doc.address,
           accuracy: doc.accuracy,
@@ -240,6 +487,7 @@ exports.getPresenceTrackingStatus = async (req, res) => {
     const staffId = req.staff?._id;
     if (!staffId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
+    await markLatestPresenceTrackingInactiveForStaff(staffId);
     const validation = await validateAttendanceForPresence(staffId);
     const staff = await Staff.findById(staffId)
       .select('branchId')
@@ -277,6 +525,9 @@ exports.getPresenceTrackingStatus = async (req, res) => {
 exports.getPresenceTrackingData = async (req, res) => {
   try {
     const { staffId, from, to, limit = 500 } = req.query;
+    if (staffId) {
+      await markLatestPresenceTrackingInactiveForStaff(staffId);
+    }
     const query = { $or: [{ taskId: null }, { taskId: { $exists: false } }] };
     if (staffId) query.staffId = staffId;
     if (from || to) {
@@ -297,14 +548,36 @@ exports.getPresenceTrackingData = async (req, res) => {
 
 /**
  * POST /api/tracking/store
- * Body: { taskId, lat, lng, timestamp?, batteryPercent?, movementType? }
+ * Body: { taskId, lat, lng, timestamp?, batteryPercent?, movementType?, address?, fullAddress?, city?, area?, pincode? }
  * Stores tracking point in Tracking collection with reverse-geocoded address.
  * Called by mobile app on Start Ride and every 15 sec during Live Tracking.
  */
 exports.storeTracking = async (req, res) => {
   try {
-    console.log('[Tracking] POST /store – raw body:', JSON.stringify(req.body));
-    const { taskId, lat, lng, timestamp, batteryPercent, movementType, destinationLat, destinationLng } = req.body;
+    if (shouldLogTrackings()) {
+      logTrackingWrite('task_store_request', {
+        taskId: req.body?.taskId,
+        lat: req.body?.lat,
+        lng: req.body?.lng,
+        movementType: req.body?.movementType,
+        batteryPercent: req.body?.batteryPercent,
+      });
+    }
+    const {
+      taskId,
+      lat,
+      lng,
+      timestamp,
+      batteryPercent,
+      movementType,
+      destinationLat,
+      destinationLng,
+      address,
+      fullAddress,
+      city,
+      area,
+      pincode,
+    } = req.body;
     const staffId = req.staff?._id;
     const staffName = req.staff?.name;
     if (!taskId || lat == null || lng == null) {
@@ -321,12 +594,22 @@ exports.storeTracking = async (req, res) => {
     const branchId = task.assignedTo?.branchId || req.staff?.branchId;
     const presenceStatus = await computePresenceStatus(task.status, lat, lng, branchId);
     const resolvedStaffName = task.assignedTo?.name || staffName;
+    const hasClientAddress =
+      [address, fullAddress, city, area, pincode].some(
+        (value) => value != null && String(value).trim() !== '',
+      );
     let geo = null;
-    try {
-      geo = await reverseGeocode(Number(lat), Number(lng));
-    } catch (e) {
-      console.log('[Tracking] Geocode failed:', e.message);
+    if (!hasClientAddress) {
+      try {
+        geo = await reverseGeocode(Number(lat), Number(lng));
+      } catch (e) {
+        console.log('[Tracking] Geocode failed:', e.message);
+      }
     }
+    const clientAddress = buildAddressSnapshot({ address, fullAddress, city, area, pincode });
+    const resolvedAddress = hasUsableAddressSnapshot(clientAddress)
+      ? clientAddress
+      : buildAddressSnapshot(geo);
     const trackingDoc = {
       taskId: task._id,
       staffId: staffIdObj || staffId,
@@ -339,15 +622,26 @@ exports.storeTracking = async (req, res) => {
       movementType: movementType || undefined,
       destinationLat: destinationLat != null ? Number(destinationLat) : undefined,
       destinationLng: destinationLng != null ? Number(destinationLng) : undefined,
-      address: geo?.address || undefined,
-      fullAddress: geo?.address || geo?.fullAddress || undefined,
-      city: geo?.city || undefined,
-      area: geo?.area || undefined,
-      pincode: geo?.pincode || undefined,
+      address: resolvedAddress?.address || resolvedAddress?.fullAddress || undefined,
+      fullAddress: resolvedAddress?.fullAddress || resolvedAddress?.address || undefined,
+      city: resolvedAddress?.city || undefined,
+      area: resolvedAddress?.area || undefined,
+      pincode: resolvedAddress?.pincode || undefined,
     };
-    console.log('[Tracking] POST /store – inserting:', JSON.stringify(trackingDoc, null, 2));
     const saved = await Tracking.create(trackingDoc);
-    console.log('[Tracking] POST /store – saved _id:', saved._id);
+    logTrackingWrite('task_store_saved', {
+      _id: String(saved._id),
+      taskId: String(task._id),
+      taskIdDisplay: task.taskId,
+      staffId: String(trackingDoc.staffId),
+      staffName: trackingDoc.staffName,
+      latitude: trackingDoc.latitude,
+      longitude: trackingDoc.longitude,
+      presenceStatus: trackingDoc.presenceStatus,
+      movementType: trackingDoc.movementType,
+      batteryPercent: trackingDoc.batteryPercent,
+      timestamp: trackingDoc.timestamp,
+    });
     res.status(201).json({ success: true, data: { _id: saved._id } });
   } catch (error) {
     console.error('[Tracking] Error storing:', error.message);
@@ -516,7 +810,16 @@ exports.exitTracking = async (req, res) => {
       fullAddress: exitAddress,
       pincode: geo?.pincode || undefined,
     };
-    await Tracking.create(trackingDoc);
+    const savedExit = await Tracking.create(trackingDoc);
+    logTrackingWrite('task_exit', {
+      _id: String(savedExit._id),
+      taskId: String(task._id),
+      staffId: String(trackingDoc.staffId),
+      latitude: trackingDoc.latitude,
+      longitude: trackingDoc.longitude,
+      exitStatus: trackingDoc.exitStatus,
+      presenceStatus: trackingDoc.presenceStatus,
+    });
     res.status(201).json({ success: true, message: 'Exit recorded' });
   } catch (error) {
     console.error('[Tracking] Error recording exit:', error.message);
@@ -681,7 +984,24 @@ exports.arrivedTracking = async (req, res) => {
       arrivalLocation,
       sourceFullAddress: resolvedSourceFullAddress,
     };
-    if (req.body.tripDurationSeconds != null) updateData.tripDurationSeconds = Number(req.body.tripDurationSeconds);
+    const persistedTravelMetrics = await computePersistedTravelMetrics(
+      task._id,
+      details || task,
+      now
+    );
+    if (persistedTravelMetrics) {
+      updateData.tripDurationSeconds = persistedTravelMetrics.tripDurationSeconds;
+      updateData.travelActivityDuration =
+        persistedTravelMetrics.travelActivityDuration;
+    } else if (req.body.tripDurationSeconds != null) {
+      updateData.tripDurationSeconds = Number(req.body.tripDurationSeconds);
+    }
+    const travelActivityDuration = normalizeTravelActivityDuration(
+      req.body?.travelActivityDuration
+    );
+    if (travelActivityDuration && !persistedTravelMetrics) {
+      updateData.travelActivityDuration = travelActivityDuration;
+    }
     if (req.body.sourceLocation) {
       updateData.sourceLocation = { ...srcLoc, ...req.body.sourceLocation };
     }
@@ -727,7 +1047,16 @@ exports.arrivedTracking = async (req, res) => {
       time: now,
       timestamp: now,
     };
-    await Tracking.create(trackingDoc);
+    const savedArrived = await Tracking.create(trackingDoc);
+    logTrackingWrite('task_arrived', {
+      _id: String(savedArrived._id),
+      taskId: String(task._id),
+      staffId: String(trackingDoc.staffId),
+      latitude: trackingDoc.latitude,
+      longitude: trackingDoc.longitude,
+      status: trackingDoc.status,
+      presenceStatus: trackingDoc.presenceStatus,
+    });
     res.status(201).json({ success: true, message: 'Arrived recorded' });
   } catch (error) {
     console.error('[Tracking] Error recording arrived:', error.message);

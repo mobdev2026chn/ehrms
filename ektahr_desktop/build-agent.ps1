@@ -22,11 +22,20 @@ if ($LASTEXITCODE -ne 0) {
 
 Remove-Item "$outputDir\*.pdb" -ErrorAction SilentlyContinue
 $agentExe = Join-Path $outputDir "EktaHR.DesktopAgent.exe"
+<<<<<<< HEAD
 $shareExe = Join-Path $outputDir "EktaHR-Agent.exe"
 if (Test-Path -LiteralPath $agentExe) {
     Copy-Item -Force $agentExe $shareExe
     $resolved = Resolve-Path $shareExe
     Write-Host "Done! Share this single file with clients: $resolved" -ForegroundColor Green
+=======
+$shareExe = Join-Path $outputDir "EktaHR-Agent-Portable.exe"
+if (Test-Path -LiteralPath $agentExe) {
+    Copy-Item -Force $agentExe $shareExe
+    $resolved = Resolve-Path $shareExe
+    Write-Host "Done! Portable build created: $resolved" -ForegroundColor Yellow
+    Write-Host "Use the setup installer for client installs/updates so Windows replaces the existing app." -ForegroundColor Yellow
+>>>>>>> development
 } else {
     $resolved = Resolve-Path $outputDir
     Write-Host "Done! Output: $resolved" -ForegroundColor Green

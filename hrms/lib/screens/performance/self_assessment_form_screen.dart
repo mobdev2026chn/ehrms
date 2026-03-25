@@ -8,6 +8,7 @@ import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/performance_service.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class SelfAssessmentFormScreen extends StatefulWidget {
   final String reviewId;
@@ -231,7 +232,7 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator(color: AppColors.primary))
+          ? const Center(child: AppTabLoader())
           : _error != null
           ? _buildErrorState()
           : _review == null

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../services/auth_service.dart';
 import '../../config/app_colors.dart';
@@ -15,9 +16,13 @@ class LoginScreen extends StatefulWidget {
   _LoginScreenState createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen>
+    with TickerProviderStateMixin {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _emailFocusNode = FocusNode();
+  final _passwordFocusNode = FocusNode();
+  final _otpFocusNode = FocusNode();
   // Firebase Google Sign-In only; login/logout go through AuthBloc → AuthRepository.
   final _authService = AuthService();
   final _formKey = GlobalKey<FormState>();
@@ -31,12 +36,125 @@ class _LoginScreenState extends State<LoginScreen> {
   String _2faPassword = '';
   final _otpController = TextEditingController();
 
+  // Entrance animations
+  late AnimationController _entranceController;
+  late Animation<double> _bgOpacity;
+  late Animation<double> _bgScale;
+  late Animation<double> _cardSlide;
+  late Animation<double> _cardOpacity;
+
+  // Success overlay
+  bool _showSuccessOverlay = false;
+  late AnimationController _successController;
+  late Animation<double> _successCheckScale;
+  late Animation<double> _successMessageOpacity;
+
+  // Button press feedback
+  late AnimationController _buttonScaleController;
+  late Animation<double> _buttonScale;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailFocusNode.addListener(_resetKeyboardStateOnFocus);
+    _passwordFocusNode.addListener(_resetKeyboardStateOnFocus);
+    _otpFocusNode.addListener(_resetKeyboardStateOnFocus);
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _bgOpacity = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _entranceController,
+        curve: const Interval(0, 0.4, curve: Curves.easeOut),
+      ),
+    );
+    _bgScale = Tween<double>(begin: 1.08, end: 1).animate(
+      CurvedAnimation(
+        parent: _entranceController,
+        curve: const Interval(0, 0.5, curve: Curves.easeOut),
+      ),
+    );
+    _cardSlide = Tween<double>(begin: 60, end: 0).animate(
+      CurvedAnimation(
+        parent: _entranceController,
+        curve: const Interval(0.25, 0.85, curve: Curves.easeOutCubic),
+      ),
+    );
+    _cardOpacity = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _entranceController,
+        curve: const Interval(0.3, 0.9, curve: Curves.easeOut),
+      ),
+    );
+    _entranceController.forward();
+
+    _successController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    );
+    // App icon: small → larger (scale up animation)
+    _successCheckScale = Tween<double>(begin: 0.2, end: 1.15).animate(
+      CurvedAnimation(
+        parent: _successController,
+        curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
+      ),
+    );
+    _successMessageOpacity = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _successController,
+        curve: const Interval(0.45, 0.75, curve: Curves.easeOut),
+      ),
+    );
+
+    _buttonScaleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 100),
+    );
+    _buttonScale = Tween<double>(begin: 1, end: 0.96).animate(
+      CurvedAnimation(parent: _buttonScaleController, curve: Curves.easeInOut),
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _clearHardwareKeyboardState();
+    });
+  }
+
   @override
   void dispose() {
+    _entranceController.dispose();
+    _successController.dispose();
+    _buttonScaleController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _otpController.dispose();
+    _emailFocusNode
+      ..removeListener(_resetKeyboardStateOnFocus)
+      ..dispose();
+    _passwordFocusNode
+      ..removeListener(_resetKeyboardStateOnFocus)
+      ..dispose();
+    _otpFocusNode
+      ..removeListener(_resetKeyboardStateOnFocus)
+      ..dispose();
     super.dispose();
+  }
+
+  void _resetKeyboardStateOnFocus() {
+    if (_emailFocusNode.hasFocus ||
+        _passwordFocusNode.hasFocus ||
+        _otpFocusNode.hasFocus) {
+      _clearHardwareKeyboardState();
+    }
+  }
+
+  void _clearHardwareKeyboardState() {
+    try {
+      // ignore: invalid_use_of_visible_for_testing_member
+      ServicesBinding.instance.keyboard.clearState();
+    } catch (_) {
+      // Best-effort workaround for Flutter's Android key-state mismatch.
+    }
   }
 
   void _handleLogin() {
@@ -90,6 +208,37 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  void _playSuccessAndNavigate(BuildContext context) {
+    setState(() => _showSuccessOverlay = true);
+    _successController.forward(from: 0).then((_) {
+      if (!mounted) return;
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) => DashboardScreen(),
+            transitionDuration: const Duration(milliseconds: 500),
+            transitionsBuilder: (_, animation, __, child) {
+              return FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.95, end: 1).animate(
+                    CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    ),
+                  ),
+                  child: child,
+                ),
+              );
+            },
+          ),
+        );
+      });
+    });
+  }
+
   void _onAuthStateChanged(BuildContext context, AuthState state) {
     if (state is AuthRequires2FA) {
       setState(() {
@@ -111,16 +260,7 @@ class _LoginScreenState extends State<LoginScreen> {
         );
         return;
       }
-      SnackBarUtils.showSnackBar(
-        context,
-        'Login Successful!',
-        backgroundColor: AppColors.primary,
-        duration: const Duration(milliseconds: 400),
-      );
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => DashboardScreen()),
-      );
+      _playSuccessAndNavigate(context);
     } else if (state is AuthFailure) {
       if (_lastAttemptWasGoogle) {
         _lastAttemptWasGoogle = false;
@@ -128,7 +268,10 @@ class _LoginScreenState extends State<LoginScreen> {
       }
       SnackBarUtils.showSnackBar(
         context,
-        ErrorMessageUtils.sanitizeForDisplay(state.message, fallback: 'Login failed'),
+        ErrorMessageUtils.sanitizeForDisplay(
+          state.message,
+          fallback: 'Login failed',
+        ),
         isError: true,
       );
     } else if (state is AuthLoadInProgress) {
@@ -147,48 +290,153 @@ class _LoginScreenState extends State<LoginScreen> {
           backgroundColor: const Color(0xFF1A1A1A),
           body: Stack(
             children: [
-              // Background Image
-              Container(
-                height: MediaQuery.of(context).size.height * 0.45,
-                width: double.infinity,
-                decoration: const BoxDecoration(
-                  image: DecorationImage(
-                    image: AssetImage(
-                      'assets/images/ektaHr_feature_graphic.png',
+              // Animated background
+              AnimatedBuilder(
+                animation: _entranceController,
+                builder: (context, child) {
+                  return Opacity(
+                    opacity: _bgOpacity.value,
+                    child: Transform.scale(
+                      scale: _bgScale.value,
+                      alignment: Alignment.center,
+                      child: Container(
+                        height: MediaQuery.of(context).size.height * 0.45,
+                        width: double.infinity,
+                        decoration: const BoxDecoration(
+                          image: DecorationImage(
+                            image: AssetImage(
+                              'assets/images/ektaHr_feature_graphic.png',
+                            ),
+                            fit: BoxFit.cover,
+                          ),
+                          borderRadius: BorderRadius.only(
+                            bottomLeft: Radius.circular(40),
+                            bottomRight: Radius.circular(40),
+                          ),
+                        ),
+                      ),
                     ),
-                    fit: BoxFit.cover,
-                  ),
-                  borderRadius: BorderRadius.only(
-                    bottomLeft: Radius.circular(40),
-                    bottomRight: Radius.circular(40),
-                  ),
-                ),
+                  );
+                },
               ),
 
-              // Main Content
+              // Main content with entrance animation
               SafeArea(
                 child: Center(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const SizedBox(height: 100),
-                        const SizedBox(height: 32),
-
-                        // Show 2FA OTP card or standard login card
-                        if (_show2FAInput)
-                          _build2FACard(isLoading)
-                        else
-                          _buildLoginCard(isLoading),
-
-                        const SizedBox(height: 24),
-                      ],
+                    child: AnimatedBuilder(
+                      animation: _entranceController,
+                      builder: (context, child) {
+                        return Transform.translate(
+                          offset: Offset(0, _cardSlide.value),
+                          child: Opacity(
+                            opacity: _cardOpacity.value,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const SizedBox(height: 100),
+                                const SizedBox(height: 32),
+                                AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 350),
+                                  switchInCurve: Curves.easeOutCubic,
+                                  switchOutCurve: Curves.easeInCubic,
+                                  transitionBuilder: (child, animation) {
+                                    return FadeTransition(
+                                      opacity: animation,
+                                      child: SlideTransition(
+                                        position: Tween<Offset>(
+                                          begin: const Offset(0, 0.05),
+                                          end: Offset.zero,
+                                        ).animate(animation),
+                                        child: child,
+                                      ),
+                                    );
+                                  },
+                                  child: _show2FAInput
+                                      ? KeyedSubtree(
+                                          key: const ValueKey<bool>(true),
+                                          child: _build2FACard(isLoading),
+                                        )
+                                      : KeyedSubtree(
+                                          key: const ValueKey<bool>(false),
+                                          child: _buildLoginCard(isLoading),
+                                        ),
+                                ),
+                                const SizedBox(height: 24),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),
               ),
+
+              // Success overlay with celebration
+              if (_showSuccessOverlay) _buildSuccessOverlay(),
             ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSuccessOverlay() {
+    const double iconSize = 140;
+    return AnimatedBuilder(
+      animation: _successController,
+      builder: (context, child) {
+        return Container(
+          color: const Color(0xFF1A1A1A).withOpacity(0.95),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: iconSize,
+                  height: iconSize,
+                  child: ScaleTransition(
+                    scale: _successCheckScale,
+                    alignment: Alignment.center,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withOpacity(0.35),
+                            blurRadius: 24,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/ekta_logo.jpeg',
+                          width: iconSize,
+                          height: iconSize,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                Opacity(
+                  opacity: _successMessageOpacity.value,
+                  child: Text(
+                    'Welcome',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -212,15 +460,25 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // EktaHR · attendance sign-in header
               TextFormField(
                 controller: _emailController,
+                focusNode: _emailFocusNode,
                 keyboardType: TextInputType.emailAddress,
+                onTap: _clearHardwareKeyboardState,
                 validator: (value) {
-                  if (value == null || value.isEmpty)
-                    return 'Please enter your email';
-                  if (!RegExp(
-                    r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
-                  ).hasMatch(value)) {
+                  final email = value?.trim() ?? '';
+                  if (email.isEmpty) return 'Please enter your email';
+                  // Keep validation permissive so valid modern domains
+                  // (long TLDs, plus signs, subdomains) are not blocked locally.
+                  final at = email.indexOf('@');
+                  if (at <= 0 || at != email.lastIndexOf('@')) {
+                    return 'Please enter a valid email';
+                  }
+                  final domain = email.substring(at + 1);
+                  if (!domain.contains('.') ||
+                      domain.startsWith('.') ||
+                      domain.endsWith('.')) {
                     return 'Please enter a valid email';
                   }
                   return null;
@@ -228,7 +486,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 style: const TextStyle(color: Colors.white, fontSize: 16),
                 decoration: InputDecoration(
                   labelText: 'Email',
-                  labelStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                  labelStyle: TextStyle(
+                    color: Colors.grey.shade400,
+                    fontSize: 14,
+                  ),
                   fillColor: _inputFill,
                   filled: true,
                   prefixIcon: Icon(
@@ -251,7 +512,9 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 20),
               TextFormField(
                 controller: _passwordController,
+                focusNode: _passwordFocusNode,
                 obscureText: !_isPasswordVisible,
+                onTap: _clearHardwareKeyboardState,
                 validator: (value) {
                   if (value == null || value.isEmpty)
                     return 'Please enter your password';
@@ -260,7 +523,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 style: const TextStyle(color: Colors.white, fontSize: 16),
                 decoration: InputDecoration(
                   labelText: 'Password',
-                  labelStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                  labelStyle: TextStyle(
+                    color: Colors.grey.shade400,
+                    fontSize: 14,
+                  ),
                   fillColor: _inputFill,
                   filled: true,
                   prefixIcon: Icon(
@@ -313,33 +579,15 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: isLoading ? null : _handleLogin,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 2,
-                ),
-                child: isLoading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text(
-                        'Login',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+              _AnimatedLoginButton(
+                isLoading: isLoading,
+                onPressed: _handleLogin,
+                buttonScale: _buttonScale,
+                onTapDown: () {
+                  if (!isLoading) _buttonScaleController.forward();
+                },
+                onTapUp: () => _buttonScaleController.reverse(),
+                onTapCancel: () => _buttonScaleController.reverse(),
               ),
               const SizedBox(height: 20),
             ],
@@ -437,7 +685,9 @@ class _LoginScreenState extends State<LoginScreen> {
             // OTP input
             TextFormField(
               controller: _otpController,
+              focusNode: _otpFocusNode,
               keyboardType: TextInputType.number,
+              onTap: _clearHardwareKeyboardState,
               maxLength: 6,
               textAlign: TextAlign.center,
               style: const TextStyle(
@@ -448,7 +698,10 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               decoration: InputDecoration(
                 labelText: 'Enter OTP',
-                labelStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                labelStyle: TextStyle(
+                  color: Colors.grey.shade400,
+                  fontSize: 14,
+                ),
                 fillColor: _inputFill,
                 filled: true,
                 counterText: '',
@@ -505,10 +758,7 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 Text(
                   "Didn't receive the OTP? ",
-                  style: TextStyle(
-                    color: Colors.grey.shade400,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
                 ),
                 GestureDetector(
                   onTap: isLoading ? null : _handleResendOTP,
@@ -543,6 +793,74 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Interactive login button with scale-on-press feedback.
+class _AnimatedLoginButton extends StatelessWidget {
+  const _AnimatedLoginButton({
+    required this.isLoading,
+    required this.onPressed,
+    required this.buttonScale,
+    required this.onTapDown,
+    required this.onTapUp,
+    required this.onTapCancel,
+  });
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+  final Animation<double> buttonScale;
+  final VoidCallback onTapDown;
+  final VoidCallback onTapUp;
+  final VoidCallback onTapCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => onTapDown(),
+      onPointerUp: (_) => onTapUp(),
+      onPointerCancel: (_) => onTapCancel(),
+      child: ScaleTransition(
+        scale: buttonScale,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(0.4),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: ElevatedButton(
+            onPressed: isLoading ? null : onPressed,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              elevation: 2,
+            ),
+            child: isLoading
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Text(
+                    'Login',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+          ),
         ),
       ),
     );
