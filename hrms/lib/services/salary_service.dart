@@ -13,10 +13,10 @@ class SalaryService {
     try {
       _api.setAuthToken(token);
       debugPrint(
-        '[SalaryOverview] GET /payrolls/stats month=$month year=$year',
+        '[SalaryOverview] GET /payroll/stats month=$month year=$year',
       );
       final response = await _api.dio.get<Map<String, dynamic>>(
-        '/payrolls/stats',
+        '/payroll/stats',
         queryParameters: {
           if (month != null) 'month': month,
           if (year != null) 'year': year,
@@ -64,10 +64,10 @@ class SalaryService {
       if (month != null) q['month'] = month;
       if (year != null) q['year'] = year;
       debugPrint(
-        '[SalaryOverview] GET /payrolls query=$q',
+        '[SalaryOverview] GET /payroll query=$q',
       );
       final response = await _api.dio.get<Map<String, dynamic>>(
-        '/payrolls',
+        '/payroll',
         queryParameters: q,
       );
       final data = response.data;
@@ -114,8 +114,8 @@ class SalaryService {
     try {
       _api.setAuthToken(token);
       final path = download
-          ? '/payrolls/$payrollId/payslip/download'
-          : '/payrolls/$payrollId/payslip/view';
+          ? '/payroll/$payrollId/payslip/download'
+          : '/payroll/$payrollId/payslip/view';
       debugPrint('[SalaryOverview] GET $path');
       final response = await _api.dio.get<dynamic>(
         path,
@@ -146,10 +146,10 @@ class SalaryService {
     try {
       _api.setAuthToken(token);
       debugPrint(
-        '[SalaryOverview] POST /payrolls/preview month=$month year=$year employeeId=$employeeId',
+        '[SalaryOverview] POST /payroll/preview month=$month year=$year employeeId=$employeeId',
       );
       final response = await _api.dio.post<Map<String, dynamic>>(
-        '/payrolls/preview',
+        '/payroll/preview',
         data: {
           'employeeId': employeeId,
           'month': month,

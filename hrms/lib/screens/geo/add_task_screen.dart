@@ -15,6 +15,7 @@ import 'package:hrms/services/task_service.dart';
 import 'package:hrms/screens/geo/live_tracking_screen.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String staffId;
@@ -900,7 +901,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             child: _loadingCustomers
                 ? const Padding(
                     padding: EdgeInsets.all(24),
-                    child: Center(child: CircularProgressIndicator()),
+                    child: const Center(child: AppTabLoader()),
                   )
                 : _filteredCustomers.isEmpty
                 ? Padding(

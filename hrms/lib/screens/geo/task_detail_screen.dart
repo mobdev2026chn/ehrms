@@ -19,6 +19,7 @@ import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/task_movement_summary_util.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final Task task;
@@ -623,7 +624,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         child: Stack(
           children: [
             if (_loadingMap && _markers.isEmpty)
-              const Center(child: CircularProgressIndicator())
+              const Center(child: AppTabLoader())
             else if (_mapError != null && _markers.isEmpty)
               Center(
                 child: Padding(
@@ -894,7 +895,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(24),
-          child: CircularProgressIndicator(),
+          child: AppTabLoader(),
         ),
       );
     }

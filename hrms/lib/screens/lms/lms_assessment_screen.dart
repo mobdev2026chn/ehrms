@@ -9,6 +9,7 @@ import '../../utils/snackbar_utils.dart' show SnackBarUtils;
 import '../../utils/error_message_utils.dart';
 import '../dashboard/dashboard_screen.dart';
 import 'lms_course_detail_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class LmsAssessmentScreen extends StatefulWidget {
   final String courseId;
@@ -166,7 +167,7 @@ class _LmsAssessmentScreenState extends State<LmsAssessmentScreen> {
           backgroundColor: AppColors.surface,
           foregroundColor: AppColors.textPrimary,
         ),
-        body: const Center(child: CircularProgressIndicator()),
+        body: const Center(child: AppTabLoader()),
       );
     }
 

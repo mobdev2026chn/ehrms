@@ -22,6 +22,7 @@ import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MyTasksScreen extends StatefulWidget {
@@ -984,7 +985,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           children: [
             // Tasks Tab
             _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _errorMessage != null
                     ? Center(child: Text(_errorMessage!))
                     : Column(
@@ -1470,7 +1471,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
             
             // Customers Tab
             _isLoadingCustomers
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _customers.isEmpty
                     ? RefreshIndicator(
                         onRefresh: _fetchCustomers,

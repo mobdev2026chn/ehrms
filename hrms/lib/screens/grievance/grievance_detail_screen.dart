@@ -12,6 +12,7 @@ import '../../utils/error_message_utils.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class GrievanceDetailScreen extends StatefulWidget {
   final String grievanceId;
@@ -173,7 +174,7 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: colorScheme.primary),
+            const AppTabLoader(),
             const SizedBox(height: 16),
             Text('Loading...', style: TextStyle(color: colorScheme.onSurfaceVariant)),
           ],

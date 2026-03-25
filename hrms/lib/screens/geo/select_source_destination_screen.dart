@@ -12,6 +12,7 @@ import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/geo/places_service.dart';
 import 'package:hrms/screens/geo/start_ride_screen.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 
 class SelectSourceDestinationScreen extends StatefulWidget {
   final Task task;
@@ -354,7 +355,7 @@ class _SelectSourceDestinationScreenState
                     ),
                     if (_loadingCustomer || _loadingSource) ...[
                       const SizedBox(height: 24),
-                      const Center(child: CircularProgressIndicator()),
+                      const Center(child: AppTabLoader()),
                     ],
                     const SizedBox(height: 24),
                   ],
@@ -696,7 +697,7 @@ class _DestinationSearchSheetState extends State<_DestinationSearchSheet> {
             const SizedBox(height: 12),
             Expanded(
               child: _searching || _fetchingPlace
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const Center(child: AppTabLoader())
                   : _predictions.isEmpty
                   ? Center(
                       child: Text(

@@ -64,6 +64,8 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/requests', requestRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/payrolls', payrollRoutes);
+// Web frontend RTK uses `/api/payroll` (singular); keep alias for parity.
+app.use('/api/payroll', payrollRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/holidays', holidayRoutes);
 app.use('/api/onboarding', onboardingRoutes);

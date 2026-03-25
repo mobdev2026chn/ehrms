@@ -21,6 +21,7 @@ import '../../utils/face_detection_helper.dart';
 import '../../utils/request_guard.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
+import '../../widgets/app_tab_loader.dart';
 import '../../widgets/attendance_success_overlay.dart';
 
 class SelfieCheckInScreen extends StatefulWidget {
@@ -1137,7 +1138,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                       const Center(
                         child: Padding(
                           padding: EdgeInsets.symmetric(vertical: 16),
-                          child: CircularProgressIndicator(),
+                          child: AppTabLoader(),
                         ),
                       )
                     else

@@ -8,6 +8,7 @@ import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/utils/task_movement_summary_util.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/notification_reaction_overlay.dart';
 
 /// One event in the task track timeline.
@@ -359,7 +360,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           centerTitle: true,
           elevation: 0,
         ),
-        body: const Center(child: CircularProgressIndicator()),
+        body: const Center(child: AppTabLoader()),
       );
     }
 

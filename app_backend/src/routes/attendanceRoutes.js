@@ -8,6 +8,7 @@ const {
     checkOut,
     getTodayAttendance,
     getAttendanceHistory,
+    getEmployeeAttendance,
     getMonthAttendance,
     getFineCalculation
 } = require('../controllers/attendanceController');
@@ -25,6 +26,7 @@ const attendanceLimiter = rateLimit({
 router.post('/checkin', protect, attendanceLimiter, checkIn);
 router.put('/checkout', protect, attendanceLimiter, checkOut);
 router.get('/today', protect, attendanceLimiter, getTodayAttendance);
+router.get('/employee/:employeeId', protect, attendanceLimiter, getEmployeeAttendance);
 router.get('/month', protect, attendanceLimiter, getMonthAttendance);
 router.get('/history', protect, attendanceLimiter, getAttendanceHistory);
 router.get('/fine-calculation', protect, attendanceLimiter, getFineCalculation);

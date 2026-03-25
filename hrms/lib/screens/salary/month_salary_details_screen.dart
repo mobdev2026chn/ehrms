@@ -4,6 +4,7 @@ import '../../config/app_colors.dart';
 import '../../services/attendance_service.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../utils/attendance_display_util.dart';
+import '../../widgets/app_tab_loader.dart';
 
 /// Month Salary Details Screen
 ///
@@ -209,7 +210,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppTabLoader())
           : _error.isNotEmpty
           ? Center(
               child: Padding(

@@ -8,6 +8,7 @@ import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../geo/live_tracking_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -126,7 +127,6 @@ class _SplashScreenState extends State<SplashScreen> {
         ? Colors.white
         : Colors.white.withOpacity(0.95);
     final textColor = iconColor;
-    final loadingColor = iconColor;
 
     return Scaffold(
       backgroundColor: _primaryColor,
@@ -179,10 +179,7 @@ class _SplashScreenState extends State<SplashScreen> {
                           ),
                         ),
                         SizedBox(height: loaderSpacing),
-                        CircularProgressIndicator(
-                          color: loadingColor,
-                          strokeWidth: 3,
-                        ),
+                        const AppTabLoader(),
                       ],
                     ),
                   ),

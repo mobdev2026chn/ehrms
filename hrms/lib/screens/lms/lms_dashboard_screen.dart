@@ -14,6 +14,7 @@ import '../../widgets/menu_icon_button.dart';
 import 'lms_course_detail_screen.dart';
 import 'lms_learning_engine_tab.dart';
 import 'lms_live_sessions_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class LmsDashboardScreen extends StatefulWidget {
   /// When true, rendered inside LmsShellScreen (no Scaffold, app bar, drawer).
@@ -239,7 +240,7 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
 
   Widget _buildMyCoursesTab() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: AppTabLoader());
     }
 
     final filtered = _filteredCourses;
@@ -389,7 +390,7 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
       );
     }
     if (_isLoadingLibrary) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: AppTabLoader());
     }
     final all = _libraryCourses;
     final filtered = all.where((c) {

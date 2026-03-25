@@ -11,6 +11,7 @@ import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/face_detection_helper.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/screens/attendance/selfie_camera_screen.dart' show SelfieCameraScreen, useImagePickerFallback;
 
 class TaskSelfieScreen extends StatefulWidget {
@@ -309,7 +310,7 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const CircularProgressIndicator(),
+                    const AppTabLoader(),
                     const SizedBox(height: 20),
                     Text(
                       'Getting your location…',

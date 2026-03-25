@@ -6,6 +6,7 @@ import '../../services/grievance_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import 'grievance_detail_screen.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class MyGrievancesScreen extends StatefulWidget {
   final bool embeddedInShell;
@@ -200,7 +201,7 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(color: colorScheme.primary),
+          const AppTabLoader(),
           const SizedBox(height: 16),
           Text('Loading grievances...', style: TextStyle(color: colorScheme.onSurfaceVariant)),
         ],

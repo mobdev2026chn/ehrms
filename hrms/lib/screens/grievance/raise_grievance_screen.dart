@@ -8,6 +8,7 @@ import '../../services/grievance_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../widgets/bottom_navigation_bar.dart';
+import '../../widgets/app_tab_loader.dart';
 import '../../widgets/notification_reaction_overlay.dart';
 import 'grievance_detail_screen.dart';
 
@@ -186,7 +187,7 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                   const Text('Category *', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 6),
                   if (_categoriesLoading)
-                    const Center(child: CircularProgressIndicator())
+                    const Center(child: AppTabLoader())
                   else if (_categoriesError != null)
                     Container(
                       padding: const EdgeInsets.all(12),

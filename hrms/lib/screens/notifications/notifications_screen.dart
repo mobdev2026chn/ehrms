@@ -6,6 +6,7 @@ import '../../services/fcm_service.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
+import '../../widgets/app_tab_loader.dart';
 
 /// Lists FCM notifications received in foreground, background, or when app was closed.
 /// All received notifications appear here (no need to tap them). Stored for 24 hours.
@@ -101,7 +102,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       body: RefreshIndicator(
         onRefresh: _load,
         child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: AppTabLoader())
             : _notifications.isEmpty
                 ? _buildEmpty()
                 : ListView.builder(

@@ -6,7 +6,7 @@ const { getHolidayTemplateForStaff } = require('../utils/holidayTemplateHelper')
 // @access  Private
 const getEmployeeHolidays = async (req, res) => {
     try {
-        const { year, search, page = 1, limit = 100 } = req.query;
+        const { year, month, search, page = 1, limit = 100 } = req.query;
 
         // Ensure we have staff info (populated by auth middleware)
         if (!req.staff) {
@@ -40,6 +40,17 @@ const getEmployeeHolidays = async (req, res) => {
                 const holidayDate = new Date(holiday.date);
                 return holidayDate.getFullYear() === filterYear;
             });
+        }
+
+        // Optional month (1–12), aligned with web GET /holidays/employee?year=&month=
+        if (month !== undefined && month !== null && month !== '') {
+            const filterMonth = Number(month);
+            if (!Number.isNaN(filterMonth) && filterMonth >= 1 && filterMonth <= 12) {
+                holidays = holidays.filter((holiday) => {
+                    const holidayDate = new Date(holiday.date);
+                    return holidayDate.getMonth() + 1 === filterMonth;
+                });
+            }
         }
 
         // Search functionality

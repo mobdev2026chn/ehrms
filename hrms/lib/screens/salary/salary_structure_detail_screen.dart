@@ -4,6 +4,7 @@ import '../../config/app_colors.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../services/salary_service.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class SalaryStructureDetailScreen extends StatefulWidget {
   const SalaryStructureDetailScreen({super.key});
@@ -72,7 +73,7 @@ class _SalaryStructureDetailScreenState
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppTabLoader())
           : _error.isNotEmpty
           ? Center(
               child: Column(

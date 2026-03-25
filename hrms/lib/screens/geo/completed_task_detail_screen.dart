@@ -10,6 +10,7 @@ import 'package:hrms/screens/dashboard/dashboard_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
 
 class CompletedTaskDetailScreen extends StatefulWidget {
@@ -193,7 +194,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           elevation: 0,
         ),
         body: _loading
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: AppTabLoader())
             : RefreshIndicator(
                 onRefresh: _fetchReport,
                 child: SingleChildScrollView(

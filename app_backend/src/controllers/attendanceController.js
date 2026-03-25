@@ -668,8 +668,13 @@ const checkIn = async (req, res) => {
                 shiftEndTime: fineShiftEndTime,
                 gracePeriodMinutes: fineGracePeriod
             };
-            // Always calculate fine so lateMinutes/fineAmount respect grace period
-            let fineResult = await calculateCombinedFine(now, null, startOfDay, fineTemplate, staff, company, activeLeave);
+            /*
+             * Fine calculation is handled by web/server flows.
+             * App check-in/out should NOT calculate or store fine fields in attendances.
+             *
+             * Always calculate fine so lateMinutes/fineAmount respect grace period
+             * let fineResult = await calculateCombinedFine(now, null, startOfDay, fineTemplate, staff, company, activeLeave);
+             */
             existing.punchIn = now;
 
             // Update location using Mongoose set() method for nested paths to avoid validation issues
@@ -699,14 +704,17 @@ const checkIn = async (req, res) => {
                 existing.businessId = staff.businessId;
                 console.log('[Attendance checkIn] (half-day update) storing businessId in attendances:', staff.businessId?.toString());
             }
-            existing.lateMinutes = fineResult.lateMinutes;
-            existing.earlyMinutes = fineResult.earlyMinutes ?? 0;
-            existing.fineHours = fineResult.fineHours ?? 0;
-            existing.fineAmount = fineResult.fineAmount ?? 0;
+            /*
+             * App flow: do not set fine fields into attendances collection.
+             * existing.lateMinutes = fineResult.lateMinutes;
+             * existing.earlyMinutes = fineResult.earlyMinutes ?? 0;
+             * existing.fineHours = fineResult.fineHours ?? 0;
+             * existing.fineAmount = fineResult.fineAmount ?? 0;
+             */
             existing.workHours = 0;
             existing.isPaidLeave = false;  // check-in: set false
             if (source) existing.source = source;
-            console.log('[Fine CHECK-IN] (half-day update) INSERTING: checkInTime=', existing.punchIn?.toISOString?.(), 'checkOutTime=null', 'lateMinutes=', existing.lateMinutes, 'earlyMinutes=', existing.earlyMinutes, 'fineAmount=', existing.fineAmount);
+            // console.log('[Fine CHECK-IN] (half-day update) fine fields are not stored for app punch flow');
             await existing.save();
             const response = existing.toObject ? existing.toObject() : existing;
             if (warnings.length > 0) response.warnings = warnings;
@@ -769,10 +777,15 @@ const checkIn = async (req, res) => {
             gracePeriodMinutes: fineGracePeriod
         };
         
-        // Always calculate fine so lateMinutes/fineAmount are set (0 when on time or within grace)
-        const fineResult = await calculateCombinedFine(now, null, startOfDay, fineTemplate, staff, company, activeLeave);
-
-        console.log('[Fine CHECK-IN] INSERTING: checkInTime=', now.toISOString(), 'checkOutTime=null', 'lateMinutes=', fineResult.lateMinutes, 'earlyMinutes=', fineResult.earlyMinutes, 'fineAmount=', fineResult.fineAmount);
+        /*
+         * Fine calculation is handled by web/server flows.
+         * App check-in/out should NOT calculate or store fine fields in attendances.
+         *
+         * Always calculate fine so lateMinutes/fineAmount are set (0 when on time or within grace)
+         * const fineResult = await calculateCombinedFine(now, null, startOfDay, fineTemplate, staff, company, activeLeave);
+         *
+         * console.log('[Fine CHECK-IN] INSERTING:', fineResult);
+         */
         // Create initial attendance record. Store businessId from staff (staffs collection).
         const businessIdToStore = staff.businessId;
         console.log('[Attendance checkIn] storing in attendances: businessId=', businessIdToStore?.toString(), '(from staffs collection; body businessId=', bodyBusinessId ?? 'not sent', ')');
@@ -791,10 +804,12 @@ const checkIn = async (req, res) => {
             ...(source && { source }),
             // Fine calculation fields
             workHours: 0,
-            fineHours: fineResult.fineHours,
-            lateMinutes: fineResult.lateMinutes,
-            earlyMinutes: fineResult.earlyMinutes,
-            fineAmount: fineResult.fineAmount
+            /*
+             * fineHours: fineResult.fineHours,
+             * lateMinutes: fineResult.lateMinutes,
+             * earlyMinutes: fineResult.earlyMinutes,
+             * fineAmount: fineResult.fineAmount
+             */
         });
 
         // Include warnings in response if any
@@ -1068,30 +1083,31 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         };
     }
     
-    const fineResult = await calculateCombinedFine(
-        attendance.punchIn,
-        now,
-        attendance.date,
-        fineTemplate,
-        staff,
-        company,
-        leaveForFine
-    );
-
-    // Use current calculation total (late + early) so fine is consistent with same shift/daily salary.
-    // Do not add early to previous stored fine — check-in may have used different shift hours.
-    const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
-    const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
-    const totalFineAmount = lateFineAmount + earlyFineAmount;
-
-    // Set all fine fields from combined result so attendance collection has consistent fine amount and fine hours
-    attendance.lateMinutes = fineResult.lateMinutes ?? attendance.lateMinutes ?? 0;
-    attendance.earlyMinutes = fineResult.earlyMinutes ?? 0;
-    attendance.fineHours = fineResult.fineHours ?? ((Number(attendance.lateMinutes) || 0) + (Number(attendance.earlyMinutes) || 0));
-    attendance.fineAmount = totalFineAmount;
-
-    console.log('[Fine CHECK-OUT] checkInTime=', attendance.punchIn?.toISOString?.(), 'checkOutTime=', now.toISOString(), 'lateFineAmount=', lateFineAmount, 'earlyFineAmount=', earlyFineAmount, 'totalFineAmount=', totalFineAmount, 'INSERTING: lateMinutes=', attendance.lateMinutes, 'earlyMinutes=', attendance.earlyMinutes, 'fineHours=', attendance.fineHours, 'fineAmount=', attendance.fineAmount);
-    console.log('[Fine AMOUNT TEST] CHECK-OUT stored: lateMinutes=' + attendance.lateMinutes + ' lateFineAmount=' + lateFineAmount + ', earlyMinutes=' + attendance.earlyMinutes + ' earlyFineAmount=' + earlyFineAmount + ', totalFineAmount=' + totalFineAmount + ' (formula: lateFine + earlyFine)');
+    /*
+     * Fine calculation is handled by web/server flows.
+     * App check-in/out should NOT calculate or store fine fields in attendances.
+     *
+     * const fineResult = await calculateCombinedFine(
+     *   attendance.punchIn,
+     *   now,
+     *   attendance.date,
+     *   fineTemplate,
+     *   staff,
+     *   company,
+     *   leaveForFine
+     * );
+     *
+     * const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
+     * const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
+     * const totalFineAmount = lateFineAmount + earlyFineAmount;
+     *
+     * attendance.lateMinutes = fineResult.lateMinutes ?? attendance.lateMinutes ?? 0;
+     * attendance.earlyMinutes = fineResult.earlyMinutes ?? 0;
+     * attendance.fineHours = fineResult.fineHours ?? ((Number(attendance.lateMinutes) || 0) + (Number(attendance.earlyMinutes) || 0));
+     * attendance.fineAmount = totalFineAmount;
+     *
+     * console.log('[Fine CHECK-OUT] INSERTING fine fields', { totalFineAmount });
+     */
 
     await attendance.save();
 
@@ -1635,6 +1651,76 @@ const getAttendanceHistory = async (req, res) => {
     } catch (error) {
         console.error(error); // Log error
         res.status(500).json({ message: 'Server Error' });
+    }
+};
+
+// @desc    Employee attendance in a date range (same collection/query shape as month view; used by web salary overview)
+// @route   GET /api/attendance/employee/:employeeId
+// @access  Private — only own staff id
+const getEmployeeAttendance = async (req, res) => {
+    try {
+        const { employeeId } = req.params;
+        const { startDate, endDate, page = 1, limit = 100 } = req.query;
+
+        if (!req.staff) {
+            return res.status(404).json({ success: false, message: 'Staff record not found' });
+        }
+        if (String(employeeId) !== String(req.staff._id)) {
+            return res.status(403).json({ success: false, message: 'Forbidden' });
+        }
+        if (!startDate || !endDate) {
+            return res.status(400).json({ success: false, message: 'startDate and endDate are required' });
+        }
+
+        const parseYmd = (ymd) => {
+            const parts = String(ymd).split('-').map(Number);
+            if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+            const [y, m, d] = parts;
+            return new Date(y, m - 1, d);
+        };
+        const start = parseYmd(startDate);
+        const end = parseYmd(endDate);
+        if (!start || !end) {
+            return res.status(400).json({ success: false, message: 'Invalid startDate or endDate' });
+        }
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+
+        const query = {
+            $or: [
+                { employeeId: req.staff._id },
+                { user: req.staff._id }
+            ],
+            date: { $gte: start, $lte: end }
+        };
+
+        const p = Math.max(1, parseInt(page, 10) || 1);
+        const l = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
+        const skip = (p - 1) * l;
+
+        const attendanceRaw = await Attendance.find(query)
+            .sort({ date: 1 })
+            .skip(skip)
+            .limit(l);
+
+        const total = await Attendance.countDocuments(query);
+        const attendance = await enrichWithLeaveDetails(attendanceRaw, req.staff._id);
+
+        return res.json({
+            success: true,
+            data: {
+                attendance,
+                pagination: {
+                    page: p,
+                    limit: l,
+                    total,
+                    pages: Math.ceil(total / l) || 0
+                }
+            }
+        });
+    } catch (error) {
+        console.error('[getEmployeeAttendance]', error);
+        return res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
 
@@ -2190,4 +2276,4 @@ const getFineCalculation = async (req, res) => {
     }
 };
 
-module.exports = { checkIn, checkOut, getTodayAttendance, getAttendanceHistory, getMonthAttendance, getFineCalculation };
+module.exports = { checkIn, checkOut, getTodayAttendance, getAttendanceHistory, getEmployeeAttendance, getMonthAttendance, getFineCalculation };

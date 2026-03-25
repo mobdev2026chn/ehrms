@@ -12,6 +12,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 import '../../config/app_colors.dart';
 import '../../services/request_service.dart';
 import '../../services/auth_service.dart';
@@ -1115,7 +1116,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
               await _fetchLeaves();
             },
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _leaves.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
@@ -1558,7 +1559,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     if (_isLoadingTypes)
                       const Padding(
                         padding: EdgeInsets.only(bottom: 20),
-                        child: Center(child: CircularProgressIndicator()),
+                        child: const Center(child: AppTabLoader()),
                       )
                     else if (_allowedTypes.isEmpty)
                       const Padding(
@@ -2307,7 +2308,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
               await _fetchLoans();
             },
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _loans.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
@@ -2805,14 +2806,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                 url,
                 loadingBuilder: (ctx, child, loadingProgress) {
                   if (loadingProgress == null) return child;
-                  return Center(
-                    child: CircularProgressIndicator(
-                      value: loadingProgress.expectedTotalBytes != null
-                          ? loadingProgress.cumulativeBytesLoaded /
-                                loadingProgress.expectedTotalBytes!
-                          : null,
-                    ),
-                  );
+                  return const Center(child: AppTabLoader());
                 },
                 errorBuilder: (ctx, error, stackTrace) => const Center(
                   child: Padding(
@@ -3299,7 +3293,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
         // List Content
         Expanded(
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
+              ? const Center(child: AppTabLoader())
               : _expenses.isEmpty
               ? Center(
                   child: Column(
@@ -3909,7 +3903,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
           context: context,
           barrierDismissible: false,
           builder: (context) =>
-              const Center(child: CircularProgressIndicator()),
+              const Center(child: AppTabLoader()),
         );
         final result = await _requestService.viewPayslipRequest(requestId);
         if (mounted) {
@@ -3935,7 +3929,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
+        builder: (context) => const Center(child: AppTabLoader()),
       );
       final result = await _requestService.getPdfBytesFromUrl(url);
       if (mounted) {
@@ -4049,7 +4043,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
           context: context,
           barrierDismissible: false,
           builder: (context) =>
-              const Center(child: CircularProgressIndicator()),
+              const Center(child: AppTabLoader()),
         );
         final result = await _requestService.downloadPayslipRequest(requestId);
         if (mounted) {
@@ -4077,7 +4071,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
           context: context,
           barrierDismissible: false,
           builder: (context) =>
-              const Center(child: CircularProgressIndicator()),
+              const Center(child: AppTabLoader()),
         );
       }
       final result = await _requestService.getPdfBytesFromUrl(url);
@@ -4677,7 +4671,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
               await _fetchRequests();
             },
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: AppTabLoader())
                 : _requests.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),

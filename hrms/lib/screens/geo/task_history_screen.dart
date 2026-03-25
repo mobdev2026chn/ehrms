@@ -5,6 +5,7 @@ import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 
 class TaskHistoryScreen extends StatefulWidget {
   final Task task;
@@ -86,7 +87,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
         ),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppTabLoader())
           : RefreshIndicator(
               onRefresh: _fetchTaskDetails,
               child: SingleChildScrollView(
@@ -1062,7 +1063,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
             const Divider(height: 1),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const Center(child: AppTabLoader())
                   : _error != null
                   ? Center(
                       child: Padding(

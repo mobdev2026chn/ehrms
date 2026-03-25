@@ -25,6 +25,7 @@ import 'selfie_camera_screen.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/absent_alert_helper.dart';
+import '../../widgets/app_tab_loader.dart';
 import '../../widgets/attendance_success_overlay.dart';
 import '../../widgets/notification_reaction_overlay.dart';
 import '../../widgets/walking_turtle_emoji.dart';
@@ -443,15 +444,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _pendingWithCheckInDateSet.clear();
       });
     }
-    final result = await _attendanceService.getMonthAttendance(
-      year,
-      month,
-      forceRefresh: forceRefresh,
-    );
-    if (!mounted) return;
+    try {
+      final result = await _attendanceService
+          .getMonthAttendance(
+            year,
+            month,
+            forceRefresh: forceRefresh,
+          )
+          .timeout(const Duration(seconds: 25));
+      if (!mounted) return;
 
-    setState(() {
-      _isLoadingMonthData = false;
+      setState(() {
+        _isLoadingMonthData = false;
 
       if (!result['success']) {
         return;
@@ -626,7 +630,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           return db.compareTo(da); // newest first
         });
       }
-    });
+      });
+    } catch (e) {
+      debugPrint('[Attendance] month data fetch failed: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingMonthData = false;
+          _monthData = null;
+          _recentActivityList = [];
+        });
+      }
+    }
   }
 
   Future<void> _fetchHistory({bool refresh = false, int? page}) async {
@@ -641,31 +655,38 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
     });
 
-    final result = await _attendanceService.getAttendanceHistory(
-      page: pageToFetch,
-      limit: _limit,
-    );
+    try {
+      final result = await _attendanceService
+          .getAttendanceHistory(
+            page: pageToFetch,
+            limit: _limit,
+          )
+          .timeout(const Duration(seconds: 25));
 
-    if (result['success'] && mounted) {
-      final List<dynamic> newData = result['data']['data'];
-      final pagination = result['data']['pagination'];
+      if (result['success'] && mounted) {
+        final List<dynamic> newData = result['data']['data'];
+        final pagination = result['data']['pagination'];
 
-      setState(() {
-        // For refresh or first page, replace the list.
-        // For subsequent pages, append to preserve earlier history.
-        if (refresh || pageToFetch == 1) {
-          _historyList = newData;
-        } else {
-          _historyList = [..._historyList, ...newData];
-        }
-        _page = pageToFetch;
-        _totalRecords = pagination['total'] ?? 0;
-        _totalPages = ((_totalRecords / _limit).ceil())
-            .clamp(1, double.infinity)
-            .toInt();
-        _isLoadingHistory = false;
-      });
-    } else {
+        setState(() {
+          // For refresh or first page, replace the list.
+          // For subsequent pages, append to preserve earlier history.
+          if (refresh || pageToFetch == 1) {
+            _historyList = newData;
+          } else {
+            _historyList = [..._historyList, ...newData];
+          }
+          _page = pageToFetch;
+          _totalRecords = pagination['total'] ?? 0;
+          _totalPages = ((_totalRecords / _limit).ceil())
+              .clamp(1, double.infinity)
+              .toInt();
+          _isLoadingHistory = false;
+        });
+      } else {
+        if (mounted) setState(() => _isLoadingHistory = false);
+      }
+    } catch (e) {
+      debugPrint('[Attendance] history fetch failed: $e');
       if (mounted) setState(() => _isLoadingHistory = false);
     }
   }
@@ -1296,13 +1317,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                           'Fine Details',
                           Icons.money_off,
                           [
-                            if (lateMinutes != null)
+                            if (lateMinutes != null &&
+                                lateMinutes.toInt() > 0)
                               _buildDayDetailRow(
                                 'Late Check-in',
                                 '${lateMinutes.toInt()} minutes',
                                 valueColor: Colors.orange.shade700,
                               ),
-                            if (earlyMinutes != null)
+                            if (earlyMinutes != null &&
+                                earlyMinutes.toInt() > 0)
                               _buildDayDetailRow(
                                 'Early Check-out',
                                 '${earlyMinutes.toInt()} minutes',
@@ -4351,15 +4374,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    CircularProgressIndicator(color: colorScheme.primary),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Loading attendance details...',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: colorScheme.onSurface,
-                      ),
-                    ),
+                    const AppTabLoader(),
                   ],
                 ),
               ),
@@ -4760,8 +4775,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         } catch (_) {}
       }
     }
-    // Late/early: when ALLOWED (true): show alert + allow check-in/out with fine.
-    // When NOT ALLOWED (false): show alert + block check-in/out.
+    // Late/early: fines are computed on the server; the app does not show minute-based
+    // "fine-style" dialogs when punch is allowed. When NOT allowed, block with a short message.
     String? alertMessage;
     bool shouldBlock = false;
     if (!isCheckedIn) {
@@ -4787,13 +4802,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             parts[1],
           );
           final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
-          // Late = check-in after grace window. Show alert in both allowed/not-allowed cases.
-          if (now.isAfter(graceEnd)) {
-            final diffMs = now.difference(shiftStartOnly).inMilliseconds;
-            final lateMinutes = (diffMs / (60 * 1000)).round().clamp(0, 999);
-            alertMessage =
-                "You are $lateMinutes minute${lateMinutes == 1 ? '' : 's'} late. Shift start: $shiftStartStr.";
-            if (allowLateEntry == false) shouldBlock = true;
+          if (now.isAfter(graceEnd) && allowLateEntry == false) {
+            // No client-side minute breakdown; server enforces policy and stores fines.
+            alertMessage = 'Late entry is not allowed for your shift.';
+            shouldBlock = true;
           }
         } catch (_) {}
       }
@@ -4819,11 +4831,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             parts[0],
             parts[1],
           );
-          if (now.isBefore(shiftEnd)) {
-            final earlyMinutes = shiftEnd.difference(now).inMinutes;
+          if (now.isBefore(shiftEnd) && allowEarlyExit == false) {
             alertMessage =
-                "You are $earlyMinutes minutes early. Shift end time: $shiftEndStr";
-            if (allowEarlyExit == false) shouldBlock = true;
+                'Early check-out is not allowed before shift end.';
+            shouldBlock = true;
           }
         } catch (_) {}
       }
@@ -5118,11 +5129,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         child: const Padding(
           padding: EdgeInsets.all(32.0),
           child: Center(
-            child: SizedBox(
-              width: 32,
-              height: 32,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
+            child: AppTabLoader(),
           ),
         ),
       );
@@ -5568,7 +5575,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(24.0),
-          child: CircularProgressIndicator(),
+          child: AppTabLoader(),
         ),
       );
     }
@@ -5599,7 +5606,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         return const Center(
           child: Padding(
             padding: EdgeInsets.all(24.0),
-            child: CircularProgressIndicator(),
+            child: AppTabLoader(),
           ),
         );
       }
@@ -5610,7 +5617,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(24.0),
-          child: CircularProgressIndicator(),
+          child: AppTabLoader(),
         ),
       );
     }

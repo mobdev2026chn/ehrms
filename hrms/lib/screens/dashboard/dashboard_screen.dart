@@ -1132,14 +1132,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           );
           final graceEnd =
               shiftStartOnly.add(Duration(minutes: gracePeriod));
-          if (now.isAfter(graceEnd)) {
-            final lateMinutes = (now.difference(shiftStartOnly).inMilliseconds /
-                    (60 * 1000))
-                .round()
-                .clamp(0, 999);
-            alertMessage =
-                'You are $lateMinutes minute${lateMinutes == 1 ? '' : 's'} late. Shift start: $shiftStartStr.';
-            if (allowLateEntry == false) shouldBlock = true;
+          if (now.isAfter(graceEnd) && allowLateEntry == false) {
+            alertMessage = 'Late entry is not allowed for your shift.';
+            shouldBlock = true;
           }
         } catch (_) {}
       }
@@ -1162,11 +1157,10 @@ class _DashboardScreenState extends State<DashboardScreen>
             parts[0],
             parts.length > 1 ? parts[1] : 0,
           );
-          if (now.isBefore(shiftEnd)) {
-            final earlyMinutes = shiftEnd.difference(now).inMinutes;
+          if (now.isBefore(shiftEnd) && allowEarlyExit == false) {
             alertMessage =
-                'You are $earlyMinutes minutes early. Shift end time: $shiftEndStr';
-            if (allowEarlyExit == false) shouldBlock = true;
+                'Early check-out is not allowed before shift end.';
+            shouldBlock = true;
           }
         } catch (_) {}
       }

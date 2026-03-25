@@ -16,6 +16,7 @@ import '../dashboard/dashboard_screen.dart';
 import 'lms_ai_quiz_attempt_screen.dart';
 import 'lms_assessment_screen.dart';
 import 'widgets/lms_content_viewer.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class LmsCourseDetailScreen extends StatefulWidget {
   final String courseId;
@@ -246,7 +247,7 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
           backgroundColor: AppColors.background,
           foregroundColor: AppColors.textPrimary,
         ),
-        body: const Center(child: CircularProgressIndicator()),
+        body: const Center(child: AppTabLoader()),
       );
     }
 
@@ -327,10 +328,7 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 3,
-                    ),
+                    const AppTabLoader(),
                     const SizedBox(height: 20),
                     Text(
                       'Wait, your quiz is generating…',

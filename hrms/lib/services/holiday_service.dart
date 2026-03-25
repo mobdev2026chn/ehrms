@@ -15,7 +15,11 @@ class HolidayService {
     if (token != null && token.isNotEmpty) _api.setAuthToken(token);
   }
 
-  Future<Map<String, dynamic>> getHolidays({int? year, String? search}) async {
+  Future<Map<String, dynamic>> getHolidays({
+    int? year,
+    int? month,
+    String? search,
+  }) async {
     try {
       await _setToken();
       final response = await _api.dio.get<Map<String, dynamic>>(
@@ -23,6 +27,7 @@ class HolidayService {
         queryParameters: {
           'limit': 100,
           if (year != null) 'year': year,
+          if (month != null) 'month': month,
           if (search != null && search.isNotEmpty) 'search': search,
         },
       );

@@ -9,6 +9,7 @@ import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../services/performance_service.dart';
 import '../../utils/error_message_utils.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class MyGoalsScreen extends StatefulWidget {
   final bool embeddedInModule;
@@ -203,7 +204,7 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
   @override
   Widget build(BuildContext context) {
     final body = _isLoading
-          ? Center(child: CircularProgressIndicator(color: AppColors.primary))
+          ? const Center(child: AppTabLoader())
           : _error != null
           ? _buildErrorState()
           : RefreshIndicator(

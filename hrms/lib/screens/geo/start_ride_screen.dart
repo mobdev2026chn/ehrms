@@ -19,6 +19,7 @@ import 'package:hrms/screens/geo/live_tracking_screen.dart';
 import 'package:hrms/screens/geo/task_detail_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:hrms/widgets/app_tab_loader.dart';
 
 /// Optional initial destination from Select Source & Destination screen.
 /// When set, use this and do NOT fall back to client address.
@@ -510,7 +511,7 @@ class _StartRideScreenState extends State<StartRideScreen> {
                   ),
                   if (_loadingCustomer ||
                       (_loadingDestination && _destinationLatLng == null))
-                    const Center(child: CircularProgressIndicator()),
+                    const Center(child: AppTabLoader()),
                 ],
               ),
             ),

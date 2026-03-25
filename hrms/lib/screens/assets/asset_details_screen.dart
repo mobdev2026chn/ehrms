@@ -5,6 +5,7 @@ import '../../services/asset_service.dart';
 import '../../models/asset_model.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class AssetDetailsScreen extends StatefulWidget {
   final String? assetId;
@@ -96,7 +97,7 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppTabLoader())
           : _errorMessage != null
               ? Center(
                   child: Column(

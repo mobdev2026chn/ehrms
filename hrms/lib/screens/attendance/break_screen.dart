@@ -13,6 +13,7 @@ import '../../services/geo/accurate_location_helper.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../utils/snackbar_utils.dart';
+import '../../widgets/app_tab_loader.dart';
 import '../../widgets/break_status_card.dart';
 
 const String _kBreakPermissionDialogShown = 'break_permission_dialog_shown';
@@ -407,7 +408,7 @@ class _BreakScreenState extends State<BreakScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Break')),
       body: _isBreakLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppTabLoader())
           : RefreshIndicator(
               onRefresh: () async {
                 await _refreshCurrentBreak();

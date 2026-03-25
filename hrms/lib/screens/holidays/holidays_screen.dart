@@ -8,6 +8,7 @@ import '../../services/holiday_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
+import '../../widgets/app_tab_loader.dart';
 
 class HolidaysScreen extends StatefulWidget {
   final int? dashboardTabIndex;
@@ -161,8 +162,8 @@ class _HolidaysScreenState extends State<HolidaysScreen>
           child: RefreshIndicator(
             onRefresh: _fetchHolidays,
             child: _isLoading
-                ? Center(
-                    child: CircularProgressIndicator(color: AppColors.primary),
+                ? const Center(
+                    child: AppTabLoader(),
                   )
                 : _errorMessage != null
                 ? ListView(
@@ -379,8 +380,8 @@ class _HolidaysScreenState extends State<HolidaysScreen>
           child: RefreshIndicator(
             onRefresh: _fetchHolidays,
             child: _isLoading
-                ? Center(
-                    child: CircularProgressIndicator(color: AppColors.primary),
+                ? const Center(
+                    child: AppTabLoader(),
                   )
                 : holidaysInMonth.isEmpty
                 ? ListView(
