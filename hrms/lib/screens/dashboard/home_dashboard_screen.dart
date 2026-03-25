@@ -743,7 +743,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final proratedSalary = calculateProratedSalary(
         calculatedSalary,
         thisMonthWorkingDaysForProration,
-        presentDays + paidLeaveDays,
+        presentDays,
         totalFineAmount,
       );
 

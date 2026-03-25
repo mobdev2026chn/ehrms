@@ -372,9 +372,11 @@ class ProratedSalary {
   });
 }
 
-/// [workingDaysForProration] - Use "this month working days" (total in month) so that
-/// proration = (presentDays/workingDaysForProration)*monthly, i.e. presentDays * dailySalary
-/// where dailySalary = monthly / workingDaysForProration.
+/// [workingDaysForProration] — full-month working-day count (denominator), same as web
+/// `workingDaysForCalculation` / backend `thisMonthWorkingDays`.
+///
+/// [presentDays] — same as web `EmployeeSalaryOverview` `presentDays` reducer
+/// (Present/Approved/Half Day / pending half-day rules only — not paid leave rows).
 ProratedSalary calculateProratedSalary(
   CalculatedSalaryStructure calculatedSalary,
   int workingDaysForProration,
@@ -521,18 +523,16 @@ WorkingDaysInfo calculateWorkingDays(
         }
       }
     } else {
-      // Standard pattern — match frontend salaryCalculation.util.ts:
-      // - If weeklyHolidays is non-empty, only those weekday numbers are week off.
-      // - If weeklyHolidays is empty, default Saturday + Sunday as week off (same as web).
+      // Standard pattern — match web EmployeeSalaryOverview
+      // (salaryCalculation.util.ts): if weeklyHolidays is empty, Sat+Sun are
+      // week-offs; otherwise only listed days are off.
       // jsWeekday: 0=Sunday, 1=Monday, ..., 6=Saturday
-      if (weeklyHolidaysList.isNotEmpty) {
-        if (weeklyHolidaysList.contains(jsWeekday)) {
-          isWeeklyOff = true;
-        }
-      } else {
+      if (weeklyHolidaysList.isEmpty) {
         if (jsWeekday == 0 || jsWeekday == 6) {
           isWeeklyOff = true;
         }
+      } else if (weeklyHolidaysList.contains(jsWeekday)) {
+        isWeeklyOff = true;
       }
     }
 
