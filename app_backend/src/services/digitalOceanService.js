@@ -13,7 +13,7 @@ require('dotenv').config();
  *   assets/images|icons|files/
  *   announcements/{announcementId}/
  *   documents/general/
- * baseFolder: ekta-dev (hrms.askeva.net, localhost) | ekta-production (my.ektahr.com)
+ * baseFolder: ekta-dev (hrms.askeva.net, localhost) | ekta-production (app.ektahr.com, my.ektahr.com)
  */
 // Digital Ocean Spaces configuration from environment variables
 const DIGITAL_OCEAN_ACCESS_KEY = process.env.DIGITAL_OCEAN_ACCESS_KEY;
@@ -65,13 +65,15 @@ if (DIGITAL_OCEAN_ACCESS_KEY && DIGITAL_OCEAN_SECRET_KEY) {
 /**
  * Determine the base folder based on the request origin/hostname
  * - hrms.askeva.net or localhost -> "ekta-dev"
- * - my.ektahr.com -> "ekta-production"
+ * - app.ektahr.com, my.ektahr.com -> "ekta-production" (API hosts for production app / web)
  */
+const PRODUCTION_SPACES_HOSTNAMES = new Set(['app.ektahr.com', 'my.ektahr.com']);
+
 function getBaseFolder(req) {
   if (!req) return 'ekta-dev';
   const origin = req.headers.origin || req.headers.host || '';
   const hostname = origin.replace(/^https?:\/\//, '').split(':')[0].toLowerCase();
-  if (hostname === 'my.ektahr.com') return 'ekta-production';
+  if (PRODUCTION_SPACES_HOSTNAMES.has(hostname)) return 'ekta-production';
   if (hostname === 'hrms.askeva.net' || hostname === 'localhost' || hostname === '127.0.0.1') return 'ekta-dev';
   return 'ekta-dev';
 }

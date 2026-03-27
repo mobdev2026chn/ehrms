@@ -54,6 +54,19 @@ void main() {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
 
+      try {
+        await Firebase.initializeApp();
+      } catch (e, st) {
+        debugPrint('[main] Firebase.initializeApp failed: $e $st');
+        runApp(
+          _InitErrorApp(
+            message:
+                'App could not start. Please check your internet or reinstall.',
+          ),
+        );
+        return;
+      }
+
       debugPrint(
         '[FCM] main: registering onBackgroundMessage handler (required for app closed/background → in-app list)',
       );
@@ -80,19 +93,6 @@ void main() {
             ),
           ),
         );
-      }
-
-      try {
-        await Firebase.initializeApp();
-      } catch (e, st) {
-        debugPrint('[main] Firebase.initializeApp failed: $e $st');
-        runApp(
-          _InitErrorApp(
-            message:
-                'App could not start. Please check your internet or reinstall.',
-          ),
-        );
-        return;
       }
 
       try {
@@ -127,10 +127,10 @@ void main() {
       try {
         await BackgroundLocationTrackerManager.initialize(
           backgroundCallback,
-          config: const BackgroundLocationTrackerConfig(
-            loggingEnabled: true,
-            androidConfig: AndroidConfig(
-              notificationIcon: 'explore',
+          config: BackgroundLocationTrackerConfig(
+            loggingEnabled: kDebugMode,
+            androidConfig: const AndroidConfig(
+              notificationIcon: 'ic_notification',
               notificationBody: 'Live tracking in progress. Tap to open.',
               channelName: 'Live Tracking',
               cancelTrackingActionText: 'Stop tracking',
@@ -138,7 +138,7 @@ void main() {
               trackingInterval: _defaultBackgroundLocationInterval,
               distanceFilterMeters: null,
             ),
-            iOSConfig: IOSConfig(
+            iOSConfig: const IOSConfig(
               activityType: ActivityType.FITNESS,
               distanceFilterMeters: 40,
               restartAfterKill: true,

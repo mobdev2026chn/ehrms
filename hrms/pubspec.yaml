@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.2+5
+version: 1.0.2+11
 
 environment:
   sdk: ^3.9.2
@@ -97,6 +97,9 @@ flutter_launcher_icons:
 # Pin webview_flutter_android to avoid 4.10.13 build errors (missing Pigeon-generated Java classes).
 dependency_overrides:
   webview_flutter_android: 4.10.11
+  # 1.6.1 uses StringBuilder.appendln; Kotlin 2.3 treats it as a compile error — use appendLine.
+  background_location_tracker:
+    path: packages/background_location_tracker
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

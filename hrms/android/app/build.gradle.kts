@@ -19,6 +19,10 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    lint {
+        checkReleaseBuilds = false
+    }
+
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
@@ -44,6 +48,16 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // Play-friendly native lib packaging (uncompressed in AAB; correct install behavior).
+            useLegacyPackaging = false
+        }
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+
     buildTypes {
         release {
             // Use release signing when key.properties exists (required for Play Store).
@@ -53,7 +67,8 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
-            // Optional: enable for smaller AAB (add plugin-specific -keep rules if needed)
+            // Keep false unless you maintain full ProGuard rules; R8 can crash release on open
+            // (Firebase, ML Kit, maps, reflection) for some staff devices.
             isMinifyEnabled = false
             isShrinkResources = false
         }

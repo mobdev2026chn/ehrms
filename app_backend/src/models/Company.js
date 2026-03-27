@@ -155,6 +155,8 @@ const CompanySchema = new Schema(
       },
       payroll: {
         calculationLogic: String,
+        payableDaysRuleId: { type: Schema.Types.Mixed },
+        payableDaysRule: { type: Schema.Types.Mixed },
         payslipCustomization: Schema.Types.Mixed,
         processingRules: {
           autoProcess: { type: Boolean, default: false },

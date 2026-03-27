@@ -25,6 +25,12 @@ const staffSchema = new mongoose.Schema({
     },
     shiftName: { type: String },
     attendanceTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'AttendanceTemplate' },
+    // Salary template assignment used by payroll payable-days rule resolution.
+    salaryTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryTemplate' },
+    payableDaysRuleId: { type: mongoose.Schema.Types.Mixed },
+    // Cached per-day salary snapshots (computed by dashboard endpoint).
+    appPerdayGrossSalary: { type: Number, default: null },
+    appPerDayNetSalary: { type: Number, default: null },
     leaveTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveTemplate' },
     holidayTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'HolidayTemplate' },
     weeklyHolidayTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'WeeklyHolidayTemplate' },
@@ -124,7 +130,11 @@ const staffSchema = new mongoose.Schema({
 
         // Employee Deduction Rates (%)
         employeePFRate: Number,
-        employeeESIRate: Number
+        employeeESIRate: Number,
+
+        // Optional salary-level payable-days rule link/inline config.
+        payableDaysRuleId: { type: mongoose.Schema.Types.Mixed },
+        payableDaysRule: { type: mongoose.Schema.Types.Mixed }
     }
 }, { timestamps: true });
 

@@ -525,7 +525,12 @@ const getProfile = async (req, res) => {
         if (staff) {
             fullStaff = await Staff.findById(staff._id)
                 .populate('branchId')
-                .populate('businessId')
+                // App does not need full company subscription/plan payload in profile.
+                // Keep only settings used by attendance/salary calculations.
+                .populate({
+                    path: 'businessId',
+                    select: '_id settings.business settings.payroll',
+                })
                 .populate('weeklyHolidayTemplateId')
                 .populate('candidateId') // Populate candidate to get education, experience, documents
                 .populate('department') // Assuming department might be a ref or string, populating just in case

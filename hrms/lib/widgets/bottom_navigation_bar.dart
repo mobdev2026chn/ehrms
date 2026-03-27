@@ -196,9 +196,9 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     final icon = isPunchedIn ? Icons.logout_rounded : Icons.login_rounded;
     final isDisabled = widget.isPunchActionInProgress;
 
-    final hPad = fillNavColumn ? 14.0 : 10.0;
-    final vPad = fillNavColumn ? 14.0 : 8.0;
-    final iconSize = fillNavColumn ? 18.0 : 16.0;
+    // Keep Punch In/Out fully visible in narrow dashboard widths.
+    final hPad = fillNavColumn ? 8.0 : 10.0;
+    final vPad = fillNavColumn ? 10.0 : 8.0;
     final fontSize = fillNavColumn ? 11.0 : 10.0;
 
     return Padding(
@@ -234,35 +234,43 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: fillNavColumn ? MainAxisSize.max : MainAxisSize.min,
+                mainAxisSize: fillNavColumn
+                    ? MainAxisSize.max
+                    : MainAxisSize.min,
                 children: [
-                  Icon(icon, size: iconSize, color: Colors.white),
-                  SizedBox(width: fillNavColumn ? 6 : 3),
-                  if (fillNavColumn)
-                    Expanded(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: fontSize,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.2,
+                  fillNavColumn
+                      ? Expanded(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.left,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: fontSize,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0,
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      : Text(
+                          label,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: fontSize,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0,
+                          ),
                         ),
-                      ),
-                    )
-                  else
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: fontSize,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
+                  SizedBox(width: fillNavColumn ? 3 : 2),
+                  Icon(icon, size: fillNavColumn ? 16 : 16, color: Colors.white),
                 ],
               ),
             ),
@@ -334,7 +342,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: BreakStatusCard(
               startTime: _effectiveBreakStartTime!,
-              onEndBreak: widget.onEndBreakTap ?? () => _handleNavigation(context, 6),
+              onEndBreak:
+                  widget.onEndBreakTap ?? () => _handleNavigation(context, 6),
               isBusy: widget.isBreakActionInProgress,
               showSuccessBanner: false,
             ),
@@ -418,10 +427,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
                       padding: const EdgeInsets.only(left: 4, right: 10),
                       child: KeyedSubtree(
                         key: const ValueKey('bottom_nav_punch'),
-                        child: _buildPunchButton(
-                          context,
-                          fillNavColumn: true,
-                        ),
+                        child: _buildPunchButton(context, fillNavColumn: true),
                       ),
                     ),
                   ),

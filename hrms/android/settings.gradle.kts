@@ -15,6 +15,18 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+
+    // Align Kotlin Gradle plugin for projects using the plugins {} DSL (do not force kotlin-stdlib globally:
+    // old plugin compilers cannot read 2.3 metadata).
+    resolutionStrategy {
+        eachPlugin {
+            when (requested.id.id) {
+                "org.jetbrains.kotlin.android",
+                "org.jetbrains.kotlin.jvm",
+                "org.jetbrains.kotlin.kapt" -> useVersion("2.3.10")
+            }
+        }
+    }
 }
 
 plugins {

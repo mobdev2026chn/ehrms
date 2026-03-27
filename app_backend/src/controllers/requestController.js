@@ -8,6 +8,13 @@ const User = require('../models/User');
 const Company = require('../models/Company');
 const payslipGeneratorService = require('../services/payslipGeneratorService');
 const { calculateAttendanceStats } = require('./payrollController');
+const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays } = require('../utils/payableDaysRule');
+
+const _idLog = (v) => {
+    if (v == null) return 'n/a';
+    if (typeof v === 'object' && v._id != null) return String(v._id);
+    return String(v);
+};
 
 // Normalize ref to raw ObjectId (handles both ObjectId and populated { _id, name } so lookup works)
 const toId = (v) => (v != null && typeof v === 'object' && v._id != null ? v._id : v) || null;
@@ -52,7 +59,27 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     const thisMonthWorkingDays = attendanceStats.workingDaysFullMonth ?? totalWorkingDays;
     const presentDays = attendanceStats.presentDays || 0;
     const paidLeaveDays = attendanceStats.paidLeaveDays || 0;
-    const effectivePaidDays = presentDays + paidLeaveDays;
+    const company = finalBusinessId ? await Company.findById(finalBusinessId).lean() : null;
+    const payableCfg = await resolvePayableDaysConfig({ staff, company });
+    const payableRule = payableCfg.rule;
+    const payableBaseDays = resolvePayableBaseDays({
+        config: payableCfg,
+        fallbackDays: thisMonthWorkingDays,
+    });
+    console.log(
+        `[_generatePayrollForPayslip] [PayableRule] staff=${employeeId} `
+        + `salaryTemplateId=${_idLog(staff?.salaryTemplateId)} `
+        + `staffPayableRuleId=${_idLog(staff?.payableDaysRuleId || staff?.salary?.payableDaysRuleId)} `
+        + `companyPayableRuleId=${_idLog(company?.settings?.payroll?.payableDaysRuleId)} `
+        + `resolvedTemplateId=${_idLog(payableCfg?.resolvedTemplateId)} resolvedRuleId=${_idLog(payableCfg?.resolvedRuleId)} `
+        + `rule=${payableRule} denominatorType=${payableCfg.denominatorType} `
+        + `denominatorDays=${payableCfg.denominatorDays ?? 'n/a'} baseDays=${payableBaseDays}`
+    );
+    const effectivePaidDays = computePayableDays({
+        presentDays,
+        paidLeaveDays,
+        rule: payableRule,
+    });
     const absentDays = attendanceStats.absentDays ?? Math.max(0, totalWorkingDays - effectivePaidDays);
 
     console.log(`[_generatePayrollForPayslip] Attendance (same as salary overview/payroll): thisMonthWD=${thisMonthWorkingDays}, presentDays=${presentDays}, absentDays=${absentDays}`);
@@ -100,9 +127,16 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     
     // Net Salary = Gross Salary - Employee Deductions
     const netSalary = grossSalary - totalDeductions;
+    console.log(
+        `[_generatePayrollForPayslip] [SalaryComponents] `
+        + `Basic=${basicSalary} DA=${dearnessAllowance} HRA=${houseRentAllowance} SA=${specialAllowance} `
+        + `EmployerPF=${employerPF} EmployerESI=${employerESI} PFStatic=${pfStaticAmount} `
+        + `Gross=${grossSalary} EmployeePF=${employeePF} EmployeeESI=${employeeESI} `
+        + `Deductions=${totalDeductions} Net=${netSalary}`
+    );
     
-    // Same as salary overview & payroll: proration = (presentDays + paidLeaveDays) / this month WD
-    const prorationFactor = thisMonthWorkingDays > 0 ? effectivePaidDays / thisMonthWorkingDays : 0;
+    // Payable-days rule parity with payroll stats/preview.
+    const prorationFactor = payableBaseDays > 0 ? effectivePaidDays / payableBaseDays : 0;
     
     // STEP 1: Prorate Gross Fixed Components
     const proratedBasicSalary = basicSalary * prorationFactor;
@@ -138,6 +172,16 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     
     // STEP 5: Calculate Prorated Net Salary (fines are NOT prorated)
     const proratedNetPay = proratedGrossSalary - proratedDeductions - totalFineAmount;
+    console.log(
+        `[_generatePayrollForPayslip] [ProratedComponents] `
+        + `proratedBasic=${proratedBasicSalary.toFixed(2)} proratedDA=${proratedDA.toFixed(2)} `
+        + `proratedHRA=${proratedHRA.toFixed(2)} proratedSA=${proratedSpecialAllowance.toFixed(2)} `
+        + `proratedEmployerPF=${proratedEmployerPF.toFixed(2)} proratedEmployerESI=${proratedEmployerESI.toFixed(2)} `
+        + `proratedGross=${proratedGrossSalary.toFixed(2)} `
+        + `proratedEmployeePF=${proratedEmployeePF.toFixed(2)} proratedEmployeeESI=${proratedEmployeeESI.toFixed(2)} `
+        + `proratedDeductions=${proratedDeductions.toFixed(2)} fine=${totalFineAmount.toFixed(2)} `
+        + `proratedNet=${proratedNetPay.toFixed(2)}`
+    );
     
     // Build components array
     const components = [];
@@ -225,7 +269,7 @@ const _generatePayrollForPayslip = async (employeeId, month, year, businessId) =
     console.log(`[_generatePayrollForPayslip] Working Days: ${totalWorkingDays}`);
     console.log(`[_generatePayrollForPayslip] Present Days: ${presentDays}, Paid Leave: ${paidLeaveDays}`);
     console.log(`[_generatePayrollForPayslip] Absent Days: ${absentDays}`);
-    console.log(`[_generatePayrollForPayslip] Proration Factor: ${prorationFactor.toFixed(6)} (effectivePaidDays=${effectivePaidDays} / thisMonthWD=${thisMonthWorkingDays})`);
+    console.log(`[_generatePayrollForPayslip] Proration Factor: ${prorationFactor.toFixed(6)} (effectivePaidDays=${effectivePaidDays} / payableBaseDays=${payableBaseDays}, rule=${payableRule})`);
     console.log(`[_generatePayrollForPayslip] Fine Amount: ${totalFineAmount.toFixed(2)}`);
     console.log(`[_generatePayrollForPayslip] Base Salary Structure:`);
     console.log(`[_generatePayrollForPayslip]   - Basic Salary: ${basicSalary}`);

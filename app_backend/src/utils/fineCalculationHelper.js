@@ -20,7 +20,13 @@ function getEffectiveFineConfig(company) {
     }
     const enabled = source.enabled === true && (source.applyFines !== false);
     console.log('[Fine] getEffectiveFineConfig: payroll.fineCalculation found, enabled=', enabled, 'calculationMethod=', source.calculationMethod || source.calculationType);
-    const calculationType = source.calculationMethod || source.calculationType || 'shiftBased';
+    // Backend fallback supports only:
+    // - 'shiftBased'
+    // - 'fixedPerHour'
+    // If config contains other values (e.g. calculationMethod='custom'),
+    // we still want default fine to behave like shiftBased when no fineRule matches.
+    const rawCalcType = source.calculationType || source.calculationMethod || 'shiftBased';
+    const calculationType = rawCalcType === 'fixedPerHour' ? 'fixedPerHour' : 'shiftBased';
     const fineRules = Array.isArray(source.fineRules) ? source.fineRules : [];
     const graceTimeMinutes = source.graceTimeMinutes ?? 0;
     const finePerHour = source.finePerHour ?? 0;
@@ -69,7 +75,19 @@ function calculateFineAmount(minutes, applyToType, fineConfig, dailySalary, shif
         amount = applyRuleAmount(matchingRule, minutes, dailySalary, shiftHours);
         formulaUsed = `rule type=${matchingRule.type} applyTo=${matchingRule.applyTo || 'both'} | dailySalary=${dailySalary} shiftHours=${shiftHours} hourlyRate=${hourlyRate.toFixed(2)} minutes=${minutes} hours=${hours.toFixed(2)}`;
     } else {
-        const calcType = fineConfig.calculationType || 'shiftBased';
+        // IMPORTANT business rule:
+        // - If fineRules are provided and none match this action (lateArrival/earlyExit),
+        //   DO NOT apply default formula for this action.
+        // - Default formula fallback is used only when fineRules are empty.
+        if (rules.length > 0) {
+            formulaUsed = `rule-miss: fineRules exist but none match applyTo=${applyToType}; fineAmount=0`;
+            const result = 0;
+            console.log(logPrefix, 'FORMULA', applyToType, '| minutes=', minutes, '|', formulaUsed, '| => fineAmount=', result);
+            return result;
+        }
+
+        const calcType =
+            fineConfig.calculationType === 'fixedPerHour' ? 'fixedPerHour' : 'shiftBased';
         if (calcType === 'fixedPerHour' && (fineConfig.finePerHour != null && fineConfig.finePerHour > 0)) {
             const hours = minutes / 60;
             amount = fineConfig.finePerHour * hours;

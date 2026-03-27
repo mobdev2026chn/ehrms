@@ -20,6 +20,9 @@ class AttendanceRepository {
     String? pincode,
     String? selfie,
     String? movementType,
+    int? lateMinutes,
+    int? earlyMinutes,
+    double? fineAmount,
   }) async {
     return _attendance.checkIn(
       lat,
@@ -30,6 +33,9 @@ class AttendanceRepository {
       pincode: pincode,
       selfie: selfie,
       movementType: movementType,
+      lateMinutes: lateMinutes,
+      earlyMinutes: earlyMinutes,
+      fineAmount: fineAmount,
     );
   }
 
@@ -43,6 +49,9 @@ class AttendanceRepository {
     String? pincode,
     String? selfie,
     String? movementType,
+    int? lateMinutes,
+    int? earlyMinutes,
+    double? fineAmount,
   }) async {
     return _attendance.checkOut(
       lat,
@@ -53,6 +62,9 @@ class AttendanceRepository {
       pincode: pincode,
       selfie: selfie,
       movementType: movementType,
+      lateMinutes: lateMinutes,
+      earlyMinutes: earlyMinutes,
+      fineAmount: fineAmount,
     );
   }
 

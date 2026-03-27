@@ -29,6 +29,7 @@ import '../../bloc/attendance/attendance_bloc.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../utils/attendance_template_util.dart';
 import '../../utils/absent_alert_helper.dart';
+import '../../utils/fine_calculation_util.dart';
 import 'home_dashboard_screen.dart';
 import '../attendance/attendance_screen.dart';
 import '../attendance/selfie_camera_screen.dart';
@@ -46,6 +47,7 @@ typedef _ResolvedLocation = ({
 
 class DashboardScreen extends StatefulWidget {
   /// 0=Dashboard, 1=Requests, 2=Salary, 3=Holidays, 4=Attendance, 5=punch flow, 6=break flow.
+  /// Tab 2 is only available when [staffData.salaryDetailsAccessEnabled] is true (see [_refreshSalaryOverviewAccess]).
   final int? initialIndex;
   const DashboardScreen({super.key, this.initialIndex});
 
@@ -55,6 +57,13 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen>
     with WidgetsBindingObserver {
+  static const String _netPerDaySalaryPrefsKey = 'app_net_per_day_salary';
+  static const String _legacyPerDaySalaryPrefsKey = 'app_per_day_salary';
+  static const String _fineTypeForLogs = 'shiftBased';
+  static const String _fineRuleTypeForLogs = '1xSalary';
+  static const String _fineRuleApplyToForLogs = 'both';
+  static const String _dashboardLocationPromptLastShownKey =
+      'dashboard_location_prompt_last_shown_ms';
   late int _currentIndex;
   int _requestsSubTabIndex = 0;
   int _attendanceSubTabIndex = 0;
@@ -65,6 +74,11 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isPunchedInToday = false;
   Map<String, dynamic>? _activeBreak;
   bool _openBreakAfterBuild = false;
+
+  /// Web `staffData.salaryDetailsAccessEnabled` — must be explicitly true to show Salary in the bottom bar.
+  bool _hasSalaryOverviewAccess = false;
+  /// When true, [initialIndex] was 2; apply tab 2 only after access is confirmed.
+  bool _deferSalaryInitialTab = false;
 
   final AttendanceService _attendanceService = AttendanceService();
   final BreakService _breakService = BreakService();
@@ -105,8 +119,15 @@ class _DashboardScreenState extends State<DashboardScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _currentIndex = _normalizeTabIndex((widget.initialIndex ?? 0));
+    final rawInitial = widget.initialIndex ?? 0;
+    if (rawInitial == 2) {
+      _deferSalaryInitialTab = true;
+      _currentIndex = _normalizeTabIndex(0);
+    } else {
+      _currentIndex = _normalizeTabIndex(rawInitial);
+    }
     _openBreakAfterBuild = widget.initialIndex == 6;
+    unawaited(_refreshSalaryOverviewAccess());
     _attendanceService.clearCachesForRefresh();
     _fetchPunchStatusForNavBar();
     _fetchActiveBreak();
@@ -134,6 +155,13 @@ class _DashboardScreenState extends State<DashboardScreen>
   Future<void> _showLocationCardsAfterDelay() async {
     await Future.delayed(const Duration(seconds: 4));
     if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final lastShownMs = prefs.getInt(_dashboardLocationPromptLastShownKey) ?? 0;
+    final throttleDurationMs = const Duration(hours: 24).inMilliseconds;
+    final shouldShowPrompt = (now - lastShownMs) >= throttleDurationMs;
+    if (!shouldShowPrompt) return;
+    await prefs.setInt(_dashboardLocationPromptLastShownKey, now);
     await LocationService.ensureAppLocationAccess(context);
   }
 
@@ -196,6 +224,156 @@ class _DashboardScreenState extends State<DashboardScreen>
     } catch (_) {}
   }
 
+  Future<double?> _loadPerDaySalaryFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final direct = prefs.getDouble(_netPerDaySalaryPrefsKey);
+      if (direct != null && direct > 0) return direct;
+      final asString = prefs.getString(_netPerDaySalaryPrefsKey);
+      final parsed = asString == null ? null : double.tryParse(asString);
+      if (parsed != null && parsed > 0) return parsed;
+      final legacyDirect = prefs.getDouble(_legacyPerDaySalaryPrefsKey);
+      if (legacyDirect != null && legacyDirect > 0) return legacyDirect;
+    } catch (_) {}
+    return null;
+  }
+
+  String _buildLateAlertMessage({
+    required String baseMessage,
+    required int lateMinutes,
+    required double fineAmount,
+  }) {
+    return '$baseMessage\n'
+        'lateMinutes: $lateMinutes\n'
+        'fine: ₹${fineAmount.toStringAsFixed(2)}\n'
+        'fineType: $_fineTypeForLogs\n'
+        'rule: $_fineRuleTypeForLogs ($_fineRuleApplyToForLogs)';
+  }
+
+  String _buildEarlyAlertMessage({
+    required String baseMessage,
+    required int earlyMinutes,
+    required double fineAmount,
+  }) {
+    return '$baseMessage\n'
+        'earlyMinutes: $earlyMinutes\n'
+        'fine: ₹${fineAmount.toStringAsFixed(2)}\n'
+        'fineType: $_fineTypeForLogs\n'
+        'rule: $_fineRuleTypeForLogs ($_fineRuleApplyToForLogs)';
+  }
+
+  Future<Map<String, dynamic>> _buildFinePayloadForPunch({
+    required bool isCheckedIn,
+    required Map<String, dynamic>? attendanceData,
+    required Map<String, dynamic>? halfDayLeave,
+    required Map<String, dynamic> tmpl,
+  }) async {
+    int lateMinutes = 0;
+    int earlyMinutes = 0;
+    double fineAmount = 0;
+    final now = DateTime.now();
+    final netPerDaySalary = await _loadPerDaySalaryFromPrefs();
+    final sessionTimings =
+        _getWorkingSessionTimings(attendanceData, halfDayLeave, tmpl);
+
+    if (!isCheckedIn) {
+      final shiftStartStr =
+          sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb(tmpl);
+      if (shiftStartStr != null && shiftStartStr.isNotEmpty) {
+        try {
+          final parts = shiftStartStr.split(':').map(int.parse).toList();
+          final gracePeriod =
+              _getGracePeriodMinutesForLateCheckIn(attendanceData, halfDayLeave, tmpl);
+          final shiftStartOnly = DateTime(
+            now.year,
+            now.month,
+            now.day,
+            parts[0],
+            parts.length > 1 ? parts[1] : 0,
+          );
+          final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
+          if (now.isAfter(graceEnd)) {
+            final shiftEndForFine =
+                sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl) ?? '18:30';
+            final fineResult = calculateFine(
+              punchInTime: now,
+              attendanceDate: DateTime(now.year, now.month, now.day),
+              shiftTiming: ShiftTiming(
+                name: 'Current Shift',
+                startTime: shiftStartStr,
+                endTime: shiftEndForFine,
+                graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
+              ),
+              fineSettings: FineSettings(
+                enabled: true,
+                graceTimeMinutes: gracePeriod,
+                calculationType: 'shiftBased',
+              ),
+              dailySalary: netPerDaySalary,
+            );
+            lateMinutes = fineResult.lateMinutes;
+            fineAmount = fineResult.fineAmount;
+          }
+        } catch (_) {}
+      }
+    } else {
+      final shiftEndStr = sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl);
+      if (shiftEndStr != null && shiftEndStr.isNotEmpty) {
+        try {
+          // For checkout: include already-stored late fine from check-in
+          // so total fine is consistent.
+          lateMinutes =
+              (attendanceData?['lateMinutes'] as num?)?.toInt() ?? 0;
+          final existingFineAmount =
+              (attendanceData?['fineAmount'] as num?)?.toDouble() ?? 0.0;
+          final parts = shiftEndStr.split(':').map(int.parse).toList();
+          final shiftEnd = DateTime(
+            now.year,
+            now.month,
+            now.day,
+            parts[0],
+            parts.length > 1 ? parts[1] : 0,
+          );
+          if (now.isBefore(shiftEnd)) {
+            earlyMinutes = shiftEnd.difference(now).inMinutes;
+            final shiftStartForFine =
+                sessionTimings?['startTime'] ??
+                _getShiftStartTimeFromDb(tmpl) ??
+                '09:30';
+            if (netPerDaySalary != null &&
+                netPerDaySalary > 0 &&
+                earlyMinutes > 0) {
+              final shiftHours = calculateShiftHours(
+                shiftStartForFine,
+                shiftEndStr,
+              );
+              if (shiftHours > 0) {
+                final earlyFine = ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
+                        .round() /
+                    100;
+                fineAmount = existingFineAmount + earlyFine;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        '[Fine TEST][Dashboard Punch][Payload] isCheckout=$isCheckedIn '
+        'lateMinutes=$lateMinutes earlyMinutes=$earlyMinutes '
+        'fineAmount=${fineAmount.toStringAsFixed(2)}',
+      );
+    }
+
+    return {
+      'lateMinutes': lateMinutes,
+      'earlyMinutes': earlyMinutes,
+      'fineAmount': fineAmount,
+    };
+  }
+
   Future<Map<String, dynamic>?> _fetchActiveBreak() async {
     final result = await _breakService.getCurrentBreak();
     if (!mounted) return null;
@@ -238,7 +416,99 @@ class _DashboardScreenState extends State<DashboardScreen>
     return index.clamp(0, 4);
   }
 
+  /// Bottom bar indices are 0..2 when salary is enabled, else 0..1 only. Punch/break use 5 and 6.
+  int _bottomBarSelectedIndex() {
+    if (_currentIndex >= 0 && _currentIndex <= 1) return _currentIndex;
+    if (_currentIndex == 2 && _hasSalaryOverviewAccess) return 2;
+    return -1;
+  }
+
+  List<NavItem> _buildBottomNavItems() {
+    const core = <NavItem>[
+      NavItem(
+        icon: Icons.dashboard_outlined,
+        activeIcon: Icons.dashboard_rounded,
+        label: 'Dashboard',
+      ),
+      NavItem(
+        icon: Icons.description_outlined,
+        activeIcon: Icons.description_rounded,
+        label: 'Requests',
+      ),
+    ];
+    if (!_hasSalaryOverviewAccess) return core;
+    return [
+      ...core,
+      const NavItem(
+        icon: Icons.account_balance_wallet_outlined,
+        activeIcon: Icons.account_balance_wallet_rounded,
+        label: 'Salary',
+      ),
+    ];
+  }
+
+  Future<void> _refreshSalaryOverviewAccess() async {
+    final enabled = await _loadSalaryDetailsAccessEnabled();
+    if (!mounted) return;
+    setState(() {
+      _hasSalaryOverviewAccess = enabled;
+      if (_deferSalaryInitialTab) {
+        _deferSalaryInitialTab = false;
+        if (enabled) {
+          _currentIndex = 2;
+        }
+      } else if (!enabled && _currentIndex == 2) {
+        _currentIndex = 0;
+      }
+    });
+  }
+
+  /// Same rule as [SalaryOverviewScreen]: `salaryDetailsAccessEnabled == true` only.
+  Future<bool> _loadSalaryDetailsAccessEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userStr = prefs.getString('user');
+      if (userStr != null) {
+        final user = jsonDecode(userStr) as Map<String, dynamic>;
+        if (user['salaryDetailsAccessEnabled'] == true) return true;
+        if (user['salaryDetailsAccessEnabled'] == false) return false;
+        final staffRaw = user['staffData'] ?? user['staff'];
+        if (staffRaw is Map) {
+          final staff = Map<String, dynamic>.from(staffRaw);
+          if (staff['salaryDetailsAccessEnabled'] == true) return true;
+          if (staff['salaryDetailsAccessEnabled'] == false) return false;
+        }
+      }
+    } catch (_) {}
+    try {
+      final res = await _authService.getProfile();
+      if (res['success'] == true && res['data'] is Map) {
+        final data = Map<String, dynamic>.from(res['data'] as Map);
+        final staffRaw = data['staffData'];
+        if (staffRaw is Map) {
+          final staff = Map<String, dynamic>.from(staffRaw);
+          final enabled = staff['salaryDetailsAccessEnabled'] == true;
+          await _persistSalaryAccessOnUser(staff['salaryDetailsAccessEnabled']);
+          return enabled;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<void> _persistSalaryAccessOnUser(dynamic salaryDetailsAccessEnabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userStr = prefs.getString('user');
+      if (userStr == null) return;
+      final user = jsonDecode(userStr) as Map<String, dynamic>;
+      user['salaryDetailsAccessEnabled'] = salaryDetailsAccessEnabled;
+      await prefs.setString('user', jsonEncode(user));
+    } catch (_) {}
+  }
+
   void _onDrawerNavigateToIndex(int index) {
+    if (index == 2 && !_hasSalaryOverviewAccess) return;
     final normalized = _normalizeTabIndex(index);
     if (index >= 0 && (index <= 4 || index == 5)) {
       setState(() => _currentIndex = normalized);
@@ -246,6 +516,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   void _onDashboardNavigate(int index, {int subTabIndex = 0}) {
+    if (index == 2 && !_hasSalaryOverviewAccess) return;
     final normalized = _normalizeTabIndex(index);
     if (index < 0 || index > 5) return;
     if (!mounted) return;
@@ -1101,6 +1372,13 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     String? alertMessage;
     bool shouldBlock = false;
+    final netPerDaySalary = await _loadPerDaySalaryFromPrefs();
+    if (kDebugMode) {
+      debugPrint(
+        '[Fine TEST][Dashboard Punch] Loaded netPerDaySalary='
+        '${netPerDaySalary?.toStringAsFixed(2) ?? "null"}',
+      );
+    }
     final allowLateEntry =
         tmpl['allowLateEntry'] ??
         tmpl['lateEntryAllowed'] ??
@@ -1132,9 +1410,67 @@ class _DashboardScreenState extends State<DashboardScreen>
           );
           final graceEnd =
               shiftStartOnly.add(Duration(minutes: gracePeriod));
-          if (now.isAfter(graceEnd) && allowLateEntry == false) {
-            alertMessage = 'Late entry is not allowed for your shift.';
-            shouldBlock = true;
+          if (now.isAfter(graceEnd)) {
+            final shiftEndForFine =
+                sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl) ?? '18:30';
+            final fineResult = calculateFine(
+              punchInTime: now,
+              attendanceDate: DateTime(now.year, now.month, now.day),
+              shiftTiming: ShiftTiming(
+                name: 'Current Shift',
+                startTime: shiftStartStr,
+                endTime: shiftEndForFine,
+                graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
+              ),
+              fineSettings: FineSettings(
+                enabled: true,
+                graceTimeMinutes: gracePeriod,
+                calculationType: 'shiftBased',
+              ),
+              dailySalary: netPerDaySalary,
+            );
+            if (kDebugMode) {
+              debugPrint(
+                '[Fine TEST][Dashboard Punch][LateIn] start=$shiftStartStr '
+                'graceMin=$gracePeriod lateMin=${fineResult.lateMinutes} '
+                'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                'fineType=$_fineTypeForLogs '
+                'ruleType=$_fineRuleTypeForLogs '
+                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fine=${fineResult.fineAmount.toStringAsFixed(2)} '
+                'allowLate=$allowLateEntry',
+              );
+              final shiftHoursForFormula =
+                  calculateShiftHours(shiftStartStr, shiftEndForFine);
+              final hourlyRateForFormula =
+                  (netPerDaySalary != null &&
+                          netPerDaySalary > 0 &&
+                          shiftHoursForFormula > 0)
+                      ? (netPerDaySalary / shiftHoursForFormula)
+                      : 0.0;
+              final lateHoursForFormula = fineResult.lateMinutes / 60.0;
+              final fineFormula =
+                  '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                  '* (${fineResult.lateMinutes} / 60)';
+              debugPrint(
+                '[Fine FORMULA][Dashboard Punch][LateIn] '
+                'fineType=$_fineTypeForLogs '
+                'ruleType=$_fineRuleTypeForLogs '
+                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fineFormula=$fineFormula '
+                '=> ${hourlyRateForFormula.toStringAsFixed(2)} * ${lateHoursForFormula.toStringAsFixed(2)} '
+                '= fineAmount:${fineResult.fineAmount.toStringAsFixed(2)}',
+              );
+            }
+            final baseMessage = allowLateEntry == false
+                ? 'Late entry is not allowed for your shift.'
+                : 'You are checking in late.';
+            alertMessage = _buildLateAlertMessage(
+              baseMessage: baseMessage,
+              lateMinutes: fineResult.lateMinutes,
+              fineAmount: fineResult.fineAmount,
+            );
+            shouldBlock = allowLateEntry == false;
           }
         } catch (_) {}
       }
@@ -1157,10 +1493,71 @@ class _DashboardScreenState extends State<DashboardScreen>
             parts[0],
             parts.length > 1 ? parts[1] : 0,
           );
-          if (now.isBefore(shiftEnd) && allowEarlyExit == false) {
-            alertMessage =
-                'Early check-out is not allowed before shift end.';
-            shouldBlock = true;
+          if (now.isBefore(shiftEnd)) {
+            final shiftStartForFine =
+                sessionTimings?['startTime'] ??
+                _getShiftStartTimeFromDb(tmpl) ??
+                '09:30';
+            final earlyMinutes = shiftEnd.difference(now).inMinutes;
+            double estimatedFine = 0;
+            if (netPerDaySalary != null &&
+                netPerDaySalary > 0 &&
+                earlyMinutes > 0) {
+              final shiftHours = calculateShiftHours(
+                shiftStartForFine,
+                shiftEndStr,
+              );
+              if (shiftHours > 0) {
+                estimatedFine =
+                    ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
+                            .round() /
+                        100;
+              }
+            }
+            if (kDebugMode) {
+              debugPrint(
+                '[Fine TEST][Dashboard Punch][EarlyOut] start=$shiftStartForFine '
+                'end=$shiftEndStr earlyMin=$earlyMinutes '
+                'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                'fineType=$_fineTypeForLogs '
+                'ruleType=$_fineRuleTypeForLogs '
+                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fine=${estimatedFine.toStringAsFixed(2)} '
+                'allowEarly=$allowEarlyExit',
+              );
+              final shiftHoursForFormula = calculateShiftHours(
+                shiftStartForFine,
+                shiftEndStr,
+              );
+              final hourlyRateForFormula =
+                  (netPerDaySalary != null &&
+                          netPerDaySalary > 0 &&
+                          shiftHoursForFormula > 0)
+                      ? (netPerDaySalary / shiftHoursForFormula)
+                      : 0.0;
+              final earlyHoursForFormula = earlyMinutes / 60.0;
+              final fineFormula =
+                  '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                  '* ($earlyMinutes / 60)';
+              debugPrint(
+                '[Fine FORMULA][Dashboard Punch][EarlyOut] '
+                'fineType=$_fineTypeForLogs '
+                'ruleType=$_fineRuleTypeForLogs '
+                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fineFormula=$fineFormula '
+                '=> ${hourlyRateForFormula.toStringAsFixed(2)} * ${earlyHoursForFormula.toStringAsFixed(2)} '
+                '= fineAmount:${estimatedFine.toStringAsFixed(2)}',
+              );
+            }
+            final baseMessage = allowEarlyExit == false
+                ? 'Early check-out is not allowed before shift end.'
+                : 'You are checking out early.';
+            alertMessage = _buildEarlyAlertMessage(
+              baseMessage: baseMessage,
+              earlyMinutes: earlyMinutes,
+              fineAmount: estimatedFine,
+            );
+            shouldBlock = allowEarlyExit == false;
           }
         } catch (_) {}
       }
@@ -1280,6 +1677,29 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!mounted) return;
     final lat = usePosition?.latitude ?? 0.0;
     final lng = usePosition?.longitude ?? 0.0;
+    final todayRes = await _attendanceService.getTodayAttendance(forceRefresh: true);
+    final todayData = todayRes['data'] as Map<String, dynamic>?;
+    final attendanceData = flattenTodayAttendancePayload(todayData) ??
+        _extractAttendanceRecord(todayData) ??
+        todayData;
+    final halfDayLeaveRaw = todayData?['halfDayLeave'];
+    final Map<String, dynamic>? halfDayLeave = halfDayLeaveRaw is Map
+        ? Map<String, dynamic>.from(halfDayLeaveRaw)
+        : null;
+    final Map<String, dynamic> effectiveTemplate;
+    if (template != null) {
+      effectiveTemplate = template;
+    } else if (todayData?['template'] is Map) {
+      effectiveTemplate = Map<String, dynamic>.from(todayData!['template'] as Map);
+    } else {
+      effectiveTemplate = <String, dynamic>{};
+    }
+    final finePayload = await _buildFinePayloadForPunch(
+      isCheckedIn: isCheckedIn,
+      attendanceData: attendanceData,
+      halfDayLeave: halfDayLeave,
+      tmpl: effectiveTemplate,
+    );
     if (isCheckedIn) {
       context.read<AttendanceBloc>().add(
         AttendanceCheckOutRequested(
@@ -1290,6 +1710,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           city: useCity,
           pincode: usePincode,
           selfie: selfiePayload,
+          lateMinutes: finePayload['lateMinutes'] as int?,
+          earlyMinutes: finePayload['earlyMinutes'] as int?,
+          fineAmount: finePayload['fineAmount'] as double?,
         ),
       );
     } else {
@@ -1302,6 +1725,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           city: useCity,
           pincode: usePincode,
           selfie: selfiePayload,
+          lateMinutes: finePayload['lateMinutes'] as int?,
+          earlyMinutes: finePayload['earlyMinutes'] as int?,
+          fineAmount: finePayload['fineAmount'] as double?,
         ),
       );
     }
@@ -1434,7 +1860,8 @@ class _DashboardScreenState extends State<DashboardScreen>
             children: screens,
           ),
           bottomNavigationBar: AppBottomNavigationBar(
-            currentIndex: _currentIndex.clamp(0, 5),
+            currentIndex: _bottomBarSelectedIndex(),
+            items: _buildBottomNavItems(),
             isPunchedInToday: _isPunchedInToday,
             isPunchActionInProgress: _isPunchActionInProgress,
             isBreakActive: _activeBreak != null,
@@ -1581,8 +2008,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 );
                 return;
               }
-                  final normalized = _normalizeTabIndex(index);
-                  setState(() => _currentIndex = normalized);
+              if (index == 2 && !_hasSalaryOverviewAccess) return;
+              final normalized = _normalizeTabIndex(index);
+              setState(() => _currentIndex = normalized);
             },
           ),
         ),

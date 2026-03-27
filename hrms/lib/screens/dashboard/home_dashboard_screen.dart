@@ -56,6 +56,8 @@ class HomeDashboardScreen extends StatefulWidget {
 }
 
 class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
+  static const String _netPerDaySalaryPrefsKey = 'app_net_per_day_salary';
+  static const String _legacyPerDaySalaryPrefsKey = 'app_per_day_salary';
   String _userName = 'User';
   String _companyName = '';
   String? _avatarUrl;
@@ -100,6 +102,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     if (payroll == null) return false;
     final s = (payroll['status'] ?? '').toString().trim().toLowerCase();
     return s == 'processed' || s == 'paid';
+  }
+
+  Future<void> _persistPerDaySalary(double value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_netPerDaySalaryPrefsKey, value);
+      // Backward compatibility for already released readers.
+      await prefs.setDouble(_legacyPerDaySalaryPrefsKey, value);
+      if (kDebugMode) {
+        debugPrint(
+          '[Fine TEST][Dashboard] Stored netPerDaySalary: '
+          'key=$_netPerDaySalaryPrefsKey value=${value.toStringAsFixed(2)}',
+        );
+      }
+    } catch (_) {}
   }
 
   @override
@@ -640,11 +657,28 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         presentDays,
         totalFineAmount,
       );
+      final perDaySalaryForApp = thisMonthWorkingDaysForProration > 0
+          ? ((calculatedSalary.monthly.netMonthlySalary /
+                          thisMonthWorkingDaysForProration) *
+                      100)
+                  .round() /
+              100
+          : 0.0;
+      await _persistPerDaySalary(perDaySalaryForApp);
       // Unpaid leave: same as Salary Overview (daily net × unpaid days subtracted from MTD net).
       var proratedNetForMtd = proratedSalary.proratedNetSalary;
       if (thisMonthWorkingDaysForProration > 0 && unpaidLeaveDays > 0) {
-        final dailyNet = calculatedSalary.monthly.netMonthlySalary /
-            thisMonthWorkingDaysForProration;
+        final storedDailyNetRaw = staffData['appPerDayNetSalary'];
+        final storedDailyNet =
+            storedDailyNetRaw is num ? storedDailyNetRaw.toDouble() : null;
+        debugPrint(
+          '[SalaryCalc][Dashboard] appPerDayNetSalary=${storedDailyNet?.toStringAsFixed(2) ?? "null"} '
+          'netMonthly=${calculatedSalary.monthly.netMonthlySalary.toStringAsFixed(2)} '
+          'wdForProration=$thisMonthWorkingDaysForProration',
+        );
+        final dailyNet = storedDailyNet ??
+            calculatedSalary.monthly.netMonthlySalary /
+                thisMonthWorkingDaysForProration;
         final unpaidDed = dailyNet * unpaidLeaveDays;
         proratedNetForMtd = math.max(0, proratedSalary.proratedNetSalary - unpaidDed);
         debugPrint(

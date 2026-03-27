@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import '../config/constants.dart';
@@ -71,6 +70,10 @@ class AttendanceService {
     String? pincode,
     String? selfie,
     String? movementType,
+    int? lateMinutes,
+    int? earlyMinutes,
+    double? fineAmount,
+    int retryCount = 0,
   }) async {
     try {
       final headers = await _getHeaders();
@@ -88,6 +91,9 @@ class AttendanceService {
         'selfie': selfie,
         'movementType': movementType,
         'source': 'app',
+        'lateMinutes': lateMinutes,
+        'earlyMinutes': earlyMinutes,
+        'fineAmount': fineAmount,
       };
       if (businessId != null && businessId.isNotEmpty) {
         body['businessId'] = businessId;
@@ -100,6 +106,25 @@ class AttendanceService {
       clearCachesForRefresh();
       return {'success': true, 'data': data};
     } on DioException catch (e) {
+      if (e.response == null &&
+          retryCount == 0 &&
+          _isTransientNetworkError(e)) {
+        await Future.delayed(const Duration(milliseconds: 800));
+        return checkIn(
+          lat,
+          lng,
+          address,
+          area: area,
+          city: city,
+          pincode: pincode,
+          selfie: selfie,
+          movementType: movementType,
+          lateMinutes: lateMinutes,
+          earlyMinutes: earlyMinutes,
+          fineAmount: fineAmount,
+          retryCount: 1,
+        );
+      }
       if (e.response != null) {
         final msg = _dioErrorMessage(e);
         return {'success': false, 'message': msg ?? 'Check-in failed'};
@@ -126,6 +151,10 @@ class AttendanceService {
     String? pincode,
     String? selfie,
     String? movementType,
+    int? lateMinutes,
+    int? earlyMinutes,
+    double? fineAmount,
+    int retryCount = 0,
   }) async {
     try {
       final headers = await _getHeaders();
@@ -141,6 +170,9 @@ class AttendanceService {
         'selfie': selfie,
         'movementType': movementType,
         'source': 'app',
+        'lateMinutes': lateMinutes,
+        'earlyMinutes': earlyMinutes,
+        'fineAmount': fineAmount,
       };
       final response = await _api.dio.put<Map<String, dynamic>>(
         '/attendance/checkout',
@@ -150,12 +182,43 @@ class AttendanceService {
       clearCachesForRefresh();
       return {'success': true, 'data': data};
     } on DioException catch (e) {
+      if (e.response == null &&
+          retryCount == 0 &&
+          _isTransientNetworkError(e)) {
+        await Future.delayed(const Duration(milliseconds: 800));
+        return checkOut(
+          lat,
+          lng,
+          address,
+          area: area,
+          city: city,
+          pincode: pincode,
+          selfie: selfie,
+          movementType: movementType,
+          lateMinutes: lateMinutes,
+          earlyMinutes: earlyMinutes,
+          fineAmount: fineAmount,
+          retryCount: 1,
+        );
+      }
       return {
         'success': false,
-        'message': _dioErrorMessage(e) ?? 'Check-out failed',
+        'message': _dioErrorMessage(e) ?? _handleException(e),
       };
     } catch (e) {
       return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  bool _isTransientNetworkError(DioException e) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.connectionError:
+        return true;
+      default:
+        return false;
     }
   }
 
@@ -494,6 +557,15 @@ class AttendanceService {
           'success': false,
           'message': 'Too many requests. Please wait a moment.',
         };
+      }
+      if (retryCount == 0 && _isTransientNetworkError(e)) {
+        await Future.delayed(const Duration(milliseconds: 1000));
+        return _getMonthAttendanceWithRetry(
+          year,
+          month,
+          forceRefresh: forceRefresh,
+          retryCount: 1,
+        );
       }
       if (_cachedMonthAttendance.containsKey(cacheKey)) {
         return {'success': true, 'data': _cachedMonthAttendance[cacheKey]};

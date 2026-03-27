@@ -39,8 +39,15 @@ const start = async () => {
                 queue.client.ping(),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
             ]);
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+            console.warn('Worker warning: Redis ping failed, queue may be unavailable:', e?.message || e);
+        }
+        console.log(`Worker started. Queue=${QUEUE_NAME}, Concurrency=${WORKER_CONCURRENCY}`);
     } catch (err) {
+        console.error('Worker startup failed:', err?.message || err);
+        if (process.env.NODE_ENV !== 'production' && err?.stack) {
+            console.error(err.stack);
+        }
         process.exit(1);
     }
 };

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../config/app_colors.dart';
 import '../../config/constants.dart';
@@ -25,6 +26,7 @@ import 'selfie_camera_screen.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/absent_alert_helper.dart';
+import '../../utils/fine_calculation_util.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/attendance_success_overlay.dart';
 import '../../widgets/notification_reaction_overlay.dart';
@@ -52,7 +54,12 @@ class AttendanceScreen extends StatefulWidget {
 
 class _AttendanceScreenState extends State<AttendanceScreen>
     with SingleTickerProviderStateMixin {
-  static const Duration _networkTimeout = Duration(seconds: 25);
+  static const String _netPerDaySalaryPrefsKey = 'app_net_per_day_salary';
+  static const String _legacyPerDaySalaryPrefsKey = 'app_per_day_salary';
+  static const String _fineTypeForLogs = 'shiftBased';
+  static const String _fineRuleTypeForLogs = '1xSalary';
+  static const String _fineRuleApplyToForLogs = 'both';
+  static const Duration _networkTimeout = Duration(seconds: 45);
   Map<String, dynamic>? _attendanceData;
 
   /// Date we last fetched attendance status for (ensures selected-date card shows correct date)
@@ -456,7 +463,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             month,
             forceRefresh: forceRefresh,
           )
-          .timeout(const Duration(seconds: 25));
+          .timeout(_networkTimeout);
       if (!mounted) return;
 
       setState(() {
@@ -2166,6 +2173,198 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         );
       },
     );
+  }
+
+  Future<double?> _loadPerDaySalaryFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final direct = prefs.getDouble(_netPerDaySalaryPrefsKey);
+      if (direct != null && direct > 0) return direct;
+      final asString = prefs.getString(_netPerDaySalaryPrefsKey);
+      final parsed = asString == null ? null : double.tryParse(asString);
+      if (parsed != null && parsed > 0) return parsed;
+      final legacyDirect = prefs.getDouble(_legacyPerDaySalaryPrefsKey);
+      if (legacyDirect != null && legacyDirect > 0) return legacyDirect;
+    } catch (_) {}
+    return null;
+  }
+
+  String _buildLateAlertMessage({
+    required String baseMessage,
+    required int lateMinutes,
+    required double fineAmount,
+  }) {
+    final fineLog = _resolveFineLogForAction('lateArrival');
+    final formattedFine = NumberFormat('#,##0.00').format(fineAmount);
+    return '$baseMessage\n'
+        'lateMinutes: $lateMinutes\n'
+        'fine: ₹$formattedFine\n'
+        'fineType: ${fineLog['fineType']}\n'
+        'rule: ${fineLog['ruleType']} (${fineLog['ruleApplyTo']})';
+  }
+
+  String _buildEarlyAlertMessage({
+    required String baseMessage,
+    required int earlyMinutes,
+    required double fineAmount,
+  }) {
+    final fineLog = _resolveFineLogForAction('earlyExit');
+    final formattedFine = NumberFormat('#,##0.00').format(fineAmount);
+    return '$baseMessage\n'
+        'earlyMinutes: $earlyMinutes\n'
+        'fine: ₹$formattedFine\n'
+        'fineType: ${fineLog['fineType']}\n'
+        'rule: ${fineLog['ruleType']} (${fineLog['ruleApplyTo']})';
+  }
+
+  Map<String, String> _resolveFineLogForAction(String actionApplyToType) {
+    try {
+      final fc = _fineCalculation;
+      final rulesRaw = fc?['fineRules'];
+      final rules = rulesRaw is List ? rulesRaw.cast<Map>() : const <Map>[];
+
+      final rawCalcType = fc?['calculationType'] ?? fc?['calculationMethod'] ?? 'shiftBased';
+      final normalizedCalcType =
+          rawCalcType == 'fixedPerHour' ? 'fixedPerHour' : 'shiftBased';
+
+      // Matching logic must mirror backend: rule matches when applyTo is null/empty,
+      // or equals the punch type, or equals 'both'.
+      final match = rules.cast<Map>().firstWhere(
+            (r) {
+              final applyTo = r['applyTo'];
+              if (applyTo == null) return true;
+              final s = applyTo.toString();
+              return s == actionApplyToType || s == 'both';
+            },
+            orElse: () => <String, dynamic>{},
+          );
+
+      final hasMatch = match.isNotEmpty && match['type'] != null;
+      if (hasMatch) {
+        return {
+          'fineType': 'ruleBased',
+          'ruleType': match['type'].toString(),
+          'ruleApplyTo': match['applyTo']?.toString() ?? 'both',
+        };
+      }
+
+      return {
+        'fineType': normalizedCalcType,
+        'ruleType': 'default',
+        'ruleApplyTo': 'none',
+      };
+    } catch (_) {
+      return {
+        'fineType': _fineTypeForLogs,
+        'ruleType': _fineRuleTypeForLogs,
+        'ruleApplyTo': _fineRuleApplyToForLogs,
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> _buildFinePayloadForPunch({
+    required bool isCheckedIn,
+  }) async {
+    int lateMinutes = 0;
+    int earlyMinutes = 0;
+    double fineAmount = 0;
+    final now = DateTime.now();
+    final netPerDaySalary = await _loadPerDaySalaryFromPrefs();
+    final sessionTimings = _getWorkingSessionTimings();
+
+    if (!isCheckedIn) {
+      final shiftStartStr =
+          sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb();
+      if (shiftStartStr != null && shiftStartStr.isNotEmpty) {
+        try {
+          final parts = shiftStartStr.split(':').map(int.parse).toList();
+          final gracePeriod = _getGracePeriodMinutesForLateCheckIn();
+          final shiftStartOnly = DateTime(
+            now.year,
+            now.month,
+            now.day,
+            parts[0],
+            parts.length > 1 ? parts[1] : 0,
+          );
+          final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
+          if (now.isAfter(graceEnd)) {
+            final shiftEndForFine =
+                sessionTimings?['endTime'] ?? _getShiftEndTime();
+            final fineResult = calculateFine(
+              punchInTime: now,
+              attendanceDate: DateTime(now.year, now.month, now.day),
+              shiftTiming: ShiftTiming(
+                name: 'Current Shift',
+                startTime: shiftStartStr,
+                endTime: shiftEndForFine,
+                graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
+              ),
+              fineSettings: FineSettings(
+                enabled: true,
+                graceTimeMinutes: gracePeriod,
+                calculationType: 'shiftBased',
+              ),
+              dailySalary: netPerDaySalary,
+            );
+            lateMinutes = fineResult.lateMinutes;
+            fineAmount = fineResult.fineAmount;
+          }
+        } catch (_) {}
+      }
+    } else {
+      final shiftEndStr = sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb();
+      if (shiftEndStr != null && shiftEndStr.isNotEmpty) {
+        try {
+          // For checkout: app payload should include late fine already stored from check-in
+          // so backend (and any logs) can show total fine consistently.
+          lateMinutes = (_attendanceData?['lateMinutes'] as num?)?.toInt() ?? 0;
+          final existingFineAmount =
+              (_attendanceData?['fineAmount'] as num?)?.toDouble() ?? 0.0;
+          final parts = shiftEndStr.split(':').map(int.parse).toList();
+          final shiftEnd = DateTime(
+            now.year,
+            now.month,
+            now.day,
+            parts[0],
+            parts.length > 1 ? parts[1] : 0,
+          );
+          if (now.isBefore(shiftEnd)) {
+            earlyMinutes = shiftEnd.difference(now).inMinutes;
+            final shiftStartForFine =
+                sessionTimings?['startTime'] ?? _getShiftStartTime();
+            if (netPerDaySalary != null &&
+                netPerDaySalary > 0 &&
+                earlyMinutes > 0) {
+              final shiftHours = calculateShiftHours(
+                shiftStartForFine,
+                shiftEndStr,
+              );
+              if (shiftHours > 0) {
+                final earlyFine =
+                    ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
+                            .round() /
+                        100;
+                fineAmount = existingFineAmount + earlyFine;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        '[Fine TEST][Attendance][Payload] isCheckout=$isCheckedIn '
+        'lateMinutes=$lateMinutes earlyMinutes=$earlyMinutes '
+        'fineAmount=${fineAmount.toStringAsFixed(2)}',
+      );
+    }
+
+    return {
+      'lateMinutes': lateMinutes,
+      'earlyMinutes': earlyMinutes,
+      'fineAmount': fineAmount,
+    };
   }
 
   /// Shows a popup alert for check-in/check-out validation failures (blocks marking attendance).
@@ -4550,6 +4749,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (!mounted) return;
     final lat = position?.latitude ?? 0.0;
     final lng = position?.longitude ?? 0.0;
+    final finePayload = await _buildFinePayloadForPunch(isCheckedIn: isCheckedIn);
     _isSubmittingFromAttendanceCamera = true;
     if (isCheckedIn) {
       context.read<AttendanceBloc>().add(
@@ -4561,6 +4761,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           city: city,
           pincode: pincode,
           selfie: selfiePayload,
+          lateMinutes: finePayload['lateMinutes'] as int?,
+          earlyMinutes: finePayload['earlyMinutes'] as int?,
+          fineAmount: finePayload['fineAmount'] as double?,
         ),
       );
     } else {
@@ -4573,6 +4776,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           city: city,
           pincode: pincode,
           selfie: selfiePayload,
+          lateMinutes: finePayload['lateMinutes'] as int?,
+          earlyMinutes: finePayload['earlyMinutes'] as int?,
+          fineAmount: finePayload['fineAmount'] as double?,
         ),
       );
     }
@@ -4793,6 +4999,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // "fine-style" dialogs when punch is allowed. When NOT allowed, block with a short message.
     String? alertMessage;
     bool shouldBlock = false;
+    final netPerDaySalary = await _loadPerDaySalaryFromPrefs();
+    if (kDebugMode) {
+      debugPrint(
+        '[Fine TEST][Attendance] Loaded netPerDaySalary='
+        '${netPerDaySalary?.toStringAsFixed(2) ?? "null"}',
+      );
+    }
     if (!isCheckedIn) {
       final allowLateEntry =
           _attendanceTemplate?['allowLateEntry'] ??
@@ -4816,10 +5029,67 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             parts[1],
           );
           final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
-          if (now.isAfter(graceEnd) && allowLateEntry == false) {
-            // No client-side minute breakdown; server enforces policy and stores fines.
-            alertMessage = 'Late entry is not allowed for your shift.';
-            shouldBlock = true;
+          if (now.isAfter(graceEnd)) {
+            final shiftEndForFine =
+                sessionTimings?['endTime'] ?? _getShiftEndTime();
+            final fineResult = calculateFine(
+              punchInTime: now,
+              attendanceDate: DateTime(now.year, now.month, now.day),
+              shiftTiming: ShiftTiming(
+                name: 'Current Shift',
+                startTime: shiftStartStr,
+                endTime: shiftEndForFine,
+                graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
+              ),
+              fineSettings: FineSettings(
+                enabled: true,
+                graceTimeMinutes: gracePeriod,
+                calculationType: 'shiftBased',
+              ),
+              dailySalary: netPerDaySalary,
+            );
+            if (kDebugMode) {
+              debugPrint(
+                '[Fine TEST][Attendance][LateIn] start=$shiftStartStr '
+                'graceMin=$gracePeriod lateMin=${fineResult.lateMinutes} '
+                'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                'fineType=$_fineTypeForLogs '
+                'ruleType=$_fineRuleTypeForLogs '
+                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fine=${fineResult.fineAmount.toStringAsFixed(2)} '
+                'allowLate=$allowLateEntry',
+              );
+              final shiftHoursForFormula =
+                  calculateShiftHours(shiftStartStr, shiftEndForFine);
+              final hourlyRateForFormula =
+                  (netPerDaySalary != null &&
+                          netPerDaySalary > 0 &&
+                          shiftHoursForFormula > 0)
+                      ? (netPerDaySalary / shiftHoursForFormula)
+                      : 0.0;
+              final lateHoursForFormula = fineResult.lateMinutes / 60.0;
+              final fineFormula =
+                  '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                  '* (${fineResult.lateMinutes} / 60)';
+              debugPrint(
+                '[Fine FORMULA][Attendance][LateIn] '
+                'fineType=$_fineTypeForLogs '
+                'ruleType=$_fineRuleTypeForLogs '
+                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fineFormula=$fineFormula '
+                '=> ${hourlyRateForFormula.toStringAsFixed(2)} * ${lateHoursForFormula.toStringAsFixed(2)} '
+                '= fineAmount:${fineResult.fineAmount.toStringAsFixed(2)}',
+              );
+            }
+            final baseMessage = allowLateEntry == false
+                ? 'Late entry is not allowed for your shift.'
+                : 'You are checking in late.';
+            alertMessage = _buildLateAlertMessage(
+              baseMessage: baseMessage,
+              lateMinutes: fineResult.lateMinutes,
+              fineAmount: fineResult.fineAmount,
+            );
+            shouldBlock = allowLateEntry == false;
           }
         } catch (_) {}
       }
@@ -4845,10 +5115,69 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             parts[0],
             parts[1],
           );
-          if (now.isBefore(shiftEnd) && allowEarlyExit == false) {
-            alertMessage =
-                'Early check-out is not allowed before shift end.';
-            shouldBlock = true;
+          if (now.isBefore(shiftEnd)) {
+            final shiftStartForFine =
+                sessionTimings?['startTime'] ?? _getShiftStartTime();
+            final earlyMinutes = shiftEnd.difference(now).inMinutes;
+            double estimatedFine = 0;
+            if (netPerDaySalary != null &&
+                netPerDaySalary > 0 &&
+                earlyMinutes > 0) {
+              final shiftHours = calculateShiftHours(
+                shiftStartForFine,
+                shiftEndStr,
+              );
+              if (shiftHours > 0) {
+                estimatedFine =
+                    ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
+                            .round() /
+                        100;
+              }
+            }
+            if (kDebugMode) {
+              debugPrint(
+                '[Fine TEST][Attendance][EarlyOut] start=$shiftStartForFine '
+                'end=$shiftEndStr earlyMin=$earlyMinutes '
+                'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                'fineType=$_fineTypeForLogs '
+                'ruleType=$_fineRuleTypeForLogs '
+                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fine=${estimatedFine.toStringAsFixed(2)} '
+                'allowEarly=$allowEarlyExit',
+              );
+              final shiftHoursForFormula = calculateShiftHours(
+                shiftStartForFine,
+                shiftEndStr,
+              );
+              final hourlyRateForFormula =
+                  (netPerDaySalary != null &&
+                          netPerDaySalary > 0 &&
+                          shiftHoursForFormula > 0)
+                      ? (netPerDaySalary / shiftHoursForFormula)
+                      : 0.0;
+              final earlyHoursForFormula = earlyMinutes / 60.0;
+              final fineFormula =
+                  '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                  '* ($earlyMinutes / 60)';
+              debugPrint(
+                '[Fine FORMULA][Attendance][EarlyOut] '
+                'fineType=$_fineTypeForLogs '
+                'ruleType=$_fineRuleTypeForLogs '
+                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fineFormula=$fineFormula '
+                '=> ${hourlyRateForFormula.toStringAsFixed(2)} * ${earlyHoursForFormula.toStringAsFixed(2)} '
+                '= fineAmount:${estimatedFine.toStringAsFixed(2)}',
+              );
+            }
+            final baseMessage = allowEarlyExit == false
+                ? 'Early check-out is not allowed before shift end.'
+                : 'You are checking out early.';
+            alertMessage = _buildEarlyAlertMessage(
+              baseMessage: baseMessage,
+              earlyMinutes: earlyMinutes,
+              fineAmount: estimatedFine,
+            );
+            shouldBlock = allowEarlyExit == false;
           }
         } catch (_) {}
       }
