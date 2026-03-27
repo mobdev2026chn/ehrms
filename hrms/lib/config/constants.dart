@@ -1,8 +1,8 @@
 // hrms/lib/config/constants.dart
 class AppConstants {
   /// Production API endpoint.
-  static const String baseUrl = 'http://127.0.0.1:9001/api';
-
+ // static const String baseUrl = 'http://127.0.0.1:9001/api';
+static const String baseUrl = 'http://ehrms.askeva.net/api';
 //
   /// Google Maps key — enable **Geocoding API** for reverse geocode (lat/lng → address in app).
   /// Also Maps SDK, Places, Directions as needed. Restrict by app + APIs in Google Cloud Console.

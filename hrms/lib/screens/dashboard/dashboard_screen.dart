@@ -59,9 +59,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     with WidgetsBindingObserver {
   static const String _netPerDaySalaryPrefsKey = 'app_net_per_day_salary';
   static const String _legacyPerDaySalaryPrefsKey = 'app_per_day_salary';
-  static const String _fineTypeForLogs = 'shiftBased';
-  static const String _fineRuleTypeForLogs = '1xSalary';
-  static const String _fineRuleApplyToForLogs = 'both';
   static const String _dashboardLocationPromptLastShownKey =
       'dashboard_location_prompt_last_shown_ms';
   late int _currentIndex;
@@ -74,6 +71,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isPunchedInToday = false;
   Map<String, dynamic>? _activeBreak;
   bool _openBreakAfterBuild = false;
+  Map<String, dynamic>? _fineCalculation;
 
   /// Web `staffData.salaryDetailsAccessEnabled` — must be explicitly true to show Salary in the bottom bar.
   bool _hasSalaryOverviewAccess = false;
@@ -131,6 +129,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     _attendanceService.clearCachesForRefresh();
     _fetchPunchStatusForNavBar();
     _fetchActiveBreak();
+    unawaited(_fetchFineCalculation());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _showLocationCardsAfterDelay();
       if (_openBreakAfterBuild) {
@@ -224,6 +223,122 @@ class _DashboardScreenState extends State<DashboardScreen>
     } catch (_) {}
   }
 
+  Future<void> _fetchFineCalculation() async {
+    try {
+      final result = await _attendanceService.getFineCalculation();
+      if (!mounted) return;
+      if (result['success'] == true && result['data'] is Map<String, dynamic>) {
+        setState(() => _fineCalculation = result['data'] as Map<String, dynamic>);
+      } else {
+        setState(() => _fineCalculation = null);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _fineCalculation = null);
+    }
+  }
+
+  Map<String, String> _resolveFineLogForAction(String actionApplyToType) {
+    try {
+      final fc = _fineCalculation;
+      final rulesRaw = fc?['fineRules'];
+      final rules = rulesRaw is List ? rulesRaw.cast<Map>() : const <Map>[];
+
+      final rawCalcType =
+          fc?['calculationType'] ?? fc?['calculationMethod'] ?? 'shiftBased';
+      final normalizedCalcType =
+          rawCalcType == 'fixedPerHour' ? 'fixedPerHour' : 'shiftBased';
+
+      final match = rules.firstWhere(
+        (r) {
+          final applyTo = r['applyTo'];
+          if (applyTo == null) return true;
+          final s = applyTo.toString();
+          return s == actionApplyToType || s == 'both';
+        },
+        orElse: () => <String, dynamic>{},
+      );
+
+      if (match.isNotEmpty && match['type'] != null) {
+        return {
+          'fineType': 'ruleBased',
+          'ruleType': match['type'].toString(),
+          'ruleApplyTo': match['applyTo']?.toString() ?? 'both',
+        };
+      }
+
+      return {
+        'fineType': normalizedCalcType,
+        'ruleType': 'default',
+        'ruleApplyTo': 'none',
+      };
+    } catch (_) {
+      return {
+        'fineType': 'shiftBased',
+        'ruleType': 'default',
+        'ruleApplyTo': 'none',
+      };
+    }
+  }
+
+  bool _hasFineRules() {
+    final fc = _fineCalculation;
+    final rulesRaw = fc?['fineRules'];
+    return rulesRaw is List && rulesRaw.isNotEmpty;
+  }
+
+  Map<String, dynamic>? _matchFineRuleForAction(String actionApplyToType) {
+    if (!_hasFineRules()) return null;
+    final fc = _fineCalculation;
+    final rulesRaw = fc?['fineRules'];
+    if (rulesRaw is! List) return null;
+    final rules = rulesRaw.cast<Map>();
+    final match = rules.cast<Map>().cast<dynamic>().firstWhere(
+          (dynamic r) {
+            if (r is! Map) return false;
+            final applyTo = r['applyTo'];
+            if (applyTo == null) return true;
+            final s = applyTo.toString().trim();
+            if (s.isEmpty) return true;
+            return s == actionApplyToType || s == 'both';
+          },
+          orElse: () => <String, dynamic>{},
+        );
+    if (match is Map<String, dynamic> && match.isNotEmpty) {
+      return match;
+    }
+    return null;
+  }
+
+  double _computeFineFromRule({
+    required Map<String, dynamic> rule,
+    required int minutes,
+    required double netPerDaySalary,
+    required double shiftHours,
+  }) {
+    final type = (rule['type']?.toString() ?? '').toLowerCase();
+    if (minutes <= 0) return 0.0;
+
+    if (type == 'custom') {
+      final customAmount = (rule['customAmount'] as num?)?.toDouble() ?? 0.0;
+      final unit = (rule['customAmountUnit']?.toString() ?? 'perHour')
+          .toLowerCase();
+      if (unit == 'perminute') return customAmount * minutes;
+      if (unit == 'perhour') return customAmount * (minutes / 60.0);
+      if (unit == 'fixed') return customAmount;
+      // Default to perHour when unit is missing/unrecognized.
+      return customAmount * (minutes / 60.0);
+    }
+
+    // Salary-multiple style rules (1xSalary / 2xSalary / 3xSalary).
+    int multiplier = 1;
+    if (type == '2xsalary') multiplier = 2;
+    if (type == '3xsalary') multiplier = 3;
+    final hourlyRate = (shiftHours > 0) ? (netPerDaySalary / shiftHours) : 0.0;
+    final hours = minutes / 60.0;
+    // Example: 1xSalary => hourlyRate * (minutes/60)
+    return (hourlyRate * hours * multiplier);
+  }
+
   Future<double?> _loadPerDaySalaryFromPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -243,11 +358,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     required int lateMinutes,
     required double fineAmount,
   }) {
+    final fineLog = _resolveFineLogForAction('lateArrival');
     return '$baseMessage\n'
         'lateMinutes: $lateMinutes\n'
         'fine: ₹${fineAmount.toStringAsFixed(2)}\n'
-        'fineType: $_fineTypeForLogs\n'
-        'rule: $_fineRuleTypeForLogs ($_fineRuleApplyToForLogs)';
+        'fineType: ${fineLog['fineType']}\n'
+        'rule: ${fineLog['ruleType']} (${fineLog['ruleApplyTo']})';
   }
 
   String _buildEarlyAlertMessage({
@@ -255,11 +371,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     required int earlyMinutes,
     required double fineAmount,
   }) {
+    final fineLog = _resolveFineLogForAction('earlyExit');
     return '$baseMessage\n'
         'earlyMinutes: $earlyMinutes\n'
         'fine: ₹${fineAmount.toStringAsFixed(2)}\n'
-        'fineType: $_fineTypeForLogs\n'
-        'rule: $_fineRuleTypeForLogs ($_fineRuleApplyToForLogs)';
+        'fineType: ${fineLog['fineType']}\n'
+        'rule: ${fineLog['ruleType']} (${fineLog['ruleApplyTo']})';
   }
 
   Future<Map<String, dynamic>> _buildFinePayloadForPunch({
@@ -268,6 +385,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     required Map<String, dynamic>? halfDayLeave,
     required Map<String, dynamic> tmpl,
   }) async {
+    // Always compute with the latest backend fine config.
+    await _fetchFineCalculation();
     int lateMinutes = 0;
     int earlyMinutes = 0;
     double fineAmount = 0;
@@ -313,6 +432,22 @@ class _DashboardScreenState extends State<DashboardScreen>
             );
             lateMinutes = fineResult.lateMinutes;
             fineAmount = fineResult.fineAmount;
+            final hasRules = _hasFineRules();
+            final lateRule = _matchFineRuleForAction('lateArrival');
+            if (hasRules) {
+              if (lateRule == null) {
+                fineAmount = 0.0;
+              } else {
+                final shiftHoursForFine =
+                    calculateShiftHours(shiftStartStr, shiftEndForFine);
+                fineAmount = _computeFineFromRule(
+                  rule: lateRule,
+                  minutes: lateMinutes,
+                  netPerDaySalary: netPerDaySalary ?? 0.0,
+                  shiftHours: shiftHoursForFine,
+                );
+              }
+            }
           }
         } catch (_) {}
       }
@@ -340,20 +475,36 @@ class _DashboardScreenState extends State<DashboardScreen>
                 sessionTimings?['startTime'] ??
                 _getShiftStartTimeFromDb(tmpl) ??
                 '09:30';
+            final shiftHours = calculateShiftHours(
+              shiftStartForFine,
+              shiftEndStr,
+            );
+            double earlyFine = 0.0;
             if (netPerDaySalary != null &&
                 netPerDaySalary > 0 &&
-                earlyMinutes > 0) {
-              final shiftHours = calculateShiftHours(
-                shiftStartForFine,
-                shiftEndStr,
-              );
-              if (shiftHours > 0) {
-                final earlyFine = ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
-                        .round() /
-                    100;
-                fineAmount = existingFineAmount + earlyFine;
+                earlyMinutes > 0 &&
+                shiftHours > 0) {
+              earlyFine = ((netPerDaySalary / shiftHours) *
+                      (earlyMinutes / 60) *
+                      100)
+                  .round() /
+                  100;
+            }
+            final hasRules = _hasFineRules();
+            final earlyRule = _matchFineRuleForAction('earlyExit');
+            if (hasRules) {
+              if (earlyRule == null) {
+                earlyFine = 0.0;
+              } else {
+                earlyFine = _computeFineFromRule(
+                  rule: earlyRule,
+                  minutes: earlyMinutes,
+                  netPerDaySalary: netPerDaySalary ?? 0.0,
+                  shiftHours: shiftHours,
+                );
               }
             }
+            fineAmount = existingFineAmount + earlyFine;
           }
         } catch (_) {}
       }
@@ -1184,7 +1335,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (isCompleted) {
       SnackBarUtils.showSnackBar(
         context,
-        'You have already checked out for today',
+        'You have already punched out today',
         isError: true,
       );
       return false;
@@ -1372,8 +1523,12 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     String? alertMessage;
     bool shouldBlock = false;
+    await _fetchFineCalculation();
     final netPerDaySalary = await _loadPerDaySalaryFromPrefs();
     if (kDebugMode) {
+      debugPrint(
+        '[Fine TEST][Dashboard Punch] Refreshed fine rules before alert/fine evaluation',
+      );
       debugPrint(
         '[Fine TEST][Dashboard Punch] Loaded netPerDaySalary='
         '${netPerDaySalary?.toStringAsFixed(2) ?? "null"}',
@@ -1429,37 +1584,75 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
               dailySalary: netPerDaySalary,
             );
+            final shiftHoursForFormula =
+                calculateShiftHours(shiftStartStr, shiftEndForFine);
+            final lateRule = _matchFineRuleForAction('lateArrival');
+            double lateFineAmount = fineResult.fineAmount;
+            if (_hasFineRules()) {
+              if (lateRule == null) {
+                lateFineAmount = 0.0;
+              } else {
+                lateFineAmount = _computeFineFromRule(
+                  rule: lateRule,
+                  minutes: fineResult.lateMinutes,
+                  netPerDaySalary: netPerDaySalary ?? 0.0,
+                  shiftHours: shiftHoursForFormula,
+                );
+              }
+            }
             if (kDebugMode) {
+              final fineLog = _resolveFineLogForAction('lateArrival');
               debugPrint(
                 '[Fine TEST][Dashboard Punch][LateIn] start=$shiftStartStr '
                 'graceMin=$gracePeriod lateMin=${fineResult.lateMinutes} '
                 'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
-                'fineType=$_fineTypeForLogs '
-                'ruleType=$_fineRuleTypeForLogs '
-                'ruleApplyTo=$_fineRuleApplyToForLogs '
-                'fine=${fineResult.fineAmount.toStringAsFixed(2)} '
+                'fineType=${fineLog['fineType']} '
+                'ruleType=${fineLog['ruleType']} '
+                'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                'fine=${lateFineAmount.toStringAsFixed(2)} '
                 'allowLate=$allowLateEntry',
               );
-              final shiftHoursForFormula =
-                  calculateShiftHours(shiftStartStr, shiftEndForFine);
-              final hourlyRateForFormula =
-                  (netPerDaySalary != null &&
-                          netPerDaySalary > 0 &&
-                          shiftHoursForFormula > 0)
-                      ? (netPerDaySalary / shiftHoursForFormula)
-                      : 0.0;
-              final lateHoursForFormula = fineResult.lateMinutes / 60.0;
-              final fineFormula =
-                  '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
-                  '* (${fineResult.lateMinutes} / 60)';
+              String fineFormula;
+              String fineFormulaWords;
+              final ruleTypeLower = (lateRule?['type']?.toString() ?? '').toLowerCase();
+              if (_hasFineRules() && lateRule != null && ruleTypeLower == 'custom') {
+                final customAmount =
+                    (lateRule['customAmount'] as num?)?.toDouble() ?? 0.0;
+                final unitLower =
+                    (lateRule['customAmountUnit']?.toString() ?? 'perHour').toLowerCase();
+                if (unitLower == 'perminute') {
+                  fineFormula = '${customAmount.toStringAsFixed(2)} × ${fineResult.lateMinutes}';
+                  fineFormulaWords =
+                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                      'customAmount perMinute × lateMinutes';
+                } else if (unitLower == 'perhour') {
+                  fineFormula =
+                      '${customAmount.toStringAsFixed(2)} × (${fineResult.lateMinutes} / 60)';
+                  fineFormulaWords =
+                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                      'customAmount perHour × (lateMinutes/60)';
+                } else {
+                  fineFormula =
+                      '${customAmount.toStringAsFixed(2)} (fixed)';
+                  fineFormulaWords =
+                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                      'customAmount fixed';
+                }
+              } else {
+                fineFormula =
+                    '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                    '* (${fineResult.lateMinutes} / 60)';
+                fineFormulaWords =
+                    'perDaySalary/shiftHours × (lateMinutes/60)';
+              }
               debugPrint(
                 '[Fine FORMULA][Dashboard Punch][LateIn] '
-                'fineType=$_fineTypeForLogs '
-                'ruleType=$_fineRuleTypeForLogs '
-                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fineType=${fineLog['fineType']} '
+                'ruleType=${fineLog['ruleType']} '
+                'ruleApplyTo=${fineLog['ruleApplyTo']} '
                 'fineFormula=$fineFormula '
-                '=> ${hourlyRateForFormula.toStringAsFixed(2)} * ${lateHoursForFormula.toStringAsFixed(2)} '
-                '= fineAmount:${fineResult.fineAmount.toStringAsFixed(2)}',
+                '= fineAmount:${lateFineAmount.toStringAsFixed(2)} '
+                'fineFormulaWords=$fineFormulaWords',
               );
             }
             final baseMessage = allowLateEntry == false
@@ -1468,7 +1661,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             alertMessage = _buildLateAlertMessage(
               baseMessage: baseMessage,
               lateMinutes: fineResult.lateMinutes,
-              fineAmount: fineResult.fineAmount,
+              fineAmount: lateFineAmount,
             );
             shouldBlock = allowLateEntry == false;
           }
@@ -1514,39 +1707,78 @@ class _DashboardScreenState extends State<DashboardScreen>
                         100;
               }
             }
+            final shiftHoursForFormula =
+                calculateShiftHours(shiftStartForFine, shiftEndStr);
+            final earlyRule = _matchFineRuleForAction('earlyExit');
+            double earlyFineAmount = estimatedFine;
+            if (_hasFineRules()) {
+              if (earlyRule == null) {
+                earlyFineAmount = 0.0;
+              } else {
+                earlyFineAmount = _computeFineFromRule(
+                  rule: earlyRule,
+                  minutes: earlyMinutes,
+                  netPerDaySalary: netPerDaySalary ?? 0.0,
+                  shiftHours: shiftHoursForFormula,
+                );
+              }
+            }
             if (kDebugMode) {
+              final fineLog = _resolveFineLogForAction('earlyExit');
               debugPrint(
                 '[Fine TEST][Dashboard Punch][EarlyOut] start=$shiftStartForFine '
                 'end=$shiftEndStr earlyMin=$earlyMinutes '
                 'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
-                'fineType=$_fineTypeForLogs '
-                'ruleType=$_fineRuleTypeForLogs '
-                'ruleApplyTo=$_fineRuleApplyToForLogs '
-                'fine=${estimatedFine.toStringAsFixed(2)} '
+                'fineType=${fineLog['fineType']} '
+                'ruleType=${fineLog['ruleType']} '
+                'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                'fine=${earlyFineAmount.toStringAsFixed(2)} '
                 'allowEarly=$allowEarlyExit',
               );
-              final shiftHoursForFormula = calculateShiftHours(
-                shiftStartForFine,
-                shiftEndStr,
-              );
-              final hourlyRateForFormula =
-                  (netPerDaySalary != null &&
-                          netPerDaySalary > 0 &&
-                          shiftHoursForFormula > 0)
-                      ? (netPerDaySalary / shiftHoursForFormula)
-                      : 0.0;
-              final earlyHoursForFormula = earlyMinutes / 60.0;
-              final fineFormula =
-                  '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
-                  '* ($earlyMinutes / 60)';
+              String fineFormula;
+              String fineFormulaWords;
+              final ruleTypeLower =
+                  (earlyRule?['type']?.toString() ?? '').toLowerCase();
+              if (_hasFineRules() &&
+                  earlyRule != null &&
+                  ruleTypeLower == 'custom') {
+                final customAmount =
+                    (earlyRule['customAmount'] as num?)?.toDouble() ?? 0.0;
+                final unitLower = (earlyRule['customAmountUnit']?.toString() ?? 'perHour')
+                    .toLowerCase();
+                if (unitLower == 'perminute') {
+                  fineFormula =
+                      '${customAmount.toStringAsFixed(2)} × $earlyMinutes';
+                  fineFormulaWords =
+                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                      'customAmount perMinute × earlyMinutes';
+                } else if (unitLower == 'perhour') {
+                  fineFormula =
+                      '${customAmount.toStringAsFixed(2)} × ($earlyMinutes / 60)';
+                  fineFormulaWords =
+                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                      'customAmount perHour × (earlyMinutes/60)';
+                } else {
+                  fineFormula = '${customAmount.toStringAsFixed(2)} (fixed)';
+                  fineFormulaWords =
+                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                      'customAmount fixed';
+                }
+              } else {
+                fineFormula =
+                    '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                    '* ($earlyMinutes / 60)';
+                fineFormulaWords =
+                    'perDaySalary/shiftHours × (earlyMinutes/60)';
+              }
               debugPrint(
                 '[Fine FORMULA][Dashboard Punch][EarlyOut] '
-                'fineType=$_fineTypeForLogs '
-                'ruleType=$_fineRuleTypeForLogs '
-                'ruleApplyTo=$_fineRuleApplyToForLogs '
+                'fineType=${fineLog['fineType']} '
+                'ruleType=${fineLog['ruleType']} '
+                'ruleApplyTo=${fineLog['ruleApplyTo']} '
                 'fineFormula=$fineFormula '
-                '=> ${hourlyRateForFormula.toStringAsFixed(2)} * ${earlyHoursForFormula.toStringAsFixed(2)} '
-                '= fineAmount:${estimatedFine.toStringAsFixed(2)}',
+                'fineFormulaWords=$fineFormulaWords '
+                '= fineAmount:${earlyFineAmount.toStringAsFixed(2)}',
               );
             }
             final baseMessage = allowEarlyExit == false
@@ -1555,7 +1787,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             alertMessage = _buildEarlyAlertMessage(
               baseMessage: baseMessage,
               earlyMinutes: earlyMinutes,
-              fineAmount: estimatedFine,
+              fineAmount: earlyFineAmount,
             );
             shouldBlock = allowEarlyExit == false;
           }
