@@ -2,6 +2,7 @@ const Staff = require('../models/Staff');
 const Tracking = require('../models/Tracking');
 const Task = require('../models/Task');
 const TaskDetails = require('../models/TaskDetails');
+const Customer = require('../models/Customer');
 const Branch = require('../models/Branch');
 const Attendance = require('../models/Attendance');
 const {
@@ -40,6 +41,31 @@ function haversineDistanceM(lat1, lng1, lat2, lng2) {
       Math.sin(dLng / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+function extractCustomerLatLng(customer) {
+  if (!customer || typeof customer !== 'object') return null;
+
+  // Customer GPS can be stored in different shapes depending on how it's inserted.
+  // Try common candidates: root props, nested `location`, nested `customFields`.
+  const candidates = [
+    { lat: customer.latitude, lng: customer.longitude },
+    { lat: customer.lat, lng: customer.lng },
+    { lat: customer.location?.latitude, lng: customer.location?.longitude },
+    { lat: customer.location?.lat, lng: customer.location?.lng },
+    { lat: customer.geofence?.latitude, lng: customer.geofence?.longitude },
+    { lat: customer.geofence?.lat, lng: customer.geofence?.lng },
+    { lat: customer.customFields?.latitude, lng: customer.customFields?.longitude },
+    { lat: customer.customFields?.lat, lng: customer.customFields?.lng },
+  ];
+
+  for (const c of candidates) {
+    if (c.lat == null || c.lng == null) continue;
+    const lat = Number(c.lat);
+    const lng = Number(c.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  return null;
 }
 
 function cleanAddressValue(value) {
@@ -935,7 +961,7 @@ exports.arrivedTracking = async (req, res) => {
     if (!taskId || lat == null || lng == null) {
       return res.status(400).json({ success: false, message: 'taskId, lat, lng required' });
     }
-    const task = await Task.findById(taskId).select('assignedTo taskId status').populate('assignedTo', 'name');
+    const task = await Task.findById(taskId).select('assignedTo taskId status customerId').populate('assignedTo', 'name');
     if (!task) {
       return res.status(404).json({ success: false, message: 'Task not found' });
     }
@@ -969,6 +995,24 @@ exports.arrivedTracking = async (req, res) => {
       resolvedFullAddress,
       resolvedPincode
     );
+
+    // Compute override flags for staff "Arrived" tap.
+    // 1) Arrival vs customer's stored GPS: true when arrival is farther than ~50m.
+    // 2) Destination override: true when destination was marked changed before arrival.
+    let overridenCustomerlocation = false;
+    const customerId = details?.customerId || task.customerId;
+    if (customerId) {
+      const customer = await Customer.findById(customerId).lean();
+      const customerCoords = extractCustomerLatLng(customer);
+      if (customerCoords) {
+        const distM = haversineDistanceM(arrivalLat, arrivalLng, customerCoords.lat, customerCoords.lng);
+        overridenCustomerlocation = distM > 50;
+      }
+    }
+    const overridendestinationlocation = details?.destinationChanged === true;
+
+    arrivalLocation.overridencustomerlocation = overridenCustomerlocation;
+    arrivalLocation.overridendestinationlocation = overridendestinationlocation;
     const updateData = {
       status: 'arrived',
       progressSteps: { ...(details?.progressSteps || {}), reachedLocation: true },

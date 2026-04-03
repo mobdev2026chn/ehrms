@@ -22,6 +22,14 @@ const customerSchema = new mongoose.Schema(
     customFields: { type: mongoose.Schema.Types.Mixed, default: {} },
     source: { type: String, default: 'web' },
     addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    /**
+     * When non-empty, only these staff may see the customer in the app.
+     * Empty/undefined = visible to all staff in the company.
+     */
+    visibleToStaffIds: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Staff' }],
+      default: undefined,
+    },
     businessId: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', required: true }
   },
   { timestamps: true }

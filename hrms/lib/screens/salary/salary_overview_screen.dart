@@ -56,6 +56,43 @@ bool _isCoreStructuralEarningName(String rawName) {
   return false;
 }
 
+bool _hasEarningByName(List<Map<String, dynamic>> rows, List<String> aliases) {
+  final lowerAliases = aliases.map((e) => e.toLowerCase()).toList();
+  for (final row in rows) {
+    final n = (row['name'] ?? '').toString().toLowerCase().trim();
+    if (n.isEmpty) continue;
+    if (lowerAliases.any((a) => n.contains(a))) return true;
+  }
+  return false;
+}
+
+List<Map<String, dynamic>> _ensurePfEsiInEarnings({
+  required List<Map<String, dynamic>> rows,
+  required MonthlySalaryStructure? monthly,
+  required double factor,
+}) {
+  if (monthly == null) return rows;
+  final out = List<Map<String, dynamic>>.from(rows);
+  final safeFactor = factor.isFinite ? factor.clamp(0.0, 10.0) : 0.0;
+  final hasEmployerPf = _hasEarningByName(out, ['employer pf', 'employer epf']);
+  final hasEmployerEsi = _hasEarningByName(out, ['employer esi']);
+  if (!hasEmployerPf) {
+    out.add({
+      'name': 'Employer PF',
+      'amount': monthly.employerPF * safeFactor,
+      'type': 'earning',
+    });
+  }
+  if (!hasEmployerEsi) {
+    out.add({
+      'name': 'Employer ESI',
+      'amount': monthly.employerESI * safeFactor,
+      'type': 'earning',
+    });
+  }
+  return out;
+}
+
 class SalaryOverviewScreen extends StatefulWidget {
   final int? dashboardTabIndex;
   final void Function(int index)? onNavigateToIndex;
@@ -2407,6 +2444,30 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final prBreakdown = _resolveProrationForBreakdown();
     final useWebStyleMtdRows = useWebStyleStructure && prBreakdown != null;
     final fineAmount = (_fineInfo['totalFineAmount'] as num?)?.toDouble() ?? 0.0;
+    final mtdNumerator = _effectivePayableDaysForRule();
+    final mtdFactor = wdm > 0 ? (mtdNumerator / wdm) : 0.0;
+    final previewGross = (_payrollPreview?['grossSalary'] as num?)?.toDouble();
+    final backendGross = _backendThisMonthGross;
+    final previewFactor = (monthly != null &&
+            previewGross != null &&
+            monthly.grossSalary > 0)
+        ? (previewGross / monthly.grossSalary)
+        : mtdFactor;
+    final backendFactor = (monthly != null &&
+            backendGross != null &&
+            monthly.grossSalary > 0)
+        ? (backendGross / monthly.grossSalary)
+        : mtdFactor;
+    final previewEarningsEnsured = _ensurePfEsiInEarnings(
+      rows: previewEarnings,
+      monthly: monthly,
+      factor: previewFactor,
+    );
+    final backendEarningsEnsured = _ensurePfEsiInEarnings(
+      rows: _backendEarnings,
+      monthly: monthly,
+      factor: backendFactor,
+    );
 
     debugPrint(
       '[SalaryCalc] breakdown: payrollLocked=$payrollLocked payrollEarnings=${payrollEarnings.length} '
@@ -2589,7 +2650,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 const SizedBox(height: 8),
-                if (payrollEarnings.isNotEmpty)
+                if (canUseSelectedPayrollMtd && payrollEarnings.isNotEmpty)
                   ...payrollEarnings.map(
                     (e) => _buildComponentRow(
                       (e['name'] ?? 'Component').toString(),
@@ -2597,8 +2658,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                       currencyFormat,
                     ),
                   )
-                else if (previewEarnings.isNotEmpty)
-                  ...previewEarnings.map(
+                else if (previewEarningsEnsured.isNotEmpty)
+                  ...previewEarningsEnsured.map(
                     (e) => _buildComponentRow(
                       (e['name'] ?? 'Component').toString(),
                       (e['amount'] as num?)?.toDouble() ?? 0.0,
@@ -2656,8 +2717,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                         ),
                       ),
                 ]
-                else if (_backendEarnings.isNotEmpty)
-                  ..._backendEarnings.map(
+                else if (backendEarningsEnsured.isNotEmpty)
+                  ...backendEarningsEnsured.map(
                     (e) => _buildComponentRow(
                       (e['name'] ?? 'Component').toString(),
                       (e['amount'] as num?)?.toDouble() ?? 0.0,
@@ -3389,11 +3450,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
       final status = (r['status'] as String? ?? '').trim().toLowerCase();
       final isPaidLeave = r['isPaidLeave'] == true;
-      final compensationType =
-          (r['compensationType'] as String? ?? '').trim().toLowerCase();
-      if (status == 'on leave' &&
-          isPaidLeave &&
-          compensationType != 'compoff') {
+      if (status == 'on leave' && isPaidLeave) {
         paidLeaveDays += 1.0;
       }
     }
@@ -4640,10 +4697,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                       ? (isHalfDayStatusForAbbr ? 0.5 : 1.0)
                       : (isHalfDayStatusForAbbr ? 0.5 : 0.0);
                   final paidLeaveValue =
-                      (isOnLeaveStatus &&
-                              isPaidLeaveDay &&
-                              compType != 'compoff' &&
-                              compType != 'comp off')
+                      (isOnLeaveStatus && isPaidLeaveDay)
                           ? (isHalfDayStatusForAbbr ? 0.5 : 1.0)
                           : 0.0;
                   final payableValue = effectiveRule == 'present_only'
@@ -4831,12 +4885,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
       if (status == 'on leave' || status == 'half day') {
         final dayValue = isHalfDay ? 0.5 : 1.0;
-        final compensationType = (r['compensationType'] as String?)?.trim().toLowerCase();
         final isPaidLeave = r['isPaidLeave'] == true;
-        final isCompOff = compensationType == 'compoff';
 
         byType.putIfAbsent(leaveType, () => {'paid': 0.0, 'unpaid': 0.0});
-        if (isPaidLeave && !isCompOff) {
+        if (isPaidLeave) {
           paidLeaves += dayValue;
           byType[leaveType]!['paid'] = (byType[leaveType]!['paid'] ?? 0) + dayValue;
         } else {

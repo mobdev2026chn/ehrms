@@ -89,6 +89,11 @@ const taskDetailsSchema = new mongoose.Schema({
     address: { type: String },
     pincode: { type: String },
     recordedAt: { type: Date },
+    // Flags computed when staff taps "Arrived" for the task module.
+    // overridencustomerlocation: true when arrival is farther than ~50m from the customer's stored location.
+    // overridendestinationlocation: true when destination was changed before arrival.
+    overridencustomerlocation: { type: Boolean, default: false },
+    overridendestinationlocation: { type: Boolean, default: false },
   },
   // Per-segment ride distance & duration. segment: travel_started | travel_resumed; endType: travel_exited | arrived
   taskTravelDuration: { type: Array, default: [] }, // [{ segment, endType, durationSeconds, endTime }]

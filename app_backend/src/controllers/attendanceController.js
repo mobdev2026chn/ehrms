@@ -99,6 +99,78 @@ function deg2rad(deg) {
     return deg * (Math.PI / 180);
 }
 
+function toFiniteNumber(value) {
+    if (value === null || value === undefined) return null;
+    const num = typeof value === 'number' ? value : parseFloat(String(value));
+    return Number.isFinite(num) ? num : null;
+}
+
+/**
+ * Returns geofence validation targets for a branch.
+ * Priority:
+ * 1) If `branch.geofence.enabled === true` and `branch.geofence.locations[]` exists, use those circles.
+ * 2) Otherwise fall back to the single `branch.geofence.latitude/longitude/radius` circle.
+ * 3) Legacy: if no `geofence.enabled`, but `branch.latitude/longitude` exist, use them.
+ */
+function getBranchGeofenceTargets(branch) {
+    const gf = branch?.geofence;
+    const geofenceEnabled = gf?.enabled === true;
+
+    // Legacy fallback (top-level latitude/longitude on Branch).
+    if (!geofenceEnabled) {
+        const legacyLat = toFiniteNumber(branch?.latitude);
+        const legacyLng = toFiniteNumber(branch?.longitude);
+        if (legacyLat != null && legacyLng != null) {
+            const radius = toFiniteNumber(branch?.radius) ?? 100;
+            return {
+                enabled: true,
+                targets: [
+                    {
+                        latitude: legacyLat,
+                        longitude: legacyLng,
+                        radius,
+                        label: branch?.branchName || 'Assigned Branch',
+                    },
+                ],
+            };
+        }
+        return { enabled: false, targets: [] };
+    }
+
+    // Multi-location mode.
+    const locations = gf?.locations;
+    if (Array.isArray(locations) && locations.length > 0) {
+        const targets = locations
+            .map((l) => {
+                const latitude = toFiniteNumber(l?.latitude ?? l?.lat);
+                const longitude = toFiniteNumber(l?.longitude ?? l?.lng);
+                const radius = toFiniteNumber(l?.radius) ?? toFiniteNumber(gf?.radius) ?? 100;
+                const label = l?.label ?? l?.name ?? null;
+                if (latitude == null || longitude == null) return null;
+                return { latitude, longitude, radius, label };
+            })
+            .filter(Boolean);
+        return { enabled: true, targets };
+    }
+
+    // Single-location fallback.
+    const latitude = toFiniteNumber(gf?.latitude);
+    const longitude = toFiniteNumber(gf?.longitude);
+    const radius = toFiniteNumber(gf?.radius) ?? 100;
+    if (latitude == null || longitude == null) return { enabled: true, targets: [] };
+    return {
+        enabled: true,
+        targets: [
+            {
+                latitude,
+                longitude,
+                radius,
+                label: branch?.branchName || 'Assigned Branch',
+            },
+        ],
+    };
+}
+
 // Helper function to get shift timing from Company settings based on shiftName
 // If shiftName is not provided, returns the first shift from the array
 function getShiftFromCompanySettings(company, shiftName = null) {
@@ -613,37 +685,49 @@ const checkIn = async (req, res) => {
             // If allowed, proceed silently (no warnings)
         }
 
-        // Geofence Logic
+        // Geofence Logic (supports multiple sub-locations via geofence.locations[])
         let activeBranch = null;
-        let officeLat, officeLng, officeName, allowedRadiusMeters;
         let isGeofenceEnabled = false;
+        let geofenceTargets = [];
+        let officeName;
 
         if (staff.branchId) {
             activeBranch = staff.branchId;
             officeName = activeBranch.branchName || "Assigned Branch";
-
-            if (activeBranch.geofence && activeBranch.geofence.enabled === true) {
-                isGeofenceEnabled = true;
-                officeLat = activeBranch.geofence.latitude;
-                officeLng = activeBranch.geofence.longitude;
-                allowedRadiusMeters = activeBranch.geofence.radius || 100;
-            } else if (activeBranch.latitude && activeBranch.longitude) {
-                isGeofenceEnabled = true;
-                officeLat = activeBranch.latitude;
-                officeLng = activeBranch.longitude;
-                allowedRadiusMeters = activeBranch.radius || 100;
-            }
+            const geofenceEval = getBranchGeofenceTargets(activeBranch);
+            isGeofenceEnabled = geofenceEval.enabled === true;
+            geofenceTargets = geofenceEval.targets || [];
         }
 
         if (isGeofenceEnabled && template.requireGeolocation !== false) {
-            if (!officeLat || !officeLng) {
-                console.warn(`[CheckIn Warning] Geofence enabled for ${officeName} but coordinates missing.`);
+            if (!Array.isArray(geofenceTargets) || geofenceTargets.length === 0) {
+                console.warn(
+                    `[CheckIn Warning] Geofence enabled for ${officeName} but no valid locations found.`
+                );
             } else {
-                const distance = getDistanceFromLatLonInKm(userLat, userLng, officeLat, officeLng);
-                const distanceInMeters = distance * 1000;
-                if (distanceInMeters > allowedRadiusMeters) {
+                let isInsideAny = false;
+                let nearest = null; // { latitude, longitude, radius, label, distanceM }
+
+                for (const t of geofenceTargets) {
+                    const distKm = getDistanceFromLatLonInKm(userLat, userLng, t.latitude, t.longitude);
+                    const distM = distKm * 1000;
+
+                    if (distM <= t.radius) {
+                        isInsideAny = true;
+                        break;
+                    }
+
+                    if (!nearest || distM < nearest.distanceM) {
+                        nearest = { ...t, distanceM: distM };
+                    }
+                }
+
+                if (!isInsideAny) {
+                    const label = nearest?.label || officeName || 'Allowed Location';
+                    const allowed = nearest?.radius ?? 0;
+                    const distance = nearest?.distanceM;
                     return res.status(400).json({
-                        message: `Check-in denied. You are ${distanceInMeters.toFixed(0)}m away. Allowed: ${allowedRadiusMeters}m.`
+                        message: `Check-in denied. You are ${distance != null ? distance.toFixed(0) : 'unknown'}m away from allowed location(s). Allowed radius: ${allowed}m. (${label})`,
                     });
                 }
             }
@@ -1132,19 +1216,51 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         }
     }
 
-    // Geofencing Check
-    if (staff.branchId && latitude && longitude && template.requireGeolocation !== false) {
+    // Geofencing Check (supports multiple sub-locations via geofence.locations[])
+    if (
+        staff.branchId &&
+        latitude !== undefined &&
+        longitude !== undefined &&
+        template.requireGeolocation !== false
+    ) {
         const activeBranch = staff.branchId;
-        if (activeBranch.geofence && activeBranch.geofence.enabled === true) {
-            const officeLat = activeBranch.geofence.latitude;
-            const officeLng = activeBranch.geofence.longitude;
-            const allowedRadius = activeBranch.geofence.radius || 100;
+        const officeName = activeBranch.branchName || "Assigned Branch";
 
-            if (officeLat && officeLng) {
-                const dist = getDistanceFromLatLonInKm(latitude, longitude, officeLat, officeLng) * 1000;
-                if (dist > allowedRadius) {
+        const userLat = parseFloat(latitude);
+        const userLng = parseFloat(longitude);
+        const geofenceEval = getBranchGeofenceTargets(activeBranch);
+
+        if (geofenceEval.enabled === true) {
+            const geofenceTargets = geofenceEval.targets || [];
+
+            if (!Array.isArray(geofenceTargets) || geofenceTargets.length === 0) {
+                console.warn(
+                    `[CheckOut Warning] Geofence enabled for ${officeName} but no valid locations found.`
+                );
+            } else if (Number.isFinite(userLat) && Number.isFinite(userLng)) {
+                let isInsideAny = false;
+                let nearest = null; // { latitude, longitude, radius, label, distanceM }
+
+                for (const t of geofenceTargets) {
+                    const distKm = getDistanceFromLatLonInKm(userLat, userLng, t.latitude, t.longitude);
+                    const distM = distKm * 1000;
+
+                    if (distM <= t.radius) {
+                        isInsideAny = true;
+                        break;
+                    }
+
+                    if (!nearest || distM < nearest.distanceM) {
+                        nearest = { ...t, distanceM: distM };
+                    }
+                }
+
+                if (!isInsideAny) {
+                    const label = nearest?.label || officeName || 'Allowed Location';
+                    const allowed = nearest?.radius ?? 0;
+                    const distance = nearest?.distanceM;
                     return res.status(400).json({
-                        message: `Check-out denied. You are ${dist.toFixed(0)}m away from branch.`
+                        message: `Check-out denied. You are ${distance != null ? distance.toFixed(0) : 'unknown'}m away from allowed location(s). Allowed radius: ${allowed}m. (${label})`,
                     });
                 }
             }
@@ -1383,7 +1499,8 @@ const getTodayAttendance = async (req, res) => {
                     enabled: geofenceEnabled,
                     latitude: lat,
                     longitude: lng,
-                    radius: b.geofence?.radius ?? b.radius ?? 100
+                    radius: b.geofence?.radius ?? b.radius ?? 100,
+                    locations: b.geofence?.locations
                 }
             };
         }

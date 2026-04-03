@@ -69,6 +69,16 @@ function logSalaryComponentsForCalc(tag, components = {}) {
 const _round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 function _componentAmountFromTemplate(comp, monthly, prorationFactor) {
+    const key = String(comp?.key || '').trim().toLowerCase();
+    const name = String(comp?.name || '').trim().toLowerCase();
+    const isBasicLike = comp?.isBasicBase === true
+        || key === 'basic'
+        || key.includes('basic')
+        || name === 'basic'
+        || name.includes('basic salary');
+    if (isBasicLike) {
+        return (Number(monthly?.basicSalary) || 0) * prorationFactor;
+    }
     const basis = String(comp?.basis || 'fixed').trim();
     const value = Number(comp?.value) || 0;
     if (basis === 'percentOfBasic') {
@@ -1114,13 +1124,12 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
         }
     });
 
-    // Paid leave days (On Leave with isPaidLeave; exclude compOff) - separate from present
+    // Paid leave days (On Leave with isPaidLeave) - separate from present.
     const paidLeaveDays = Object.entries(dateMap).reduce((sum, [date, data]) => {
         if (date > todayStr) return sum;
         const s = (data.attendanceStatus || '').trim().toLowerCase();
         const isPaid = data.isPaidLeave === true;
-        const comp = (data.compensationType || '').trim().toLowerCase();
-        if (s === 'on leave' && isPaid && comp !== 'compoff') return sum + 1;
+        if (s === 'on leave' && isPaid) return sum + 1;
         return sum;
     }, 0);
 
