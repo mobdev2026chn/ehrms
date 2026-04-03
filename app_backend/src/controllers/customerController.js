@@ -6,16 +6,12 @@ function isPrivilegedUser(req) {
   return Boolean(req.user?.role && req.user.role !== 'Employee');
 }
 
-function buildVisibleToStaffOrAllQuery({ staffId }) {
-  // visibleToStaffIds absent/empty => visible to all staff
-  // visibleToStaffIds includes staffId => visible to that staff
-  return {
-    $or: [
-      { visibleToStaffIds: { $exists: false } },
-      { visibleToStaffIds: { $size: 0 } },
-      { visibleToStaffIds: { $in: [staffId] } },
-    ],
-  };
+function buildVisibleToStaffOnlyQuery({ staffId }) {
+  // Strict visibility:
+  // - visibleToStaffIds missing/empty => NOT visible to anyone
+  // - visibleToStaffIds contains staffId => visible to that staff
+  if (!staffId) return { visibleToStaffIds: { $in: [] } };
+  return { visibleToStaffIds: { $in: [staffId] } };
 }
 
 exports.createCustomer = async (req, res) => {
@@ -30,12 +26,16 @@ exports.createCustomer = async (req, res) => {
 
     let visibleToStaffIdsToSet = undefined;
     if (privileged) {
-      // Default for privileged users: empty => visible to all staff.
-      if (Array.isArray(req.body.visibleToStaffIds)) {
-        visibleToStaffIdsToSet = req.body.visibleToStaffIds;
-      } else {
-        visibleToStaffIdsToSet = [];
-      }
+      // Default: only the creating staff should see it.
+      const provided = Array.isArray(req.body.visibleToStaffIds) ? req.body.visibleToStaffIds : [];
+      const providedList = provided.filter(Boolean);
+      const creatorStr = creatorStaffId?.toString();
+      const hasCreator =
+        creatorStr && providedList.some((id) => id?.toString?.() === creatorStr);
+      visibleToStaffIdsToSet =
+        providedList.length > 0
+          ? (hasCreator ? providedList : [...providedList, creatorStaffId])
+          : (creatorStaffId ? [creatorStaffId] : []);
     } else {
       const provided = Array.isArray(req.body.visibleToStaffIds) ? req.body.visibleToStaffIds : [];
       const creatorStr = creatorStaffId?.toString();
@@ -45,7 +45,7 @@ exports.createCustomer = async (req, res) => {
         : false;
 
       if (!creatorStr) {
-        // No staff context: safest is to show nothing to employees.
+        // No staff context: safest is to show nothing to anyone.
         visibleToStaffIdsToSet = [];
       } else if (providedList.length === 0) {
         // Requirement: include creating staffId.
@@ -81,19 +81,16 @@ exports.getAllCustomers = async (req, res) => {
       return res.status(200).json([]);
     }
 
-    const privileged = isPrivilegedUser(req);
     const staffId = req.staff?._id;
 
-    const filter = privileged
-      ? { businessId }
-      : {
-          businessId,
-          ...buildVisibleToStaffOrAllQuery({ staffId }),
-        };
+    const filter = {
+      businessId,
+      ...buildVisibleToStaffOnlyQuery({ staffId }),
+    };
 
     console.log('[Customers] GET /customers - fetching with filter:', {
       businessId: businessId.toString(),
-      privileged,
+      staffId: staffId ? staffId.toString() : null,
     });
 
     const customers = await Customer.find(filter).sort({ customerName: 1 }).lean();
@@ -114,16 +111,13 @@ exports.getCustomerById = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Customer not found' });
     }
 
-    const privileged = isPrivilegedUser(req);
     const staffId = req.staff?._id;
 
-    const filter = privileged
-      ? { _id: customerId, businessId }
-      : {
-          _id: customerId,
-          businessId,
-          ...buildVisibleToStaffOrAllQuery({ staffId }),
-        };
+    const filter = {
+      _id: customerId,
+      businessId,
+      ...buildVisibleToStaffOnlyQuery({ staffId }),
+    };
 
     console.log('[Customers] GET /customers/:id - customerId:', customerId);
     const customer = await Customer.findOne(filter).lean();
@@ -157,8 +151,8 @@ exports.updateCustomer = async (req, res) => {
       const staffId = req.staff?._id;
       const visible = existing.visibleToStaffIds;
       const isAllowed =
-        !visible ||
-        (Array.isArray(visible) && visible.length === 0) ||
+        Array.isArray(visible) &&
+        visible.length > 0 &&
         (staffId && visible.some((id) => id?.toString?.() === staffId.toString()));
 
       if (!isAllowed) {
