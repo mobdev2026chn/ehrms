@@ -97,7 +97,12 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
       fineAmount: event.fineAmount,
     );
     if (result['success'] == true) {
-      emit(AttendanceCheckInSuccess());
+      emit(
+        AttendanceCheckInSuccess(
+          checkInLat: event.lat,
+          checkInLng: event.lng,
+        ),
+      );
     } else {
       emit(
         AttendanceFailure(

@@ -159,8 +159,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     });
   }
 
-  Future<void> _runPostPunchSuccessTasks(bool isCheckedIn) async {
+  Future<void> _runPostPunchSuccessTasks(
+    bool isCheckedIn, {
+    double? checkInLat,
+    double? checkInLng,
+  }) async {
     try {
+      if (isCheckedIn && checkInLat != null && checkInLng != null) {
+        await PresenceTrackingService()
+            .pinOfficeZoneAtCheckIn(checkInLat, checkInLng);
+      }
       await PresenceTrackingService().ensureTrackingIfPunchedIn(isCheckedIn);
     } catch (e) {
       if (kDebugMode) {
@@ -2044,6 +2052,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     bool isLate = false,
     bool isEarly = false,
   }) async {
+    final fullMessage =
+        await AttendanceTemplateStore.appendRequireSelfieGeolocationToMessage(
+      message,
+    );
+    if (!mounted) return;
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -2115,7 +2128,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        message,
+                        fullMessage,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 14,
@@ -4581,9 +4594,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               );
             }
           }
-          unawaited(
-            _runPostPunchSuccessTasks(state is AttendanceCheckInSuccess),
-          );
+          if (state is AttendanceCheckInSuccess) {
+            unawaited(
+              _runPostPunchSuccessTasks(
+                true,
+                checkInLat: state.checkInLat,
+                checkInLng: state.checkInLng,
+              ),
+            );
+          } else {
+            unawaited(_runPostPunchSuccessTasks(false));
+          }
         } else if (state is AttendanceFailure) {
           _setPunchActionInProgress(false);
           if (_isSubmittingFromAttendanceCamera) {
@@ -4789,6 +4810,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final requireSelfie = _attendanceTemplate?['requireSelfie'] ?? true;
     final requireGeolocation =
         _attendanceTemplate?['requireGeolocation'] ?? true;
+    if (kDebugMode) {
+      debugPrint(
+        '[Attendance][TemplateFlags][camera-submit] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${_attendanceTemplate?['name'] ?? _attendanceTemplate?['title'] ?? 'unknown'}',
+      );
+    }
     if (requireGeolocation && position == null) {
       _setPunchActionInProgress(false);
       if (mounted) Navigator.of(context).pop();
@@ -4865,6 +4891,69 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           city: city,
           pincode: pincode,
           selfie: selfiePayload,
+          lateMinutes: finePayload['lateMinutes'] as int?,
+          earlyMinutes: finePayload['earlyMinutes'] as int?,
+          fineAmount: finePayload['fineAmount'] as double?,
+        ),
+      );
+    }
+  }
+
+  /// Submits attendance without selfie (when template says `requireSelfie: false`).
+  Future<void> _submitAttendanceWithoutSelfie({
+    required Position? position,
+    required String address,
+    required String? area,
+    required String? city,
+    required String? pincode,
+    required bool isCheckedIn,
+  }) async {
+    final requireSelfie = _attendanceTemplate?['requireSelfie'] ?? true;
+    final requireGeolocation = _attendanceTemplate?['requireGeolocation'] ?? true;
+    if (kDebugMode) {
+      debugPrint(
+        '[Attendance][TemplateFlags][no-selfie-submit] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${_attendanceTemplate?['name'] ?? _attendanceTemplate?['title'] ?? 'unknown'}',
+      );
+    }
+    if (requireGeolocation && position == null) {
+      _setPunchActionInProgress(false);
+      SnackBarUtils.showSnackBar(
+        context,
+        'Location is required. Please enable location and try again.',
+        isError: true,
+      );
+      return;
+    }
+
+    final lat = position?.latitude ?? 0.0;
+    final lng = position?.longitude ?? 0.0;
+    final finePayload = await _buildFinePayloadForPunch(isCheckedIn: isCheckedIn);
+
+    if (isCheckedIn) {
+      context.read<AttendanceBloc>().add(
+        AttendanceCheckOutRequested(
+          lat: lat,
+          lng: lng,
+          address: address,
+          area: area,
+          city: city,
+          pincode: pincode,
+          selfie: null,
+          lateMinutes: finePayload['lateMinutes'] as int?,
+          earlyMinutes: finePayload['earlyMinutes'] as int?,
+          fineAmount: finePayload['fineAmount'] as double?,
+        ),
+      );
+    } else {
+      context.read<AttendanceBloc>().add(
+        AttendanceCheckInRequested(
+          lat: lat,
+          lng: lng,
+          address: address,
+          area: area,
+          city: city,
+          pincode: pincode,
+          selfie: null,
           lateMinutes: finePayload['lateMinutes'] as int?,
           earlyMinutes: finePayload['earlyMinutes'] as int?,
           fineAmount: finePayload['fineAmount'] as double?,
@@ -5367,35 +5456,72 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     if (!mounted) return;
 
-    final location = await _getCurrentLocation();
-    if (!mounted) return;
-    final requireGeolocation =
-        _attendanceTemplate?['requireGeolocation'] ?? true;
-    if (requireGeolocation && location.position == null) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Location is required. Please enable location and try again.',
-        isError: true,
+    final requireSelfie = _attendanceTemplate?['requireSelfie'] ?? true;
+    final requireGeolocation = _attendanceTemplate?['requireGeolocation'] ?? true;
+    if (kDebugMode) {
+      debugPrint(
+        '[Attendance][TemplateFlags][open-mark] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${_attendanceTemplate?['name'] ?? _attendanceTemplate?['title'] ?? 'unknown'}',
       );
-      _setPunchActionInProgress(false);
+    }
+
+    Position? position;
+    String address = '';
+    String? area;
+    String? city;
+    String? pincode;
+
+    if (requireGeolocation) {
+      final location = await _getCurrentLocation();
+      if (!mounted) return;
+      if (location.position == null) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Location is required. Please enable location and try again.',
+          isError: true,
+        );
+        _setPunchActionInProgress(false);
+        return;
+      }
+      position = location.position;
+      address = location.address;
+      area = location.area;
+      city = location.city;
+      pincode = location.pincode;
+    }
+
+    final locationStr = requireGeolocation
+        ? (address.isNotEmpty
+            ? address
+            : (area != null
+                ? '${area}, ${city ?? ''}${pincode != null ? ' ${pincode}' : ''}'
+                : null))
+        : 'Location not required';
+
+    if (!requireSelfie) {
+      await _submitAttendanceWithoutSelfie(
+        position: position,
+        address: address,
+        area: area,
+        city: city,
+        pincode: pincode,
+        isCheckedIn: isCheckedIn,
+      );
       return;
     }
-    final locationStr = location.address.isNotEmpty
-        ? location.address
-        : (location.area != null
-              ? '${location.area}, ${location.city ?? ''}${location.pincode != null ? ' ${location.pincode}' : ''}'
-              : null);
+
     final result = await SelfieCameraScreen.captureSelfie(
       context,
       location: locationStr,
-      onRefreshLocation: () async {
-        final loc = await _getCurrentLocation();
-        return loc.address.isNotEmpty
-            ? loc.address
-            : (loc.area != null
-                  ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
-                  : null);
-      },
+      onRefreshLocation: requireGeolocation
+          ? () async {
+              final loc = await _getCurrentLocation();
+              return loc.address.isNotEmpty
+                  ? loc.address
+                  : (loc.area != null
+                      ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
+                      : null);
+            }
+          : null,
     );
     if (!mounted) return;
     File? file;
@@ -5414,13 +5540,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       _setPunchActionInProgress(false);
       return;
     }
+
     await _submitAttendanceFromCameraFile(
       file,
-      position: location.position,
-      address: location.address,
-      area: location.area,
-      city: location.city,
-      pincode: location.pincode,
+      position: position,
+      address: address,
+      area: area,
+      city: city,
+      pincode: pincode,
       isCheckedIn: isCheckedIn,
     );
     // Success/failure handled in BlocListener

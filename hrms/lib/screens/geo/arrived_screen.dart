@@ -5,7 +5,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hrms/config/app_colors.dart';
-import 'package:hrms/config/constants.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/exit_ride_bottom_sheet.dart';
 import 'package:hrms/screens/geo/form_fill_screen.dart';
@@ -634,6 +633,34 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                           _destinationDisplayLat,
                           _destinationDisplayLng,
                         ),
+                        if ((task ?? widget.task)?.arrivalLocation
+                                ?.overridencustomerlocation ==
+                            true)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Text(
+                              'Arrival differs from customer location (>50m).',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.orange.shade800,
+                              ),
+                            ),
+                          ),
+                        if ((task ?? widget.task)?.arrivalLocation
+                                ?.overridendestinationlocation ==
+                            true)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              'Arrival differs from destination (>50m).',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.orange.shade800,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),

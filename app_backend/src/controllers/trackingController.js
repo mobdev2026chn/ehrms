@@ -14,6 +14,8 @@ const {
 const { reverseGeocode } = require('../services/geocodingService');
 const { markLatestPresenceTrackingInactiveForStaff } = require('../services/presenceTrackingStatusService');
 const { parseTimestamp } = require('../utils/dateUtils');
+const { resolveBusinessTimezone, computeDailyTaskCountForStaff } = require('../utils/trackingTaskCount');
+const { isLatLngInsideBranchGeofence, getBranchGeofenceTargets } = require('../utils/branchGeofence');
 const { logTrackingWrite, shouldLogTrackings } = require('../utils/trackingLogger');
 
 /** Build location object per spec: { lat, lng, address?, pincode?, recordedAt } */
@@ -57,6 +59,10 @@ function extractCustomerLatLng(customer) {
     { lat: customer.geofence?.lat, lng: customer.geofence?.lng },
     { lat: customer.customFields?.latitude, lng: customer.customFields?.longitude },
     { lat: customer.customFields?.lat, lng: customer.customFields?.lng },
+    { lat: customer.customFields?.location?.latitude, lng: customer.customFields?.location?.longitude },
+    { lat: customer.customFields?.location?.lat, lng: customer.customFields?.location?.lng },
+    { lat: customer.customFields?.geofence?.latitude, lng: customer.customFields?.geofence?.longitude },
+    { lat: customer.customFields?.geofence?.lat, lng: customer.customFields?.geofence?.lng },
   ];
 
   for (const c of candidates) {
@@ -280,31 +286,29 @@ function computeTravelSegment(startPoint, endLat, endLng, endTime, isArrived) {
 }
 
 /** Compute presenceStatus: 'task' if task in_progress, else 'in_office' if within staff's branch geofence, else 'out_of_office'.
- * Uses staff.branchId to find branch in branches collection and its geofence lat/lng/radius. */
+ * Uses the same multi-circle rules as attendance (geofence.locations[] + legacy fallbacks). */
 async function computePresenceStatus(taskStatus, lat, lng, branchId) {
   const statusLower = String(taskStatus || '').toLowerCase();
   if (statusLower === 'in_progress') return 'task';
 
   if (!branchId) return 'out_of_office';
-  const branch = await Branch.findById(branchId).select('geofence').lean();
-  const gf = branch?.geofence;
-  if (!gf?.enabled || gf?.latitude == null || gf?.longitude == null) return 'out_of_office';
+  const branch = await Branch.findById(branchId)
+    .select('geofence branchName latitude longitude radius')
+    .lean();
+  if (!branch) return 'out_of_office';
 
-  const radius = gf.radius ?? 100;
-  const distM = haversineDistanceM(Number(lat), Number(lng), gf.latitude, gf.longitude);
-  return distM <= radius ? 'in_office' : 'out_of_office';
+  return isLatLngInsideBranchGeofence(branch, lat, lng, 0) ? 'in_office' : 'out_of_office';
 }
 
-/** Compute presenceStatus for staff presence (no task): 'in_office' if within branch geofence, else 'out_of_office'. */
-async function computePresenceStatusForOffice(lat, lng, branchId) {
+/** Compute presenceStatus for staff presence (no task): same geofence rules as check-in. Optional accuracy (m) widens circles slightly. */
+async function computePresenceStatusForOffice(lat, lng, branchId, accuracyM = 0) {
   if (!branchId) return 'out_of_office';
-  const branch = await Branch.findById(branchId).select('geofence').lean();
-  const gf = branch?.geofence;
-  if (!gf?.enabled || gf?.latitude == null || gf?.longitude == null) return 'out_of_office';
+  const branch = await Branch.findById(branchId)
+    .select('geofence branchName latitude longitude radius')
+    .lean();
+  if (!branch) return 'out_of_office';
 
-  const radius = gf.radius ?? 200;
-  const distM = haversineDistanceM(Number(lat), Number(lng), gf.latitude, gf.longitude);
-  return distM <= radius ? 'in_office' : 'out_of_office';
+  return isLatLngInsideBranchGeofence(branch, lat, lng, accuracyM) ? 'in_office' : 'out_of_office';
 }
 
 /**
@@ -370,7 +374,7 @@ async function validateAttendanceForPresence(staffId) {
  * POST /api/tracking/presence/store
  * Body: { lat, lng, timestamp?, batteryPercent?, movementType?, accuracy?, presenceStatus?, status?, appStatus?, address?, fullAddress?, city?, area?, pincode? }
  * Stores presence tracking point. Attendance-validated: only when checked in, not checked out, not on leave.
- * presenceStatus: 'in_office' | 'out_of_office' | 'task' (server computes if not sent)
+ * presenceStatus: always computed server-side from branch geofence (same rules as check-in).
  * status: backend-managed active/inactive for fresh/stale presence tracking
  * appStatus: app lifecycle state from client (active | inactive | offline | app_background | app_closed)
  */
@@ -383,7 +387,6 @@ exports.storePresenceTracking = async (req, res) => {
       batteryPercent,
       movementType,
       accuracy,
-      presenceStatus: clientPresenceStatus,
       status: clientStatus,
       appStatus: clientAppStatus,
       address,
@@ -409,10 +412,14 @@ exports.storePresenceTracking = async (req, res) => {
     }
 
     const branchId = req.staff?.branchId;
-    const resolvedPresenceStatus =
-      clientPresenceStatus && ['in_office', 'out_of_office', 'task'].includes(clientPresenceStatus)
-        ? clientPresenceStatus
-        : await computePresenceStatusForOffice(Number(lat), Number(lng), branchId);
+    const accuracyM = accuracy != null ? Number(accuracy) : 0;
+    // Always derive from branch geofence (matches check-in); avoids client/server mismatches on multi-location branches.
+    const resolvedPresenceStatus = await computePresenceStatusForOffice(
+      Number(lat),
+      Number(lng),
+      branchId,
+      accuracyM,
+    );
 
     const hasClientAddress =
       [address, fullAddress, city, area, pincode].some(
@@ -517,17 +524,32 @@ exports.getPresenceTrackingStatus = async (req, res) => {
     const validation = await validateAttendanceForPresence(staffId);
     const staff = await Staff.findById(staffId)
       .select('branchId')
-      .populate('branchId', 'branchName geofence')
+      .populate('branchId', 'branchName latitude longitude radius geofence')
       .lean();
 
+    /** Full office circle(s) for the app — same rules as attendance (locations[] + legacy). Web check-in has no app pin; client compares against this. */
     let branchGeofence = null;
-    if (staff?.branchId?.geofence?.enabled) {
-      const gf = staff.branchId.geofence;
-      branchGeofence = {
-        latitude: gf.latitude,
-        longitude: gf.longitude,
-        radius: gf.radius ?? 200,
-      };
+    const branch = staff?.branchId;
+    if (branch && typeof branch === 'object') {
+      const ge = getBranchGeofenceTargets(branch);
+      if (ge.enabled && ge.targets.length > 0) {
+        branchGeofence = {
+          enabled: true,
+          targets: ge.targets.map((t) => {
+            const o = {
+              latitude: t.latitude,
+              longitude: t.longitude,
+              radius: t.radius,
+            };
+            if (t.label) o.label = t.label;
+            return o;
+          }),
+        };
+        const t0 = ge.targets[0];
+        branchGeofence.latitude = t0.latitude;
+        branchGeofence.longitude = t0.longitude;
+        branchGeofence.radius = t0.radius;
+      }
     }
 
     res.status(200).json({
@@ -636,6 +658,14 @@ exports.storeTracking = async (req, res) => {
     const resolvedAddress = hasUsableAddressSnapshot(clientAddress)
       ? clientAddress
       : buildAddressSnapshot(geo);
+    const atTime = parseTimestamp(timestamp);
+    const bizTz = await resolveBusinessTimezone(req.staff);
+    const taskCount = await computeDailyTaskCountForStaff({
+      staffId: staffIdObj || staffId,
+      taskId: task._id,
+      atTime,
+      timeZone: bizTz,
+    });
     const trackingDoc = {
       taskId: task._id,
       staffId: staffIdObj || staffId,
@@ -643,7 +673,7 @@ exports.storeTracking = async (req, res) => {
       latitude: Number(lat),
       longitude: Number(lng),
       presenceStatus,
-      timestamp: parseTimestamp(timestamp),
+      timestamp: atTime,
       batteryPercent: batteryPercent != null ? Number(batteryPercent) : undefined,
       movementType: movementType || undefined,
       destinationLat: destinationLat != null ? Number(destinationLat) : undefined,
@@ -653,6 +683,7 @@ exports.storeTracking = async (req, res) => {
       city: resolvedAddress?.city || undefined,
       area: resolvedAddress?.area || undefined,
       pincode: resolvedAddress?.pincode || undefined,
+      taskCount,
     };
     const saved = await Tracking.create(trackingDoc);
     logTrackingWrite('task_store_saved', {
@@ -821,6 +852,13 @@ exports.exitTracking = async (req, res) => {
     };
     await upsertTaskDetails(fullDoc);
 
+    const bizTz = await resolveBusinessTimezone(req.staff);
+    const taskCount = await computeDailyTaskCountForStaff({
+      staffId: staffIdObj || staffId,
+      taskId: task._id,
+      atTime: exitNow,
+      timeZone: bizTz,
+    });
     const trackingDoc = {
       taskId: task._id,
       staffId: staffIdObj || staffId,
@@ -832,9 +870,11 @@ exports.exitTracking = async (req, res) => {
       exitReason: exitRecord.exitReason,
       exitedAt: exitRecord.exitedAt,
       time: exitRecord.exitedAt,
+      timestamp: exitNow,
       address: exitAddress,
       fullAddress: exitAddress,
       pincode: geo?.pincode || undefined,
+      taskCount,
     };
     const savedExit = await Tracking.create(trackingDoc);
     logTrackingWrite('task_exit', {
@@ -998,7 +1038,7 @@ exports.arrivedTracking = async (req, res) => {
 
     // Compute override flags for staff "Arrived" tap.
     // 1) Arrival vs customer's stored GPS: true when arrival is farther than ~50m.
-    // 2) Destination override: true when destination was marked changed before arrival.
+    // 2) Destination override: true when arrival is farther than ~50m from the last destinationLocation.
     let overridenCustomerlocation = false;
     const customerId = details?.customerId || task.customerId;
     if (customerId) {
@@ -1009,7 +1049,24 @@ exports.arrivedTracking = async (req, res) => {
         overridenCustomerlocation = distM > 50;
       }
     }
-    const overridendestinationlocation = details?.destinationChanged === true;
+    // "Last destination" is stored in task_details.destinationLocation.
+    // Mark override when staff arrived > 50m away from that last destination.
+    let overridendestinationlocation = false;
+    const destination = details?.destinationLocation;
+    const destinationLat = destination?.lat ?? destination?.latitude;
+    const destinationLng = destination?.lng ?? destination?.longitude;
+    if (destinationLat != null && destinationLng != null) {
+      const distM = haversineDistanceM(
+        arrivalLat,
+        arrivalLng,
+        Number(destinationLat),
+        Number(destinationLng),
+      );
+      overridendestinationlocation = distM > 50;
+    } else {
+      // Backward compat fallback: older documents might rely on destinationChanged only.
+      overridendestinationlocation = details?.destinationChanged === true;
+    }
 
     arrivalLocation.overridencustomerlocation = overridenCustomerlocation;
     arrivalLocation.overridendestinationlocation = overridendestinationlocation;
@@ -1065,7 +1122,7 @@ exports.arrivedTracking = async (req, res) => {
     const taskTravelDistance = [...(details?.taskTravelDistance || []), { segment: travelSegment.segment, endType: travelSegment.endType, distanceKm: travelSegment.distanceKm, endTime: travelSegment.endTime }];
 
     await Task.findByIdAndUpdate(taskId, {
-      
+
       $set: { status: 'arrived' },
       $unset: buildUnsetExtended(),
     });
@@ -1078,6 +1135,13 @@ exports.arrivedTracking = async (req, res) => {
     };
     await upsertTaskDetails(fullDoc);
 
+    const bizTz = await resolveBusinessTimezone(req.staff);
+    const taskCount = await computeDailyTaskCountForStaff({
+      staffId: staffIdObj || staffId,
+      taskId: task._id,
+      atTime: now,
+      timeZone: bizTz,
+    });
     const trackingDoc = {
       taskId: task._id,
       staffId: staffIdObj || staffId,
@@ -1091,6 +1155,7 @@ exports.arrivedTracking = async (req, res) => {
       pincode: resolvedPincode,
       time: now,
       timestamp: now,
+      taskCount,
     };
     const savedArrived = await Tracking.create(trackingDoc);
     logTrackingWrite('task_arrived', {

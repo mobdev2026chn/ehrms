@@ -50,7 +50,14 @@ class AttendanceStatusLoaded extends AttendanceState {
   ];
 }
 
-class AttendanceCheckInSuccess extends AttendanceState {}
+/// Carries check-in coordinates so presence tracking can pin the office geofence zone once.
+class AttendanceCheckInSuccess extends AttendanceState {
+  final double? checkInLat;
+  final double? checkInLng;
+  const AttendanceCheckInSuccess({this.checkInLat, this.checkInLng});
+  @override
+  List<Object?> get props => [checkInLat, checkInLng];
+}
 
 class AttendanceCheckOutSuccess extends AttendanceState {}
 

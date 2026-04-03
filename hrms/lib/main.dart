@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -24,29 +25,37 @@ const Duration _defaultBackgroundLocationInterval = Duration(minutes: 1);
 
 @pragma('vm:entry-point')
 void backgroundCallback() {
-  BackgroundLocationTrackerManager.handleBackgroundUpdated((data) async {
-    final lat = data.lat;
-    final lon = data.lon;
-    final speedMps = data.speed;
-    int? batteryPercent;
-    try {
-      batteryPercent = await Battery().batteryLevel;
-    } catch (_) {}
-    await LiveTrackingService.sendTrackingFromBackground(
-      lat,
-      lon,
-      batteryPercent: batteryPercent,
-      speedMps: speedMps,
-      accuracyM: data.horizontalAccuracy,
-    );
-    await PresenceTrackingService.sendPresenceFromBackground(
-      lat,
-      lon,
-      batteryPercent: batteryPercent,
-      accuracyM: data.horizontalAccuracy,
-      speedMps: speedMps,
-    );
-  });
+  try {
+    BackgroundLocationTrackerManager.handleBackgroundUpdated((data) async {
+      final lat = data.lat;
+      final lon = data.lon;
+      final speedMps = data.speed;
+      int? batteryPercent;
+      try {
+        batteryPercent = await Battery().batteryLevel;
+      } catch (_) {}
+      await LiveTrackingService.sendTrackingFromBackground(
+        lat,
+        lon,
+        batteryPercent: batteryPercent,
+        speedMps: speedMps,
+        accuracyM: data.horizontalAccuracy,
+      );
+      await PresenceTrackingService.sendPresenceFromBackground(
+        lat,
+        lon,
+        batteryPercent: batteryPercent,
+        accuracyM: data.horizontalAccuracy,
+        speedMps: speedMps,
+      );
+    });
+  } on MissingPluginException catch (e) {
+    // When background_location_tracker isn't properly registered on a device,
+    // plugin calls can throw MissingPluginException in background isolate.
+    debugPrint('[backgroundCallback] MissingPluginException ignored: $e');
+  } catch (e, st) {
+    debugPrint('[backgroundCallback] failed: $e $st');
+  }
 }
 
 void main() {

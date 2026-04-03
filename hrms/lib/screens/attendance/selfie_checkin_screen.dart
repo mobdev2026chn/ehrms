@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -113,6 +114,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   void _determinePositionFromTemplate() {
     final template = _effectiveTemplate ?? widget.template;
     final requireGeolocation = template?['requireGeolocation'] ?? true;
+    print(
+      '[SelfieCheckInScreen][TemplateFlags][determine-position] requireGeolocation=$requireGeolocation',
+    );
     if (requireGeolocation) {
       _determinePosition();
     } else {
@@ -125,6 +129,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   Future<void> _maybeShowPermissionDialog() async {
     final requireSelfie = _template?['requireSelfie'] ?? true;
     final requireGeolocation = _template?['requireGeolocation'] ?? true;
+    print(
+      '[SelfieCheckInScreen][TemplateFlags][permission-dialog] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation',
+    );
     if (!requireSelfie && !requireGeolocation) return;
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(_kAttendancePermissionDialogShown) == true) return;
@@ -188,7 +195,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Camera is used for your attendance selfie.',
+                        'Selfie required: $requireSelfie\nCamera is used for your attendance selfie.',
                         style: TextStyle(
                           fontSize: 14,
                           height: 1.4,
@@ -211,7 +218,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Location is used to record your check-in and check-out place.',
+                        'Location required: $requireGeolocation\nLocation is used to record your check-in and check-out place.',
                         style: TextStyle(
                           fontSize: 14,
                           height: 1.4,
@@ -276,6 +283,19 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
         _isCompleted = state.isCompleted;
         _isStatusLoading = false;
       });
+      final tmpl = _template;
+      final branch = state.branchData;
+      if (tmpl != null && branch != null) {
+        unawaited(
+          AttendanceTemplateStore.saveTemplateDetails(<String, dynamic>{
+            'template': tmpl,
+            'branch': branch,
+            'shiftAssigned': true,
+            'checkInAllowed': state.checkInAllowed,
+            'checkOutAllowed': state.checkOutAllowed,
+          }),
+        );
+      }
     } else if (state is AttendanceFailure) {
       if (!mounted) return;
       setState(() {
@@ -312,6 +332,11 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
               'To continue recording your attendance location while the app is in the background or the screen is off, this app needs "Allow all the time" location access.\n\n'
               'Your location is used only for attendance presence tracking and is sent to your organization\'s HRMS server.',
         );
+      }
+      final pinLat = state.checkInLat;
+      final pinLng = state.checkInLng;
+      if (pinLat != null && pinLng != null) {
+        await PresenceTrackingService().pinOfficeZoneAtCheckIn(pinLat, pinLng);
       }
       await PresenceTrackingService().ensureTrackingIfPunchedIn(true);
       final userName = await _authService.getCurrentUserName();
@@ -556,6 +581,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     final requireSelfie = _template?['requireSelfie'] ?? true;
     final bool requireGeolocation =
         _template?['requireGeolocation'] ?? true;
+    print(
+      '[SelfieCheckInScreen][TemplateFlags][submit] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation hasSelfie=${_imageFile != null} hasPosition=${_position != null}',
+    );
     if (requireSelfie && _imageFile == null) {
       SnackBarUtils.showSnackBar(
         context,

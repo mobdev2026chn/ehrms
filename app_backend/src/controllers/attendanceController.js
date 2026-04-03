@@ -12,6 +12,7 @@ const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
 const { getHolidayTemplateForStaff, getHolidayForDate, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
 const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const digitalOceanService = require('../services/digitalOceanService');
+const { getBranchGeofenceTargets } = require('../utils/branchGeofence');
 
 /** Build a single address string from address, area, city, pincode. */
 function buildAddressString(address, area, city, pincode) {
@@ -97,78 +98,6 @@ function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
 
 function deg2rad(deg) {
     return deg * (Math.PI / 180);
-}
-
-function toFiniteNumber(value) {
-    if (value === null || value === undefined) return null;
-    const num = typeof value === 'number' ? value : parseFloat(String(value));
-    return Number.isFinite(num) ? num : null;
-}
-
-/**
- * Returns geofence validation targets for a branch.
- * Priority:
- * 1) If `branch.geofence.enabled === true` and `branch.geofence.locations[]` exists, use those circles.
- * 2) Otherwise fall back to the single `branch.geofence.latitude/longitude/radius` circle.
- * 3) Legacy: if no `geofence.enabled`, but `branch.latitude/longitude` exist, use them.
- */
-function getBranchGeofenceTargets(branch) {
-    const gf = branch?.geofence;
-    const geofenceEnabled = gf?.enabled === true;
-
-    // Legacy fallback (top-level latitude/longitude on Branch).
-    if (!geofenceEnabled) {
-        const legacyLat = toFiniteNumber(branch?.latitude);
-        const legacyLng = toFiniteNumber(branch?.longitude);
-        if (legacyLat != null && legacyLng != null) {
-            const radius = toFiniteNumber(branch?.radius) ?? 100;
-            return {
-                enabled: true,
-                targets: [
-                    {
-                        latitude: legacyLat,
-                        longitude: legacyLng,
-                        radius,
-                        label: branch?.branchName || 'Assigned Branch',
-                    },
-                ],
-            };
-        }
-        return { enabled: false, targets: [] };
-    }
-
-    // Multi-location mode.
-    const locations = gf?.locations;
-    if (Array.isArray(locations) && locations.length > 0) {
-        const targets = locations
-            .map((l) => {
-                const latitude = toFiniteNumber(l?.latitude ?? l?.lat);
-                const longitude = toFiniteNumber(l?.longitude ?? l?.lng);
-                const radius = toFiniteNumber(l?.radius) ?? toFiniteNumber(gf?.radius) ?? 100;
-                const label = l?.label ?? l?.name ?? null;
-                if (latitude == null || longitude == null) return null;
-                return { latitude, longitude, radius, label };
-            })
-            .filter(Boolean);
-        return { enabled: true, targets };
-    }
-
-    // Single-location fallback.
-    const latitude = toFiniteNumber(gf?.latitude);
-    const longitude = toFiniteNumber(gf?.longitude);
-    const radius = toFiniteNumber(gf?.radius) ?? 100;
-    if (latitude == null || longitude == null) return { enabled: true, targets: [] };
-    return {
-        enabled: true,
-        targets: [
-            {
-                latitude,
-                longitude,
-                radius,
-                label: branch?.branchName || 'Assigned Branch',
-            },
-        ],
-    };
 }
 
 // Helper function to get shift timing from Company settings based on shiftName
@@ -585,6 +514,12 @@ const checkIn = async (req, res) => {
             .populate('holidayTemplateId');
         const templateDoc = await loadAttendanceTemplateForStaff(staff);
         const template = normalizeTemplate(templateDoc);
+        console.log('[Attendance checkIn] template flags', {
+            staffId: staffId?.toString(),
+            templateName: template?.name ?? null,
+            requireSelfie: template?.requireSelfie,
+            requireGeolocation: template?.requireGeolocation
+        });
 
         // Salary must be configured to allow check-in (required for fine/late/early storage and payroll)
         const salaryStructure = staff.salary ? calculateSalaryStructure(staff.salary) : null;
@@ -1037,6 +972,12 @@ const checkOut = async (req, res) => {
         }
         const templateDoc = await loadAttendanceTemplateForStaff(staff);
         const template = normalizeTemplate(templateDoc);
+        console.log('[Attendance checkOut] template flags', {
+            staffId: staffId?.toString(),
+            templateName: template?.name ?? null,
+            requireSelfie: template?.requireSelfie,
+            requireGeolocation: template?.requireGeolocation
+        });
 
         // Find today's attendance
         const attendance = await Attendance.findOne({
