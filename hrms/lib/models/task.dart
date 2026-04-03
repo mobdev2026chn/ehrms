@@ -32,12 +32,21 @@ class TaskLocation {
   final String? fullAddress;
   final String? pincode;
 
+  /// When staff tapped "Arrived", backend may compute whether the arrival GPS
+  /// differs from the customer's stored GPS (~50m threshold).
+  final bool? overridencustomerlocation;
+
+  /// When staff changed destination before arrival, backend may compute this.
+  final bool? overridendestinationlocation;
+
   const TaskLocation({
     required this.lat,
     required this.lng,
     this.address,
     this.fullAddress,
     this.pincode,
+    this.overridencustomerlocation,
+    this.overridendestinationlocation,
   });
 
   String? get displayAddress => address ?? fullAddress;
@@ -50,6 +59,10 @@ class TaskLocation {
       address: json['address'] as String?,
       fullAddress: json['fullAddress'] as String?,
       pincode: json['pincode'] as String?,
+      overridencustomerlocation:
+          json['overridencustomerlocation'] as bool?,
+      overridendestinationlocation:
+          json['overridendestinationlocation'] as bool?,
     );
   }
 
@@ -59,6 +72,10 @@ class TaskLocation {
     if (address != null) 'address': address,
     if (fullAddress != null) 'fullAddress': fullAddress,
     if (pincode != null) 'pincode': pincode,
+    if (overridencustomerlocation != null)
+      'overridencustomerlocation': overridencustomerlocation,
+    if (overridendestinationlocation != null)
+      'overridendestinationlocation': overridendestinationlocation,
   };
 }
 
