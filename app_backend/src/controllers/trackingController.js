@@ -1065,6 +1065,7 @@ exports.arrivedTracking = async (req, res) => {
     const taskTravelDistance = [...(details?.taskTravelDistance || []), { segment: travelSegment.segment, endType: travelSegment.endType, distanceKm: travelSegment.distanceKm, endTime: travelSegment.endTime }];
 
     await Task.findByIdAndUpdate(taskId, {
+      
       $set: { status: 'arrived' },
       $unset: buildUnsetExtended(),
     });
