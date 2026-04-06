@@ -11,6 +11,13 @@ function getStaffAttendanceTemplateObjectId(staff) {
     return v;
 }
 
+/** ObjectId from Staff.businessId — same pattern when businessId is populated (Company doc). */
+function normalizeBusinessIdRef(value) {
+    if (value == null) return null;
+    if (typeof value === 'object' && value._id != null) return value._id;
+    return value;
+}
+
 /**
  * Load AttendanceTemplate for this staff. Returns null if id missing, document missing,
  * or template.businessId !== staff.businessId when both are set.
@@ -28,13 +35,15 @@ async function loadAttendanceTemplateForStaff(staff) {
         });
         return null;
     }
-    if (staff.businessId && doc.businessId) {
-        if (String(doc.businessId) !== String(staff.businessId)) {
+    const staffBizId = normalizeBusinessIdRef(staff.businessId);
+    const templateBizId = normalizeBusinessIdRef(doc.businessId);
+    if (staffBizId && templateBizId) {
+        if (String(templateBizId) !== String(staffBizId)) {
             console.warn('[AttendanceTemplate] document businessId does not match staff.businessId', {
                 staffId: staff._id?.toString?.(),
-                staffBusinessId: String(staff.businessId),
+                staffBusinessId: String(staffBizId),
                 attendanceTemplateId: String(templateId),
-                templateBusinessId: String(doc.businessId)
+                templateBusinessId: String(templateBizId)
             });
             return null;
         }

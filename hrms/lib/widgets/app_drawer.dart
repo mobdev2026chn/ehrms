@@ -14,8 +14,6 @@ import '../screens/profile/profile_screen.dart';
 import '../screens/performance/performance_module_screen.dart';
 import '../screens/announcements/announcements_screen.dart';
 import '../screens/grievance/grievance_shell_screen.dart';
-import '../screens/interaction/interaction_shell_screen.dart';
-
 
 class AppDrawer extends StatefulWidget {
   /// Current tab index when used from Dashboard (0=Dashboard, 1=Requests, 2=Salary, 3=Holidays, 4=Attendance).
@@ -185,17 +183,7 @@ class _AppDrawerState extends State<AppDrawer> {
                     },
                   ),
                 // My Learning and Live Sessions hidden from drawer
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.forum_outlined,
-                  title: 'Interaction',
-                  onTap: () {
-                    Navigator.pop(context);
-                    Future.microtask(
-                      () => _navigateAndClearStack(const InteractionShellScreen()),
-                    );
-                  },
-                ),
+                // Interaction (chat/polls) temporarily hidden from drawer.
                 _buildDrawerItem(
                   context: context,
                   icon: Icons.campaign_rounded,
