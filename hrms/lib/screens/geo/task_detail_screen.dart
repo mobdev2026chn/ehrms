@@ -288,8 +288,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       _destinationLatLng = destLatLng;
     });
 
-    final currentPos = position!;
-    final dest = destLatLng!;
+    final currentPos = position;
+    final dest = destLatLng;
 
     // Actual GPS path until Arrived (from Tracking) — not straight Directions route
     if (task.id != null && task.id!.isNotEmpty) {
@@ -1052,8 +1052,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   ({String? source, String? destination, String body}) _parseSourceDestination(
     String? desc,
   ) {
-    if (desc == null || desc.trim().isEmpty)
+    if (desc == null || desc.trim().isEmpty) {
       return (source: null, destination: null, body: desc ?? '');
+    }
     String? source;
     String? destination;
     final lines = desc.split('\n');
@@ -1411,7 +1412,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       return '${h}h ${m}m';
     }
     if (remainderSecs > 0) {
-      return '${mins} min${mins == 1 ? '' : 's'} ${remainderSecs} secs';
+      return '$mins min${mins == 1 ? '' : 's'} $remainderSecs secs';
     }
     return mins == 1 ? '1 min' : '$mins mins';
   }
@@ -1786,7 +1787,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               _summaryDivider(),
             _summaryRow(
               'Distance Travelled',
-              '${distanceKm!.toStringAsFixed(2)} km',
+              '${distanceKm.toStringAsFixed(2)} km',
             ),
           ],
           if (_showOtpRow) ...[

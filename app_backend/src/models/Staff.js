@@ -24,6 +24,10 @@ const staffSchema = new mongoose.Schema({
         enum: ['Intern', 'Employee']
     },
     shiftName: { type: String },
+    /** Embedded company shift _id when stored explicitly (else shiftName may hold the same hex string). */
+    shiftId: { type: mongoose.Schema.Types.ObjectId, default: null },
+    /** When true, checkout may record overtime minutes (shift end + otBufferMinutes logic). */
+    overtimeEligible: { type: Boolean, default: false },
     attendanceTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'AttendanceTemplate' },
     // Salary template assignment used by payroll payable-days rule resolution.
     salaryTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryTemplate' },

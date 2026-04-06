@@ -305,7 +305,7 @@ Map<String, dynamic>? flattenTodayAttendancePayload(dynamic apiBody) {
   final out = <String, dynamic>{};
   final inner = root['data'];
   if (inner is Map) {
-    out.addAll(Map<String, dynamic>.from(inner as Map));
+    out.addAll(Map<String, dynamic>.from(inner));
   }
   const keysFromRoot = <String>[
     'isHoliday',
@@ -324,6 +324,18 @@ Map<String, dynamic>? flattenTodayAttendancePayload(dynamic apiBody) {
     'hasPunchIn',
     'hasPunchOut',
     'checkedIn',
+    'punchIn',
+    'punchOut',
+    'status',
+    'leaveType',
+    'session',
+    'halfDaySession',
+    'address',
+    'fineAmount',
+    'fineHours',
+    'lateMinutes',
+    'earlyMinutes',
+    'netPerDaySalary',
   ];
   for (final k in keysFromRoot) {
     if (root.containsKey(k)) out[k] = root[k];

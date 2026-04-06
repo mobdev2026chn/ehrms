@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
+import 'package:intl/intl.dart';
 import '../config/constants.dart';
 import '../utils/error_message_utils.dart';
 import 'api_client.dart';
@@ -226,10 +227,12 @@ class AttendanceService {
 
   Future<Map<String, dynamic>> getTodayAttendance({
     bool forceRefresh = false,
+    String? date,
   }) async {
     try {
+      final nowStr = date ?? DateFormat('yyyy-MM-dd').format(DateTime.now());
       const endpointPath = '/attendance/today';
-      final url = '$baseUrl$endpointPath';
+      final url = '$baseUrl$endpointPath?date=$nowStr';
 
       // Invalidate cache if it's from a different day
       if (_cachedTodayAttendance != null) {
@@ -244,12 +247,12 @@ class AttendanceService {
       }
 
       // Return cached value if available and not forced to refresh
-      if (!forceRefresh && _cachedTodayAttendance != null) {
+      if (!forceRefresh && date == null && _cachedTodayAttendance != null) {
         return {'success': true, 'data': _cachedTodayAttendance};
       }
 
       // Throttle repeated calls within a short window
-      if (_isThrottled(url)) {
+      if (date == null && _isThrottled(url)) {
         // If we have cache, return it, otherwise surface a friendly message
         if (_cachedTodayAttendance != null) {
           return {'success': true, 'data': _cachedTodayAttendance};
@@ -263,7 +266,11 @@ class AttendanceService {
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
-      final response = await _api.dio.get<Map<String, dynamic>>(endpointPath);
+// Fetching today's attendance data for the current user
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        endpointPath,
+        queryParameters: {'date': nowStr},
+      );
       final data = response.data ?? {};
 
       if (data['template'] != null) {

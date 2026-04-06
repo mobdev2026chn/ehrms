@@ -54,11 +54,21 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
 
   @override
   void dispose() {
-    for (final c in _strengthsControllers) c.dispose();
-    for (final c in _areasControllers) c.dispose();
-    for (final c in _achievementsControllers) c.dispose();
-    for (final c in _challengesControllers) c.dispose();
-    for (final c in _goalsAchievedControllers) c.dispose();
+    for (final c in _strengthsControllers) {
+      c.dispose();
+    }
+    for (final c in _areasControllers) {
+      c.dispose();
+    }
+    for (final c in _achievementsControllers) {
+      c.dispose();
+    }
+    for (final c in _challengesControllers) {
+      c.dispose();
+    }
+    for (final c in _goalsAchievedControllers) {
+      c.dispose();
+    }
     _commentsController.dispose();
     super.dispose();
   }
@@ -77,11 +87,21 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
         if (review != null) {
           final sr = review['selfReview'] as Map<String, dynamic>?;
           if (sr != null) {
-            for (final c in _strengthsControllers) c.dispose();
-            for (final c in _areasControllers) c.dispose();
-            for (final c in _achievementsControllers) c.dispose();
-            for (final c in _challengesControllers) c.dispose();
-            for (final c in _goalsAchievedControllers) c.dispose();
+            for (final c in _strengthsControllers) {
+              c.dispose();
+            }
+            for (final c in _areasControllers) {
+              c.dispose();
+            }
+            for (final c in _achievementsControllers) {
+              c.dispose();
+            }
+            for (final c in _challengesControllers) {
+              c.dispose();
+            }
+            for (final c in _goalsAchievedControllers) {
+              c.dispose();
+            }
             setState(() {
               _overallRating = (sr['overallRating'] as num?)?.toInt() ?? 0;
               _strengthsControllers.clear();
@@ -90,40 +110,45 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
                   TextEditingController(text: s?.toString() ?? ''),
                 );
               }
-              if (_strengthsControllers.isEmpty)
+              if (_strengthsControllers.isEmpty) {
                 _strengthsControllers.add(TextEditingController());
+              }
               _areasControllers.clear();
               for (final a in (sr['areasForImprovement'] as List?) ?? ['']) {
                 _areasControllers.add(
                   TextEditingController(text: a?.toString() ?? ''),
                 );
               }
-              if (_areasControllers.isEmpty)
+              if (_areasControllers.isEmpty) {
                 _areasControllers.add(TextEditingController());
+              }
               _achievementsControllers.clear();
               for (final a in (sr['achievements'] as List?) ?? ['']) {
                 _achievementsControllers.add(
                   TextEditingController(text: a?.toString() ?? ''),
                 );
               }
-              if (_achievementsControllers.isEmpty)
+              if (_achievementsControllers.isEmpty) {
                 _achievementsControllers.add(TextEditingController());
+              }
               _challengesControllers.clear();
               for (final c in (sr['challenges'] as List?) ?? ['']) {
                 _challengesControllers.add(
                   TextEditingController(text: c?.toString() ?? ''),
                 );
               }
-              if (_challengesControllers.isEmpty)
+              if (_challengesControllers.isEmpty) {
                 _challengesControllers.add(TextEditingController());
+              }
               _goalsAchievedControllers.clear();
               for (final g in (sr['goalsAchieved'] as List?) ?? ['']) {
                 _goalsAchievedControllers.add(
                   TextEditingController(text: g?.toString() ?? ''),
                 );
               }
-              if (_goalsAchievedControllers.isEmpty)
+              if (_goalsAchievedControllers.isEmpty) {
                 _goalsAchievedControllers.add(TextEditingController());
+              }
               _commentsController.text = sr['comments']?.toString() ?? '';
             });
           }

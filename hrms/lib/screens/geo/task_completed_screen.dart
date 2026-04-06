@@ -218,7 +218,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
       if (remainderSecs > 0) return '${h}h ${m}m ${remainderSecs}s';
       return '${h}h ${m}m';
     }
-    if (remainderSecs > 0) return '${mins} min${mins == 1 ? '' : 's'} ${remainderSecs} secs';
+    if (remainderSecs > 0) return '$mins min${mins == 1 ? '' : 's'} $remainderSecs secs';
     return mins == 1 ? '1 min' : '$mins mins';
   }
 

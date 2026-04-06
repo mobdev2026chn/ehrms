@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
-import 'package:hrms/widgets/bottom_navigation_bar.dart';
 
 class EndTaskScreen extends StatelessWidget {
   const EndTaskScreen({super.key});

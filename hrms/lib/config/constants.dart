@@ -1,10 +1,31 @@
 // hrms/lib/config/constants.dart
 class AppConstants {
-  /// Production API endpoint
-  // static const String baseUrl = 'http://192.168.1.33:9001/api';
-  //static const String baseUrl = 'http://127.0.0.1:9001/api';
-  static const String baseUrl = 'https://ehrms.askeva.net/api';
-  //
+  /// General app API (attendance, geo, profile, …).
+  static const String baseUrl = 'http://10.243.42.36:9001/api';
+
+  /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
+  static const String webBaseUrl = 'https://hrms.askeva.net/api';
+
+  /// When **true** (default): Interaction REST + Socket use [webBaseUrl] like the web.
+  /// With a different [baseUrl], [AuthService] performs a second `/auth/login` against [webBaseUrl]
+  /// and stores `interaction_access_token` so chat works without changing geo login.
+  /// When **false**: Interaction uses [baseUrl] (needs TypeScript `backend` with `/api/interaction` on that host).
+  static const bool interactionUseWebHost = true;
+
+  /// Prefs key: JWT for [webBaseUrl] when [baseUrl] is another server (set after web login sync).
+  static const String interactionAccessTokenPrefsKey = 'interaction_access_token';
+
+  /// REST base for `/interaction/*`.
+  static String get interactionApiBaseUrl =>
+      interactionUseWebHost ? webBaseUrl : baseUrl;
+
+  /// Socket.IO origin for Interaction (no `/api`, no trailing slash).
+  static String get interactionSocketOrigin {
+    final u = interactionApiBaseUrl;
+    if (u.endsWith('/api')) return u.substring(0, u.length - 4);
+    return u.replaceAll(RegExp(r'/+$'), '');
+  }
+
   /// Google Maps key — enable **Geocoding API** for reverse geocode (lat/lng → address in app).
   /// Also Maps SDK, Places, Directions as needed. Restrict by app + APIs in Google Cloud Console.
   static const String googleMapsApiKey =
@@ -21,8 +42,16 @@ class AppConstants {
     return u.replaceAll(RegExp(r'/+$'), '');
   }
 
+  /// Origin for Socket.IO (same server as REST; no trailing slash).
+  static String get socketOrigin {
+    final u = baseUrl;
+    if (u.endsWith('/api')) return u.substring(0, u.length - 4);
+    return u.replaceAll(RegExp(r'/+$'), '');
+  }
+
   /// Debug console: presence + live task tracking POSTs (flutter run / debug only).
-  static const bool logTrackingsToConsole = true;
+  // static const bool logTrackingsToConsole = true;
+  static const bool logTrackingsToConsole = false;
 
   /// When true, attendance selfie is verified against profile photo (face matching).
   /// When false, only on-device face detection runs; no server-side face matching.
@@ -42,8 +71,9 @@ class AppConstants {
     if (path == null || path.isEmpty) return '';
     if (path.startsWith('http://') ||
         path.startsWith('https://') ||
-        path.startsWith('data:'))
+        path.startsWith('data:')) {
       return path;
+    }
     final p = path.startsWith('/') ? path : '/$path';
     return '$fileBaseUrl$p';
   }

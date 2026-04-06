@@ -48,8 +48,9 @@ class TaskService {
       body['businessId'] = storedBusinessId;
     }
     if (sourceLocation != null) body['sourceLocation'] = sourceLocation;
-    if (destinationLocation != null)
+    if (destinationLocation != null) {
       body['destinationLocation'] = destinationLocation;
+    }
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/tasks',
       data: body,
@@ -232,8 +233,9 @@ class TaskService {
       await _setToken();
       final body = <String, dynamic>{};
       if (status != null) body['status'] = status;
-      if (startTime != null)
+      if (startTime != null) {
         body['startTime'] = startTime.toUtc().toIso8601String();
+      }
       if (startLat != null && startLng != null) {
         final now = DateTime.now().toUtc();
         body['startLocation'] = {
@@ -243,15 +245,19 @@ class TaskService {
         };
       }
       if (sourceLocation != null) body['sourceLocation'] = sourceLocation;
-      if (destinationLocation != null)
+      if (destinationLocation != null) {
         body['destinationLocation'] = destinationLocation;
-      if (destinationChanged != null)
+      }
+      if (destinationChanged != null) {
         body['destinationChanged'] = destinationChanged;
+      }
       if (tripDistanceKm != null) body['tripDistanceKm'] = tripDistanceKm;
-      if (tripDurationSeconds != null)
+      if (tripDurationSeconds != null) {
         body['tripDurationSeconds'] = tripDurationSeconds;
-      if (arrivalTime != null)
+      }
+      if (arrivalTime != null) {
         body['arrivalTime'] = arrivalTime.toUtc().toIso8601String();
+      }
       final response = await _api.dio.patch<Map<String, dynamic>>(
         '/tasks/$id',
         data: body,
@@ -536,8 +542,9 @@ class TaskService {
     final payload = <String, dynamic>{'otp': otp};
     if (lat != null) payload['lat'] = lat;
     if (lng != null) payload['lng'] = lng;
-    if (fullAddress != null && fullAddress.isNotEmpty)
+    if (fullAddress != null && fullAddress.isNotEmpty) {
       payload['fullAddress'] = fullAddress;
+    }
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/tasks/$taskMongoId/verify-otp',
       data: payload,
@@ -592,14 +599,17 @@ class TaskService {
       'lat': lat,
       'lng': lng,
     };
-    if (fullAddress != null && fullAddress.isNotEmpty)
+    if (fullAddress != null && fullAddress.isNotEmpty) {
       data['fullAddress'] = fullAddress;
+    }
     if (pincode != null && pincode.isNotEmpty) data['pincode'] = pincode;
-    if (sourceFullAddress != null && sourceFullAddress.isNotEmpty)
+    if (sourceFullAddress != null && sourceFullAddress.isNotEmpty) {
       data['sourceFullAddress'] = sourceFullAddress;
+    }
     if (tripDistanceKm != null) data['tripDistanceKm'] = tripDistanceKm;
-    if (tripDurationSeconds != null)
+    if (tripDurationSeconds != null) {
       data['tripDurationSeconds'] = tripDurationSeconds;
+    }
     if (sourceLocation != null) data['sourceLocation'] = sourceLocation;
     if (travelActivityDuration != null) {
       data['travelActivityDuration'] = travelActivityDuration;
@@ -619,8 +629,9 @@ class TaskService {
     final data = <String, dynamic>{'taskId': taskMongoId};
     if (lat != null) data['lat'] = lat;
     if (lng != null) data['lng'] = lng;
-    if (fullAddress != null && fullAddress.isNotEmpty)
+    if (fullAddress != null && fullAddress.isNotEmpty) {
       data['fullAddress'] = fullAddress;
+    }
     if (pincode != null && pincode.isNotEmpty) data['pincode'] = pincode;
     await _api.dio.post<dynamic>('/tracking/restart', data: data);
   }

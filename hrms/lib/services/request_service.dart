@@ -165,7 +165,7 @@ class RequestService {
         return {'success': false, 'hasConflict': false};
       }
       final resData = body['data'] as Map<String, dynamic>?;
-      final list = (dynamic value) => value is List ? List<String>.from(value.map((e) => e.toString())) : <String>[];
+      List<String> list(dynamic value) => value is List ? List<String>.from(value.map((e) => e.toString())) : <String>[];
       return {
         'success': true,
         'hasConflict': resData?['hasConflict'] == true,
@@ -223,8 +223,9 @@ class RequestService {
         data: data,
       );
       final body = response.data;
-      if (body == null)
+      if (body == null) {
         return {'success': false, 'message': 'Invalid response'};
+      }
       var responseData = body;
       if (body.containsKey('data') && body['data'] is Map) {
         final d = body['data'] as Map;
@@ -266,8 +267,9 @@ class RequestService {
       );
       final body = response.data;
       if (body is List) return {'success': true, 'data': body};
-      if (body is Map && body['success'] == true)
+      if (body is Map && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
+      }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -320,8 +322,9 @@ class RequestService {
         queryParameters: q,
       );
       final body = response.data;
-      if (body != null && body['success'] == true)
+      if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
+      }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -340,8 +343,9 @@ class RequestService {
         data: data,
       );
       final body = response.data;
-      if (body == null)
+      if (body == null) {
         return {'success': false, 'message': 'Invalid response'};
+      }
       var responseData = body;
       if (body.containsKey('data') && body['data'] is Map) {
         final d = body['data'] as Map;
@@ -378,8 +382,9 @@ class RequestService {
         queryParameters: q,
       );
       final body = response.data;
-      if (body != null && body['success'] == true)
+      if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
+      }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -437,8 +442,9 @@ class RequestService {
         queryParameters: q,
       );
       final body = response.data;
-      if (body != null && body['success'] == true)
+      if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
+      }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};

@@ -318,6 +318,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     final type = (rule['type']?.toString() ?? '').toLowerCase();
     if (minutes <= 0) return 0.0;
 
+    debugPrint('[Fine] _computeFineFromRule: type=$type, minutes=$minutes, netPerDaySalary=$netPerDaySalary, shiftHours=$shiftHours');
+
     if (type == 'custom') {
       final customAmount = (rule['customAmount'] as num?)?.toDouble() ?? 0.0;
       final unit = (rule['customAmountUnit']?.toString() ?? 'perHour')
@@ -329,14 +331,24 @@ class _DashboardScreenState extends State<DashboardScreen>
       return customAmount * (minutes / 60.0);
     }
 
+    if (type == 'halfday') {
+      return (netPerDaySalary / 2.0);
+    }
+    if (type == 'fullday') {
+      return netPerDaySalary;
+    }
+
     // Salary-multiple style rules (1xSalary / 2xSalary / 3xSalary).
     int multiplier = 1;
     if (type == '2xsalary') multiplier = 2;
     if (type == '3xsalary') multiplier = 3;
+
     final hourlyRate = (shiftHours > 0) ? (netPerDaySalary / shiftHours) : 0.0;
     final hours = minutes / 60.0;
     // Example: 1xSalary => hourlyRate * (minutes/60)
-    return (hourlyRate * hours * multiplier);
+    final amount = (hourlyRate * hours * multiplier);
+    debugPrint('[Fine] Rule Result: hourlyRate=$hourlyRate, hours=$hours, multiplier=$multiplier => amount=$amount');
+    return amount;
   }
 
   Future<double?> _loadPerDaySalaryFromPrefs() async {
@@ -396,6 +408,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         _getWorkingSessionTimings(attendanceData, halfDayLeave, tmpl);
 
     if (!isCheckedIn) {
+      if (_templateIsOpenShift(tmpl)) {
+        lateMinutes = 0;
+        fineAmount = 0;
+      } else {
       final shiftStartStr =
           sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb(tmpl);
       if (shiftStartStr != null && shiftStartStr.isNotEmpty) {
@@ -451,34 +467,23 @@ class _DashboardScreenState extends State<DashboardScreen>
           }
         } catch (_) {}
       }
+      }
     } else {
-      final shiftEndStr = sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl);
-      if (shiftEndStr != null && shiftEndStr.isNotEmpty) {
-        try {
-          // For checkout: include already-stored late fine from check-in
-          // so total fine is consistent.
-          lateMinutes =
-              (attendanceData?['lateMinutes'] as num?)?.toInt() ?? 0;
-          final existingFineAmount =
-              (attendanceData?['fineAmount'] as num?)?.toDouble() ?? 0.0;
-          final parts = shiftEndStr.split(':').map(int.parse).toList();
-          final shiftEnd = DateTime(
-            now.year,
-            now.month,
-            now.day,
-            parts[0],
-            parts.length > 1 ? parts[1] : 0,
-          );
-          if (now.isBefore(shiftEnd)) {
-            earlyMinutes = shiftEnd.difference(now).inMinutes;
-            final shiftStartForFine =
-                sessionTimings?['startTime'] ??
-                _getShiftStartTimeFromDb(tmpl) ??
-                '09:30';
-            final shiftHours = calculateShiftHours(
-              shiftStartForFine,
-              shiftEndStr,
-            );
+      lateMinutes = (attendanceData?['lateMinutes'] as num?)?.toInt() ?? 0;
+      final existingFineAmount =
+          (attendanceData?['fineAmount'] as num?)?.toDouble() ?? 0.0;
+      if (_templateIsOpenShift(tmpl)) {
+        final punchInRaw = attendanceData?['punchIn'];
+        if (punchInRaw != null) {
+          try {
+            final punchIn =
+                DateTime.parse(punchInRaw.toString()).toLocal();
+            final reqH = _templateOpenRequiredHours(tmpl);
+            final requiredMin = (reqH * 60).round();
+            final workedMin = now.difference(punchIn).inMinutes;
+            earlyMinutes =
+                workedMin >= requiredMin ? 0 : (requiredMin - workedMin);
+            final shiftHours = reqH;
             double earlyFine = 0.0;
             if (netPerDaySalary != null &&
                 netPerDaySalary > 0 &&
@@ -505,8 +510,60 @@ class _DashboardScreenState extends State<DashboardScreen>
               }
             }
             fineAmount = existingFineAmount + earlyFine;
-          }
-        } catch (_) {}
+          } catch (_) {}
+        }
+      } else {
+        final shiftEndStr =
+            sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl);
+        if (shiftEndStr != null && shiftEndStr.isNotEmpty) {
+          try {
+            final parts = shiftEndStr.split(':').map(int.parse).toList();
+            final shiftEnd = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              parts[0],
+              parts.length > 1 ? parts[1] : 0,
+            );
+            if (now.isBefore(shiftEnd)) {
+              earlyMinutes = shiftEnd.difference(now).inMinutes;
+              final shiftStartForFine =
+                  sessionTimings?['startTime'] ??
+                  _getShiftStartTimeFromDb(tmpl) ??
+                  '09:30';
+              final shiftHours = calculateShiftHours(
+                shiftStartForFine,
+                shiftEndStr,
+              );
+              double earlyFine = 0.0;
+              if (netPerDaySalary != null &&
+                  netPerDaySalary > 0 &&
+                  earlyMinutes > 0 &&
+                  shiftHours > 0) {
+                earlyFine = ((netPerDaySalary / shiftHours) *
+                        (earlyMinutes / 60) *
+                        100)
+                    .round() /
+                    100;
+              }
+              final hasRules = _hasFineRules();
+              final earlyRule = _matchFineRuleForAction('earlyExit');
+              if (hasRules) {
+                if (earlyRule == null) {
+                  earlyFine = 0.0;
+                } else {
+                  earlyFine = _computeFineFromRule(
+                    rule: earlyRule,
+                    minutes: earlyMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: shiftHours,
+                  );
+                }
+              }
+              fineAmount = existingFineAmount + earlyFine;
+            }
+          } catch (_) {}
+        }
       }
     }
 
@@ -941,6 +998,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
       final body = result['data'] as Map<String, dynamic>;
       final template = asAttendanceTemplateMap(body['template']);
+      if (kDebugMode) {
+        _logTodayShiftTimingsFromDb(template);
+      }
       final staffHasTemplate = staffHasAssignedAttendanceTemplate(
         profileAttendanceTemplateRef: templateId,
         todayAttendanceTemplate: template,
@@ -1085,6 +1145,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     String message, {
     bool isLate = false,
     bool isEarly = false,
+    String? shiftDisplayName,
+    String? shiftTimingLine,
   }) async {
     final fullMessage =
         await AttendanceTemplateStore.appendRequireSelfieGeolocationToMessage(
@@ -1107,6 +1169,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                 : Icons.info_outline_rounded;
         final Color iconColor = AppColors.primary;
         final colorScheme = Theme.of(context).colorScheme;
+        final String resolvedShiftName = (shiftDisplayName != null &&
+                shiftDisplayName.trim().isNotEmpty)
+            ? shiftDisplayName.trim()
+            : 'Shift';
         return Dialog(
           backgroundColor: Colors.transparent,
           insetPadding: const EdgeInsets.symmetric(horizontal: 24),
@@ -1159,6 +1225,65 @@ class _DashboardScreenState extends State<DashboardScreen>
                           color: Colors.white.withOpacity(0.9),
                         ),
                       ),
+                      if (isLate) ...[
+                        const SizedBox(height: 14),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.14),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'SHIFT',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.6,
+                                  color: Colors.white.withOpacity(0.55),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                resolvedShiftName,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white.withOpacity(0.95),
+                                ),
+                              ),
+                              if (shiftTimingLine != null &&
+                                  shiftTimingLine.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                Text(
+                                  'TIMINGS',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.6,
+                                    color: Colors.white.withOpacity(0.55),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  shiftTimingLine,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    height: 1.35,
+                                    color: Colors.white.withOpacity(0.88),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       Text(
                         fullMessage,
@@ -1232,6 +1357,54 @@ class _DashboardScreenState extends State<DashboardScreen>
     return (v != null && v.isNotEmpty) ? v : null;
   }
 
+  /// Logs merged today template shift window from DB (`shiftStartTime` / `shiftEndTime`; falls back to `startTime` / `endTime`).
+  static void _logTodayShiftTimingsFromDb(Map<String, dynamic>? template) {
+    final fromShiftKeysStart = _getShiftStartTimeFromDb(template);
+    final fromShiftKeysEnd = _getShiftEndTimeFromDb(template);
+    final startFallback =
+        template?['startTime']?.toString().trim();
+    final endFallback = template?['endTime']?.toString().trim();
+    final startOut =
+        fromShiftKeysStart ?? (startFallback?.isNotEmpty == true ? startFallback : null);
+    final endOut =
+        fromShiftKeysEnd ?? (endFallback?.isNotEmpty == true ? endFallback : null);
+    debugPrint(
+      'shift start time****** ${startOut ?? '(none)'}',
+    );
+    debugPrint(
+      'shift end time****** ${endOut ?? '(none)'}',
+    );
+  }
+
+  /// Parity with app_backend getShiftTimings: open / open shift, or shift name "OPEN".
+  static bool _templateIsOpenShift(Map<String, dynamic>? template) {
+    if (template == null) return false;
+    final st =
+        (template['shiftType'] ?? '').toString().toLowerCase().trim();
+    if (st == 'open' || st == 'open shift') return true;
+    final name = (template['shiftName'] ?? template['name'] ?? '')
+        .toString()
+        .toLowerCase()
+        .trim();
+    if (name == 'open' || name == 'open shift') return true;
+    return false;
+  }
+
+  static double _templateOpenRequiredHours(Map<String, dynamic>? template) {
+    if (template == null || !_templateIsOpenShift(template)) return 8;
+    for (final key in ['openWorkHours', 'workHours']) {
+      final v = template[key];
+      if (v is num) {
+        final d = v.toDouble();
+        if (d > 0) return d;
+      } else if (v != null) {
+        final p = double.tryParse(v.toString().trim());
+        if (p != null && p > 0) return p;
+      }
+    }
+    return 8;
+  }
+
   static int _getGracePeriodMinutes(Map<String, dynamic>? template) {
     if (template == null) return 15;
     final flat = template['gracePeriodMinutes'];
@@ -1287,6 +1460,53 @@ class _DashboardScreenState extends State<DashboardScreen>
     } catch (_) {
       return null;
     }
+  }
+
+  static String _formatHhMmForDisplay(String hhmm) {
+    final parts = hhmm.split(':');
+    final h = int.tryParse(parts[0].trim()) ?? 0;
+    final m = parts.length > 1 ? (int.tryParse(parts[1].trim()) ?? 0) : 0;
+    final hour = h % 12 == 0 ? 12 : h % 12;
+    final ampm = h < 12 ? 'AM' : 'PM';
+    if (m == 0) return '$hour:00 $ampm';
+    return '$hour:${m.toString().padLeft(2, '0')} $ampm';
+  }
+
+  static String _shiftDisplayNameForWarningDialog(
+    Map<String, dynamic>? attendanceData,
+    Map<String, dynamic>? template,
+  ) {
+    final fromAttendance = attendanceData?['shiftName']?.toString().trim();
+    if (fromAttendance != null && fromAttendance.isNotEmpty) {
+      return fromAttendance;
+    }
+    final sn = template?['shiftName']?.toString().trim();
+    if (sn != null && sn.isNotEmpty) return sn;
+    final n = template?['name']?.toString().trim();
+    if (n != null && n.isNotEmpty) return n;
+    return 'Shift';
+  }
+
+  static String? _shiftTimingSummaryForWarningDialog(
+    Map<String, dynamic>? attendanceData,
+    Map<String, dynamic>? halfDayLeave,
+    Map<String, dynamic>? template,
+  ) {
+    if (template == null || _templateIsOpenShift(template)) return null;
+    final session = _getWorkingSessionTimings(
+      attendanceData,
+      halfDayLeave,
+      template,
+    );
+    final startRaw = session?['startTime'] ?? _getShiftStartTimeFromDb(template);
+    final endRaw = session?['endTime'] ?? _getShiftEndTimeFromDb(template);
+    if (startRaw == null ||
+        endRaw == null ||
+        startRaw.isEmpty ||
+        endRaw.isEmpty) {
+      return null;
+    }
+    return '$startRaw-$endRaw';
   }
 
   static Map<String, String>? _getWorkingSessionTimings(
@@ -1415,18 +1635,20 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
       return false;
     }
-    final shiftStart = _getShiftStartTimeFromDb(tmpl);
-    final shiftEnd = _getShiftEndTimeFromDb(tmpl);
-    if (shiftStart == null ||
-        shiftStart.isEmpty ||
-        shiftEnd == null ||
-        shiftEnd.isEmpty) {
-      await _showValidationAlertDialog(
-        shiftAssigned == true
-            ? 'Shift timings not set. Contact HR.'
-            : 'Shift not assigned. Contact HR.',
-      );
-      return false;
+    if (!_templateIsOpenShift(tmpl)) {
+      final shiftStart = _getShiftStartTimeFromDb(tmpl);
+      final shiftEnd = _getShiftEndTimeFromDb(tmpl);
+      if (shiftStart == null ||
+          shiftStart.isEmpty ||
+          shiftEnd == null ||
+          shiftEnd.isEmpty) {
+        await _showValidationAlertDialog(
+          shiftAssigned == true
+              ? 'Shift timings not set. Contact HR.'
+              : 'Shift not assigned. Contact HR.',
+        );
+        return false;
+      }
     }
 
     final isSecondHalfLeave =
@@ -1560,6 +1782,9 @@ class _DashboardScreenState extends State<DashboardScreen>
         tmpl['earlyExitAllowed'] ??
         true;
     if (!isCheckedIn) {
+      if (_templateIsOpenShift(tmpl)) {
+        // Flexible clock-in: no late-entry alert or block.
+      } else {
       final sessionTimings = _getWorkingSessionTimings(
           attendanceData, halfDayLeave, tmpl);
       final shiftStartStr =
@@ -1684,137 +1909,211 @@ class _DashboardScreenState extends State<DashboardScreen>
           }
         } catch (_) {}
       }
+      }
     }
     if (isCheckedIn && alertMessage == null) {
-      final sessionTimings = _getWorkingSessionTimings(
-          attendanceData, halfDayLeave, tmpl);
-      final shiftEndStr =
-          sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl);
-      if (shiftEndStr == null && allowEarlyExit == false) {
-        alertMessage = 'Shift end time not set. Contact HR.';
-        shouldBlock = true;
-      } else if (shiftEndStr != null) {
-        try {
-          final parts = shiftEndStr.split(':').map(int.parse).toList();
-          final shiftEnd = DateTime(
-            now.year,
-            now.month,
-            now.day,
-            parts[0],
-            parts.length > 1 ? parts[1] : 0,
-          );
-          if (now.isBefore(shiftEnd)) {
-            final shiftStartForFine =
-                sessionTimings?['startTime'] ??
-                _getShiftStartTimeFromDb(tmpl) ??
-                '09:30';
-            final earlyMinutes = shiftEnd.difference(now).inMinutes;
-            double estimatedFine = 0;
-            if (netPerDaySalary != null &&
-                netPerDaySalary > 0 &&
-                earlyMinutes > 0) {
-              final shiftHours = calculateShiftHours(
-                shiftStartForFine,
-                shiftEndStr,
-              );
-              if (shiftHours > 0) {
+      if (_templateIsOpenShift(tmpl)) {
+        final punchInRaw = attendanceData?['punchIn'];
+        if (punchInRaw != null) {
+          try {
+            final punchIn =
+                DateTime.parse(punchInRaw.toString()).toLocal();
+            final reqH = _templateOpenRequiredHours(tmpl);
+            final requiredMin = (reqH * 60).round();
+            final workedMin = now.difference(punchIn).inMinutes;
+            final earlyMinutes =
+                workedMin >= requiredMin ? 0 : (requiredMin - workedMin);
+            if (earlyMinutes > 0) {
+              double estimatedFine = 0;
+              if (netPerDaySalary != null &&
+                  netPerDaySalary > 0 &&
+                  reqH > 0) {
                 estimatedFine =
-                    ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
+                    ((netPerDaySalary / reqH) * (earlyMinutes / 60) * 100)
                             .round() /
                         100;
               }
-            }
-            final shiftHoursForFormula =
-                calculateShiftHours(shiftStartForFine, shiftEndStr);
-            final earlyRule = _matchFineRuleForAction('earlyExit');
-            double earlyFineAmount = estimatedFine;
-            if (_hasFineRules()) {
-              if (earlyRule == null) {
-                earlyFineAmount = 0.0;
-              } else {
-                earlyFineAmount = _computeFineFromRule(
-                  rule: earlyRule,
-                  minutes: earlyMinutes,
-                  netPerDaySalary: netPerDaySalary ?? 0.0,
-                  shiftHours: shiftHoursForFormula,
+              final earlyRule = _matchFineRuleForAction('earlyExit');
+              double earlyFineAmount = estimatedFine;
+              if (_hasFineRules()) {
+                if (earlyRule == null) {
+                  earlyFineAmount = 0.0;
+                } else {
+                  earlyFineAmount = _computeFineFromRule(
+                    rule: earlyRule,
+                    minutes: earlyMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: reqH,
+                  );
+                }
+              }
+              if (kDebugMode) {
+                debugPrint(
+                  '[Fine TEST][Dashboard Punch][EarlyOut][open] '
+                  'requiredH=$reqH earlyMin=$earlyMinutes '
+                  'fine=${earlyFineAmount.toStringAsFixed(2)}',
                 );
               }
-            }
-            if (kDebugMode) {
-              final fineLog = _resolveFineLogForAction('earlyExit');
-              debugPrint(
-                '[Fine TEST][Dashboard Punch][EarlyOut] start=$shiftStartForFine '
-                'end=$shiftEndStr earlyMin=$earlyMinutes '
-                'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
-                'fineType=${fineLog['fineType']} '
-                'ruleType=${fineLog['ruleType']} '
-                'ruleApplyTo=${fineLog['ruleApplyTo']} '
-                'fine=${earlyFineAmount.toStringAsFixed(2)} '
-                'allowEarly=$allowEarlyExit',
+              final baseMessage = allowEarlyExit == false
+                  ? 'Early check-out: you have not completed your required ${reqH == reqH.roundToDouble() ? reqH.toInt() : reqH} hour(s) for today.'
+                  : 'You are checking out before completing your required hours.';
+              alertMessage = _buildEarlyAlertMessage(
+                baseMessage: baseMessage,
+                earlyMinutes: earlyMinutes,
+                fineAmount: earlyFineAmount,
               );
-              String fineFormula;
-              String fineFormulaWords;
-              final ruleTypeLower =
-                  (earlyRule?['type']?.toString() ?? '').toLowerCase();
-              if (_hasFineRules() &&
-                  earlyRule != null &&
-                  ruleTypeLower == 'custom') {
-                final customAmount =
-                    (earlyRule['customAmount'] as num?)?.toDouble() ?? 0.0;
-                final unitLower = (earlyRule['customAmountUnit']?.toString() ?? 'perHour')
-                    .toLowerCase();
-                if (unitLower == 'perminute') {
-                  fineFormula =
-                      '${customAmount.toStringAsFixed(2)} × $earlyMinutes';
-                  fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount perMinute × earlyMinutes';
-                } else if (unitLower == 'perhour') {
-                  fineFormula =
-                      '${customAmount.toStringAsFixed(2)} × ($earlyMinutes / 60)';
-                  fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount perHour × (earlyMinutes/60)';
-                } else {
-                  fineFormula = '${customAmount.toStringAsFixed(2)} (fixed)';
-                  fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount fixed';
-                }
-              } else {
-                fineFormula =
-                    '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
-                    '* ($earlyMinutes / 60)';
-                fineFormulaWords =
-                    'perDaySalary/shiftHours × (earlyMinutes/60)';
-              }
-              debugPrint(
-                '[Fine FORMULA][Dashboard Punch][EarlyOut] '
-                'fineType=${fineLog['fineType']} '
-                'ruleType=${fineLog['ruleType']} '
-                'ruleApplyTo=${fineLog['ruleApplyTo']} '
-                'fineFormula=$fineFormula '
-                'fineFormulaWords=$fineFormulaWords '
-                '= fineAmount:${earlyFineAmount.toStringAsFixed(2)}',
-              );
+              shouldBlock = allowEarlyExit == false;
             }
-            final baseMessage = allowEarlyExit == false
-                ? 'Early check-out is not allowed before shift end.'
-                : 'You are checking out early.';
-            alertMessage = _buildEarlyAlertMessage(
-              baseMessage: baseMessage,
-              earlyMinutes: earlyMinutes,
-              fineAmount: earlyFineAmount,
+          } catch (_) {}
+        }
+      } else {
+        final sessionTimings = _getWorkingSessionTimings(
+            attendanceData, halfDayLeave, tmpl);
+        final shiftEndStr =
+            sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb(tmpl);
+        if (shiftEndStr == null && allowEarlyExit == false) {
+          alertMessage = 'Shift end time not set. Contact HR.';
+          shouldBlock = true;
+        } else if (shiftEndStr != null) {
+          try {
+            final parts = shiftEndStr.split(':').map(int.parse).toList();
+            final shiftEnd = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              parts[0],
+              parts.length > 1 ? parts[1] : 0,
             );
-            shouldBlock = allowEarlyExit == false;
-          }
-        } catch (_) {}
+            if (now.isBefore(shiftEnd)) {
+              final shiftStartForFine =
+                  sessionTimings?['startTime'] ??
+                  _getShiftStartTimeFromDb(tmpl) ??
+                  '09:30';
+              final earlyMinutes = shiftEnd.difference(now).inMinutes;
+              double estimatedFine = 0;
+              if (netPerDaySalary != null &&
+                  netPerDaySalary > 0 &&
+                  earlyMinutes > 0) {
+                final shiftHours = calculateShiftHours(
+                  shiftStartForFine,
+                  shiftEndStr,
+                );
+                if (shiftHours > 0) {
+                  estimatedFine =
+                      ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
+                              .round() /
+                          100;
+                }
+              }
+              final shiftHoursForFormula =
+                  calculateShiftHours(shiftStartForFine, shiftEndStr);
+              final earlyRule = _matchFineRuleForAction('earlyExit');
+              double earlyFineAmount = estimatedFine;
+              if (_hasFineRules()) {
+                if (earlyRule == null) {
+                  earlyFineAmount = 0.0;
+                } else {
+                  earlyFineAmount = _computeFineFromRule(
+                    rule: earlyRule,
+                    minutes: earlyMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: shiftHoursForFormula,
+                  );
+                }
+              }
+              if (kDebugMode) {
+                final fineLog = _resolveFineLogForAction('earlyExit');
+                debugPrint(
+                  '[Fine TEST][Dashboard Punch][EarlyOut] start=$shiftStartForFine '
+                  'end=$shiftEndStr earlyMin=$earlyMinutes '
+                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fine=${earlyFineAmount.toStringAsFixed(2)} '
+                  'allowEarly=$allowEarlyExit',
+                );
+                String fineFormula;
+                String fineFormulaWords;
+                final ruleTypeLower =
+                    (earlyRule?['type']?.toString() ?? '').toLowerCase();
+                if (_hasFineRules() &&
+                    earlyRule != null &&
+                    ruleTypeLower == 'custom') {
+                  final customAmount =
+                      (earlyRule['customAmount'] as num?)?.toDouble() ?? 0.0;
+                  final unitLower = (earlyRule['customAmountUnit']?.toString() ?? 'perHour')
+                      .toLowerCase();
+                  if (unitLower == 'perminute') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × $earlyMinutes';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perMinute × earlyMinutes';
+                  } else if (unitLower == 'perhour') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × ($earlyMinutes / 60)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perHour × (earlyMinutes/60)';
+                  } else {
+                    fineFormula = '${customAmount.toStringAsFixed(2)} (fixed)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount fixed';
+                  }
+                } else {
+                  fineFormula =
+                      '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                      '* ($earlyMinutes / 60)';
+                  fineFormulaWords =
+                      'perDaySalary/shiftHours × (earlyMinutes/60)';
+                }
+                debugPrint(
+                  '[Fine FORMULA][Dashboard Punch][EarlyOut] '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fineFormula=$fineFormula '
+                  'fineFormulaWords=$fineFormulaWords '
+                  '= fineAmount:${earlyFineAmount.toStringAsFixed(2)}',
+                );
+              }
+              final baseMessage = allowEarlyExit == false
+                  ? 'Early check-out is not allowed before shift end.'
+                  : 'You are checking out early.';
+              alertMessage = _buildEarlyAlertMessage(
+                baseMessage: baseMessage,
+                earlyMinutes: earlyMinutes,
+                fineAmount: earlyFineAmount,
+              );
+              shouldBlock = allowEarlyExit == false;
+            }
+          } catch (_) {}
+        }
       }
     }
     if (alertMessage != null) {
       final isLate = alertMessage.contains('late');
       final isEarly = alertMessage.contains('early');
-      await _showWarningAlertDialog(alertMessage, isLate: isLate, isEarly: isEarly);
+      String? lateShiftName;
+      String? lateShiftTiming;
+      if (isLate) {
+        lateShiftName =
+            _shiftDisplayNameForWarningDialog(attendanceData, tmpl);
+        lateShiftTiming = _shiftTimingSummaryForWarningDialog(
+          attendanceData,
+          halfDayLeave,
+          tmpl,
+        );
+      }
+      await _showWarningAlertDialog(
+        alertMessage,
+        isLate: isLate,
+        isEarly: isEarly,
+        shiftDisplayName: lateShiftName,
+        shiftTimingLine: lateShiftTiming,
+      );
       if (!mounted) return false;
       if (shouldBlock) return false;
     }
@@ -2362,7 +2661,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ? (useAddress.isNotEmpty
                         ? useAddress
                         : (useArea != null
-                            ? '${useArea}, ${useCity ?? ''}${usePincode != null ? ' ${usePincode}' : ''}'
+                            ? '$useArea, ${useCity ?? ''}${usePincode != null ? ' $usePincode' : ''}'
                             : null))
                     : 'Location not required';
 

@@ -612,8 +612,9 @@ class FcmService {
         payload: jsonEncode(data),
       );
     } catch (e) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('$_logTag _showForegroundSystemNotification: $e');
+      }
     }
   }
 

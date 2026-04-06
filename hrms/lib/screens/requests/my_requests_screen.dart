@@ -1560,7 +1560,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     if (_isLoadingTypes)
                       const Padding(
                         padding: EdgeInsets.only(bottom: 20),
-                        child: const Center(child: AppTabLoader()),
+                        child: Center(child: AppTabLoader()),
                       )
                     else if (_allowedTypes.isEmpty)
                       const Padding(
@@ -1637,11 +1637,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                               : (v) {
                                   setState(() {
                                     _isOneDay = v;
-                                    if (_isOneDay && _startDate != null)
+                                    if (_isOneDay && _startDate != null) {
                                       _endDate = _startDate;
+                                    }
                                   });
                                 },
-                          activeColor: AppColors.primary,
+                          activeThumbColor: AppColors.primary,
                         ),
                       ],
                     ),
@@ -5270,7 +5271,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 20),
                         child: DropdownButtonFormField<String>(
-                          value: _allowedMonthsForSelectedYear.contains(_month)
+                          initialValue: _allowedMonthsForSelectedYear.contains(_month)
                               ? _month
                               : (_allowedMonthsForSelectedYear.isNotEmpty
                                     ? _allowedMonthsForSelectedYear.first

@@ -166,8 +166,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         if (t.taskId.toLowerCase().contains(q)) return true;
         if (t.taskTitle.toLowerCase().contains(q)) return true;
         if (t.customer != null &&
-            t.customer!.customerName.toLowerCase().contains(q))
+            t.customer!.customerName.toLowerCase().contains(q)) {
           return true;
+        }
         return false;
       }).toList();
     }
@@ -182,8 +183,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 _filterStartDate!.month,
                 _filterStartDate!.day,
               ),
-            ))
+            )) {
           return false;
+        }
         if (_filterEndDate != null) {
           final endOfDay = DateTime(
             _filterEndDate!.year,
@@ -492,7 +494,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           ),
         );
       }
-    } catch (e, stack) {
+    } catch (e) {
       if (mounted) {
         setState(() => _exporting = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -581,7 +583,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       }
       await _fetchTasks();
       await _fetchCustomers();
-    } catch (e, st) {
+    } catch (e) {
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -626,7 +628,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           _errorMessage = null;
         });
       }
-    } catch (e, st) {
+    } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = 'Failed to load tasks';
@@ -634,6 +636,30 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         });
       }
     }
+  }
+
+  Future<void> _confirmContinueIncompleteTask(VoidCallback onYes) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Continue task?'),
+        content: const Text(
+          'Are you sure you want to continue this task?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('No'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || yes != true) return;
+    onYes();
   }
 
   Color _getStatusChipColor(TaskStatus status) {
@@ -1140,61 +1166,82 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                               task.status ==
                                                   TaskStatus
                                                       .reopenedOnArrival) {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (context) => ArrivedScreen(
-                                                  taskMongoId: task.id,
-                                                  taskId: task.taskId,
-                                                  task: task,
-                                                  totalDuration: Duration(
-                                                    seconds:
-                                                        task.tripDurationSeconds ??
-                                                        0,
-                                                  ),
-                                                  totalDistanceKm:
-                                                      task.tripDistanceKm ??
-                                                      0.0,
-                                                  isWithinGeofence: false,
-                                                  arrivalTime:
-                                                      task.arrivalTime ??
-                                                      DateTime.now(),
-                                                  sourceLat:
-                                                      task.sourceLocation?.lat,
-                                                  sourceLng:
-                                                      task.sourceLocation?.lng,
-                                                  sourceAddress: task
-                                                      .sourceLocation
-                                                      ?.address,
-                                                  destLat: task
-                                                      .destinationLocation
-                                                      ?.lat,
-                                                  destLng: task
-                                                      .destinationLocation
-                                                      ?.lng,
-                                                  destAddress: task
-                                                      .destinationLocation
-                                                      ?.address,
-                                                  arrivalAtLat: task
-                                                      .arrivalLocation?.lat,
-                                                  arrivalAtLng: task
-                                                      .arrivalLocation?.lng,
-                                                  arrivalAtAddress: task
-                                                      .arrivalLocation
-                                                      ?.displayAddress,
-                                                ),
-                                              ),
-                                            );
-                                          } else {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (context) =>
-                                                    TaskDetailScreen(
-                                                      task: task,
+                                            void goArrived() {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (context) =>
+                                                      ArrivedScreen(
+                                                    taskMongoId: task.id,
+                                                    taskId: task.taskId,
+                                                    task: task,
+                                                    totalDuration: Duration(
+                                                      seconds:
+                                                          task.tripDurationSeconds ??
+                                                          0,
                                                     ),
-                                              ),
-                                            );
+                                                    totalDistanceKm:
+                                                        task.tripDistanceKm ??
+                                                        0.0,
+                                                    isWithinGeofence: false,
+                                                    arrivalTime:
+                                                        task.arrivalTime ??
+                                                        DateTime.now(),
+                                                    sourceLat: task
+                                                        .sourceLocation?.lat,
+                                                    sourceLng: task
+                                                        .sourceLocation?.lng,
+                                                    sourceAddress: task
+                                                        .sourceLocation
+                                                        ?.address,
+                                                    destLat: task
+                                                        .destinationLocation
+                                                        ?.lat,
+                                                    destLng: task
+                                                        .destinationLocation
+                                                        ?.lng,
+                                                    destAddress: task
+                                                        .destinationLocation
+                                                        ?.address,
+                                                    arrivalAtLat: task
+                                                        .arrivalLocation?.lat,
+                                                    arrivalAtLng: task
+                                                        .arrivalLocation?.lng,
+                                                    arrivalAtAddress: task
+                                                        .arrivalLocation
+                                                        ?.displayAddress,
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                            if (task.status ==
+                                                TaskStatus.holdOnArrival) {
+                                              _confirmContinueIncompleteTask(
+                                                goArrived,
+                                              );
+                                            } else {
+                                              goArrived();
+                                            }
+                                          } else {
+                                            void goTaskDetail() {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (context) =>
+                                                      TaskDetailScreen(
+                                                    task: task,
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                            if (task.status ==
+                                                TaskStatus.hold) {
+                                              _confirmContinueIncompleteTask(
+                                                goTaskDetail,
+                                              );
+                                            } else {
+                                              goTaskDetail();
+                                            }
                                           }
                                         },
                                   borderRadius: BorderRadius.circular(14),

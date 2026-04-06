@@ -11,6 +11,7 @@ import 'api_client.dart';
 import 'fcm_service.dart';
 import 'attendance_template_store.dart';
 import 'geo/live_tracking_service.dart';
+import 'interaction_socket_service.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -22,6 +23,73 @@ class AuthService {
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
   final ApiClient _api = ApiClient();
+
+  /// Second login to [AppConstants.webBaseUrl] so `/api/interaction/*` matches the web (same JWT host).
+  Future<void> _syncInteractionAccessTokenFromWebHost({
+    required String email,
+    required String password,
+    String? otp,
+  }) async {
+    if (!AppConstants.interactionUseWebHost) return;
+    final prefs = await SharedPreferences.getInstance();
+    final main = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
+    if (main == web) {
+      await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
+      return;
+    }
+    try {
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: web,
+          connectTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 20),
+          sendTimeout: const Duration(seconds: 20),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+        ),
+      );
+      final requestBody = <String, dynamic>{'email': email, 'password': password};
+      if (otp != null && otp.isNotEmpty) requestBody['otp'] = otp;
+      final response = await dio.post<Map<String, dynamic>>(
+        '/auth/login',
+        data: requestBody,
+      );
+      final body = response.data ?? {};
+      if (body['requiresOTP'] == true) {
+        await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
+        if (kDebugMode) {
+          debugPrint(
+            '[AuthService] Web HRMS login requires OTP; sign in with OTP then open Interaction again or set interactionUseWebHost false.',
+          );
+        }
+        return;
+      }
+      final data = body['data'];
+      String? webToken;
+      if (data != null && data['accessToken'] != null) {
+        webToken = data['accessToken']?.toString();
+      } else if (body['token'] != null) {
+        webToken = body['token']?.toString();
+      } else if (body['accessToken'] != null) {
+        webToken = body['accessToken']?.toString();
+      }
+      if (webToken != null && webToken.isNotEmpty) {
+        await prefs.setString(
+          AppConstants.interactionAccessTokenPrefsKey,
+          webToken,
+        );
+        if (kDebugMode) debugPrint('[AuthService] Web HRMS interaction token synced');
+      } else {
+        await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[AuthService] Web HRMS interaction sync failed: $e');
+      await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
+    }
+  }
 
   Future<Map<String, dynamic>> login(String email, String password, {String? otp}) async {
     try {
@@ -83,6 +151,11 @@ class AuthService {
       }
       await _persistCurrentBaseUrl(prefs);
       _api.setAuthToken(accessToken);
+      await _syncInteractionAccessTokenFromWebHost(
+        email: email.trim(),
+        password: password,
+        otp: otp,
+      );
       if (kDebugMode) debugPrint('[AuthService] login success – registering FCM token');
       await FcmService.sendTokenToBackendAfterLogin();
       return {'success': true, 'data': data};
@@ -439,6 +512,7 @@ class AuthService {
   }
 
   Future<void> logout() async {
+    InteractionSocketService.instance.disconnect();
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     if (token != null && token.isNotEmpty) {

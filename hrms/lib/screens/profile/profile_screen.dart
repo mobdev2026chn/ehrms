@@ -403,7 +403,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             children: [
               GestureDetector(
                 onTap: () {
-                  if (showPhoto && photoUrlStr != null) {
+                  if (showPhoto) {
                     _showProfilePhotoOptions(
                       photoUrl: photoUrlStr,
                       hasPhoto: true,

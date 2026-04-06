@@ -35,7 +35,7 @@ function computeMonthlySalaryFromStaffSalary(staffSalary = {}) {
 
     const employeePF = employeePFRate > 0 ? (employeePFRate / 100 * basicSalary) : pfStaticAmount;
     const employeeESI = employeeESIRate / 100 * grossSalary;
-    const totalMonthlyDeductions = employeePF + employeeESI;
+    const totalMonthlyDeductions = employeePF + employeeESI + employerPF + employerESI;
 
     const netSalary = grossSalary - totalMonthlyDeductions;
     return { grossSalary, netSalary };

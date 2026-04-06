@@ -32,8 +32,9 @@ class RetryOnRateLimitInterceptor extends Interceptor {
     final retryAfter = err.response?.headers.value('retry-after');
     if (retryAfter != null && retryAfter.isNotEmpty) {
       final parsed = int.tryParse(retryAfter);
-      if (parsed != null && parsed > 0)
+      if (parsed != null && parsed > 0) {
         waitSeconds = parsed > 120 ? 120 : parsed;
+      }
     }
     await Future<void>.delayed(Duration(seconds: waitSeconds));
     final opts = err.requestOptions;

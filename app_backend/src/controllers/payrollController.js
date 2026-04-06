@@ -11,7 +11,8 @@ const { calculateFineAmount } = require('../utils/fineCalculationHelper');
 const { getShiftTimings } = require('../utils/leaveAttendanceHelper');
 const { calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
 const { getHolidayTemplateForStaff, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
-const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays } = require('../utils/payableDaysRule');
+const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
+const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays, resolveTemplateLinkedPayableDenominatorDays } = require('../utils/payableDaysRule');
 
 const _idLog = (v) => {
     if (v == null) return 'n/a';
@@ -67,6 +68,38 @@ function logSalaryComponentsForCalc(tag, components = {}) {
 }
 
 const _round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/** Web net uses gross minus employee+employer PF/ESI; template-mapped deduction lists may omit employer rows. */
+function ensureEmployerStatutoryDeductionsForWebNet(deductions, m, prorationFactor) {
+    const f = Number(prorationFactor) || 0;
+    const low = (s) => String(s || '').toLowerCase();
+    const hasEmployerPf = deductions.some((d) => {
+        const t = low(d?.name);
+        return t.includes('employer') && (t.includes('pf') || t.includes('provident'));
+    });
+    const hasEmployerEsi = deductions.some((d) => {
+        const t = low(d?.name);
+        return t.includes('employer') && t.includes('esi');
+    });
+    const epfAmt = _round2((Number(m?.employerPF) || 0) * f);
+    const eesiAmt = _round2((Number(m?.employerESI) || 0) * f);
+    if (!hasEmployerPf && epfAmt > 0) {
+        deductions.push({
+            name: 'Employer PF',
+            rawAmount: epfAmt,
+            amount: epfAmt,
+            type: 'deduction',
+        });
+    }
+    if (!hasEmployerEsi && eesiAmt > 0) {
+        deductions.push({
+            name: 'Employer ESI',
+            rawAmount: eesiAmt,
+            amount: eesiAmt,
+            type: 'deduction',
+        });
+    }
+}
 
 function _componentAmountFromTemplate(comp, monthly, prorationFactor) {
     const key = String(comp?.key || '').trim().toLowerCase();
@@ -201,9 +234,24 @@ async function _resolveTemplateMappedComponents({
 }
 
 /**
+ * Scale fixed components only; re-run [computeMonthlySalaryFromStaffSalary] so PF/ESI thresholds
+ * apply to MTD basic+DA+HRA (web payroll.controller.ts preview behavior).
+ */
+function scaleStaffSalaryFixedForMtd(s, factor) {
+    const f = Number(factor) || 0;
+    if (!s || typeof s !== 'object') return s;
+    return {
+        ...s,
+        basicSalary: (Number(s.basicSalary) || 0) * f,
+        dearnessAllowance: (Number(s.dearnessAllowance) || 0) * f,
+        houseRentAllowance: (Number(s.houseRentAllowance) || 0) * f,
+        specialAllowance: (Number(s.specialAllowance) || 0) * f,
+    };
+}
+
+/**
  * Full-month salary from staff.salary (same thresholds as web salaryStructureCalculation + Flutter).
- * Estimated MTD in app/web: proratedGross = grossSalary * (presentDays / fullMonthWorkingDays),
- * proratedDeductions = totalMonthlyDeductions * same factor, net MTD = proratedGross - proratedDeductions - fines.
+ * MTD/preview: use [scaleStaffSalaryFixedForMtd] then this function — not gross×factor alone.
  */
 function computeMonthlySalaryFromStaffSalary(s) {
     const basicSalary = s.basicSalary || 0;
@@ -225,7 +273,8 @@ function computeMonthlySalaryFromStaffSalary(s) {
     const grossSalary = grossFixedSalary + employerPF + employerESI + pfStaticAmount;
     const employeePF = employeePFRate > 0 ? (employeePFRate / 100 * basicSalary) : pfStaticAmount;
     const employeeESI = employeeESIRate / 100 * grossSalary;
-    const totalMonthlyDeductions = employeePF + employeeESI;
+    // Web salaryStructureCalculation.util.ts: net = gross - (emp+employer PF/ESI) = fixed + pfStatic - empPF - empESI
+    const totalMonthlyDeductions = employeePF + employeeESI + employerPF + employerESI;
     const netSalary = grossSalary - totalMonthlyDeductions;
     return {
         basicSalary,
@@ -386,9 +435,10 @@ const getPayrollStats = async (req, res) => {
             const company = await Company.findById(staffRef?.businessId).lean();
             const payableCfg = await resolvePayableDaysConfig({ staff: staffRef, company });
             const payableRule = payableCfg.rule;
-            const payableBaseDays = resolvePayableBaseDays({
-                config: payableCfg,
-                fallbackDays: thisMonthWorkingDays,
+            const payableBaseDays = await resolveTemplateLinkedPayableDenominatorDays({
+                staff: staffRef,
+                company,
+                fullMonthWorkingDays: thisMonthWorkingDays,
             });
             console.log(
                 `[PayableRule] staff=${staffId} source=stats-payrollExists `
@@ -401,35 +451,21 @@ const getPayrollStats = async (req, res) => {
             );
             const payableDays = computePayableDays({ presentDays, paidLeaveDays, rule: payableRule });
             const prorationFactor = payableBaseDays > 0 ? payableDays / payableBaseDays : 1;
+            const mStatsFull = staffForProration?.salary
+                ? computeMonthlySalaryFromStaffSalary(staffForProration.salary)
+                : null;
+            const mStatsMtd = staffForProration?.salary
+                ? computeMonthlySalaryFromStaffSalary(
+                    scaleStaffSalaryFixedForMtd(staffForProration.salary, prorationFactor),
+                )
+                : null;
             console.log(`[getPayrollStats] Payroll exists path: baseDays=${payableBaseDays}, thisMonthWorkingDays=${thisMonthWorkingDays}, workingDaysTillToday=${workingDays}, presentDays=${presentDays}, paidLeaveDays=${paidLeaveDays}, payableRule=${payableRule}, payableDays=${payableDays}, prorationFactor=${prorationFactor}`);
             const fineConfig = company ? getEffectiveFineConfig(company) : null;
             const shiftTimings = company && staffRef ? getShiftTimings(company, staffRef) : {};
             const shiftHours = Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
             const dailySalaryForFine = payableBaseDays > 0
-                ? (staffForProration?.salary
-                    ? (() => {
-                        const s = staffForProration.salary;
-                        const basic = (s.basicSalary || 0);
-                        const da = (s.dearnessAllowance || 0);
-                        const hra = (s.houseRentAllowance || 0);
-                        const sa = (s.specialAllowance || 0);
-                        const basicPlusDA = basic + da;
-                        const basicPlusDAPlusHRA = basic + da + hra;
-                        const isPFApplicable = basicPlusDA < 15000;
-                        const isESIApplicable = basicPlusDAPlusHRA < 21000;
-                        const employerPFRate = isPFApplicable ? (s.employerPFRate || 0) : 0;
-                        const employerESIRate = isESIApplicable ? (s.employerESIRate || 0) : 0;
-                        const employeePFRate = isPFApplicable ? (s.employeePFRate || 0) : 0;
-                        const employeeESIRate = isESIApplicable ? (s.employeeESIRate || 0) : 0;
-                        const pfStaticAmount = isPFApplicable ? 0 : 1800;
-                        const gf = basic + da + hra + sa;
-                        const epf = employerPFRate / 100 * basic;
-                        const eesi = employerESIRate / 100 * gf;
-                        const gross = gf + epf + eesi + pfStaticAmount;
-                        const empPF = employeePFRate > 0 ? (employeePFRate / 100 * basic) : pfStaticAmount;
-                        const empESI = employeeESIRate / 100 * gross;
-                        return (gross - empPF - empESI) / payableBaseDays;
-                    })()
+                ? (mStatsFull
+                    ? (mStatsFull.netSalary / payableBaseDays)
                     : (Number(payroll.netPay) / payableBaseDays))
                 : 0;
 
@@ -441,15 +477,14 @@ const getPayrollStats = async (req, res) => {
                 })
                 .reduce((sum, record) => sum + getRecordFineAmount(record, dailySalaryForFine, shiftHours, fineConfig), 0);
 
-            if (staffForProration && staffForProration.salary) {
-                console.log(`[getPayrollStats] Using salary structure for proration (linear MTD, web/Flutter parity)`);
-                const m = computeMonthlySalaryFromStaffSalary(staffForProration.salary);
-                logSalaryComponentsForCalc('stats-payrollExists', m);
-                thisMonthGross = m.grossSalary * prorationFactor;
-                const proratedDeductions = m.totalMonthlyDeductions * prorationFactor;
-                thisMonthNet = thisMonthGross - proratedDeductions - totalFineAmount;
-                const oneDaySalary = thisMonthWorkingDays > 0 ? (m.netSalary / thisMonthWorkingDays).toFixed(2) : null;
-                console.log(`[getPayrollStats] Calculated from salary structure: thisMonthGross=${thisMonthGross}, thisMonthNet=${thisMonthNet}, proratedDeductions=${proratedDeductions}, totalFineAmount=${totalFineAmount}`);
+            if (staffForProration && staffForProration.salary && mStatsFull && mStatsMtd) {
+                console.log(`[getPayrollStats] Using scaled MTD salary structure (web payroll preview parity)`);
+                logSalaryComponentsForCalc('stats-payrollExists-full', mStatsFull);
+                logSalaryComponentsForCalc('stats-payrollExists-mtd', mStatsMtd);
+                thisMonthGross = mStatsMtd.grossSalary;
+                thisMonthNet = mStatsMtd.netSalary - totalFineAmount;
+                const oneDaySalary = thisMonthWorkingDays > 0 ? (mStatsFull.netSalary / thisMonthWorkingDays).toFixed(2) : null;
+                console.log(`[getPayrollStats] Calculated from salary structure: thisMonthGross=${thisMonthGross}, thisMonthNet=${thisMonthNet}, totalFineAmount=${totalFineAmount}`);
                 if (oneDaySalary) console.log(`[getPayrollStats] 1 day salary = Monthly NET / this month WD = ${oneDaySalary} (same as salary overview)`);
             } else {
                 // Fallback to simple proration if salary structure not available
@@ -525,8 +560,8 @@ const getPayrollStats = async (req, res) => {
 
         const attendanceStats = await calculateAttendanceStats(staffId, currentMonth, currentYear);
         const s = staff.salary;
-        const m = computeMonthlySalaryFromStaffSalary(s);
-        logSalaryComponentsForCalc('stats-noPayroll', m);
+        const mFullStats = computeMonthlySalaryFromStaffSalary(s);
+        logSalaryComponentsForCalc('stats-noPayroll-full', mFullStats);
 
         const workingDays = attendanceStats.workingDays || 0;
         const thisMonthWorkingDays = attendanceStats.workingDaysFullMonth ?? workingDays;
@@ -547,9 +582,10 @@ const getPayrollStats = async (req, res) => {
         const fineConfigNoPayroll = companyNoPayroll ? getEffectiveFineConfig(companyNoPayroll) : null;
         const payableCfgNoPayroll = await resolvePayableDaysConfig({ staff, company: companyNoPayroll });
         const payableRuleNoPayroll = payableCfgNoPayroll.rule;
-        const payableBaseDaysNoPayroll = resolvePayableBaseDays({
-            config: payableCfgNoPayroll,
-            fallbackDays: thisMonthWorkingDays,
+        const payableBaseDaysNoPayroll = await resolveTemplateLinkedPayableDenominatorDays({
+            staff,
+            company: companyNoPayroll,
+            fullMonthWorkingDays: thisMonthWorkingDays,
         });
         console.log(
             `[PayableRule] staff=${staffId} source=stats-noPayroll `
@@ -566,10 +602,12 @@ const getPayrollStats = async (req, res) => {
             rule: payableRuleNoPayroll,
         });
         const prorationFactor = payableBaseDaysNoPayroll > 0 ? payableDaysNoPayroll / payableBaseDaysNoPayroll : 0;
+        const mMtdStats = computeMonthlySalaryFromStaffSalary(scaleStaffSalaryFixedForMtd(s, prorationFactor));
+        logSalaryComponentsForCalc('stats-noPayroll-mtd', mMtdStats);
         console.log(`[getPayrollStats] No-payroll path: baseDays=${payableBaseDaysNoPayroll}, thisMonthWorkingDays=${thisMonthWorkingDays}, workingDaysTillToday=${workingDays}, presentDays=${presentDays}, paidLeaveDays=${paidLeaveDays}, payableRule=${payableRuleNoPayroll}, payableDays=${payableDaysNoPayroll}, prorationFactor=${prorationFactor}`);
         const shiftTimingsNoPayroll = companyNoPayroll && staff ? getShiftTimings(companyNoPayroll, staff) : {};
         const shiftHoursNoPayroll = Math.max(0, calculateWorkHoursFromShift(shiftTimingsNoPayroll.startTime || '09:30', shiftTimingsNoPayroll.endTime || '18:30') || 9);
-        const dailySalaryNoPayrollForFine = payableBaseDaysNoPayroll > 0 ? (m.netSalary / payableBaseDaysNoPayroll) : 0;
+        const dailySalaryNoPayrollForFine = payableBaseDaysNoPayroll > 0 ? (mFullStats.netSalary / payableBaseDaysNoPayroll) : 0;
         const totalFineAmount = attendanceRecords
             .filter(r => {
                 const st = (r.status || '').trim().toLowerCase();
@@ -578,43 +616,50 @@ const getPayrollStats = async (req, res) => {
             })
             .reduce((sum, record) => sum + getRecordFineAmount(record, dailySalaryNoPayrollForFine, shiftHoursNoPayroll, fineConfigNoPayroll), 0);
 
-        const thisMonthGross = m.grossSalary * prorationFactor;
-        const proratedDeductions = m.totalMonthlyDeductions * prorationFactor;
+        const thisMonthGross = mMtdStats.grossSalary;
+        const proratedDeductions = mMtdStats.totalMonthlyDeductions;
         let templateMappedEarnings = [
-            { name: 'Basic Salary', amount: m.basicSalary },
-            { name: 'DA', amount: m.dearnessAllowance },
-            { name: 'HRA', amount: m.houseRentAllowance },
-            { name: 'Employer PF', amount: m.employerPF },
-            { name: 'Employer ESI', amount: m.employerESI },
-            ...(m.pfStaticAmount > 0 ? [{ name: 'Statutory PF (Fixed)', amount: m.pfStaticAmount }] : [])
+            { name: 'Basic Salary', amount: mMtdStats.basicSalary },
+            { name: 'DA', amount: mMtdStats.dearnessAllowance },
+            { name: 'HRA', amount: mMtdStats.houseRentAllowance },
+            { name: 'Employer PF', amount: mMtdStats.employerPF },
+            { name: 'Employer ESI', amount: mMtdStats.employerESI },
+            ...(mMtdStats.pfStaticAmount > 0 ? [{ name: 'Statutory PF (Fixed)', amount: mMtdStats.pfStaticAmount }] : [])
         ];
         let templateMappedDeductions = [
-            { name: 'Employee PF', amount: m.employeePF * prorationFactor },
-            { name: 'Employee ESI', amount: m.employeeESI * prorationFactor },
-            ...(totalFineAmount > 0 ? [{ name: 'Late Login Fine', amount: totalFineAmount }] : [])
+            { name: 'Employer PF', rawAmount: mMtdStats.employerPF, amount: _round2(mMtdStats.employerPF) },
+            { name: 'Employer ESI', rawAmount: mMtdStats.employerESI, amount: _round2(mMtdStats.employerESI) },
+            { name: 'Employee PF', rawAmount: mMtdStats.employeePF, amount: _round2(mMtdStats.employeePF) },
+            { name: 'Employee ESI', rawAmount: mMtdStats.employeeESI, amount: _round2(mMtdStats.employeeESI) },
+            ...(totalFineAmount > 0 ? [{ name: 'Late Login Fine', rawAmount: totalFineAmount, amount: _round2(totalFineAmount) }] : [])
         ];
         const mappedNoPayroll = await _resolveTemplateMappedComponents({
             staffId,
             businessId: staff.businessId,
             salaryTemplateId: staff.salaryTemplateId,
-            monthly: m,
+            monthly: mFullStats,
             prorationFactor,
-            statutoryEmployeePF: m.employeePF * prorationFactor,
-            statutoryEmployeeESI: m.employeeESI * prorationFactor,
+            statutoryEmployeePF: mMtdStats.employeePF,
+            statutoryEmployeeESI: mMtdStats.employeeESI,
             totalFineAmount,
             tag: 'stats-noPayroll',
         });
         if (mappedNoPayroll.hasTemplateMapping) {
             templateMappedEarnings = mappedNoPayroll.earnings.map((e) => ({ name: e.name, amount: e.amount }));
-            templateMappedDeductions = mappedNoPayroll.deductions.map((d) => ({ name: d.name, amount: d.amount }));
+            templateMappedDeductions = mappedNoPayroll.deductions.map((d) => ({
+                name: d.name,
+                amount: d.amount,
+                rawAmount: d.rawAmount ?? d.amount,
+            }));
         }
+        ensureEmployerStatutoryDeductionsForWebNet(templateMappedDeductions, mMtdStats, 1);
         const deductionsForNetNoPayroll = templateMappedDeductions.reduce(
             (sum, d) => sum + (Number(d.rawAmount ?? d.amount) || 0),
             0
         );
         const thisMonthNet = thisMonthGross - deductionsForNetNoPayroll;
-        const oneDaySalaryNoPayroll = thisMonthWorkingDays > 0 ? (m.netSalary / thisMonthWorkingDays).toFixed(2) : null;
-        console.log(`[getPayrollStats] No-payroll path: thisMonthGross=${thisMonthGross?.toFixed?.(2)}, thisMonthNet=${thisMonthNet?.toFixed?.(2)}, proratedDeductions=${proratedDeductions?.toFixed?.(2)}, deductionsUsedForNet=${deductionsForNetNoPayroll?.toFixed?.(2)}`);
+        const oneDaySalaryNoPayroll = thisMonthWorkingDays > 0 ? (mFullStats.netSalary / thisMonthWorkingDays).toFixed(2) : null;
+        console.log(`[getPayrollStats] No-payroll path: thisMonthGross=${thisMonthGross?.toFixed?.(2)}, thisMonthNet=${thisMonthNet?.toFixed?.(2)}, mtdTotalDeductions=${proratedDeductions?.toFixed?.(2)}, deductionsUsedForNet=${deductionsForNetNoPayroll?.toFixed?.(2)}`);
         if (oneDaySalaryNoPayroll) console.log(`[getPayrollStats] 1 day salary = Monthly NET / this month WD = ${oneDaySalaryNoPayroll} (same as salary overview)`);
 
         // Calculate Annual Benefits for CTC
@@ -641,8 +686,8 @@ const getPayrollStats = async (req, res) => {
                 year: currentYear,
                 isProcessed: false,
                 stats: {
-                    grossSalary: m.grossSalary,
-                    netSalary: m.netSalary,
+                    grossSalary: mFullStats.grossSalary,
+                    netSalary: mFullStats.netSalary,
                     thisMonthGross: thisMonthGross,
                     thisMonthNet: thisMonthNet,
                     deductions: deductionsForNetNoPayroll,
@@ -717,17 +762,18 @@ const previewPayrollEmployee = async (req, res) => {
         }
 
         const attendanceStats = await calculateAttendanceStats(targetStaffId, currentMonth, currentYear);
-        const m = computeMonthlySalaryFromStaffSalary(staff.salary);
-        logSalaryComponentsForCalc('preview', m);
+        const mFull = computeMonthlySalaryFromStaffSalary(staff.salary);
+        logSalaryComponentsForCalc('preview-full', mFull);
         const workingDaysTill = attendanceStats.workingDays || 0;
         const thisMonthWorkingDays = attendanceStats.workingDaysFullMonth || workingDaysTill || 1;
         const presentDays = attendanceStats.presentDays || 0;
         const paidLeaveDays = attendanceStats.paidLeaveDays || 0;
         const companyNoPayroll = await Company.findById(staff.businessId).lean();
         const payableCfg = await resolvePayableDaysConfig({ staff, company: companyNoPayroll });
-        const payableBaseDays = resolvePayableBaseDays({
-            config: payableCfg,
-            fallbackDays: thisMonthWorkingDays,
+        const payableBaseDays = await resolveTemplateLinkedPayableDenominatorDays({
+            staff,
+            company: companyNoPayroll,
+            fullMonthWorkingDays: thisMonthWorkingDays,
         });
         console.log(
             `[PayableRule] staff=${targetStaffId} source=preview `
@@ -744,6 +790,10 @@ const previewPayrollEmployee = async (req, res) => {
             rule: payableCfg.rule,
         });
         const prorationFactor = payableBaseDays > 0 ? effectivePaidDays / payableBaseDays : 0;
+        const mMtd = computeMonthlySalaryFromStaffSalary(
+            scaleStaffSalaryFixedForMtd(staff.salary, prorationFactor),
+        );
+        logSalaryComponentsForCalc('preview-mtd', mMtd);
 
         const startOfMonth = new Date(currentYear, currentMonth - 1, 1);
         const endOfMonth = new Date(currentYear, currentMonth, 0, 23, 59, 59, 999);
@@ -754,7 +804,7 @@ const previewPayrollEmployee = async (req, res) => {
         const fineConfigNoPayroll = companyNoPayroll ? getEffectiveFineConfig(companyNoPayroll) : null;
         const shiftTimingsNoPayroll = companyNoPayroll && staff ? getShiftTimings(companyNoPayroll, staff) : {};
         const shiftHoursNoPayroll = Math.max(0, calculateWorkHoursFromShift(shiftTimingsNoPayroll.startTime || '09:30', shiftTimingsNoPayroll.endTime || '18:30') || 9);
-        const dailySalaryNoPayrollForFine = payableBaseDays > 0 ? (m.netSalary / payableBaseDays) : 0;
+        const dailySalaryNoPayrollForFine = payableBaseDays > 0 ? (mFull.netSalary / payableBaseDays) : 0;
         const totalFineAmount = attendanceRecords
             .filter(r => {
                 const st = (r.status || '').trim().toLowerCase();
@@ -763,8 +813,8 @@ const previewPayrollEmployee = async (req, res) => {
             })
             .reduce((sum, record) => sum + getRecordFineAmount(record, dailySalaryNoPayrollForFine, shiftHoursNoPayroll, fineConfigNoPayroll), 0);
 
-        const thisMonthGross = m.grossSalary * prorationFactor;
-        const proratedDeductions = m.totalMonthlyDeductions * prorationFactor;
+        const thisMonthGross = mMtd.grossSalary;
+        const proratedDeductions = mMtd.totalMonthlyDeductions;
 
         const pf = (name, amt, type) => ({
             name,
@@ -772,24 +822,26 @@ const previewPayrollEmployee = async (req, res) => {
             type
         });
         let earnings = [
-            pf('Basic Salary', m.basicSalary * prorationFactor, 'earning'),
-            pf('DA', m.dearnessAllowance * prorationFactor, 'earning'),
-            pf('HRA', m.houseRentAllowance * prorationFactor, 'earning'),
+            pf('Basic Salary', mMtd.basicSalary, 'earning'),
+            pf('DA', mMtd.dearnessAllowance, 'earning'),
+            pf('HRA', mMtd.houseRentAllowance, 'earning'),
         ];
-        if ((m.specialAllowance || 0) * prorationFactor > 0.005) {
-            earnings.push(pf('Special Allowance', m.specialAllowance * prorationFactor, 'earning'));
+        if ((mMtd.specialAllowance || 0) > 0.005) {
+            earnings.push(pf('Special Allowance', mMtd.specialAllowance, 'earning'));
         }
-        earnings.push(
-            pf('Employer PF', m.employerPF * prorationFactor, 'earning'),
-            pf('Employer ESI', m.employerESI * prorationFactor, 'earning')
-        );
-        if (m.pfStaticAmount > 0) {
-            earnings.push(pf('Statutory PF (Fixed)', m.pfStaticAmount * prorationFactor, 'earning'));
+        if (mMtd.employerPF > 0.005) {
+            earnings.push(pf('Statutory PF (Gross)', mMtd.employerPF, 'earning'));
         }
+        if (mMtd.pfStaticAmount > 0.005) {
+            earnings.push(pf('Statutory PF (Fixed)', mMtd.pfStaticAmount, 'earning'));
+        }
+        earnings.push(pf('Employer ESI', mMtd.employerESI, 'earning'));
 
         let deductions = [
-            pf('Employee PF', m.employeePF * prorationFactor, 'deduction'),
-            pf('Employee ESI', m.employeeESI * prorationFactor, 'deduction'),
+            pf('Employer PF', mMtd.employerPF, 'deduction'),
+            pf('Employer ESI', mMtd.employerESI, 'deduction'),
+            pf('Employee PF', mMtd.employeePF, 'deduction'),
+            pf('Employee ESI', mMtd.employeeESI, 'deduction'),
         ];
         if (totalFineAmount > 0) {
             deductions.push(pf('Late Login Fine', totalFineAmount, 'deduction'));
@@ -798,10 +850,10 @@ const previewPayrollEmployee = async (req, res) => {
             staffId: targetStaffId,
             businessId: staff.businessId,
             salaryTemplateId: staff.salaryTemplateId,
-            monthly: m,
+            monthly: mFull,
             prorationFactor,
-            statutoryEmployeePF: m.employeePF * prorationFactor,
-            statutoryEmployeeESI: m.employeeESI * prorationFactor,
+            statutoryEmployeePF: mMtd.employeePF,
+            statutoryEmployeeESI: mMtd.employeeESI,
             totalFineAmount,
             tag: 'preview',
         });
@@ -816,6 +868,7 @@ const previewPayrollEmployee = async (req, res) => {
                 type: d.type
             })));
         }
+        ensureEmployerStatutoryDeductionsForWebNet(deductions, mMtd, 1);
         const deductionsUsedForNet = deductions.reduce(
             (sum, d) => sum + (Number(d.rawAmount ?? d.amount) || 0),
             0
@@ -875,7 +928,7 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
     if (staff && staff.businessId) {
         const Company = require('../models/Company');
         const business = await Company.findById(staff.businessId);
-        const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
+        const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
         const weekOffConfig = await getWeekOffConfigForStaff(staff, business || undefined);
         weeklyOffPattern = weekOffConfig.weeklyOffPattern;
         weeklyHolidays = weekOffConfig.weeklyHolidays;
@@ -935,21 +988,13 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
             let isWeeklyOff = false;
             
             if (weeklyOffPattern === 'oddEvenSaturday') {
-                // oddEvenSaturday pattern: Don't check weeklyHolidays
-                // Odd Saturdays (1st, 3rd, 5th, etc.) are WORKING DAYS
-                // Even Saturdays (2nd, 4th, 6th, etc.) are WEEKLY OFF
-                // All Sundays are WEEKLY OFF
                 if (dayOfWeek === 0) {
-                    // Sunday - always weekly off
                     isWeeklyOff = true;
                 } else if (dayOfWeek === 6) {
-                    // Saturday - check if even (weekly off) or odd (working)
-                    if (day % 2 === 0) {
-                        // Even Saturday - weekly off
+                    if (isOddEvenSaturdayWeeklyOff(year, month - 1, day, 'local')) {
                         isWeeklyOff = true;
                         console.log(`[calculateAttendanceStats] Day ${day} is Even Saturday (weekly off)`);
                     } else {
-                        // Odd Saturday - working day
                         console.log(`[calculateAttendanceStats] Day ${day} is Odd Saturday (working day)`);
                     }
                 }
@@ -986,7 +1031,7 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
             let isWeeklyOff = false;
             if (weeklyOffPattern === 'oddEvenSaturday') {
                 if (dayOfWeek === 0) isWeeklyOff = true;
-                else if (dayOfWeek === 6 && day % 2 === 0) isWeeklyOff = true;
+                else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(year, month - 1, day, 'local')) isWeeklyOff = true;
             } else {
                 isWeeklyOff = weeklyHolidays.some(h => h.day === dayOfWeek);
             }

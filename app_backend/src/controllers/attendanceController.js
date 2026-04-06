@@ -8,7 +8,7 @@ const Tracking = require('../models/Tracking');
 const { reverseGeocode } = require('../services/geocodingService');
 const { logTrackingWrite } = require('../utils/trackingLogger');
 const { calculateAttendanceStats } = require('./payrollController');
-const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
+const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
 const { getHolidayTemplateForStaff, getHolidayForDate, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
 const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const digitalOceanService = require('../services/digitalOceanService');
@@ -100,47 +100,61 @@ function deg2rad(deg) {
     return deg * (Math.PI / 180);
 }
 
-// Helper function to get shift timing from Company settings based on shiftName
-// If shiftName is not provided, returns the first shift from the array
-function getShiftFromCompanySettings(company, shiftName = null) {
-    if (!company || !company.settings || !company.settings.attendance || !company.settings.attendance.shifts) {
-        return null;
+/** Company shift document: open = flexible clock-in/out, required workHours per day. */
+function isOpenShiftTiming(shiftTiming) {
+    const type = String(shiftTiming?.shiftType || '').toLowerCase();
+    return type === 'open' || type === 'open shift';
+}
+
+/**
+ * App may send forceAppFine with optional fields. Only treat as override when the client
+ * actually sent a number (or numeric string). Skips null/undefined so server-calculated
+ * checkout values are not wiped: Number(null) === 0 is finite in JS and would zero
+ * earlyMinutes/fineAmount for open-shift checkout when Flutter omits those keys as null.
+ */
+function hasExplicitAppFineNumeric(value) {
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'string' && value.trim() === '') return false;
+    return Number.isFinite(Number(value));
+}
+
+function staffShiftAssignmentKey(staff) {
+    if (!staff) return '';
+    const rawSid = staff.shiftId;
+    let sid = '';
+    if (rawSid != null && rawSid !== '') {
+        sid =
+            typeof rawSid === 'object' && rawSid._id != null
+                ? String(rawSid._id).trim()
+                : String(rawSid).trim();
     }
-    
-    const shifts = company.settings.attendance.shifts;
-    if (!Array.isArray(shifts) || shifts.length === 0) {
-        return null;
-    }
-    
-    // Find shift matching the shiftName (case-insensitive), or use first shift if shiftName is not provided
-    let matchedShift = null;
-    if (shiftName) {
-        matchedShift = shifts.find(shift => {
-            const shiftNameLower = (shift.name || '').toLowerCase();
-            const staffShiftNameLower = (shiftName || '').toLowerCase();
-            return shiftNameLower === staffShiftNameLower;
-        });
-    }
-    
-    // If no match found and shiftName was provided, return null
-    // If shiftName was not provided, use first shift
-    if (!matchedShift) {
-        if (shiftName) {
-            return null; // Shift name specified but not found
-        }
-        matchedShift = shifts[0]; // Use first shift as default
-    }
-    return matchedShift;
+    const sn = (staff.shiftName || '').toString().trim();
+    return sid || sn;
+}
+
+function isLikelyMongoObjectIdHex(v) {
+    return /^[a-fA-F0-9]{24}$/i.test(String(v).trim());
 }
 
 // True when company has no shifts config (use template) or staff has a matching shift assigned.
-function isShiftAssignedForStaff(company, staff) {
+function isShiftAssignedForStaff(company, staff, attendanceTemplateDoc) {
+    const { staffShiftKeyFromStaff } = require('../utils/leaveAttendanceHelper');
     const shifts = company?.settings?.attendance?.shifts;
     if (!shifts || !Array.isArray(shifts) || shifts.length === 0) return true;
-    const staffShiftName = (staff.shiftName || '').toString().trim();
-    if (!staffShiftName) return false;
-    const match = shifts.some(s => (s.name || '').toString().trim().toLowerCase() === staffShiftName.toLowerCase());
-    return match;
+    const key = staffShiftKeyFromStaff(staff, attendanceTemplateDoc);
+    if (!key) {
+        const raw = staffShiftAssignmentKey(staff);
+        if (!raw) return false;
+        return true;
+    }
+    return shifts.some((s) => {
+        if (!s) return false;
+        if (isLikelyMongoObjectIdHex(key)) {
+            return s._id != null && String(s._id).toLowerCase() === key.toLowerCase();
+        }
+        if (s._id != null && String(s._id) === key) return true;
+        return (s.name || '').toString().trim().toLowerCase() === key.toLowerCase();
+    });
 }
 
 function normalizeTemplate(templateDoc) {
@@ -160,6 +174,12 @@ function normalizeTemplate(templateDoc) {
         allowLateEntry: t.allowLateEntry !== false && t.lateEntryAllowed !== false,
         allowEarlyExit: t.allowEarlyExit !== false && t.earlyExitAllowed !== false,
         allowOvertime: t.allowOvertime !== false && t.overtimeAllowed !== false,
+        // Explicitly include shiftType and openWorkHours if they exist in the original templateDoc
+        shiftType: t.shiftType || 'standard',
+        openWorkHours: t.openWorkHours || null,
+        // For open shifts, explicitly set start/end times to null
+        shiftStartTime: ((t.shiftType || '').toLowerCase() === 'open' || (t.shiftType || '').toLowerCase() === 'open shift') ? null : (t.shiftStartTime || '09:30'),
+        shiftEndTime: ((t.shiftType || '').toLowerCase() === 'open' || (t.shiftType || '').toLowerCase() === 'open shift') ? null : (t.shiftEndTime || '18:30'),
     };
 }
 
@@ -231,7 +251,7 @@ function calculateWorkingDays(year, month, holidays, weeklyOffPattern, weeklyHol
         
         if (weeklyOffPattern === 'oddEvenSaturday') {
             if (dayOfWeek === 0) isWeekOff = true;
-            else if (dayOfWeek === 6 && d % 2 === 0) isWeekOff = true;
+            else if (isOddEvenSaturdayWeeklyOff(year, month, d, 'local')) isWeekOff = true;
         } else {
             isWeekOff = weeklyHolidays.some(h => h.day === dayOfWeek);
         }
@@ -252,8 +272,12 @@ function calculateWorkingDays(year, month, holidays, weeklyOffPattern, weeklyHol
 
 // Helper function to calculate shift hours
 function calculateShiftHours(startTime, endTime) {
-    const [startHours, startMins] = startTime.split(':').map(Number);
-    const [endHours, endMins] = endTime.split(':').map(Number);
+    if (startTime == null || endTime == null) return 9;
+    const ss = String(startTime).trim();
+    const ee = String(endTime).trim();
+    if (!ss || !ee) return 9;
+    const [startHours, startMins] = ss.split(':').map(Number);
+    const [endHours, endMins] = ee.split(':').map(Number);
     
     const startTotalMinutes = startHours * 60 + startMins;
     const endTotalMinutes = endHours * 60 + endMins;
@@ -267,12 +291,17 @@ function calculateShiftHours(startTime, endTime) {
 }
 
 // Helper: fine config from company.settings.payroll.fineCalculation only (not attendance)
-const { getEffectiveFineConfig, calculateFineAmount } = require('../utils/fineCalculationHelper');
+const { getEffectiveFineConfig, calculateFineAmount, calculateOvertimePayAmount } = require('../utils/fineCalculationHelper');
 
 // Helper function to calculate fine for late arrival.
 // Uses formula: Fine = (Daily Salary ÷ Shift Hours) × (Late Minutes ÷ 60). Applies fineRules when present.
 // When businessTimezone is provided, shift boundaries are built in that TZ (fixes production UTC server showing lateMinutes=0).
-function calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, dailySalary, shiftHours, fineConfig = null, businessTimezone = null) {
+function calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, dailySalary, shiftHours, fineConfig = null, businessTimezone = null, isOpenShiftDay = false) {
+    console.log('[Fine] calculateLateFine called: isOpenShiftDay=', isOpenShiftDay, 'punchInTime=', punchInTime?.toISOString?.());
+    if (isOpenShiftDay) {
+        console.log('[Fine] calculateLateFine: Skipping late fine for open shift.');
+        return { lateMinutes: 0, fineAmount: 0 };
+    }
     let shiftStart;
     if (businessTimezone) {
         const { getShiftBoundaryAsUTCDate } = require('../utils/leaveAttendanceHelper');
@@ -329,15 +358,25 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         // Use halfDaySession enum values ('First Half Day' / 'Second Half Day') - fallback to converting session numbers
         const session = isHalfDay ? (leave.halfDaySession || leave.halfDayType || (leave.session === '1' ? 'First Half Day' : leave.session === '2' ? 'Second Half Day' : null)) : null;
         const { getShiftTimings, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
-        const dbShiftTimings = getShiftTimings(company, staff);
+        const dbShiftTimings = getShiftTimings(company, staff, attendanceDate, staff?.joiningDate, template);
+        console.log('[Fine] calculateCombinedFine: dbShiftTimings=', JSON.stringify(dbShiftTimings));
         const businessTimezone = getBusinessTimezone(company);
-        const dbShiftStartTime = dbShiftTimings.startTime;
-        const dbShiftEndTime = dbShiftTimings.endTime;
+        // Company embed may return null window; keep fine math stable with template then defaults.
+        const dbShiftStartTime = dbShiftTimings.startTime || template?.shiftStartTime || '09:30';
+        const dbShiftEndTime = dbShiftTimings.endTime || template?.shiftEndTime || '18:30';
         const dbGracePeriodMinutes = dbShiftTimings.gracePeriodMinutes ?? fineConfig?.graceTimeMinutes ?? 0;
-        
-        // Get shift timings (session-aware for Half Day, regular shift otherwise)
+        const shiftTypeLower = (dbShiftTimings.shiftType || 'standard').toString().toLowerCase();
+        const isOpenShiftDay = (shiftTypeLower === 'open' || shiftTypeLower === 'open shift') && !isHalfDay;
+        console.log('[Fine] calculateCombinedFine: isHalfDay=', isHalfDay, 'shiftTypeLower=', shiftTypeLower, 'isOpenShiftDay=', isOpenShiftDay);
+
+        // Get shift timings (session-aware for Half Day, open shift uses required hours only, else fixed clock)
         let shiftStartTime, shiftEndTime, shiftHours;
-        if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+        if (isOpenShiftDay) {
+            shiftHours = Number(dbShiftTimings.openWorkHours || dbShiftTimings.workHours);
+            if (!Number.isFinite(shiftHours) || shiftHours <= 0) shiftHours = 8;
+            shiftStartTime = dbShiftStartTime;
+            shiftEndTime = dbShiftEndTime;
+        } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
             const { getWorkingSessionTimings } = require('../utils/leaveAttendanceHelper');
             // Calculate working session from DB shift times (use company halfDaySettings for custom midpoint)
             const sessionTimings = getWorkingSessionTimings(session, dbShiftStartTime, dbShiftEndTime, dbShiftTimings.halfDaySettings);
@@ -403,16 +442,34 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         console.log('[Fine] Config: source=payroll.fineCalculation', 'enabled=', fineConfig?.enabled, 'calculationType=', fineConfig?.calculationType || 'shiftBased', 'dailySalary=', effectiveDailySalary, 'shiftHours=', shiftHours, 'shiftStart=', shiftStartTime, 'shiftEnd=', shiftEndTime, 'businessTimezone=', businessTimezone);
 
         let lateFine;
-        if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+        if (isOpenShiftDay) {
+            lateFine = { lateMinutes: 0, fineAmount: 0 };
+        } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
             const { calculateHalfDayLateFine } = require('../utils/leaveAttendanceHelper');
             const halfDayGrace = session === 'First Half Day' ? 0 : gracePeriodMinutes;
             lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, halfDayGrace, effectiveDailySalary, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings);
         } else {
-            lateFine = calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, effectiveDailySalary, shiftHours, fineConfig, businessTimezone);
+            lateFine = calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, effectiveDailySalary, shiftHours, fineConfig, businessTimezone, isOpenShiftDay);
         }
         let earlyFine = { earlyMinutes: 0, fineAmount: 0 };
         if (punchOutTime) {
-            if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+            if (isOpenShiftDay && punchInTime) {
+                const requiredMin = Math.round(shiftHours * 60);
+                let effectivePunchIn = punchInTime;
+                if (shiftStartTime) {
+                    const { getShiftBoundaryAsUTCDate } = require('../utils/leaveAttendanceHelper');
+                    const shiftStartUTC = getShiftBoundaryAsUTCDate(attendanceDate, shiftStartTime, businessTimezone);
+                    if (punchInTime > shiftStartUTC) {
+                        effectivePunchIn = shiftStartUTC;
+                    }
+                }
+                const workedMin = Math.max(0, Math.round((punchOutTime.getTime() - effectivePunchIn.getTime()) / (1000 * 60)));
+                const shortBy = Math.max(0, requiredMin - workedMin);
+                earlyFine.earlyMinutes = shortBy;
+                if (fineConfig && fineConfig.enabled && shortBy > 0 && effectiveDailySalary > 0) {
+                    earlyFine.fineAmount = calculateFineAmount(shortBy, 'earlyExit', fineConfig, effectiveDailySalary, shiftHours);
+                }
+            } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
                 const { calculateHalfDayEarlyFine } = require('../utils/leaveAttendanceHelper');
                 earlyFine = calculateHalfDayEarlyFine(punchOutTime, attendanceDate, session, effectiveDailySalary, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings);
             } else {
@@ -426,6 +483,55 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
 
         const fineHours = lateFine.lateMinutes + earlyFine.earlyMinutes;
         const fineAmount = lateFineAmount + earlyFineAmount;
+
+        // Reference shiftBased breakdown for manual testing (actual lines may use fineRules; see [Fine][formula][test] per leg)
+        const testTag = '[Fine][formula][test]';
+        if (fineConfig && fineConfig.enabled && effectiveDailySalary > 0 && shiftHours > 0) {
+            const refHourly = effectiveDailySalary / shiftHours;
+            const lateH = (Number(lateFine.lateMinutes) || 0) / 60;
+            const earlyH = (Number(earlyFine.earlyMinutes) || 0) / 60;
+            const refLatePart = refHourly * lateH;
+            const refEarlyPart = refHourly * earlyH;
+            console.log(
+                testTag,
+                'combined | ref_hourly_rate = dailySalary ÷ shiftHours =',
+                effectiveDailySalary,
+                '÷',
+                shiftHours,
+                '=',
+                refHourly.toFixed(6)
+            );
+            console.log(
+                testTag,
+                'combined | if_shiftBased_1x_per_leg: late_part = hourly×(lateMin÷60) =',
+                refHourly.toFixed(4),
+                '×',
+                lateH.toFixed(6),
+                '=',
+                refLatePart.toFixed(6),
+                '| early_part =',
+                refHourly.toFixed(4),
+                '×',
+                earlyH.toFixed(6),
+                '=',
+                refEarlyPart.toFixed(6)
+            );
+            console.log(
+                testTag,
+                'combined | ref_sum_1x =',
+                refLatePart.toFixed(6),
+                '+',
+                refEarlyPart.toFixed(6),
+                '=',
+                (refLatePart + refEarlyPart).toFixed(6),
+                '| actual stored: lateFineAmount=',
+                lateFineAmount,
+                'earlyFineAmount=',
+                earlyFineAmount,
+                'fineAmount=',
+                fineAmount
+            );
+        }
 
         const out = {
             lateMinutes: lateFine.lateMinutes,
@@ -454,6 +560,180 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         console.error('[Fine] Calculation Error', error);
         return { lateMinutes: 0, earlyMinutes: 0, fineHours: 0, fineAmount: 0, lateFineAmount: 0, earlyFineAmount: 0 };
     }
+}
+
+/**
+ * Persists attendance.overtimeAmount (rupees) when eligible OT minutes >= shift otBufferMinutes.
+ * Uses payroll fineCalculation gate + same shiftBased/fixedPerHour base as OT pay (see calculateOvertimePayAmount).
+ * Pays for full stored overtime minutes (e.g. 143) when threshold met.
+ */
+async function applyOvertimeAmountForAttendance(
+    attendance,
+    staff,
+    company,
+    template,
+    shiftTiming,
+    attendanceDate,
+    leaveForOt
+) {
+    const logTag = '[OT Calc][amount]';
+    const otRounded = Math.floor(Number(attendance.overtime) || 0);
+    const buf = Math.max(0, Math.round(Number(shiftTiming?.otBufferMinutes) || 0));
+    const fineConfig = getEffectiveFineConfig(company || {});
+    const otSettings = company?.settings?.attendance?.overtimePaySettings;
+    const otPayAllowed =
+        fineConfig.enabled === true || otSettings?.enabled === true;
+
+    console.log(logTag, 'inputs | attendanceId=%s staffId=%s | overtime(min)=%s otBufferMinutes=%s | threshold: pay only if overtime≥buffer → %s',
+        attendance._id?.toString?.() || null,
+        staff._id?.toString?.() || null,
+        otRounded,
+        buf,
+        otRounded >= buf ? 'PASS' : 'FAIL');
+
+    if (!shiftTiming || otRounded < buf) {
+        const reason = !shiftTiming ? 'no_shiftTiming' : 'overtime_below_buffer';
+        console.log(logTag, 'overtimeAmount=0 | reason=%s | formula: (if overtime < otBufferMinutes then no rupee OT)', reason);
+        attendance.overtimeAmount = 0;
+        return;
+    }
+    if (!otPayAllowed) {
+        console.log(logTag, 'overtimeAmount=0 | reason=otPayDisabled | need payroll.fineCalculation enabled or attendance.overtimePaySettings.enabled');
+        attendance.overtimeAmount = 0;
+        return;
+    }
+
+    const payrollFc = company?.settings?.payroll?.fineCalculation;
+    const configForOt = fineConfig.enabled
+        ? fineConfig
+        : {
+            enabled: true,
+            calculationType:
+                fineConfig.calculationType ||
+                (payrollFc?.calculationMethod === 'fixedPerHour' ||
+                payrollFc?.calculationType === 'fixedPerHour'
+                    ? 'fixedPerHour'
+                    : 'shiftBased'),
+            finePerHour: fineConfig.finePerHour ?? payrollFc?.finePerHour ?? 0,
+            fineRules: []
+        };
+
+    const isHalfDay =
+        leaveForOt &&
+        String(leaveForOt.leaveType || '').trim().toLowerCase() === 'half day';
+    const session = isHalfDay
+        ? (leaveForOt.halfDaySession ||
+            leaveForOt.halfDayType ||
+            (leaveForOt.session === '1'
+                ? 'First Half Day'
+                : leaveForOt.session === '2'
+                    ? 'Second Half Day'
+                    : null))
+        : null;
+
+    const dbShiftTimings = shiftTiming;
+    const shiftTypeLower = (dbShiftTimings.shiftType || 'standard').toString().toLowerCase();
+    const isOpenShiftDay =
+        (shiftTypeLower === 'open' || shiftTypeLower === 'open shift') && !isHalfDay;
+
+    const dbShiftStartTime = dbShiftTimings.startTime || template?.shiftStartTime || '09:30';
+    const dbShiftEndTime = dbShiftTimings.endTime || template?.shiftEndTime || '18:30';
+
+    let shiftHours;
+    if (isOpenShiftDay) {
+        shiftHours = Number(dbShiftTimings.openWorkHours || dbShiftTimings.workHours);
+        if (!Number.isFinite(shiftHours) || shiftHours <= 0) shiftHours = 8;
+    } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+        const { getWorkingSessionTimings } = require('../utils/leaveAttendanceHelper');
+        const sessionTimings = getWorkingSessionTimings(
+            session,
+            dbShiftStartTime,
+            dbShiftEndTime,
+            dbShiftTimings.halfDaySettings
+        );
+        if (sessionTimings) {
+            shiftHours = calculateShiftHours(sessionTimings.startTime, sessionTimings.endTime);
+        } else {
+            shiftHours = calculateShiftHours(dbShiftStartTime, dbShiftEndTime);
+        }
+    } else {
+        shiftHours = calculateShiftHours(dbShiftStartTime, dbShiftEndTime);
+    }
+
+    const salaryStructure = staff.salary ? calculateSalaryStructure(staff.salary) : null;
+    const netMonthlySalary =
+        salaryStructure?.monthly?.netMonthlySalary != null
+            ? Number(salaryStructure.monthly.netMonthlySalary)
+            : 0;
+    const attendanceYear = attendanceDate.getFullYear();
+    const attendanceMonth1Based = attendanceDate.getMonth() + 1;
+    let dailySalary = null;
+    if (netMonthlySalary > 0 && staff._id) {
+        try {
+            const attendanceStats = await calculateAttendanceStats(
+                staff._id,
+                attendanceMonth1Based,
+                attendanceYear
+            );
+            const thisMonthWorkingDays =
+                attendanceStats.workingDaysFullMonth ?? attendanceStats.workingDays ?? 0;
+            if (thisMonthWorkingDays > 0) {
+                dailySalary = netMonthlySalary / thisMonthWorkingDays;
+            }
+        } catch (err) {
+            console.error('[OT Pay] calculateAttendanceStats failed:', err.message);
+            const attendanceMonth0Based = attendanceDate.getMonth();
+            let monthHolidays = [];
+            if (staff.businessId) {
+                const holidayTemplate = await getHolidayTemplateForStaff(staff);
+                monthHolidays = getHolidaysForMonth(
+                    holidayTemplate,
+                    attendanceYear,
+                    attendanceMonth1Based
+                );
+            }
+            const businessSettings = company?.settings?.business || {};
+            const weeklyOffPattern = businessSettings.weeklyOffPattern || 'standard';
+            const weeklyHolidays = businessSettings.weeklyHolidays || [{ day: 0, name: 'Sunday' }];
+            const workingDays = calculateWorkingDays(
+                attendanceYear,
+                attendanceMonth0Based,
+                monthHolidays,
+                weeklyOffPattern,
+                weeklyHolidays
+            );
+            if (workingDays > 0) dailySalary = netMonthlySalary / workingDays;
+        }
+    }
+
+    let effectiveDailySalary = dailySalary && dailySalary > 0 ? dailySalary : 0;
+    if (isHalfDay && effectiveDailySalary > 0) {
+        effectiveDailySalary = effectiveDailySalary / 2;
+    }
+
+    const mult =
+        otSettings && Number(otSettings.defaultMultiplier) > 0
+            ? Number(otSettings.defaultMultiplier)
+            : 1;
+
+    console.log(logTag, 'payContext | shiftType=%s shiftHours=%s | effectiveDailySalary=%s | halfDay=%s | calcType=%s | OTminutesPaid=%s (full stored overtime) | defaultMultiplier=%s',
+        shiftTypeLower,
+        shiftHours,
+        effectiveDailySalary.toFixed ? effectiveDailySalary.toFixed(4) : effectiveDailySalary,
+        isHalfDay,
+        configForOt.calculationType || 'shiftBased',
+        otRounded,
+        mult);
+
+    attendance.overtimeAmount = calculateOvertimePayAmount(
+        otRounded,
+        configForOt,
+        effectiveDailySalary,
+        shiftHours,
+        mult
+    );
+
+    console.log(logTag, 'stored | overtimeAmount=%s INR', attendance.overtimeAmount);
 }
 
 // @desc    Check In
@@ -487,6 +767,7 @@ const checkIn = async (req, res) => {
         return res.status(404).json({ message: 'Staff record not found for this user' });
     }
     const staffId = req.staff._id;
+    console.log('[Attendance checkIn] Staff Shift Name:', req.staff.shiftName);
     const nowForLog = new Date();
     console.log('[Attendance checkIn] request', { staffId: staffId?.toString(), date: nowForLog.toISOString?.()?.slice(0, 10), businessIdFromBody: bodyBusinessId ?? null });
 
@@ -512,6 +793,7 @@ const checkIn = async (req, res) => {
             .populate('branchId')
             .populate('weeklyHolidayTemplateId')
             .populate('holidayTemplateId');
+        console.log('[Attendance checkIn] Fetched Staff Details: _id=', staff._id?.toString(), 'shiftName=', staff.shiftName);
         const templateDoc = await loadAttendanceTemplateForStaff(staff);
         const template = normalizeTemplate(templateDoc);
         console.log('[Attendance checkIn] template flags', {
@@ -530,13 +812,13 @@ const checkIn = async (req, res) => {
 
         const Company = require('../models/Company');
         const company = await Company.findById(staff.businessId);
-        if (!isShiftAssignedForStaff(company, staff)) {
+        if (!isShiftAssignedForStaff(company, staff, templateDoc)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
         // PRIORITY 1: Check if On Approved Leave (highest priority - blocks all other rules)
         const Leave = require('../models/Leave');
         const { canCheckInWithHalfDayLeave, getShiftTimings, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
-        const shiftForCheckIn = getShiftTimings(company, staff);
+        const shiftForCheckIn = getShiftTimings(company, staff, startOfDay, staff?.joiningDate, templateDoc);
         const businessTimezone = getBusinessTimezone(company);
         const activeLeave = await Leave.findOne({
             employeeId: staffId,
@@ -576,49 +858,54 @@ const checkIn = async (req, res) => {
         let isWeeklyOff = false;
         if (weekOffConfig.weeklyOffPattern === 'oddEvenSaturday') {
             if (dayOfWeek === 0) isWeeklyOff = true;
-            else if (dayOfWeek === 6 && now.getDate() % 2 === 0) isWeeklyOff = true;
+            else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(now.getFullYear(), now.getMonth(), now.getDate(), 'local')) isWeeklyOff = true;
         } else {
             isWeeklyOff = weekOffConfig.weeklyHolidays.some(h => h.day === dayOfWeek);
         }
         if (isWeeklyOff && template.allowAttendanceOnWeeklyOff === false) {
-            return res.status(403).json({ message: 'Today is a Weekly Off. Check-in not allowed.' });
+            // If it's the oddEvenSaturday pattern and today is Saturday, allow check-in regardless of the template setting
+            if (weekOffConfig.weeklyOffPattern === 'oddEvenSaturday' && dayOfWeek === 6) {
+                // Allow check-in
+            } else {
+                return res.status(403).json({ message: 'Today is a Weekly Off. Check-in not allowed.' });
+            }
         }
 
         // 4. Check Late Entry - Always allow, but add warning if not allowed in settings
-        // PRIORITY: Get shift timing from Company settings (matches shiftName if available, otherwise first shift)
-        // Fallback to AttendanceTemplate if shift not found in Company settings
-        let shiftTiming = null;
-        if (company) {
-            shiftTiming = getShiftFromCompanySettings(company, staff.shiftName || null);
-        }
-        
-        const shiftStartStr = shiftTiming?.startTime || template.shiftStartTime || "09:30";
-        const shiftEndStr = shiftTiming?.endTime || template.shiftEndTime || "18:30";
-        const gracePeriod = shiftTiming?.gracePeriodMinutes ?? template.gracePeriodMinutes ?? 0;
-        
-        const [sHours, sMins] = shiftStartStr.split(':').map(Number);
-
-        const shiftStart = new Date(now);
-        shiftStart.setHours(sHours, sMins, 0, 0);
-        const graceTimeEnd = new Date(shiftStart);
-        graceTimeEnd.setMinutes(graceTimeEnd.getMinutes() + gracePeriod);
-
-        const warnings = [];
+        const shiftTiming = company ? shiftForCheckIn : null;
+        let shiftStartStr = null;
+        let shiftEndStr = null;
         let lateMinutes = 0;
-        if (now > graceTimeEnd) {
-            // User is checking in late (after grace period)
-            lateMinutes = Math.floor((now.getTime() - shiftStart.getTime()) / (1000 * 60));
-            if (template.allowLateEntry === false) {
-                // Add warning but still allow check-in
-                warnings.push({
-                    type: 'late_entry',
-                    message: `Late entry not allowed. You are ${lateMinutes} minute(s) late. Shift start time: ${shiftStartStr}`,
-                    minutes: lateMinutes,
-                    notAllowed: true
-                });
+
+        if (isOpenShiftTiming({ shiftType: shiftTiming?.shiftType })) {
+            // For open shifts, fixed start/end times are not applicable.
+            // lateMinutes will remain 0 as initialized.
+            console.log('[Fine] checkIn: Open shift detected, bypassing fixed shift time calculations.');
+        } else {
+            shiftStartStr = shiftTiming?.startTime || template.shiftStartTime || "09:30";
+            shiftEndStr = shiftTiming?.endTime || template.shiftEndTime || "18:30";
+            const gracePeriod = shiftTiming?.gracePeriodMinutes ?? template.gracePeriodMinutes ?? 0;
+            const [sHours, sMins] = shiftStartStr.split(':').map(Number);
+
+            const shiftStart = new Date(now);
+            shiftStart.setHours(sHours, sMins, 0, 0);
+            const graceTimeEnd = new Date(shiftStart);
+            graceTimeEnd.setMinutes(graceTimeEnd.getMinutes() + gracePeriod);
+
+            if (now > graceTimeEnd) {
+                lateMinutes = Math.floor((now.getTime() - shiftStart.getTime()) / (1000 * 60));
+                if (template.allowLateEntry === false) {
+                    warnings.push({
+                        type: 'late_entry',
+                        message: `Late entry not allowed. You are ${lateMinutes} minute(s) late. Shift start time: ${shiftStartStr}`,
+                        minutes: lateMinutes,
+                        notAllowed: true
+                    });
+                }
             }
-            // If allowed, proceed silently (no warnings)
         }
+        
+        const warnings = [];
 
         // Geofence Logic (supports multiple sub-locations via geofence.locations[])
         let activeBranch = null;
@@ -747,19 +1034,40 @@ const checkIn = async (req, res) => {
             existing.fineAmount = fineResult.fineAmount ?? 0;
             // For app punches, prefer app-calculated values so DB matches app formula/logs.
             if (source === 'app' && forceAppFine === true) {
-                const appLate = Number(bodyLateMinutes);
-                const appEarly = Number(bodyEarlyMinutes);
-                const appFine = Number(bodyFineAmount);
-                if (Number.isFinite(appLate)) existing.lateMinutes = Math.max(0, Math.round(appLate));
-                if (Number.isFinite(appEarly)) existing.earlyMinutes = Math.max(0, Math.round(appEarly));
-                if (Number.isFinite(appFine)) existing.fineAmount = Math.max(0, Math.round(appFine * 100) / 100);
-                existing.fineHours = (Number(existing.lateMinutes) || 0) + (Number(existing.earlyMinutes) || 0);
-                console.log('[Fine STORE][CHECK-IN][HALF-DAY UPDATE][APP OVERRIDE]', {
-                    lateMinutes: existing.lateMinutes,
-                    earlyMinutes: existing.earlyMinutes,
-                    fineHours: existing.fineHours,
-                    fineAmount: existing.fineAmount
-                });
+                // If it's an open shift day, explicitly set lateMinutes and fineAmount to 0
+                // regardless of app-provided values.
+                const shiftTypeLower = (fineTemplate.shiftType || 'standard').toString().toLowerCase();
+                const isOpenShiftDay = (shiftTypeLower === 'open' || shiftTypeLower === 'open shift');
+
+                if (isOpenShiftDay) {
+                    existing.lateMinutes = 0;
+                    existing.fineAmount = 0;
+                    existing.fineHours = existing.earlyMinutes;
+                    console.log('[Fine STORE][CHECK-IN][HALF-DAY UPDATE][APP OVERRIDE] Open shift detected, lateMinutes and fineAmount forced to 0.');
+                } else {
+                    if (hasExplicitAppFineNumeric(bodyLateMinutes)) {
+                        existing.lateMinutes = Math.max(0, Math.round(Number(bodyLateMinutes)));
+                    }
+                    if (hasExplicitAppFineNumeric(bodyEarlyMinutes)) {
+                        existing.earlyMinutes = Math.max(0, Math.round(Number(bodyEarlyMinutes)));
+                    }
+                    if (hasExplicitAppFineNumeric(bodyFineAmount)) {
+                        const serverFine = Number(fineResult.fineAmount) || 0;
+                        const appFine = Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100);
+                        // Use app fine if it's > 0, OR if server also thinks it's 0.
+                        // This prevents app's "default 0" from wiping out server's correct calculation.
+                        if (appFine > 0 || serverFine <= 0) {
+                            existing.fineAmount = appFine;
+                        }
+                    }
+                    existing.fineHours = (Number(existing.lateMinutes) || 0) + (Number(existing.earlyMinutes) || 0);
+                    console.log('[Fine STORE][CHECK-IN][HALF-DAY UPDATE][APP OVERRIDE]', {
+                        lateMinutes: existing.lateMinutes,
+                        earlyMinutes: existing.earlyMinutes,
+                        fineHours: existing.fineHours,
+                        fineAmount: existing.fineAmount
+                    });
+                }
             }
             existing.workHours = 0;
             existing.isPaidLeave = false;  // check-in: set false
@@ -868,22 +1176,41 @@ const checkIn = async (req, res) => {
         });
         // For app punches, prefer app-calculated values so DB matches app formula/logs.
         if (source === 'app' && forceAppFine === true) {
-            const appLate = Number(bodyLateMinutes);
-            const appEarly = Number(bodyEarlyMinutes);
-            const appFine = Number(bodyFineAmount);
-            if (Number.isFinite(appLate)) attendance.lateMinutes = Math.max(0, Math.round(appLate));
-            if (Number.isFinite(appEarly)) attendance.earlyMinutes = Math.max(0, Math.round(appEarly));
-            if (Number.isFinite(appFine)) attendance.fineAmount = Math.max(0, Math.round(appFine * 100) / 100);
-            attendance.fineHours =
-                (Number(attendance.lateMinutes) || 0) + (Number(attendance.earlyMinutes) || 0);
-            console.log('[Fine STORE][CHECK-IN][CREATE][APP OVERRIDE]', {
-                lateMinutes: attendance.lateMinutes,
-                earlyMinutes: attendance.earlyMinutes,
-                fineHours: attendance.fineHours,
-                fineAmount: attendance.fineAmount
-            });
+            // If it's an open shift day, explicitly set lateMinutes and fineAmount to 0
+            // regardless of app-provided values.
+            const shiftTypeLower = (fineTemplate.shiftType || 'standard').toString().toLowerCase();
+            const isOpenShiftDay = (shiftTypeLower === 'open' || shiftTypeLower === 'open shift');
+
+            if (isOpenShiftDay) {
+                attendance.lateMinutes = 0;
+                attendance.fineAmount = 0;
+                attendance.fineHours = attendance.earlyMinutes;
+                console.log('[Fine STORE][CHECK-IN][CREATE][APP OVERRIDE] Open shift detected, lateMinutes and fineAmount forced to 0.');
+            } else { 
+                if (hasExplicitAppFineNumeric(bodyLateMinutes)) {
+                    attendance.lateMinutes = Math.max(0, Math.round(Number(bodyLateMinutes)));
+                }
+                if (hasExplicitAppFineNumeric(bodyEarlyMinutes)) {
+                    attendance.earlyMinutes = Math.max(0, Math.round(Number(bodyEarlyMinutes)));
+                }
+                if (hasExplicitAppFineNumeric(bodyFineAmount)) {
+                    const serverFine = Number(fineResult.fineAmount) || 0;
+                    const appFine = Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100);
+                    if (appFine > 0 || serverFine <= 0) {
+                        attendance.fineAmount = appFine;
+                    }
+                }
+                attendance.fineHours =
+                    (Number(attendance.lateMinutes) || 0) + (Number(attendance.earlyMinutes) || 0);
+                console.log('[Fine STORE][CHECK-IN][CREATE][APP OVERRIDE]', {
+                    lateMinutes: attendance.lateMinutes,
+                    earlyMinutes: attendance.earlyMinutes,
+                    fineHours: attendance.fineHours,
+                    fineAmount: attendance.fineAmount
+                });
+            }
             await attendance.save();
-        }
+        } 
         console.log('[Fine STORE][CHECK-IN][CREATE]', {
             attendanceId: attendance._id?.toString?.() || null,
             lateMinutes: attendance.lateMinutes,
@@ -965,12 +1292,12 @@ const checkOut = async (req, res) => {
             .populate('branchId')
             .populate('weeklyHolidayTemplateId')
             .populate('holidayTemplateId');
+        const templateDoc = await loadAttendanceTemplateForStaff(staff);
         const Company = require('../models/Company');
         const company = await Company.findById(staff.businessId);
-        if (!isShiftAssignedForStaff(company, staff)) {
+        if (!isShiftAssignedForStaff(company, staff, templateDoc)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
-        const templateDoc = await loadAttendanceTemplateForStaff(staff);
         const template = normalizeTemplate(templateDoc);
         console.log('[Attendance checkOut] template flags', {
             staffId: staffId?.toString(),
@@ -1081,8 +1408,19 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     const Company = require('../models/Company');
     const company = await Company.findById(staff.businessId);
 
+    const shiftDay = attendance.date ? new Date(attendance.date) : startOfDay;
+    const {
+        canCheckOutWithHalfDayLeave,
+        getShiftTimings,
+        getBusinessTimezone,
+        getWorkingSessionTimings,
+        computeOpenShiftOvertimeWithBufferTracking
+    } = require('../utils/leaveAttendanceHelper');
+    const shiftResolved = company
+        ? getShiftTimings(company, staff, shiftDay, staff?.joiningDate, template)
+        : null;
+
     const Leave = require('../models/Leave');
-    const { canCheckOutWithHalfDayLeave, getShiftTimings, getBusinessTimezone, getWorkingSessionTimings } = require('../utils/leaveAttendanceHelper');
     const activeLeave = await Leave.findOne({
         employeeId: staff._id,
         status: { $regex: /^approved$/i },
@@ -1091,7 +1429,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     });
     if (activeLeave) {
         if (activeLeave.leaveType === 'Half Day') {
-            const shiftForLeave = getShiftTimings(company, staff);
+            const shiftForLeave = shiftResolved;
             const tzForLeave = getBusinessTimezone(company);
             const checkOutResult = canCheckOutWithHalfDayLeave(
                 activeLeave,
@@ -1110,10 +1448,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     }
 
     // Check Early Exit - use session end time for half-day (first/second half), else full shift end
-    let shiftTiming = null;
-    if (company) {
-        shiftTiming = getShiftFromCompanySettings(company, staff.shiftName || null);
-    }
+    const shiftTiming = shiftResolved;
     let dbShiftStart = shiftTiming?.startTime || template.shiftStartTime || '09:30';
     let dbShiftEnd = shiftTiming?.endTime || template.shiftEndTime || '18:30';
 
@@ -1121,7 +1456,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     let shiftEnd = new Date(now);
     const isHalfDayCheckout = isHalfDayStatus || (activeLeave && String(activeLeave.leaveType || '').trim().toLowerCase() === 'half day');
     if (isHalfDayCheckout && company) {
-        const dbShiftTimings = getShiftTimings(company, staff);
+        const dbShiftTimings = shiftResolved || {};
         dbShiftStart = dbShiftTimings.startTime || dbShiftStart;
         dbShiftEnd = dbShiftTimings.endTime || dbShiftEnd;
         const halfDaySettings = dbShiftTimings.halfDaySettings ?? null;
@@ -1143,9 +1478,37 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         shiftEnd.setHours(eHours, eMins, 0, 0);
     }
 
+    const isOpenShiftCheckout = !isHalfDayCheckout && isOpenShiftTiming({ shiftType: shiftTiming?.shiftType });
+
     const warnings = [];
     let earlyMinutes = 0;
-    if (now < shiftEnd) {
+    if (isOpenShiftCheckout && attendance.punchIn) {
+        const reqH = Number(shiftTiming?.workHours || shiftTiming?.openWorkHours);
+        const requiredHours = (Number.isFinite(reqH) && reqH > 0) ? reqH : 8;
+        const requiredMin = Math.round(requiredHours * 60);
+        
+        let effectivePunchIn = new Date(attendance.punchIn);
+        if (shiftTiming?.startTime) {
+            const { getShiftBoundaryAsUTCDate } = require('../utils/leaveAttendanceHelper');
+            const businessTimezone = (company?.settings?.attendance?.timezone || company?.settings?.business?.timezone || company?.timezone || 'Asia/Kolkata');
+            const shiftStartUTC = getShiftBoundaryAsUTCDate(shiftDay, shiftTiming.startTime, businessTimezone);
+            if (effectivePunchIn > shiftStartUTC) {
+                effectivePunchIn = shiftStartUTC;
+            }
+        }
+        
+        const workedMin = Math.max(0, Math.floor((now.getTime() - effectivePunchIn.getTime()) / (1000 * 60)));
+        earlyMinutes = Math.max(0, requiredMin - workedMin);
+        if (earlyMinutes > 0) {
+            const notAllowed = template.allowEarlyExit === false;
+            warnings.push({
+                type: 'early_checkout',
+                message: `You are checking out ${earlyMinutes} minute(s) before completing your required ${requiredHours} hour(s) for today.`,
+                minutes: earlyMinutes,
+                notAllowed
+            });
+        }
+    } else if (now < shiftEnd) {
         earlyMinutes = Math.floor((shiftEnd.getTime() - now.getTime()) / (1000 * 60));
         if (template.allowEarlyExit === false) {
             warnings.push({
@@ -1233,19 +1596,63 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         const minutes = Math.round(durationMs / (1000 * 60));
         attendance.workHours = minutes; // store in minutes
 
-        // Record Overtime if allowed
-        if (template.allowOvertime) {
-            // Use shift timing from Company settings if available
-            const overtimeShiftEndStr = shiftTiming?.endTime || template.shiftEndTime || "18:30";
-            const [eHours, eMins] = overtimeShiftEndStr.split(':').map(Number);
-            const shiftEnd = new Date(now);
-            shiftEnd.setHours(eHours, eMins, 0, 0);
-
-            if (now > shiftEnd) {
-                const otMs = now - shiftEnd;
-                attendance.overtime = parseFloat((otMs / (1000 * 60 * 60)).toFixed(2));
+        // Overtime (minutes): only for overtimeEligible staff when template allows OT.
+        // Standard/rotational: gross past shift end minus otBufferMinutes. Open shift: full extra vs required daily minutes; bufferTime tracks threshold only.
+        const otEligible = staff.overtimeEligible === true;
+        if (otEligible && template.allowOvertime !== false) {
+            const stType = (shiftTiming?.shiftType || 'standard').toString().toLowerCase();
+            const hasEndTime = shiftTiming?.endTime && String(shiftTiming.endTime).trim().length > 0;
+            if (stType === 'open' && isOpenShiftCheckout) {
+                const reqH = Number(shiftTiming?.workHours || shiftTiming?.openWorkHours);
+                const requiredHours = (Number.isFinite(reqH) && reqH > 0) ? reqH : 8;
+                const requiredMin = Math.round(requiredHours * 60);
+                const bufferMin = Math.max(0, Math.round(Number(shiftTiming?.otBufferMinutes) || 0));
+                const { overtimeMinutes, bufferTimeUsed } = computeOpenShiftOvertimeWithBufferTracking(
+                    minutes,
+                    requiredMin,
+                    bufferMin
+                );
+                attendance.overtime = overtimeMinutes;
+                attendance.bufferTime = bufferTimeUsed;
+            } else if (stType !== 'open' && hasEndTime && now > shiftEnd) {
+                const bufferMin = Math.max(0, Math.round(Number(shiftTiming?.otBufferMinutes) || 0));
+                const grossMin = Math.floor((now.getTime() - shiftEnd.getTime()) / (60 * 1000));
+                attendance.overtime = Math.max(0, grossMin - bufferMin);
+                attendance.bufferTime = 0;
+                console.log('[OT Minutes][fixed shift] formula: grossPastEnd = floor((punchOut−shiftEnd)/1min) = %s | overtime = max(0, gross − otBuffer) = max(0, %s − %s) = %s',
+                    grossMin, grossMin, bufferMin, attendance.overtime);
+            } else {
+                attendance.overtime = 0;
+                attendance.bufferTime = 0;
+                console.log('[OT Minutes] overtime=0 | shiftType=%s openCheckout=%s hasEndTime=%s punchAfterShiftEnd=%s',
+                    stType, stType === 'open' && isOpenShiftCheckout, !!hasEndTime, now > shiftEnd);
             }
+        } else {
+            attendance.overtime = 0;
+            attendance.bufferTime = 0;
+            console.log('[OT Minutes] overtime=0 | reason=%s',
+                !otEligible ? 'staff_not_overtimeEligible' : 'template_disallows_overtime');
         }
+
+        let leaveForOt = activeLeave;
+        if (!leaveForOt && isHalfDayStatus && attendance.session) {
+            leaveForOt = {
+                leaveType: 'Half Day',
+                session: attendance.session,
+                status: 'Approved'
+            };
+        }
+        await applyOvertimeAmountForAttendance(
+            attendance,
+            staff,
+            company,
+            template,
+            shiftTiming,
+            shiftDay,
+            leaveForOt
+        );
+    } else {
+        attendance.overtimeAmount = 0;
     }
 
     // Recalculate fine with punch-out (includes both late arrival and early exit)
@@ -1295,12 +1702,19 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     attendance.fineAmount = totalFineAmount;
     // For app punches, prefer app-calculated values so DB matches app formula/logs.
     if (source === 'app' && forceAppFine === true) {
-        const appLate = Number(bodyLateMinutes);
-        const appEarly = Number(bodyEarlyMinutes);
-        const appFine = Number(bodyFineAmount);
-        if (Number.isFinite(appLate)) attendance.lateMinutes = Math.max(0, Math.round(appLate));
-        if (Number.isFinite(appEarly)) attendance.earlyMinutes = Math.max(0, Math.round(appEarly));
-        if (Number.isFinite(appFine)) attendance.fineAmount = Math.max(0, Math.round(appFine * 100) / 100);
+        if (hasExplicitAppFineNumeric(bodyLateMinutes)) {
+            attendance.lateMinutes = Math.max(0, Math.round(Number(bodyLateMinutes)));
+        }
+        if (hasExplicitAppFineNumeric(bodyEarlyMinutes)) {
+            attendance.earlyMinutes = Math.max(0, Math.round(Number(bodyEarlyMinutes)));
+        }
+        if (hasExplicitAppFineNumeric(bodyFineAmount)) {
+            const serverFine = Number(totalFineAmount) || 0;
+            const appFine = Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100);
+            if (appFine > 0 || serverFine <= 0) {
+                attendance.fineAmount = appFine;
+            }
+        }
         attendance.fineHours =
             (Number(attendance.lateMinutes) || 0) + (Number(attendance.earlyMinutes) || 0);
         console.log('[Fine STORE][CHECK-OUT][APP OVERRIDE]', {
@@ -1331,6 +1745,10 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         lateMinutes: attendance.lateMinutes,
         earlyMinutes: attendance.earlyMinutes,
         workHours: attendance.workHours,
+        overtimeMinutes: attendance.overtime,
+        bufferTimeMinutes: attendance.bufferTime,
+        overtimeAmount: attendance.overtimeAmount,
+        overtimeEligible: staff.overtimeEligible === true,
         fineHours: attendance.fineHours,
         fineAmount: attendance.fineAmount,
     });
@@ -1423,6 +1841,8 @@ const getTodayAttendance = async (req, res) => {
         const Company = require('../models/Company');
         const company = await Company.findById(req.staff.businessId);
 
+        const attendanceTemplateLeanEarly = await loadAttendanceTemplateForStaff(staff);
+
         // Branch Info (include status and geofence for app-side check-in/out validation)
         let branchInfo = null;
         if (staff.branchId) {
@@ -1494,7 +1914,13 @@ const getTodayAttendance = async (req, res) => {
         };
         const resolveHalfDayDisplay = (l) =>
             l.halfDaySession ?? l.halfDayType ?? (resolveSession(l) === '1' ? 'First Half Day' : resolveSession(l) === '2' ? 'Second Half Day' : null);
-        const dbShiftTimingsForLeave = getShiftTimings(company, staff);
+        const dbShiftTimingsForLeave = getShiftTimings(
+            company,
+            staff,
+            queryDate,
+            staff?.joiningDate,
+            attendanceTemplateLeanEarly
+        );
         const shiftStartForLeave = dbShiftTimingsForLeave.startTime || null;
         const shiftEndForLeave = dbShiftTimingsForLeave.endTime || null;
         const halfDaySettingsForLeave = dbShiftTimingsForLeave.halfDaySettings || null;
@@ -1679,21 +2105,122 @@ const getTodayAttendance = async (req, res) => {
             }
         }
 
-        const shiftAssigned = isShiftAssignedForStaff(company, staff);
-        const resolvedAttendanceTemplateDoc = await loadAttendanceTemplateForStaff(staff);
+        const resolvedAttendanceTemplateDoc = attendanceTemplateLeanEarly;
+        const shiftAssigned = isShiftAssignedForStaff(company, staff, resolvedAttendanceTemplateDoc);
         const finalTemplate = resolvedAttendanceTemplateDoc
             ? normalizeTemplate(resolvedAttendanceTemplateDoc)
             : {};
         
+        // Explicitly get shift timings and merge into finalTemplate
+        const {
+            shiftType: resolvedShiftType,
+            openWorkHours: resolvedOpenWorkHours,
+            startTime: resolvedShiftStartTime,
+            endTime: resolvedShiftEndTime,
+            gracePeriodMinutes: resolvedGracePeriodMinutes,
+            effectiveShiftName: resolvedEffectiveShiftName,
+            effectiveShiftId: resolvedEffectiveShiftId
+        } = getShiftTimings(
+            company,
+            staff,
+            queryDate,
+            staff?.joiningDate,
+            resolvedAttendanceTemplateDoc
+        );
+
+        finalTemplate.shiftType = resolvedShiftType || finalTemplate.shiftType;
+        if (resolvedEffectiveShiftName) {
+            finalTemplate.shiftName = resolvedEffectiveShiftName;
+        }
+        finalTemplate.openWorkHours = resolvedOpenWorkHours || finalTemplate.openWorkHours;
+        // Company embed: do not fall back to attendance template when window is unknown (null both).
+        const rs = resolvedShiftType ? String(resolvedShiftType).toLowerCase().trim() : '';
+        if (rs === 'open' || rs === 'open shift') {
+            finalTemplate.shiftStartTime = null;
+            finalTemplate.shiftEndTime = null;
+            if (resolvedGracePeriodMinutes !== undefined && resolvedGracePeriodMinutes !== null) {
+                finalTemplate.gracePeriodMinutes = resolvedGracePeriodMinutes;
+            }
+        } else {
+            if (resolvedShiftStartTime && resolvedShiftEndTime) {
+                finalTemplate.shiftStartTime = resolvedShiftStartTime;
+                finalTemplate.shiftEndTime = resolvedShiftEndTime;
+            } else {
+                finalTemplate.shiftStartTime = null;
+                finalTemplate.shiftEndTime = null;
+            }
+            if (resolvedGracePeriodMinutes !== undefined && resolvedGracePeriodMinutes !== null) {
+                finalTemplate.gracePeriodMinutes = resolvedGracePeriodMinutes;
+            }
+        }
+
         // Merge shift timings from company settings into template only when shift is assigned
-        if (shiftAssigned && dbShiftTimingsForLeave.startTime) {
-            finalTemplate.shiftStartTime = dbShiftTimingsForLeave.startTime;
+        if (shiftAssigned) {
+            const stLeave = (dbShiftTimingsForLeave.shiftType || 'standard').toString().toLowerCase();
+            finalTemplate.shiftType = dbShiftTimingsForLeave.shiftType || 'standard';
+            if (stLeave === 'open' || stLeave === 'open shift') {
+                finalTemplate.openWorkHours = dbShiftTimingsForLeave.openWorkHours;
+                finalTemplate.shiftStartTime = null;
+                finalTemplate.shiftEndTime = null;
+                if (dbShiftTimingsForLeave.gracePeriodMinutes !== undefined) {
+                    finalTemplate.gracePeriodMinutes = dbShiftTimingsForLeave.gracePeriodMinutes;
+                }
+            } else {
+                if (dbShiftTimingsForLeave.startTime && dbShiftTimingsForLeave.endTime) {
+                    finalTemplate.shiftStartTime = dbShiftTimingsForLeave.startTime;
+                    finalTemplate.shiftEndTime = dbShiftTimingsForLeave.endTime;
+                } else {
+                    finalTemplate.shiftStartTime = null;
+                    finalTemplate.shiftEndTime = null;
+                }
+                if (dbShiftTimingsForLeave.gracePeriodMinutes !== undefined) {
+                    finalTemplate.gracePeriodMinutes = dbShiftTimingsForLeave.gracePeriodMinutes;
+                }
+            }
         }
-        if (shiftAssigned && dbShiftTimingsForLeave.endTime) {
-            finalTemplate.shiftEndTime = dbShiftTimingsForLeave.endTime;
-        }
-        if (shiftAssigned && dbShiftTimingsForLeave.gracePeriodMinutes !== undefined) {
-            finalTemplate.gracePeriodMinutes = dbShiftTimingsForLeave.gracePeriodMinutes;
+
+        {
+            const shiftNameForLog = (resolvedEffectiveShiftName
+                || finalTemplate.shiftName
+                || finalTemplate.name
+                || '(unnamed)').toString().trim();
+            const calY = queryDate.getUTCFullYear();
+            const calM = queryDate.getUTCMonth() + 1;
+            const calD = queryDate.getUTCDate();
+            const attendanceDateStr = `${calY}-${String(calM).padStart(2, '0')}-${String(calD).padStart(2, '0')}`;
+            const stLower = (finalTemplate.shiftType || '').toString().toLowerCase();
+            const isOpenTpl = stLower === 'open' || stLower === 'open shift';
+            const startLog = finalTemplate.shiftStartTime != null && finalTemplate.shiftStartTime !== ''
+                ? finalTemplate.shiftStartTime
+                : (isOpenTpl ? '(open — no fixed start)' : '(none)');
+            const endLog = finalTemplate.shiftEndTime != null && finalTemplate.shiftEndTime !== ''
+                ? finalTemplate.shiftEndTime
+                : (isOpenTpl ? '(open — no fixed end)' : '(none)');
+            const shiftIdForLog = resolvedEffectiveShiftId || '(none)';
+            console.log(
+                'shift start time******',
+                startLog,
+                '| shiftName=',
+                shiftNameForLog,
+                '| shiftId=',
+                shiftIdForLog,
+                '| attendanceDate=',
+                attendanceDateStr,
+                '| staffId=',
+                String(req.staff._id)
+            );
+            console.log(
+                'shift end time******',
+                endLog,
+                '| shiftName=',
+                shiftNameForLog,
+                '| shiftId=',
+                shiftIdForLog,
+                '| attendanceDate=',
+                attendanceDateStr,
+                '| staffId=',
+                String(req.staff._id)
+            );
         }
         
         let isWeeklyOff = false;
@@ -1703,7 +2230,7 @@ const getTodayAttendance = async (req, res) => {
         const weekOffConfig = await getWeekOffConfigForStaff(staff, company);
         if (weekOffConfig.weeklyOffPattern === 'oddEvenSaturday') {
             if (dayOfWeek === 0) isWeeklyOff = true;
-            else if (dayOfWeek === 6 && queryDate.getDate() % 2 === 0) isWeeklyOff = true;
+            else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(queryDate.getFullYear(), queryDate.getMonth(), queryDate.getDate(), 'local')) isWeeklyOff = true;
         } else {
             isWeeklyOff = weekOffConfig.weeklyHolidays.some(h => h.day === dayOfWeek);
         }
@@ -1755,6 +2282,17 @@ const getTodayAttendance = async (req, res) => {
         const hasPunchOut = !!(attendance && attendance.punchOut);
         const checkedIn = hasPunchIn && !hasPunchOut;
 
+        console.log('[API][GET /api/attendance/today] template.shiftTimings', {
+            staffId: req.staff._id?.toString(),
+            queryDate: req.query.date || 'today',
+            shiftType: finalTemplate.shiftType ?? null,
+            shiftStartTime: finalTemplate.shiftStartTime ?? finalTemplate.startTime ?? null,
+            shiftEndTime: finalTemplate.shiftEndTime ?? finalTemplate.endTime ?? null,
+            openWorkHours: finalTemplate.openWorkHours ?? null,
+            shiftName: finalTemplate.shiftName ?? finalTemplate.name ?? null,
+            shiftAssigned
+        });
+
         res.json({
             data: attendance,
             branch: branchInfo,
@@ -1769,6 +2307,7 @@ const getTodayAttendance = async (req, res) => {
             isHoliday: !!holidayInfo,
             holidayInfo: holidayInfo,
             isWeeklyOff: isWeeklyOff,
+            weeklyOffPattern: weekOffConfig.weeklyOffPattern,
             isAlternateWorkDate: isAlternateWorkDate,
             isCompensationWeekOff: isCompensationWeekOff,
             isCompensationCompOff: isCompensationCompOff,
@@ -1968,9 +2507,6 @@ const getMonthAttendance = async (req, res) => {
         const businessTz = getBusinessTimezone(companyForFine);
         const staffWithSalary = await Staff.findById(req.staff._id).select('+salary').lean();
         const fineConfig = companyForFine ? getEffectiveFineConfig(companyForFine) : null;
-        const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary) : {};
-        const shiftHours = Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
-
         let dailySalaryForEnrich = 0;
         try {
             const stats = await calculateAttendanceStats(req.staff._id, Number(month), Number(year));
@@ -1990,6 +2526,8 @@ const getMonthAttendance = async (req, res) => {
         }
 
         for (const doc of attendanceRaw) {
+            const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary, doc.date ? new Date(doc.date) : new Date(), staffWithSalary?.joiningDate) : {};
+            const shiftHours = Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
             const hasFineMinutes = (Number(doc.fineHours) || 0) > 0 || (Number(doc.lateMinutes) || 0) > 0;
             const status = (doc.status || '').trim().toLowerCase();
             const isEligible = status === 'present' || status === 'approved' || (doc.leaveType || '').trim().toLowerCase() === 'half day';
@@ -2043,7 +2581,7 @@ const getMonthAttendance = async (req, res) => {
 
             if (weeklyOffPattern === 'oddEvenSaturday') {
                 if (dayOfWeek === 0) isWeekOff = true;
-                else if (dayOfWeek === 6 && d % 2 === 0) isWeekOff = true;
+                else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(year, month - 1, d, 'local')) isWeekOff = true;
             } else {
                 isWeekOff = weeklyHolidays.some(h => h.day === dayOfWeek);
             }
@@ -2071,7 +2609,7 @@ const getMonthAttendance = async (req, res) => {
             if (weeklyOffPattern === 'oddEvenSaturday') {
                 if (dayOfWeek === 0) {
                     isWeekOff = true; // All Sundays are week off
-                } else if (dayOfWeek === 6 && d % 2 === 0) {
+                } else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(year, month - 1, d, 'local')) {
                     isWeekOff = true; // Even Saturdays are week off
                 }
             } else {
@@ -2237,7 +2775,7 @@ const getMonthAttendance = async (req, res) => {
             if (weeklyOffPattern === 'oddEvenSaturday') {
                 if (dayOfWeek === 0) {
                     isWeekOff = true; // All Sundays are week off
-                } else if (dayOfWeek === 6 && d % 2 === 0) {
+                } else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(year, month - 1, d, 'local')) {
                     isWeekOff = true; // Even Saturdays are week off
                 }
             } else {

@@ -45,10 +45,10 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   bool _showDestinationSuggestions = false;
   final FocusNode _customerFocusNode = FocusNode();
   List<PlacePrediction> _destinationPredictions = [];
-  String _sourceAddress = '';
+  final String _sourceAddress = '';
   String _destinationAddress = '';
   DateTime? _expectedCompletionDate;
-  bool _useCurrentLocationForSource = true;
+  final bool _useCurrentLocationForSource = true;
   bool _useCustomerAddressAsDestination = false;
   bool _destinationChangedByUser = false;
   String _currentLocationAddress = '';
@@ -76,11 +76,12 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       }
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _currentLocationAddress = 'Location permission denied';
             _loadingCurrentLocation = false;
           });
+        }
         return;
       }
       final position = await Geolocator.getCurrentPosition(
@@ -104,11 +105,12 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         });
       }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _currentLocationAddress = 'Current location (GPS)';
           _loadingCurrentLocation = false;
         });
+      }
     }
   }
 
@@ -368,8 +370,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                     final details = await PlacesService.getPlaceDetails(
                       p.placeId,
                     );
-                    if (details != null && mounted)
+                    if (details != null && mounted) {
                       await _onDestinationSelected(details);
+                    }
                   },
                 );
               },
@@ -429,7 +432,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         if (_destinationAddress.isNotEmpty) ...[
           const SizedBox(height: 6),
           Text(
-            'Selected: $_destinationAddress${_destinationPincode != null ? ' (${_destinationPincode})' : ''}',
+            'Selected: $_destinationAddress${_destinationPincode != null ? ' ($_destinationPincode)' : ''}',
             style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
@@ -901,7 +904,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             child: _loadingCustomers
                 ? const Padding(
                     padding: EdgeInsets.all(24),
-                    child: const Center(child: AppTabLoader()),
+                    child: Center(child: AppTabLoader()),
                   )
                 : _filteredCustomers.isEmpty
                 ? Padding(

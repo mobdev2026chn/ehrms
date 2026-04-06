@@ -1,6 +1,7 @@
 /// Stores attendance template details in SharedPreferences.
 /// Used so check-in alert, selfie check-in, and attendance validation
 /// can use fresh template data without re-login when templates change.
+library;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 

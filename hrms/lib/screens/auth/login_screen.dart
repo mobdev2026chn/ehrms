@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../config/app_colors.dart';
 import '../../bloc/auth/auth_bloc.dart';
@@ -454,8 +453,9 @@ class _LoginScreenState extends State<LoginScreen>
                 focusNode: _passwordFocusNode,
                 obscureText: !_isPasswordVisible,
                 validator: (value) {
-                  if (value == null || value.isEmpty)
+                  if (value == null || value.isEmpty) {
                     return 'Please enter your password';
+                  }
                   return null;
                 },
                 style: const TextStyle(color: Colors.white, fontSize: 16),

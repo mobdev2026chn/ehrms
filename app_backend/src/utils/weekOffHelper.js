@@ -33,6 +33,28 @@ function getBusinessWeekOffConfig(company) {
 }
 
 /**
+ * oddEvenSaturday: week off on 2nd, 4th, 6th Saturday of the month (ordinal), not by calendar
+ * date parity (e.g. 14th/28th). Sundays are handled by callers.
+ * @param {number} fullYear
+ * @param {number} monthIndex0 - 0 = January
+ * @param {number} dayOfMonth - 1–31
+ * @param {'local'|'utc'} calendar - match how the caller interprets the calendar day
+ * @returns {boolean} true if this day is Saturday and is an even-indexed Saturday (off)
+ */
+function isOddEvenSaturdayWeeklyOff(fullYear, monthIndex0, dayOfMonth, calendar = 'local') {
+  const getDow = (y, m, dom) =>
+    calendar === 'utc'
+      ? new Date(Date.UTC(y, m, dom)).getUTCDay()
+      : new Date(y, m, dom).getDay();
+  if (getDow(fullYear, monthIndex0, dayOfMonth) !== 6) return false;
+  let ordinal = 0;
+  for (let d = 1; d <= dayOfMonth; d++) {
+    if (getDow(fullYear, monthIndex0, d) === 6) ordinal++;
+  }
+  return ordinal % 2 === 0;
+}
+
+/**
  * Get week-off config for a staff: staff's WeeklyHolidayTemplate when assigned and active,
  * otherwise business (Company.settings.business) weeklyOffPattern and weeklyHolidays.
  * @param {Object} staff - Staff doc (weeklyHolidayTemplateId may be populated or ObjectId)
@@ -77,5 +99,6 @@ async function getWeekOffConfigForStaff(staff, company) {
 module.exports = {
   getWeekOffConfigForStaff,
   getBusinessWeekOffConfig,
+  isOddEvenSaturdayWeeklyOff,
   DEFAULT_CONFIG,
 };

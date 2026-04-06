@@ -5,6 +5,8 @@ library;
 
 import 'package:flutter/foundation.dart';
 
+import 'rotational_shift_util.dart' as rs;
+
 /// Shift timing information
 class ShiftTiming {
   final String name;
@@ -314,12 +316,14 @@ ShiftTiming? createShiftTimingFromTemplate(Map<String, dynamic>? template) {
 }
 
 /// Helper function to create ShiftTiming from business settings based on shift name
-/// Fetches shift from settings.attendance.shifts[] array matching the shiftName
-/// This matches the backend's business settings structure
+/// Fetches shift from settings.attendance.shifts[] array matching the shiftName or embedded shift _id.
+/// When [attendanceDate] / [joiningDate] are set, rotational shifts resolve like the server (days since join modulo cycle).
 ShiftTiming? createShiftTimingFromBusinessSettings(
   Map<String, dynamic>? businessSettings,
-  String? shiftName,
-) {
+  String? shiftName, {
+  DateTime? attendanceDate,
+  DateTime? joiningDate,
+}) {
   if (businessSettings == null || shiftName == null || shiftName.isEmpty) {
     return null;
   }
@@ -334,23 +338,20 @@ ShiftTiming? createShiftTimingFromBusinessSettings(
   final shifts = attendance['shifts'] as List?;
   if (shifts == null || shifts.isEmpty) return null;
 
-  // Find shift matching the shiftName
-  Map<String, dynamic>? matchedShift;
-  for (final shift in shifts) {
-    if (shift is Map<String, dynamic>) {
-      final name = shift['name'] as String?;
-      if (name != null && name.toLowerCase() == shiftName.toLowerCase()) {
-        matchedShift = shift;
-        break;
-      }
-    }
-  }
+  final wrapper = rs.findShiftByKey(shifts, shiftName) ??
+      (shifts.first is Map
+          ? Map<String, dynamic>.from(shifts.first as Map)
+          : null);
+  if (wrapper == null) return null;
 
-  if (matchedShift == null) return null;
+  final day = attendanceDate ?? DateTime.now();
+  final anchor = joiningDate ?? DateTime.now();
+  final matchedShift =
+      rs.resolveEffectiveShiftForDate(shifts, wrapper, day, anchor);
 
   // Extract shift timing information
-  final startTime = matchedShift['startTime'] as String? ?? "09:30";
-  final endTime = matchedShift['endTime'] as String? ?? "18:30";
+  final startTime = matchedShift['startTime'] as String? ?? '09:30';
+  final endTime = matchedShift['endTime'] as String? ?? '18:30';
   final graceTimeData = matchedShift['graceTime'] as Map<String, dynamic>?;
 
   GraceTime? graceTime;

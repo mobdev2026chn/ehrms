@@ -184,7 +184,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
     staffId ??= (widget.task ?? _task)?.assignedTo;
     if (staffId == null || staffId.isEmpty) return;
     if (mounted) setState(() => _staffId = staffId);
-    await _loadFormTemplatesAndResponses(staffId!);
+    await _loadFormTemplatesAndResponses(staffId);
   }
 
   Future<void> _loadFormTemplatesAndResponses(String staffId) async {
@@ -236,7 +236,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
         });
       }
       final staffId = _staffId ?? t.assignedTo;
-      if (staffId != null && staffId.isNotEmpty) {
+      if (staffId.isNotEmpty) {
         if (_staffId == null && mounted) setState(() => _staffId = staffId);
         await _loadFormTemplatesAndResponses(staffId);
       }
@@ -1187,9 +1187,9 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
         const SizedBox(height: 6),
         Text(
           hasAddress
-              ? address!
+              ? address
               : (hasCoords
-                    ? '${lat!.toStringAsFixed(6)}, ${lng!.toStringAsFixed(6)}'
+                    ? '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}'
                     : '—'),
           style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
         ),

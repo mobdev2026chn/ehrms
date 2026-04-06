@@ -3,8 +3,9 @@ import 'package:hrms/models/customer.dart';
 DateTime? _parseDate(dynamic value) {
   if (value == null) return null;
   if (value is String) return DateTime.tryParse(value);
-  if (value is num)
+  if (value is num) {
     return DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true);
+  }
   if (value is Map<dynamic, dynamic>) {
     final dateStr = value[r'$date'];
     if (dateStr != null) return DateTime.tryParse(dateStr.toString());
@@ -128,8 +129,9 @@ class TaskExitRecord {
   });
 
   factory TaskExitRecord.fromJson(Map<String, dynamic>? json) {
-    if (json == null)
+    if (json == null) {
       return const TaskExitRecord(lat: 0, lng: 0, exitReason: '');
+    }
     final loc = json['exitLocation'] as Map<String, dynamic>? ?? json;
     return TaskExitRecord(
       lat: (loc['lat'] as num?)?.toDouble() ?? 0,
@@ -504,8 +506,9 @@ class Task {
   static DateTime? _dateFromJson(dynamic value) {
     if (value == null) return null;
     if (value is String) return DateTime.tryParse(value);
-    if (value is num)
+    if (value is num) {
       return DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true);
+    }
     if (value is Map<dynamic, dynamic>) {
       final dateStr = value[r'$date'];
       if (dateStr != null) return DateTime.tryParse(dateStr.toString());
@@ -717,9 +720,9 @@ class TimelineEvent {
     final timeVal = json['time'];
     DateTime? time;
     if (timeVal != null) {
-      if (timeVal is String)
+      if (timeVal is String) {
         time = DateTime.tryParse(timeVal);
-      else if (timeVal is num)
+      } else if (timeVal is num)
         time = DateTime.fromMillisecondsSinceEpoch(
           timeVal.toInt(),
           isUtc: true,
@@ -762,9 +765,9 @@ class RoutePoint {
     final ts = json['timestamp'];
     DateTime? time;
     if (ts != null) {
-      if (ts is String)
+      if (ts is String) {
         time = DateTime.tryParse(ts);
-      else if (ts is num)
+      } else if (ts is num)
         time = DateTime.fromMillisecondsSinceEpoch(ts.toInt(), isUtc: true);
       else if (ts is Map && ts[r'$date'] != null) {
         time = DateTime.tryParse(ts[r'$date'].toString());

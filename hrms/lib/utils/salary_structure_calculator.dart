@@ -46,6 +46,28 @@ class SalaryStructureInputs {
     this.employeeESIRate = 0,
   });
 
+  /// Web payroll preview: scale fixed components by payableDays/baseDays, then [calculateSalaryStructure].
+  SalaryStructureInputs scaledByProrationFactor(double factor) {
+    final f = factor;
+    if (f <= 0 || f == 1.0) return this;
+    return SalaryStructureInputs(
+      basicSalary: basicSalary * f,
+      dearnessAllowance: dearnessAllowance * f,
+      houseRentAllowance: houseRentAllowance * f,
+      specialAllowance: specialAllowance * f,
+      employerPFRate: employerPFRate,
+      employerESIRate: employerESIRate,
+      incentiveRate: incentiveRate,
+      gratuityRate: gratuityRate,
+      statutoryBonusRate: statutoryBonusRate,
+      medicalInsuranceAmount: medicalInsuranceAmount,
+      mobileAllowance: mobileAllowance,
+      mobileAllowanceType: mobileAllowanceType,
+      employeePFRate: employeePFRate,
+      employeeESIRate: employeeESIRate,
+    );
+  }
+
   factory SalaryStructureInputs.fromMap(Map<String, dynamic> salary) {
     final basicSalary = (salary['basicSalary'] ?? 0).toDouble();
     final dearnessAllowance = (salary['dearnessAllowance'] ?? 0).toDouble();
@@ -79,10 +101,13 @@ class MonthlySalaryStructure {
   final double grossFixedSalary; // basicSalary + DA + HRA + specialAllowance
   final double employerPF; // basicSalary × employerPFRate / 100
   final double employerESI; // grossFixedSalary × employerESIRate / 100
-  final double grossSalary; // grossFixedSalary + employerPF + employerESI
+  final double pfStaticAmount; // ₹1800 in gross when Basic+DA ≥ 15000 (web)
+  final double grossSalary; // grossFixedSalary + employerPF + employerESI + pfStaticAmount
   final double employeePF; // basicSalary × employeePFRate / 100
   final double employeeESI; // grossSalary × employeeESIRate / 100
-  final double totalMonthlyDeductions; // employeePF + employeeESI
+  /// Web `salaryStructureCalculation.util.ts`: employeePF + employeeESI + employerPF + employerESI
+  /// (employer amounts are already in [grossSalary]; subtracting them yields take-home = fixed + pfStatic − employeePF − employeeESI).
+  final double totalMonthlyDeductions;
   final double netMonthlySalary; // grossSalary - totalMonthlyDeductions
 
   MonthlySalaryStructure({
@@ -93,6 +118,7 @@ class MonthlySalaryStructure {
     required this.grossFixedSalary,
     required this.employerPF,
     required this.employerESI,
+    required this.pfStaticAmount,
     required this.grossSalary,
     required this.employeePF,
     required this.employeeESI,
@@ -148,8 +174,9 @@ class CalculatedSalaryStructure {
 /// 2. Gross Salary = Fixed Gross + Employer PF + Employer ESI
 ///    - Employer PF = % of Basic
 ///    - Employer ESI = % of Fixed Gross
-/// 3. Net Salary = Gross Salary - Employee Deductions
-///    - Employee PF = % of Basic
+/// 3. Net Salary (web) = Gross Salary - (Employee PF + Employee ESI + Employer PF + Employer ESI)
+///    i.e. take-home = Gross Fixed + PF static − Employee PF − Employee ESI
+///    - Employee PF = % of Basic (or PF static when PF not applicable)
 ///    - Employee ESI = % of Gross Salary (NOT Fixed Gross)
 /// 4. Annual Gross = Monthly Gross × 12
 /// 5. Incentive = % of Annual Gross Salary
@@ -219,12 +246,13 @@ CalculatedSalaryStructure calculateSalaryStructure(
       ? (grossSalary * effectiveEmployeeESIRate / 100)
       : 0;
 
-  final totalMonthlyDeductions = employeePF + employeeESI;
+  // Must match web: totalMonthlyDeductions includes employer PF/ESI (see backend TS util).
+  final totalMonthlyDeductions =
+      employeePF + employeeESI + employerPF + employerESI;
 
   // ============================================
   // STEP 4: Net Salary (Take-Home Pay)
   // ============================================
-  // Net Monthly Salary = Gross Salary - Employee Deductions
   final netMonthlySalary = grossSalary - totalMonthlyDeductions;
 
   // ============================================
@@ -287,6 +315,7 @@ CalculatedSalaryStructure calculateSalaryStructure(
       grossFixedSalary: grossFixedSalary.toDouble(),
       employerPF: employerPF.toDouble(),
       employerESI: employerESI.toDouble(),
+      pfStaticAmount: pfStaticAmount.toDouble(),
       grossSalary: grossSalary.toDouble(),
       employeePF: employeePF.toDouble(),
       employeeESI: employeeESI.toDouble(),
@@ -330,6 +359,7 @@ CalculatedSalaryStructure calculatedSalaryFromLegacyStaffMap(
     grossFixedSalary: gross * 0.8,
     employerPF: 0,
     employerESI: 0,
+    pfStaticAmount: 0,
     grossSalary: gross,
     employeePF: 0,
     employeeESI: 0,
@@ -372,11 +402,40 @@ class ProratedSalary {
   });
 }
 
-/// [workingDaysForProration] — full-month working-day count (denominator), same as web
-/// `workingDaysForCalculation` / backend `thisMonthWorkingDays`.
-///
-/// [presentDays] — same as web `EmployeeSalaryOverview` `presentDays` reducer
-/// (Present/Approved/Half Day / pending half-day rules only — not paid leave rows).
+/// Web / app_backend payroll preview: scale Basic/DA/HRA/Special by payable/base days,
+/// then run full PF/ESI ladder (thresholds apply to MTD fixed pay).
+ProratedSalary calculateWebStyleMtdProratedSalary(
+  SalaryStructureInputs fullMonthInputs,
+  int payableBaseDays,
+  num payableDays, [
+  double fineAmount = 0,
+]) {
+  if (payableBaseDays <= 0) {
+    return ProratedSalary(
+      proratedGrossSalary: 0,
+      proratedDeductions: 0,
+      fineAmount: fineAmount,
+      totalDeductions: fineAmount,
+      proratedNetSalary: -fineAmount,
+      attendancePercentage: 0,
+    );
+  }
+  final f = payableDays / payableBaseDays;
+  final scaled = fullMonthInputs.scaledByProrationFactor(f);
+  final m = calculateSalaryStructure(scaled).monthly;
+  final attendancePercentage = (payableDays / payableBaseDays) * 100;
+  final totalDeductions = m.totalMonthlyDeductions + fineAmount;
+  return ProratedSalary(
+    proratedGrossSalary: m.grossSalary,
+    proratedDeductions: m.totalMonthlyDeductions,
+    fineAmount: fineAmount,
+    totalDeductions: totalDeductions,
+    proratedNetSalary: m.netMonthlySalary - fineAmount,
+    attendancePercentage: attendancePercentage,
+  );
+}
+
+/// Legacy linear: gross×factor and deductions×factor. Prefer [calculateWebStyleMtdProratedSalary].
 ProratedSalary calculateProratedSalary(
   CalculatedSalaryStructure calculatedSalary,
   int workingDaysForProration,
@@ -397,16 +456,11 @@ ProratedSalary calculateProratedSalary(
   final attendancePercentage = (presentDays / workingDaysForProration) * 100;
   final prorationFactor = presentDays / workingDaysForProration;
 
-  // Match web formula exactly:
-  // - prorated gross = monthly gross * proration factor
-  // - prorated deductions = monthly deductions * proration factor
-  // - fines are applied after proration
   final proratedGrossSalary =
       calculatedSalary.monthly.grossSalary * prorationFactor;
   final proratedDeductions =
       calculatedSalary.monthly.totalMonthlyDeductions * prorationFactor;
 
-  // Fine amount is NOT prorated - it's the actual total from attendance records
   final totalDeductions = proratedDeductions + fineAmount;
 
   final proratedNetSalary = proratedGrossSalary - totalDeductions;
@@ -514,11 +568,22 @@ WorkingDaysInfo calculateWorkingDays(
         isWeeklyOff = true;
       } else if (jsWeekday == 6) {
         // Saturday - check if even (weekly off) or odd (working)
-        if (day % 2 == 0) {
-          // Even Saturday - weekly off
+        // Calculate which Saturday of the month this is (1st, 2nd, etc.)
+        int saturdayOrdinal = 0;
+        for (int d = 1; d <= day; d++) {
+          final tempDate = DateTime(year, month, d);
+          final tempDartWeekday = tempDate.weekday;
+          final tempJsWeekday = tempDartWeekday == 7 ? 0 : tempDartWeekday;
+          if (tempJsWeekday == 6) {
+            saturdayOrdinal++;
+          }
+        }
+        
+        if (saturdayOrdinal % 2 == 0) {
+          // Even Saturday (2nd, 4th, 6th) - weekly off
           isWeeklyOff = true;
         } else {
-          // Odd Saturday - working day
+          // Odd Saturday (1st, 3rd, 5th) - working day
           isWeeklyOff = false;
         }
       }

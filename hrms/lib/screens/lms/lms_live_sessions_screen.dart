@@ -802,7 +802,7 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                   ),
                   const SizedBox(height: 16),
                   DropdownButtonFormField<String>(
-                    value: _sessionType,
+                    initialValue: _sessionType,
                     decoration: const InputDecoration(
                       labelText: 'Session Type',
                       border: OutlineInputBorder(),
@@ -848,8 +848,9 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                                 const Duration(days: 365),
                               ),
                             );
-                            if (date != null)
+                            if (date != null) {
                               setState(() => _selectedDate = date);
+                            }
                           },
                           icon: const Icon(Icons.calendar_today),
                           label: Text(
@@ -869,8 +870,9 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                               context: context,
                               initialTime: _selectedTime ?? TimeOfDay.now(),
                             );
-                            if (time != null)
+                            if (time != null) {
                               setState(() => _selectedTime = time);
+                            }
                           },
                           icon: const Icon(Icons.access_time),
                           label: Text(

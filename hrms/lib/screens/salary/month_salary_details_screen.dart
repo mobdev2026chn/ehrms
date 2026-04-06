@@ -809,7 +809,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
         child: Row(
           children: [
             // Date
-            Container(
+            SizedBox(
               width: 60,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

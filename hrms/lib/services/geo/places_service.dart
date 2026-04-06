@@ -45,7 +45,7 @@ class PlacesService {
     double? lng,
   }) async {
     final key = AppConstants.googleMapsApiKey;
-    if (key == null || key.isEmpty || input.trim().isEmpty) return [];
+    if (key.isEmpty || input.trim().isEmpty) return [];
 
     try {
       // Full URL – no types restriction for full coverage: cities, areas,
@@ -99,7 +99,7 @@ class PlacesService {
   /// Get lat/lng and formatted address for a place_id (e.g. from autocomplete).
   static Future<PlaceDetails?> getPlaceDetails(String placeId) async {
     final key = AppConstants.googleMapsApiKey;
-    if (key == null || key.isEmpty) return null;
+    if (key.isEmpty) return null;
 
     try {
       final url =

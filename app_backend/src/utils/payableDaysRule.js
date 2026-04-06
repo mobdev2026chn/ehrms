@@ -1,4 +1,50 @@
 const mongoose = require('mongoose');
+const SalaryTemplate = require('../models/SalaryTemplate');
+const SalaryPayableDaysRule = require('../models/SalaryPayableDaysRule');
+
+/**
+ * Same denominator as web `resolveTemplatePayableDays` in payroll.controller.ts (TypeScript):
+ * only SalaryTemplate.payableDaysRule with type `fixedDays` + daysPerMonth uses a fixed divisor;
+ * `calendarMonth` (or missing rule) uses full-month working-day count.
+ */
+async function resolveTemplateLinkedPayableDenominatorDays({
+    staff,
+    company,
+    fullMonthWorkingDays,
+}) {
+    const fallback = Number(fullMonthWorkingDays) || 0;
+    const businessId = staff?.businessId || company?._id;
+    const templateId = staff?.salaryTemplateId;
+    if (!templateId || !mongoose.Types.ObjectId.isValid(String(templateId))) {
+        return fallback;
+    }
+    if (!businessId || !mongoose.Types.ObjectId.isValid(String(businessId))) {
+        return fallback;
+    }
+    try {
+        const template = await SalaryTemplate.findOne({
+            _id: new mongoose.Types.ObjectId(String(templateId)),
+            businessId: new mongoose.Types.ObjectId(String(businessId)),
+            isActive: true,
+        })
+            .select('payableDaysRuleId')
+            .lean();
+        if (!template?.payableDaysRuleId) return fallback;
+        const rule = await SalaryPayableDaysRule.findOne({
+            _id: template.payableDaysRuleId,
+            businessId: new mongoose.Types.ObjectId(String(businessId)),
+        })
+            .select('type daysPerMonth')
+            .lean();
+        if (!rule) return fallback;
+        const t = String(rule.type || '').trim().toLowerCase();
+        const dpm = Number(rule.daysPerMonth) || 0;
+        if (t === 'fixeddays' && dpm > 0) return dpm;
+        return fallback;
+    } catch (_) {
+        return fallback;
+    }
+}
 
 /**
  * Resolve payable-days rule from staff/company settings.
@@ -320,5 +366,6 @@ module.exports = {
     resolvePayableDaysRule,
     resolvePayableBaseDays,
     computePayableDays,
+    resolveTemplateLinkedPayableDenominatorDays,
 };
 

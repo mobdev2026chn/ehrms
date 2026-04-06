@@ -64,6 +64,10 @@ class ErrorMessageUtils {
       }
       if (code == 401) return 'Session expired. Please log in again.';
       if (code == 403) return 'You don\'t have permission for this action.';
+      if (code == 409) {
+        return backendMsg ??
+            'Customer already exists with this email or phone number.';
+      }
       if (code != null && code >= 400) {
         return backendMsg ?? 'Request failed. Please try again.';
       }
@@ -138,10 +142,13 @@ class ErrorMessageUtils {
     final lower = s.toLowerCase();
     return lower.contains('exception') ||
         lower.contains('stack trace') ||
-        lower.contains('at ') && lower.contains('(') ||
+        (lower.contains('at ') && lower.contains('(')) ||
         lower.contains('ioexception') ||
         lower.contains('executionexception') ||
         lower.contains('firebase_messaging') ||
+        lower.contains('internal server') ||
+        lower.contains('e11000') ||
+        lower.trim() == 'server error' ||
         s.contains('java.') ||
         s.contains('dart:');
   }

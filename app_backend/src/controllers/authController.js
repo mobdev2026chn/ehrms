@@ -527,9 +527,10 @@ const getProfile = async (req, res) => {
                 .populate('branchId')
                 // App does not need full company subscription/plan payload in profile.
                 // Keep only settings used by attendance/salary calculations.
+                // Full settings subtree so embedded attendance.shifts[].workHours is not omitted by partial paths.
                 .populate({
                     path: 'businessId',
-                    select: '_id settings.business settings.payroll',
+                    select: '_id settings',
                 })
                 .populate('weeklyHolidayTemplateId')
                 .populate('candidateId') // Populate candidate to get education, experience, documents
@@ -625,7 +626,7 @@ const updateProfile = async (req, res) => {
             const {
                 gender, maritalStatus, dob, bloodGroup, address, bankDetails,
                 employmentIds, uan, pan, aadhaar, pfNumber, esiNumber,
-                designation, department, shiftName, status,
+                designation, department, shiftName, shiftId, status,
                 isGpsEnabled, isGpsAllowed, isEnabledPreciseLocation
             } = req.body;
 
@@ -647,6 +648,7 @@ const updateProfile = async (req, res) => {
             if (designation) updateData.designation = designation;
             if (department) updateData.department = department;
             if (shiftName) updateData.shiftName = shiftName;
+            if (shiftId !== undefined) updateData.shiftId = shiftId || null;
             if (status) updateData.status = status;
             if (typeof isGpsEnabled === 'boolean') {
                 updateData.isGpsEnabled = isGpsEnabled;

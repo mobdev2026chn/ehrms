@@ -590,7 +590,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         );
       }
 
-      // Past month: no calculation – use payroll for that month/year or show 0.00
+      // Past month: load payroll/preview/history, then continue with same attendance +
+      // holidays + stats path as current month (full calendar, late fines, daily breakdown).
       if (!_isCurrentMonth(monthIndex, year)) {
         _pastMonthPayroll = null;
         _currentPayroll = null;
@@ -625,6 +626,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           'lateDays': 0,
           'totalLateMinutes': 0,
         };
+        _unpaidLeaveDeduction = 0;
         try {
           final payrollData = await _salaryService
               .getPayrolls(
@@ -646,12 +648,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           await _tryFetchPayrollPreview(monthIndex, year);
         }
         await _loadPayrollHistory();
-        if (mounted) setState(() => _isLoading = false);
-        return;
+      } else {
+        _pastMonthPayroll = null;
       }
-
-      // Current month: clear past-month state and run full calculation
-      _pastMonthPayroll = null;
 
       if (_isCurrentMonth(monthIndex, year) && !_allowCurrentCycleSalaryAccess) {
         debugPrint(
@@ -777,7 +776,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             final data = gb['data'] as Map<String, dynamic>;
             final b = data['business'];
             if (b is Map) {
-              companyDoc = Map<String, dynamic>.from(b as Map);
+              companyDoc = Map<String, dynamic>.from(b);
             }
           }
         } catch (_) {}
@@ -1192,12 +1191,25 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       // Get shift timing from business settings based on staff's shiftName
       final staffShiftName = staffData['shiftName'] as String?;
 
+      DateTime? joiningDateParsed;
+      final jdRaw = staffData['joiningDate'];
+      if (jdRaw is String) {
+        joiningDateParsed = DateTime.tryParse(jdRaw);
+      } else if (jdRaw is DateTime) {
+        joiningDateParsed = jdRaw;
+      }
+      final rotationalRefDay = _isCurrentMonth(monthIndex, year)
+          ? DateTime(todayNav.year, todayNav.month, todayNav.day)
+          : DateTime(year, monthIndex, 15);
+
       // Create shift timing from business settings (priority: shift-specific grace time)
       ShiftTiming? shiftTiming;
       if (businessSettings != null && staffShiftName != null) {
         shiftTiming = createShiftTimingFromBusinessSettings(
           businessSettings,
           staffShiftName,
+          attendanceDate: rotationalRefDay,
+          joiningDate: joiningDateParsed,
         );
       }
 
@@ -1245,7 +1257,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               '[SalaryPerDay] month=$monthIndex year=$year '
               'denominatorDays=$thisMonthWorkingDays payableRule=${_payableRule ?? "workingDaysFallback"} '
               'netMonthly=${netM.toStringAsFixed(2)} '
-              'perDayNet=${dailySalary!.toStringAsFixed(4)} '
+              'perDayNet=${dailySalary.toStringAsFixed(4)} '
               '(netMonthly / denominatorDays) '
               'grossMonthly=${grossM.toStringAsFixed(2)} '
               'perDayGross=${perGross.toStringAsFixed(4)} '
@@ -1300,12 +1312,20 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         final thisMonthWorkingDays = _salaryPayableBaseDays(workingDays);
         if (thisMonthWorkingDays > 0) {
           final presentDaysForProration = _effectivePayableDaysForRule();
-          _proratedSalary = calculateProratedSalary(
-            _calculatedSalary!,
-            thisMonthWorkingDays,
-            presentDaysForProration,
-            finalTotalFineAmount,
-          );
+          _proratedSalary = _staffSalary != null &&
+                  _staffSalary!['basicSalary'] != null
+              ? calculateWebStyleMtdProratedSalary(
+                  SalaryStructureInputs.fromMap(_staffSalary!),
+                  thisMonthWorkingDays,
+                  presentDaysForProration,
+                  finalTotalFineAmount,
+                )
+              : calculateProratedSalary(
+                  _calculatedSalary!,
+                  thisMonthWorkingDays,
+                  presentDaysForProration,
+                  finalTotalFineAmount,
+                );
           final perDayNetForLog =
               _calculatedSalary!.monthly.netMonthlySalary / thisMonthWorkingDays;
           final perDayGrossForLog =
@@ -1648,18 +1668,19 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   ],
                   _buildSummaryCards(),
                   const SizedBox(height: 10),
-                  if (_isSelectedCurrentMonth && !_isCurrentCycleBlocked) ...[
+                  if (!_salaryAccessDenied &&
+                      (!_isSelectedCurrentMonth || !_isCurrentCycleBlocked)) ...[
                     _buildAttendanceSummary(),
                     const SizedBox(height: 10),
                     _buildAttendanceCalendarOverview(),
                     const SizedBox(height: 10),
-                    _buildSalaryComponentBreakdown(),
-                    const SizedBox(height: 10),
+                  ],
+                  _buildSalaryComponentBreakdown(),
+                  const SizedBox(height: 10),
+                  if (!_salaryAccessDenied &&
+                      (!_isSelectedCurrentMonth || !_isCurrentCycleBlocked)) ...[
                     _buildDailyBreakdownOverview(),
-                  ] else ...[
-                    _buildSalaryComponentBreakdown(),
                     const SizedBox(height: 10),
-                    if (!_isSelectedCurrentMonth) _buildPastMonthAttendancePlaceholder(),
                   ],
                   if (_calculatedSalary != null &&
                       (_payrollHistoryLoading ||
@@ -1698,7 +1719,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             onPressed: hasUrl
                 ? () => _sharePayslipPdfFromUrl(
                       url,
-                      fileBaseName: 'Payslip_${_selectedMonth}',
+                      fileBaseName: 'Payslip_$_selectedMonth',
                     )
                 : null,
             icon: const Icon(Icons.ios_share_rounded, size: 20),
@@ -2335,17 +2356,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     );
   }
 
-  Widget _buildPastMonthAttendancePlaceholder() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-    );
-  }
-
   /// MTD figures for the breakdown card. Recomputes if [_proratedSalary] was never set (avoids falling
   /// back to [_backendEarnings], which can show prorated Basic/DA/HRA and look like "wrong" contract pay).
   int _salaryPayableBaseDays(int fallbackWorkingDays) {
@@ -2369,10 +2379,19 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final wdm = _salaryPayableBaseDays(workingDays);
     if (wdm <= 0) return null;
     final fine = (_fineInfo['totalFineAmount'] as num?)?.toDouble() ?? 0.0;
+    final payable = _effectivePayableDaysForRule();
+    if (_staffSalary != null && _staffSalary!['basicSalary'] != null) {
+      return calculateWebStyleMtdProratedSalary(
+        SalaryStructureInputs.fromMap(_staffSalary!),
+        wdm,
+        payable,
+        fine,
+      );
+    }
     return calculateProratedSalary(
       _calculatedSalary!,
       wdm,
-      _effectivePayableDaysForRule(),
+      payable,
       fine,
     );
   }
@@ -2429,23 +2448,33 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final canUseSelectedPayrollMtd =
         !_isSelectedCurrentMonth || _payrollRowIsFinalForMtd(selectedPayroll);
 
-    // Web (EmployeeSalaryOverview): earnings list shows **full** Basic/DA/HRA; MTD row is prorated.
-    // Do not require [_proratedSalary] for earnings — otherwise we fall back to [_backendEarnings] (wrong Basic).
+    // Web: MTD earnings/deductions = salary ladder on Basic/DA/HRA/Special × (payableDays ÷ template/base days).
     final wdm = _workingDaysInfo == null
         ? 0
         : _salaryPayableBaseDays(
             _workingDaysInfo!.workingDaysFullMonth ??
                 _workingDaysInfo!.workingDays,
           );
-    final f = wdm > 0 ? (_webPresentDays / wdm) : 0.0;
+    final mtdNumerator = _effectivePayableDaysForRule();
+    final mtdFactor = wdm > 0 ? (mtdNumerator / wdm) : 0.0;
+    final f = mtdFactor;
     final useWebStyleStructure = payrollEarnings.isEmpty &&
         monthly != null &&
         !payrollLocked;
     final prBreakdown = _resolveProrationForBreakdown();
     final useWebStyleMtdRows = useWebStyleStructure && prBreakdown != null;
     final fineAmount = (_fineInfo['totalFineAmount'] as num?)?.toDouble() ?? 0.0;
-    final mtdNumerator = _effectivePayableDaysForRule();
-    final mtdFactor = wdm > 0 ? (mtdNumerator / wdm) : 0.0;
+    MonthlySalaryStructure? mtdStruct;
+    if (useWebStyleStructure &&
+        _staffSalary != null &&
+        _staffSalary!['basicSalary'] != null &&
+        mtdFactor > 0) {
+      mtdStruct = calculateSalaryStructure(
+        SalaryStructureInputs.fromMap(
+          _staffSalary!,
+        ).scaledByProrationFactor(mtdFactor),
+      ).monthly;
+    }
     final previewGross = (_payrollPreview?['grossSalary'] as num?)?.toDouble();
     final backendGross = _backendThisMonthGross;
     final previewFactor = (monthly != null &&
@@ -2477,13 +2506,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       'hadProratedState=${_proratedSalary != null} backendEarnings=${_backendEarnings.length} '
       '${_backendEarnings.map((e) => '${e['name']}:${e['amount']}').join(', ')}',
     );
-    final pfStaticMonthly = monthly != null
-        ? (monthly.grossSalary -
-                monthly.grossFixedSalary -
-                monthly.employerPF -
-                monthly.employerESI)
-            .clamp(0.0, double.infinity)
-        : 0.0;
+    final pfStaticMonthly = monthly?.pfStaticAmount ?? 0.0;
 
     return Container(
       decoration: BoxDecoration(
@@ -2545,7 +2568,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                             OutlinedButton.icon(
                               onPressed: () => _sharePayslipPdfFromUrl(
                                 url,
-                                fileBaseName: 'Payslip_${_selectedMonth}',
+                                fileBaseName: 'Payslip_$_selectedMonth',
                               ),
                               icon: const Icon(Icons.ios_share_rounded, size: 18),
                               label: const Text('Share'),
@@ -2667,42 +2690,83 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     ),
                   )
                 else if (useWebStyleStructure) ...[
-                  _buildComponentRow(
-                    'Basic Salary',
-                    monthly.basicSalary,
-                    currencyFormat,
-                  ),
-                  _buildComponentRow(
-                    'DA',
-                    monthly.dearnessAllowance,
-                    currencyFormat,
-                  ),
-                  _buildComponentRow(
-                    'HRA',
-                    monthly.houseRentAllowance,
-                    currencyFormat,
-                  ),
-                  _buildComponentRow(
-                    'Special Allowance',
-                    monthly.specialAllowance,
-                    currencyFormat,
-                  ),
-                  _buildComponentRow(
-                    'Employer PF',
-                    monthly.employerPF,
-                    currencyFormat,
-                  ),
-                  _buildComponentRow(
-                    'Employer ESI',
-                    monthly.employerESI,
-                    currencyFormat,
-                  ),
-                  if (pfStaticMonthly > 0.01)
+                  if (mtdStruct != null) ...[
                     _buildComponentRow(
-                      'Statutory PF (Fixed)',
-                      pfStaticMonthly,
+                      'Basic Salary',
+                      mtdStruct.basicSalary,
                       currencyFormat,
                     ),
+                    _buildComponentRow(
+                      'DA',
+                      mtdStruct.dearnessAllowance,
+                      currencyFormat,
+                    ),
+                    _buildComponentRow(
+                      'HRA',
+                      mtdStruct.houseRentAllowance,
+                      currencyFormat,
+                    ),
+                    if (mtdStruct.specialAllowance > 0.005)
+                      _buildComponentRow(
+                        'Special Allowance',
+                        mtdStruct.specialAllowance,
+                        currencyFormat,
+                      ),
+                    if (mtdStruct.employerPF > 0.005)
+                      _buildComponentRow(
+                        'Statutory PF (Gross)',
+                        mtdStruct.employerPF,
+                        currencyFormat,
+                      ),
+                    if (mtdStruct.pfStaticAmount > 0.005)
+                      _buildComponentRow(
+                        'Statutory PF (Fixed)',
+                        mtdStruct.pfStaticAmount,
+                        currencyFormat,
+                      ),
+                    _buildComponentRow(
+                      'Employer ESI',
+                      mtdStruct.employerESI,
+                      currencyFormat,
+                    ),
+                  ] else ...[
+                    _buildComponentRow(
+                      'Basic Salary',
+                      monthly.basicSalary * f,
+                      currencyFormat,
+                    ),
+                    _buildComponentRow(
+                      'DA',
+                      monthly.dearnessAllowance * f,
+                      currencyFormat,
+                    ),
+                    _buildComponentRow(
+                      'HRA',
+                      monthly.houseRentAllowance * f,
+                      currencyFormat,
+                    ),
+                    _buildComponentRow(
+                      'Special Allowance',
+                      monthly.specialAllowance * f,
+                      currencyFormat,
+                    ),
+                    _buildComponentRow(
+                      'Employer PF',
+                      monthly.employerPF * f,
+                      currencyFormat,
+                    ),
+                    _buildComponentRow(
+                      'Employer ESI',
+                      monthly.employerESI * f,
+                      currencyFormat,
+                    ),
+                    if (pfStaticMonthly * f > 0.01)
+                      _buildComponentRow(
+                        'Statutory PF (Fixed)',
+                        pfStaticMonthly * f,
+                        currencyFormat,
+                      ),
+                  ],
                   ..._backendEarnings
                       .where(
                         (e) => !_isCoreStructuralEarningName(
@@ -2813,22 +2877,69 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     ),
                   )
                 else if (useWebStyleStructure) ...[
-                  _buildComponentRow(
-                    employeePFRate != null
-                        ? 'Employee PF (${employeePFRate.toStringAsFixed(0)}%)'
-                        : 'Employee PF',
-                    monthly.employeePF * f,
-                    currencyFormat,
-                    isDeduction: true,
-                  ),
-                  _buildComponentRow(
-                    employeeESIRate != null
-                        ? 'Employee ESI (${employeeESIRate.toStringAsFixed(2)}%)'
-                        : 'Employee ESI',
-                    monthly.employeeESI * f,
-                    currencyFormat,
-                    isDeduction: true,
-                  ),
+                  if (mtdStruct != null) ...[
+                    if (mtdStruct.employerPF > 0.005)
+                      _buildComponentRow(
+                        'Employer PF',
+                        mtdStruct.employerPF,
+                        currencyFormat,
+                        isDeduction: true,
+                      ),
+                    if (mtdStruct.employerESI > 0.005)
+                      _buildComponentRow(
+                        'Employer ESI',
+                        mtdStruct.employerESI,
+                        currencyFormat,
+                        isDeduction: true,
+                      ),
+                    _buildComponentRow(
+                      employeePFRate != null
+                          ? 'Employee PF (${employeePFRate.toStringAsFixed(0)}%)'
+                          : 'Employee PF',
+                      mtdStruct.employeePF,
+                      currencyFormat,
+                      isDeduction: true,
+                    ),
+                    _buildComponentRow(
+                      employeeESIRate != null
+                          ? 'Employee ESI (${employeeESIRate.toStringAsFixed(2)}%)'
+                          : 'Employee ESI',
+                      mtdStruct.employeeESI,
+                      currencyFormat,
+                      isDeduction: true,
+                    ),
+                  ] else ...[
+                    if (monthly.employerPF * f > 0.005)
+                      _buildComponentRow(
+                        'Employer PF',
+                        monthly.employerPF * f,
+                        currencyFormat,
+                        isDeduction: true,
+                      ),
+                    if (monthly.employerESI * f > 0.005)
+                      _buildComponentRow(
+                        'Employer ESI',
+                        monthly.employerESI * f,
+                        currencyFormat,
+                        isDeduction: true,
+                      ),
+                    _buildComponentRow(
+                      employeePFRate != null
+                          ? 'Employee PF (${employeePFRate.toStringAsFixed(0)}%)'
+                          : 'Employee PF',
+                      monthly.employeePF * f,
+                      currencyFormat,
+                      isDeduction: true,
+                    ),
+                    _buildComponentRow(
+                      employeeESIRate != null
+                          ? 'Employee ESI (${employeeESIRate.toStringAsFixed(2)}%)'
+                          : 'Employee ESI',
+                      monthly.employeeESI * f,
+                      currencyFormat,
+                      isDeduction: true,
+                    ),
+                  ],
                   if (fineAmount > 0)
                     _buildComponentRow(
                       'Late Login Fine',
@@ -2888,7 +2999,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 else if (useWebStyleStructure)
                   _buildComponentRow(
                     'Total Deductions',
-                    monthly.totalMonthlyDeductions * f + fineAmount,
+                    (mtdStruct != null
+                            ? mtdStruct.totalMonthlyDeductions
+                            : monthly.totalMonthlyDeductions * f) +
+                        fineAmount,
                     currencyFormat,
                     isDeduction: true,
                   )
@@ -2921,9 +3035,11 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 else if (useWebStyleStructure && wdm > 0)
                   _buildComponentRow(
                     'Net Salary',
-                    monthly.grossSalary * f -
-                        monthly.totalMonthlyDeductions * f -
-                        fineAmount,
+                    mtdStruct != null
+                        ? mtdStruct.netMonthlySalary - fineAmount
+                        : monthly.grossSalary * f -
+                            monthly.totalMonthlyDeductions * f -
+                            fineAmount,
                     currencyFormat,
                   )
                 else if (_backendThisMonthNet != null)
@@ -4383,7 +4499,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           ),
           const SizedBox(height: 2),
           Text(
-            '${_selectedMonth} $_selectedYear',
+            '$_selectedMonth $_selectedYear',
             style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
           ),
           const SizedBox(height: 10),
@@ -4398,7 +4514,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               Expanded(
                 child: Center(
                   child: Text(
-                    '${_selectedMonth} $_selectedYear',
+                    '$_selectedMonth $_selectedYear',
                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -4786,7 +4902,19 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final jsWeekday = date.weekday % 7; // Sun=0...Sat=6
     if (_weeklyOffPattern == 'oddEvenSaturday') {
       if (jsWeekday == 0) return true;
-      if (jsWeekday == 6) return date.day % 2 == 0;
+      if (jsWeekday == 6) {
+        // Calculate which Saturday of the month this is
+        int saturdayOrdinal = 0;
+        final year = date.year;
+        final month = date.month;
+        for (int d = 1; d <= date.day; d++) {
+          final tempDate = DateTime(year, month, d);
+          if ((tempDate.weekday % 7) == 6) {
+            saturdayOrdinal++;
+          }
+        }
+        return saturdayOrdinal % 2 == 0;
+      }
       return false;
     }
     if (_weeklyHolidays.isNotEmpty) {
@@ -4913,9 +5041,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   }
 
   Widget _buildDailyBreakdownOverview() {
-    if (_calculatedSalary == null ||
-        _workingDaysInfo == null ||
-        _proratedSalary == null) {
+    if (_calculatedSalary == null || _workingDaysInfo == null) {
+      return const SizedBox.shrink();
+    }
+    if (_resolveProrationForBreakdown() == null) {
       return const SizedBox.shrink();
     }
     final thisMonthWorkingDays = _salaryPayableBaseDays(

@@ -19,11 +19,13 @@ import '../geo/live_tracking_screen.dart';
 import '../../services/request_service.dart';
 import '../../services/attendance_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/settings_service.dart';
 import '../../services/salary_service.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../utils/salary_fine_summary.dart';
 import '../../utils/attendance_display_util.dart';
 import '../../utils/absent_alert_helper.dart';
+import '../../utils/rotational_shift_util.dart';
 
 class HomeDashboardScreen extends StatefulWidget {
   final Function(int index, {int subTabIndex})? onNavigate;
@@ -65,6 +67,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   final RequestService _requestService = RequestService();
   final AttendanceService _attendanceService = AttendanceService();
   final AuthService _authService = AuthService();
+  final SettingsService _settingsService = SettingsService();
   final SalaryService _salaryService = SalaryService();
 
   List<dynamic> _recentLeaves = [];
@@ -77,6 +80,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   Map<String, dynamic>? _monthData;
   Map<String, dynamic>? _stats;
   DateTime _selectedMonth = DateTime.now();
+
+  /// Populated from GET /auth/profile (company.settings.attendance.shifts) for rotational calendar.
+  Map<String, dynamic>? _profileCompanyDoc;
+  String? _profileStaffShiftName;
+
+  /// Latest `staffData` map from profile (for reconciling shift key after /attendance/today template loads).
+  Map<String, dynamic>? _profileStaffDataSnapshot;
+  DateTime? _profileJoiningDate;
+
+  /// True when staff's assigned shift row is rotational (today's template only applies to "today").
+  bool _profileShiftIsRotational = false;
 
   // Salary calculation data (same logic as Salary Overview "This Month Net")
   double _calculatedMonthSalary = 0;
@@ -156,8 +170,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     // Sync: if user tapped "Stop tracking" in notification, native stopped but we had stale state
     if (active) {
       // Retry: cold start can report false before native tracker is ready — avoid wiping trip prefs.
-      final isTracking =
-          await LiveTrackingService().isBackgroundLocationTrackingRunningWithRetry();
+      final isTracking = await LiveTrackingService()
+          .isBackgroundLocationTrackingRunningWithRetry();
       if (!isTracking) {
         await LiveTrackingService().stopTracking();
         if (mounted) setState(() => _liveTrackingActive = false);
@@ -217,17 +231,28 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   /// flags from GET /attendance/today are not dropped (they live on the response root).
   Map<String, dynamic>? _extractLiveTodayAttendance(dynamic responseBody) {
     if (responseBody is! Map<String, dynamic>) return null;
+
+    // 1. Try our helper that flattens the nested data + root flags
     final merged = flattenTodayAttendancePayload(responseBody);
-    if (merged != null) return merged;
+    if (merged != null &&
+        (merged['punchIn'] != null || merged['status'] != null)) {
+      return merged;
+    }
+
+    // 2. Fallback to extracting just the inner data if merged failed
     final nested = responseBody['data'];
-    if (nested is Map<String, dynamic>) return Map<String, dynamic>.from(nested);
+    if (nested is Map<String, dynamic>)
+      return Map<String, dynamic>.from(nested);
     if (nested is Map) return Map<String, dynamic>.from(nested);
-    final hasAttendanceFields =
+
+    // 3. Fallback to the root if fields are there directly
+    final hasFields =
         responseBody['punchIn'] != null ||
         responseBody['punchOut'] != null ||
         responseBody['status'] != null;
-    if (!hasAttendanceFields) return null;
-    return Map<String, dynamic>.from(responseBody);
+    if (hasFields) return Map<String, dynamic>.from(responseBody);
+
+    return null;
   }
 
   Future<void> _loadData() async {
@@ -272,22 +297,41 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         }
       }
 
-      // Run dashboard, month attendance, and loans in parallel for faster load
+      // Run dashboard, month attendance, loans, and profile (shifts for rotational calendar) in parallel
       final dashboardFuture = _requestService.getDashboardData();
-      final liveTodayFuture =
-          _attendanceService.getTodayAttendance(forceRefresh: true);
+      final liveTodayFuture = _attendanceService.getTodayAttendance(
+        forceRefresh: true,
+      );
+      final profileFuture = _authService.getProfile();
+      final businessFuture = _settingsService.getBusiness();
       _fetchMonthAttendance(forceRefresh: true);
       _fetchActiveLoans();
 
       final result = await dashboardFuture;
       final liveTodayResult = await liveTodayFuture;
+      final profileResult = await profileFuture;
+      Map<String, dynamic>? businessFromSettings;
+      try {
+        final gb = await businessFuture;
+        if (gb['success'] == true && gb['data'] is Map<String, dynamic>) {
+          final b = (gb['data'] as Map<String, dynamic>)['business'];
+          if (b is Map) businessFromSettings = Map<String, dynamic>.from(b);
+        }
+      } catch (_) {}
+      if (profileResult['success'] == true && profileResult['data'] is Map) {
+        _applyShiftContextFromProfile(
+          Map<String, dynamic>.from(profileResult['data'] as Map),
+          businessFromSettingsApi: businessFromSettings,
+        );
+      }
       final fcmList = await FcmService.getStoredNotifications();
       if (mounted) {
         if (result['success']) {
           final data = result['data'];
           final stats = data['stats'];
-          final liveTodayAttendance =
-              _extractLiveTodayAttendance(liveTodayResult['data']);
+          final liveTodayAttendance = _extractLiveTodayAttendance(
+            liveTodayResult['data'],
+          );
           final activeLoansList = stats?['activeLoansList'];
           final loansList = activeLoansList is List
               ? activeLoansList
@@ -333,6 +377,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 .where((e) => ((e['body']?.toString() ?? '').trim()).isNotEmpty)
                 .length;
           });
+          _reconcileShiftKeyWithTodayTemplate();
           _calculateSalaryFromModule();
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
@@ -365,6 +410,347 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         });
       }
     }
+  }
+
+  /// Prefer today's template name so [shiftName] that duplicates the attendance template label is ignored (backend parity).
+  void _reconcileShiftKeyWithTodayTemplate() {
+    if (!mounted || _profileStaffDataSnapshot == null) return;
+    final t = _todayAttendance?['template'];
+    String? templateLabel;
+    if (t is Map) {
+      templateLabel = (t['name'] ?? t['shiftName'])?.toString().trim();
+      if (templateLabel != null && templateLabel.isEmpty) {
+        templateLabel = null;
+      }
+    }
+    final newKey = staffShiftKeyFromProfileMap(
+      _profileStaffDataSnapshot!,
+      attendanceTemplateName: templateLabel,
+    );
+    if (newKey == _profileStaffShiftName) return;
+    var rotational = false;
+    final shifts = shiftsListFromCompany(_profileCompanyDoc);
+    final keyTrim = (newKey ?? '').trim();
+    if (shifts != null) {
+      final w = keyTrim.isNotEmpty
+          ? findShiftByStaffKey(shifts, keyTrim)
+          : (shifts.first is Map
+                ? Map<String, dynamic>.from(shifts.first as Map)
+                : null);
+      if (w != null) {
+        rotational = isRotationalShiftWrapper(Map<String, dynamic>.from(w));
+      }
+    }
+    setState(() {
+      _profileStaffShiftName = newKey;
+      _profileShiftIsRotational = rotational;
+    });
+  }
+
+  /// Company.shifts + staff.shiftName + joiningDate (web: full shifts from GET /settings/business).
+  void _applyShiftContextFromProfile(
+    Map<String, dynamic> data, {
+    Map<String, dynamic>? businessFromSettingsApi,
+  }) {
+    if (!mounted) return;
+    final staff = data['staffData'];
+    Map<String, dynamic>? company;
+    String? shiftKey;
+    DateTime? jd;
+    var rotational = false;
+    _profileStaffDataSnapshot = null;
+    if (staff is Map) {
+      final m = Map<String, dynamic>.from(staff);
+      _profileStaffDataSnapshot = Map<String, dynamic>.from(m);
+      final bid = m['businessId'];
+      if (bid is Map) company = Map<String, dynamic>.from(bid);
+      shiftKey = staffShiftKeyFromProfileMap(m);
+      jd = parseJoiningDate(m['joiningDate']);
+      company = companyDocForShiftResolution(
+        profilePopulatedCompany: company,
+        businessFromSettingsBusinessApi: businessFromSettingsApi,
+      );
+      final shifts = shiftsListFromCompany(company);
+      final keyTrim = (shiftKey ?? '').trim();
+      if (shifts != null) {
+        final w = keyTrim.isNotEmpty
+            ? findShiftByStaffKey(shifts, keyTrim)
+            : (shifts.first is Map
+                  ? Map<String, dynamic>.from(shifts.first as Map)
+                  : null);
+        if (w != null) {
+          rotational = isRotationalShiftWrapper(Map<String, dynamic>.from(w));
+        }
+      }
+    }
+    setState(() {
+      _profileCompanyDoc = company;
+      _profileStaffShiftName = shiftKey;
+      _profileJoiningDate = jd;
+      _profileShiftIsRotational = rotational;
+    });
+  }
+
+  /// Merged `template` from live GET /attendance/today (openWorkHours matches server getShiftTimings).
+  Map<String, dynamic>? _todayAttendanceTemplateMap() {
+    final t = _todayAttendance?['template'];
+    if (t is Map<String, dynamic>) return t;
+    if (t is Map) return Map<String, dynamic>.from(t);
+    return null;
+  }
+
+  /// For rotational staff, only merge today's template on the current calendar day.
+  Map<String, dynamic>? _templateOverrideForCalendarDay(DateTime dayLocal) {
+    final tmpl = _todayAttendanceTemplateMap();
+    if (tmpl == null || tmpl.isEmpty) return null;
+    if (!_profileShiftIsRotational) return tmpl;
+    final n = DateTime.now();
+    final same =
+        dayLocal.year == n.year &&
+        dayLocal.month == n.month &&
+        dayLocal.day == n.day;
+    return same ? tmpl : null;
+  }
+
+  String? _formatCalendarPunchTime(dynamic raw) {
+    if (raw == null) return null;
+    final s = raw.toString().trim();
+    if (s.isEmpty) return null;
+    try {
+      return DateFormat('hh:mm a').format(DateTime.parse(s).toLocal());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Web-style status chip (top-right of calendar day).
+  Widget _dashboardCalendarStatusChip(String label, Color bg, Color fg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 6,
+          height: 1.0,
+          fontWeight: FontWeight.w700,
+          color: fg,
+        ),
+      ),
+    );
+  }
+
+  Widget _dashboardCalendarPunchRow(
+    Color dotColor,
+    String timeText,
+    Color textColor,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            timeText,
+            style: TextStyle(
+              fontSize: 7,
+              height: 1.05,
+              fontWeight: FontWeight.w600,
+              color: textColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardAssignedShiftHeader() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final snap = effectiveShiftForCalendarDay(
+      companyDoc: _profileCompanyDoc,
+      staffShiftKey: _profileStaffShiftName,
+      dayLocal: today,
+      joiningDate: _profileJoiningDate,
+      attendanceTodayTemplate: _todayAttendanceTemplateMap(),
+    );
+    if (snap == null) return const SizedBox.shrink();
+
+    if (kDebugMode) {
+      final reqMin = snap.requiredWorkMinutes();
+      String reqHStr;
+      if (reqMin == null) {
+        reqHStr = 'n/a';
+      } else if (reqMin % 60 == 0) {
+        reqHStr = '${reqMin ~/ 60}h';
+      } else {
+        reqHStr = '${(reqMin / 60).toStringAsFixed(2)}h';
+      }
+      final windowStr =
+          (snap.startTime != null &&
+              snap.endTime != null &&
+              snap.startTime!.isNotEmpty &&
+              snap.endTime!.isNotEmpty)
+          ? '${snap.startTime}-${snap.endTime}'
+          : (snap.isOpen
+                ? 'open required=${snap.openWorkHours ?? '-'}h'
+                : 'n/a');
+      final tmpl = _todayAttendanceTemplateMap();
+      final tmplStart = tmpl == null
+          ? '-'
+          : (trimmedTimeField(tmpl['shiftStartTime']) ??
+                trimmedTimeField(tmpl['startTime']) ??
+                '-');
+      final tmplEnd = tmpl == null
+          ? '-'
+          : (trimmedTimeField(tmpl['shiftEndTime']) ??
+                trimmedTimeField(tmpl['endTime']) ??
+                '-');
+      debugPrint(
+        '[DashboardTodayShift] name=${snap.displayName} '
+        'type=${snap.shiftTypeLower} window=$windowStr '
+        'requiredWorkMinutes=$reqMin requiredHours~$reqHStr '
+        'openWorkHours=${snap.isOpen ? '${snap.openWorkHours}' : '-'} '
+        'otBufferMin=${snap.otBufferMinutes ?? '-'} '
+        'templateTimes=$tmplStart/$tmplEnd '
+        'rotationTemplate=${snap.rotationTemplateName ?? '-'} '
+        'rotationalMode=${snap.rotationalMode ?? '-'} '
+        'cycleDay=${snap.cycleDayIndex1Based ?? '-'} '
+        'cycleLen=${snap.cycleLength ?? '-'} '
+        'compact="${snap.compactLine()}"',
+      );
+    }
+
+    final refFmt = DateFormat('EEE, MMM d, yyyy').format(now);
+    final rotName = snap.rotationTemplateName;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outline.withOpacity(0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    'YOUR ASSIGNED SHIFT',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.4,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                Text(
+                  refFmt,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            if (rotName != null && rotName.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                rotName,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.shade100),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Today's working shift (this cycle)",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.blue.shade900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    snap.compactLine(),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      height: 1.2,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (snap.cycleLength != null &&
+                snap.cycleDayIndex1Based != null &&
+                snap.cycleLength! > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                (snap.rotationalMode ?? '') == 'weekly'
+                    ? 'Cycle day ${snap.cycleDayIndex1Based} of ${snap.cycleLength} '
+                          '($refFmt). Weekly rotation: slot follows the calendar '
+                          'weekday (UTC, Sun=0…Sat=6), same rule as web and server.'
+                    : 'Cycle day ${snap.cycleDayIndex1Based} of ${snap.cycleLength} '
+                          '($refFmt). Custom/daily rotation: counted from your '
+                          'joining date on the calendar — same rule as web and '
+                          'server for late, half-day, and overtime.',
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.35,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 6),
+            Text(
+              'Calendar shows the effective shift for each date. Rotational: '
+              'weekly uses weekday; custom/daily uses joining date + cycle length '
+              'with shiftIdsInCycle / shiftNamesInCycle.',
+              style: TextStyle(
+                fontSize: 10,
+                height: 1.3,
+                color: colorScheme.onSurfaceVariant.withOpacity(0.9),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _fetchMonthAttendance({bool forceRefresh = false}) async {
@@ -552,19 +938,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       double unpaidLeaveDays = 0;
       if (attendanceRecords.isNotEmpty) {
         final today = DateTime.now();
-        final todayKey = DateFormat('yyyy-MM-dd').format(
-          DateTime(today.year, today.month, today.day),
-        );
+        final todayKey = DateFormat(
+          'yyyy-MM-dd',
+        ).format(DateTime(today.year, today.month, today.day));
         for (final record in attendanceRecords) {
           final recordKey = normalizeAttendanceDateKeyForSalary(record['date']);
           if (recordKey != null && recordKey.compareTo(todayKey) > 0) {
             continue;
           }
 
-          final status =
-              (record['status'] as String? ?? '').trim().toLowerCase();
-          final leaveType =
-              (record['leaveType'] as String? ?? 'Leave').trim().toLowerCase();
+          final status = (record['status'] as String? ?? '')
+              .trim()
+              .toLowerCase();
+          final leaveType = (record['leaveType'] as String? ?? 'Leave')
+              .trim()
+              .toLowerCase();
           final hasHalfDaySession = record['halfDaySession'] != null;
           final isHalfDayStatus =
               status == 'half day' || leaveType == 'half day';
@@ -582,9 +970,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           // Paid / unpaid leave (same as Salary Overview `_computeWebAttendanceBreakdown`)
           if (status == 'on leave' || status == 'half day') {
             final dayValue = isHalfDay ? 0.5 : 1.0;
-            final compensationType =
-                (record['compensationType'] as String?)?.trim().toLowerCase();
-            final isPaidLeave = record['isPaidLeave'] == true ||
+            final compensationType = (record['compensationType'] as String?)
+                ?.trim()
+                .toLowerCase();
+            final isPaidLeave =
+                record['isPaidLeave'] == true ||
                 compensationType == 'paid' ||
                 (compensationType == null && record['isPaidLeave'] != false);
             if (isPaidLeave) {
@@ -611,8 +1001,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       // vs 19/22) and prorated MTD net will not match the Salary tab.
       final endDateForCurrentMonth =
           (year == now.year && monthIndex == now.month)
-              ? DateTime(now.year, now.month, now.day)
-              : null;
+          ? DateTime(now.year, now.month, now.day)
+          : null;
       final webTillDateInfo = calculateWorkingDays(
         year,
         monthIndex,
@@ -659,28 +1049,33 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       );
       final perDaySalaryForApp = thisMonthWorkingDaysForProration > 0
           ? ((calculatedSalary.monthly.netMonthlySalary /
-                          thisMonthWorkingDaysForProration) *
-                      100)
-                  .round() /
-              100
+                            thisMonthWorkingDaysForProration) *
+                        100)
+                    .round() /
+                100
           : 0.0;
       await _persistPerDaySalary(perDaySalaryForApp);
       // Unpaid leave: same as Salary Overview (daily net × unpaid days subtracted from MTD net).
       var proratedNetForMtd = proratedSalary.proratedNetSalary;
       if (thisMonthWorkingDaysForProration > 0 && unpaidLeaveDays > 0) {
         final storedDailyNetRaw = staffData['appPerDayNetSalary'];
-        final storedDailyNet =
-            storedDailyNetRaw is num ? storedDailyNetRaw.toDouble() : null;
+        final storedDailyNet = storedDailyNetRaw is num
+            ? storedDailyNetRaw.toDouble()
+            : null;
         debugPrint(
           '[SalaryCalc][Dashboard] appPerDayNetSalary=${storedDailyNet?.toStringAsFixed(2) ?? "null"} '
           'netMonthly=${calculatedSalary.monthly.netMonthlySalary.toStringAsFixed(2)} '
           'wdForProration=$thisMonthWorkingDaysForProration',
         );
-        final dailyNet = storedDailyNet ??
+        final dailyNet =
+            storedDailyNet ??
             calculatedSalary.monthly.netMonthlySalary /
                 thisMonthWorkingDaysForProration;
         final unpaidDed = dailyNet * unpaidLeaveDays;
-        proratedNetForMtd = math.max(0, proratedSalary.proratedNetSalary - unpaidDed);
+        proratedNetForMtd = math.max(
+          0,
+          proratedSalary.proratedNetSalary - unpaidDed,
+        );
         debugPrint(
           '[SalaryCalc][Dashboard] unpaid leave deduction: days=$unpaidLeaveDays '
           'amount=$unpaidDed mtdNet=$proratedNetForMtd',
@@ -747,8 +1142,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           _calculatedMonthSalary = displayThisMonthNet;
           _overallMonthlyNetSalary =
               calculatedSalary.monthly.netMonthlySalary < 0
-                  ? 0.0
-                  : calculatedSalary.monthly.netMonthlySalary;
+              ? 0.0
+              : calculatedSalary.monthly.netMonthlySalary;
           _workingDaysForSalary = workingDaysUsed;
           if (_companyName.isEmpty &&
               companyName != null &&
@@ -776,8 +1171,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final monthlyNet = _overallMonthlyNetSalary;
     final hasSalary = mtdNet > 0 || monthlyNet > 0;
     final mtdDisplay = hasSalary ? '₹${formatter.format(mtdNet)}' : '--';
-    final monthlyDisplay =
-        hasSalary ? '₹${formatter.format(monthlyNet)}' : null;
+    final monthlyDisplay = hasSalary
+        ? '₹${formatter.format(monthlyNet)}'
+        : null;
     // Present days and paid leave for This Month Net subtitle (e.g. "3 days present + 1 PL")
     final presentDaysVal =
         _stats?['attendanceSummary']?['presentDays']?.toString() ?? '0';
@@ -2218,7 +2614,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final s = dateValue.toString().trim();
       if (s.isEmpty) return '';
       if (s.contains('T')) return s.split('T').first;
-      if (s.length >= 10 && s[4] == '-' && s[7] == '-') return s.substring(0, 10);
+      if (s.length >= 10 && s[4] == '-' && s[7] == '-')
+        return s.substring(0, 10);
       final d = DateTime.parse(s);
       final u = d.toUtc();
       return '${u.year}-${u.month.toString().padLeft(2, '0')}-${u.day.toString().padLeft(2, '0')}';
@@ -2245,8 +2642,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         byDate[key] = Map<String, dynamic>.from(r);
         continue;
       }
-      final hasPunchIn = (r['punchIn'] != null && r['punchIn'].toString().trim().isNotEmpty);
-      final existingHasPunchIn = (existing['punchIn'] != null && existing['punchIn'].toString().trim().isNotEmpty);
+      final hasPunchIn =
+          (r['punchIn'] != null && r['punchIn'].toString().trim().isNotEmpty);
+      final existingHasPunchIn =
+          (existing['punchIn'] != null &&
+          existing['punchIn'].toString().trim().isNotEmpty);
       if (hasPunchIn && !existingHasPunchIn) {
         byDate[key] = Map<String, dynamic>.from(r);
       } else if (hasPunchIn == existingHasPunchIn) {
@@ -2254,8 +2654,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         final eUpdated = existing['updatedAt'];
         if (rUpdated != null && eUpdated != null) {
           try {
-            final rTime = DateTime.parse(rUpdated.toString()).millisecondsSinceEpoch;
-            final eTime = DateTime.parse(eUpdated.toString()).millisecondsSinceEpoch;
+            final rTime = DateTime.parse(
+              rUpdated.toString(),
+            ).millisecondsSinceEpoch;
+            final eTime = DateTime.parse(
+              eUpdated.toString(),
+            ).millisecondsSinceEpoch;
             if (rTime > eTime) byDate[key] = Map<String, dynamic>.from(r);
           } catch (_) {}
         }
@@ -2333,15 +2737,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         final dateKey = normalizeAttendanceDateKeyForSalary(r['date']);
         if (dateKey == null) continue;
         if (isCurrentMonth) {
-          final todayKey = DateFormat('yyyy-MM-dd').format(
-            DateTime(now.year, now.month, now.day),
-          );
+          final todayKey = DateFormat(
+            'yyyy-MM-dd',
+          ).format(DateTime(now.year, now.month, now.day));
           if (dateKey.compareTo(todayKey) > 0) continue;
         }
 
         final status = (r['status'] as String? ?? '').trim().toLowerCase();
-        final leaveType =
-            (r['leaveType'] as String? ?? 'Leave').trim().toLowerCase();
+        final leaveType = (r['leaveType'] as String? ?? 'Leave')
+            .trim()
+            .toLowerCase();
         final hasHalfDaySession = r['halfDaySession'] != null;
         final isHalfDayStatus = status == 'half day' || leaveType == 'half day';
         final isHalfDay = isHalfDayStatus || hasHalfDaySession;
@@ -2355,9 +2760,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         }
 
         if ((status == 'on leave' || status == 'half day') && isHalfDay) {
-          final compensationType =
-              (r['compensationType'] as String?)?.trim().toLowerCase();
-          final isPaidLeave = r['isPaidLeave'] == true ||
+          final compensationType = (r['compensationType'] as String?)
+              ?.trim()
+              .toLowerCase();
+          final isPaidLeave =
+              r['isPaidLeave'] == true ||
               compensationType == 'paid' ||
               (compensationType == null && r['isPaidLeave'] != false);
           if (isPaidLeave) halfDayPaidLeaveCount += 1;
@@ -2789,7 +3196,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     Map<String, String> dayCompensationTypeByDate = {};
     Map<String, num?> dayWorkHoursByDate = {};
     Set<String> pendingWithCheckInDateSet = {};
-    final rawAttendance = _monthData != null ? (_monthData!['attendance'] as List?) ?? [] : [];
+    final rawAttendance = _monthData != null
+        ? (_monthData!['attendance'] as List?) ?? []
+        : [];
     final attendanceDeduped = _deduplicateAttendanceByDate(rawAttendance);
     if (attendanceDeduped.isNotEmpty) {
       for (var entry in attendanceDeduped) {
@@ -2933,399 +3342,688 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       }
     }
 
+    const calCrossSpacing = 8.0;
+    const calColCount = 7;
+    const calAspect = 0.48;
+    final screenW = MediaQuery.sizeOf(context).width;
+    // Wider than typical phone columns so status chips and shift text fit; scroll when needed.
+    final calGridWidth = math.max(screenW, 560.0);
+    final cellWidth =
+        (calGridWidth - (calColCount - 1) * calCrossSpacing) / calColCount;
+    final rowCount = days.length ~/ 7;
+    final cellHeight = cellWidth / calAspect;
+    final gridHeight = rowCount * cellHeight + (rowCount - 1) * calCrossSpacing;
+
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.chevron_left),
-              onPressed: () {
-                setState(() {
-                  _selectedMonth = DateTime(
-                    _selectedMonth.year,
-                    _selectedMonth.month - 1,
-                  );
-                });
-                // Call async function after setState completes
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _fetchMonthAttendance(forceRefresh: true);
-                });
-              },
-            ),
-            Text(
-              DateFormat('MMMM yyyy').format(_selectedMonth),
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-                color: colorScheme.onSurface,
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.chevron_right),
-              onPressed: () {
-                setState(() {
-                  _selectedMonth = DateTime(
-                    _selectedMonth.year,
-                    _selectedMonth.month + 1,
-                  );
-                });
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _fetchMonthAttendance(forceRefresh: true);
-                });
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
-              .map(
-                (d) => SizedBox(
-                  width: 30,
-                  child: Center(
-                    child: Text(
-                      d,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.black,
-                        fontWeight: FontWeight.w600,
-                      ),
+        _buildDashboardAssignedShiftHeader(),
+        Card(
+          clipBehavior: Clip.antiAlias,
+          margin: EdgeInsets.zero,
+          color: colorScheme.surfaceContainerLowest,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: colorScheme.outline.withOpacity(0.35)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 10, 8, 12),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: calGridWidth,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left),
+                          onPressed: () {
+                            setState(() {
+                              _selectedMonth = DateTime(
+                                _selectedMonth.year,
+                                _selectedMonth.month - 1,
+                              );
+                            });
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              _fetchMonthAttendance(forceRefresh: true);
+                            });
+                          },
+                        ),
+                        Text(
+                          DateFormat('MMMM yyyy').format(_selectedMonth),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right),
+                          onPressed: () {
+                            setState(() {
+                              _selectedMonth = DateTime(
+                                _selectedMonth.year,
+                                _selectedMonth.month + 1,
+                              );
+                            });
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              _fetchMonthAttendance(forceRefresh: true);
+                            });
+                          },
+                        ),
+                      ],
                     ),
-                  ),
-                ),
-              )
-              .toList(),
-        ),
-        const SizedBox(height: 8),
-        GridView.builder(
-          key: ValueKey(
-            'calendar_${_selectedMonth.year}_${_selectedMonth.month}',
-          ),
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 7,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-          ),
-          itemCount: days.length,
-          itemBuilder: (context, index) {
-            final dayDate = days[index];
-            final dateStr = DateFormat('yyyy-MM-dd').format(dayDate);
-            final bool isCurrentMonth = dayDate.month == _selectedMonth.month;
-            final bool isToday =
-                isCurrentMonth &&
-                dayDate.day == now.day &&
-                dayDate.month == now.month &&
-                dayDate.year == now.year;
-            Color bgColor = Colors.transparent;
-            Color textColor = isCurrentMonth
-                ? colorScheme.onSurface
-                : colorScheme.onSurfaceVariant;
-
-            // Initialize variables before use
-            num? workHours;
-            bool isLowHours = false;
-            bool isFuture = false;
-            String? leaveTypeAbbr;
-
-            if (isCurrentMonth) {
-              final bool isHoliday = holidayDateSet.contains(dateStr);
-
-              final dayOfWeek =
-                  dayDate.weekday % 7; // 0=Sunday, 1=Monday, ..., 6=Saturday
-
-              // Use backend calculated week off dates, but add validation:
-              // 1. Sundays (day 0) should ALWAYS be week off
-              // 2. Fridays (day 5) should NEVER be week off unless explicitly in backend data
-              // 3. Do NOT show violet for alternate work dates (compensation week-off days when employee can check-in)
-              bool isWeekOff = weekOffDateSet.contains(dateStr);
-              if (isWeekOff && alternateWorkDatesInMonthSet.contains(dateStr)) {
-                isWeekOff =
-                    false; // Alternate work date: can check-in, don't highlight as week off
-              }
-              // Validation: Sundays are always week off (unless it's an alternate work date)
-              if (dayOfWeek == 0 &&
-                  !alternateWorkDatesInMonthSet.contains(dateStr)) {
-                isWeekOff = true;
-              }
-
-              // Check if present from backend presentDates array
-              final bool isPresentFromBackend = presentDateSet.contains(
-                dateStr,
-              );
-
-              // Set secondary text color for Sundays/week offs
-              if (isWeekOff) {
-                textColor = colorScheme.onSurfaceVariant;
-              }
-
-              // Priority: Present with LeaveType (Green) > Half Day (On Leave Blue) > Holiday > Week Off > Leave without attendance (On Leave Blue) > Present > Absent > Not Marked
-              // IMPORTANT: Week offs (especially Sundays) should NEVER be marked as absent
-              final status = dayStatusByDate[dateStr];
-              final hasLeaveType = dayLeaveTypeByDate.containsKey(dateStr);
-              // Never treat as present when record is Pending/Absent/Rejected (trust attendance list over presentDates)
-              final isAbsentStatus =
-                  (status ?? '').toString().toLowerCase() == 'absent';
-              final isPresentStatus =
-                  (status == 'Present' ||
-                      status == 'Approved' ||
-                      isPresentFromBackend) &&
-                  status != 'Pending' &&
-                  !isAbsentStatus &&
-                  status != 'Rejected';
-              final isHalfDayStatus =
-                  status == 'Half Day' || (status?.toLowerCase() == 'half day');
-
-              // 1. Present with leaveType → Green background with CL/SL/HA
-              if (isPresentStatus && hasLeaveType) {
-                bgColor = const Color(0xFFDCFCE7); // Present - Light Green
-              }
-              // 2. Half Day status → On Leave blue background with "HA"
-              else if (isHalfDayStatus) {
-                bgColor = const Color(0xFFBFDBFE); // Half Day - On Leave blue
-              }
-              // 3. Holiday
-              else if (isHoliday) {
-                bgColor = const Color(0xFFFEF3C7); // Holiday - Light yellow
-              }
-              // 3.5. Alternate Working Day (compensation week-off day when employee can check-in)
-              else if (alternateWorkDatesInMonthSet.contains(dateStr)) {
-                bgColor = const Color(0xFFE8D5C4); // Working Day - Light brown
-              }
-              // 4. Week Off
-              else if (isWeekOff) {
-                bgColor = const Color(0xFFE9D5FF); // Week Off - Light purple
-              }
-              // 5. Leave date but no attendance → Blue with "L"
-              else if (leaveDateSet.contains(dateStr)) {
-                bgColor = const Color(0xFFBFDBFE); // On Leave - light blue
-              }
-              // 6. Present without leaveType → Green
-              else if (isPresentStatus) {
-                bgColor = const Color(0xFFDCFCE7); // Present - Light Green
-              }
-              // 7. Other attendance statuses (Pending treated as Absent). Show red when status is Absent in attendances collection.
-              else if (dayStatusByDate.containsKey(dateStr)) {
-                if (status == 'Pending' ||
-                    isAbsentStatus ||
-                    status == 'Rejected') {
-                  bgColor = const Color(0xFFFEE2E2); // Absent - Light red
-                } else if (status == 'On Leave') {
-                  bgColor = const Color(0xFFBFDBFE); // On Leave - light blue
-                }
-              }
-              // 8. Absent from backend (never show today as absent - day may be in progress or data stale)
-              else if (absentDateSet.contains(dateStr)) {
-                if (!isWeekOff && !isToday) {
-                  bgColor = const Color(0xFFFEE2E2); // Absent - Light red
-                } else if (isToday) {
-                  // Today: show as not marked so user isn't shown absent incorrectly
-                  bgColor = const Color(0xFFE2E8F0); // Not Marked - Light grey
-                }
-              }
-              // 9. Future dates
-              else {
-                final todayOnly = DateTime(now.year, now.month, now.day);
-                final dateOnly = DateTime(
-                  dayDate.year,
-                  dayDate.month,
-                  dayDate.day,
-                );
-                if (dateOnly.isAfter(todayOnly)) {
-                  bgColor = const Color(0xFFE2E8F0); // Not Marked - Light grey
-                }
-              }
-
-              // For today: prefer live _todayAttendance so we show Present if user has punched in
-              if (isToday && _todayAttendance != null) {
-                final st =
-                    _todayAttendance!['status']?.toString().toLowerCase() ?? '';
-                if (st == 'present' || st == 'approved') {
-                  bgColor = const Color(0xFFDCFCE7); // Present - Light Green
-                }
-              }
-
-              // Leave type abbreviation logic: PL=Paid Leave, L=Leave, HA=Half Day, CF=Comp Off, WF=Week Off, WD=Working Day
-              final statusForDay = dayStatusByDate[dateStr] ?? '';
-              final statusLower = statusForDay.toString().toLowerCase();
-              final isAbsentStatusForAbbr = statusLower == 'absent';
-              final isPresentStatusForAbbr =
-                  (statusForDay == 'Present' ||
-                      statusForDay == 'Approved' ||
-                      isPresentFromBackend) &&
-                  statusForDay != 'Pending' &&
-                  !isAbsentStatusForAbbr &&
-                  statusForDay != 'Rejected';
-              final isHalfDayStatusForAbbr =
-                  statusForDay == 'Half Day' || statusLower == 'half day';
-              final hasLeaveTypeForAbbr = dayLeaveTypeByDate.containsKey(
-                dateStr,
-              );
-              final isOnLeaveStatus = statusLower == 'on leave';
-              final isPaidLeaveDay = dayIsPaidLeaveByDate[dateStr] == true;
-              final compType = dayCompensationTypeByDate[dateStr] ?? '';
-
-              if (isPresentStatusForAbbr && hasLeaveTypeForAbbr) {
-                leaveTypeAbbr = AttendanceDisplayUtil.leaveTypeToAbbreviation(
-                  dayLeaveTypeByDate[dateStr],
-                );
-              } else if (isWeekOff) {
-                leaveTypeAbbr = 'WF';
-              } else if (alternateWorkDatesInMonthSet.contains(dateStr)) {
-                leaveTypeAbbr = 'WD';
-              } else if (isHalfDayStatusForAbbr) {
-                leaveTypeAbbr = 'HA';
-              } else if (isOnLeaveStatus &&
-                  (compType == 'compoff' || compType == 'comp off')) {
-                leaveTypeAbbr = 'CF';
-              } else if (isOnLeaveStatus &&
-                  isPaidLeaveDay &&
-                  compType != 'weekoff' &&
-                  compType != 'compoff') {
-                leaveTypeAbbr = 'PL';
-              } else if ((leaveDateSet.contains(dateStr) || isOnLeaveStatus) &&
-                  !isPresentStatusForAbbr) {
-                leaveTypeAbbr = 'L';
-              } else if (pendingWithCheckInDateSet.contains(dateStr)) {
-                leaveTypeAbbr = 'WA'; // Waiting for Approval (Pending + has check-in)
-              }
-
-              // Low work-hours indicator
-              workHours = dayWorkHoursByDate[dateStr];
-
-              // Calculate workHours from punchIn and punchOut if not available
-              if ((workHours == null || workHours == 0) &&
-                  _monthData != null &&
-                  _monthData!['attendance'] != null) {
-                try {
-                  final entry = (_monthData!['attendance'] as List).firstWhere((
-                    e,
-                  ) {
-                    try {
-                      final d = DateTime.parse(e['date']).toLocal();
-                      final eDateStr = DateFormat('yyyy-MM-dd').format(d);
-                      return eDateStr == dateStr;
-                    } catch (_) {
-                      return false;
-                    }
-                  }, orElse: () => null);
-
-                  if (entry != null) {
-                    final punchIn = entry['punchIn'];
-                    final punchOut = entry['punchOut'];
-                    if (punchIn != null && punchOut != null) {
-                      try {
-                        final punchInTime = DateTime.parse(
-                          punchIn.toString(),
-                        ).toLocal();
-                        final punchOutTime = DateTime.parse(
-                          punchOut.toString(),
-                        ).toLocal();
-                        final duration = punchOutTime.difference(punchInTime);
-                        if (duration.inMinutes > 0) {
-                          workHours =
-                              duration.inMinutes / 60.0; // Convert to hours
-                        }
-                      } catch (_) {
-                        // If parsing fails, leave workHours as null
-                      }
-                    }
-                  }
-                } catch (_) {
-                  // If lookup fails, leave workHours as is
-                }
-              }
-
-              // workHours from API/local are in minutes; low when < 9 hours (540 mins)
-              final workHoursMins = _workHoursToMinutes(workHours);
-              isLowHours = workHoursMins != null && workHoursMins < 540;
-              // Don't show low work hours red dot for comp off, leave, week off, or absent
-              if (isWeekOff ||
-                  compType == 'compoff' ||
-                  compType == 'comp off' ||
-                  isOnLeaveStatus ||
-                  isAbsentStatusForAbbr ||
-                  (leaveDateSet.contains(dateStr) && !isPresentStatusForAbbr)) {
-                isLowHours = false;
-              }
-              isFuture = DateTime(
-                dayDate.year,
-                dayDate.month,
-                dayDate.day,
-              ).isAfter(DateTime(now.year, now.month, now.day));
-            }
-
-            return Container(
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.circular(8),
-                border: isToday
-                    ? Border.all(color: AppColors.primary, width: 2)
-                    : null,
-              ),
-              child: Stack(
-                children: [
-                  Align(
-                    alignment: Alignment.center,
-                    child: Padding(
-                      padding: const EdgeInsets.all(1.0),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '${dayDate.day}',
-                              style: TextStyle(
-                                fontSize: 11,
-                                height: 1.0,
-                                fontWeight: isToday
-                                    ? FontWeight.bold
-                                    : FontWeight.w500,
-                                color: textColor,
-                              ),
-                            ),
-                            if (leaveTypeAbbr != null &&
-                                leaveTypeAbbr.isNotEmpty) ...[
-                              Text(
-                                leaveTypeAbbr,
-                                style: TextStyle(
-                                  fontSize: 7,
-                                  height: 1.0,
-                                  fontWeight: FontWeight.w600,
-                                  color: textColor.withOpacity(0.9),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+                          .map(
+                            (d) => SizedBox(
+                              width: cellWidth,
+                              child: Center(
+                                child: Text(
+                                  d,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
-                            ],
-                          ],
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: gridHeight,
+                      child: GridView.builder(
+                        key: ValueKey(
+                          'calendar_${_selectedMonth.year}_${_selectedMonth.month}',
                         ),
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: calColCount,
+                          mainAxisSpacing: calCrossSpacing,
+                          crossAxisSpacing: calCrossSpacing,
+                          childAspectRatio: calAspect,
+                        ),
+                        itemCount: days.length,
+                        itemBuilder: (context, index) {
+                          final dayDate = days[index];
+                          final dateStr = DateFormat(
+                            'yyyy-MM-dd',
+                          ).format(dayDate);
+                          final bool isCurrentMonth =
+                              dayDate.month == _selectedMonth.month;
+                          final bool isToday =
+                              isCurrentMonth &&
+                              dayDate.day == now.day &&
+                              dayDate.month == now.month &&
+                              dayDate.year == now.year;
+                          Color bgColor = Colors.transparent;
+                          Color textColor = isCurrentMonth
+                              ? colorScheme.onSurface
+                              : colorScheme.onSurfaceVariant;
+
+                          // Initialize variables before use
+                          num? workHours;
+                          bool isLowHours = false;
+                          bool isFuture = false;
+                          EffectiveShiftDay? effShiftForCell;
+                          String? punchInFmt;
+                          String? punchOutFmt;
+                          String? webBadgeLabel;
+                          Color? webBadgeBg;
+                          Color? webBadgeFg;
+                          bool calendarCellIsWeekOff = false;
+
+                          if (isCurrentMonth) {
+                            effShiftForCell = effectiveShiftForCalendarDay(
+                              companyDoc: _profileCompanyDoc,
+                              staffShiftKey: _profileStaffShiftName,
+                              dayLocal: DateTime(
+                                dayDate.year,
+                                dayDate.month,
+                                dayDate.day,
+                              ),
+                              joiningDate: _profileJoiningDate,
+                              attendanceTodayTemplate:
+                                  _templateOverrideForCalendarDay(
+                                    DateTime(
+                                      dayDate.year,
+                                      dayDate.month,
+                                      dayDate.day,
+                                    ),
+                                  ),
+                            );
+                            final bool isHoliday = holidayDateSet.contains(
+                              dateStr,
+                            );
+
+                            final dayOfWeek =
+                                dayDate.weekday %
+                                7; // 0=Sunday, 1=Monday, ..., 6=Saturday
+
+                            // Use backend calculated week off dates, but add validation:
+                            // 1. Sundays (day 0) should ALWAYS be week off
+                            // 2. Fridays (day 5) should NEVER be week off unless explicitly in backend data
+                            // 3. Do NOT show violet for alternate work dates (compensation week-off days when employee can check-in)
+                            bool isWeekOff = weekOffDateSet.contains(dateStr);
+                            if (isWeekOff &&
+                                alternateWorkDatesInMonthSet.contains(
+                                  dateStr,
+                                )) {
+                              isWeekOff =
+                                  false; // Alternate work date: can check-in, don't highlight as week off
+                            }
+                            // Validation: Sundays are always week off (unless it's an alternate work date)
+                            if (dayOfWeek == 0 &&
+                                !alternateWorkDatesInMonthSet.contains(
+                                  dateStr,
+                                )) {
+                              isWeekOff = true;
+                            }
+
+                            // Check if present from backend presentDates array
+                            final bool isPresentFromBackend = presentDateSet
+                                .contains(dateStr);
+
+                            // Set secondary text color for Sundays/week offs
+                            if (isWeekOff) {
+                              textColor = colorScheme.onSurfaceVariant;
+                            }
+
+                            // Priority: Present with LeaveType (Green) > Half Day (On Leave Blue) > Holiday > Week Off > Leave without attendance (On Leave Blue) > Present > Absent > Not Marked
+                            // IMPORTANT: Week offs (especially Sundays) should NEVER be marked as absent
+                            final status = dayStatusByDate[dateStr];
+                            final hasLeaveType = dayLeaveTypeByDate.containsKey(
+                              dateStr,
+                            );
+                            // Never treat as present when record is Pending/Absent/Rejected (trust attendance list over presentDates)
+                            final isAbsentStatus =
+                                (status ?? '').toString().toLowerCase() ==
+                                'absent';
+                            final isPresentStatus =
+                                (status == 'Present' ||
+                                    status == 'Approved' ||
+                                    isPresentFromBackend) &&
+                                status != 'Pending' &&
+                                !isAbsentStatus &&
+                                status != 'Rejected';
+                            final isHalfDayStatus =
+                                status == 'Half Day' ||
+                                (status?.toLowerCase() == 'half day');
+
+                            // 1. Present with leaveType → Green background with CL/SL/HA
+                            if (isPresentStatus && hasLeaveType) {
+                              bgColor = const Color(
+                                0xFFDCFCE7,
+                              ); // Present - Light Green
+                            }
+                            // 2. Half Day status → On Leave blue background with "HA"
+                            else if (isHalfDayStatus) {
+                              bgColor = const Color(
+                                0xFFBFDBFE,
+                              ); // Half Day - On Leave blue
+                            }
+                            // 3. Holiday
+                            else if (isHoliday) {
+                              bgColor = const Color(
+                                0xFFFEF3C7,
+                              ); // Holiday - Light yellow
+                            }
+                            // 3.5. Alternate Working Day (compensation week-off day when employee can check-in)
+                            else if (alternateWorkDatesInMonthSet.contains(
+                              dateStr,
+                            )) {
+                              bgColor = const Color(
+                                0xFFE8D5C4,
+                              ); // Working Day - Light brown
+                            }
+                            // 4. Week Off
+                            else if (isWeekOff) {
+                              bgColor = const Color(
+                                0xFFE9D5FF,
+                              ); // Week Off - Light purple
+                            }
+                            // 5. Leave date but no attendance → Blue with "L"
+                            else if (leaveDateSet.contains(dateStr)) {
+                              bgColor = const Color(
+                                0xFFBFDBFE,
+                              ); // On Leave - light blue
+                            }
+                            // 6. Present without leaveType → Green
+                            else if (isPresentStatus) {
+                              bgColor = const Color(
+                                0xFFDCFCE7,
+                              ); // Present - Light Green
+                            }
+                            // 7. Other attendance statuses (Pending treated as Absent). Show red when status is Absent in attendances collection.
+                            else if (dayStatusByDate.containsKey(dateStr)) {
+                              if (status == 'Pending' ||
+                                  isAbsentStatus ||
+                                  status == 'Rejected') {
+                                bgColor = const Color(
+                                  0xFFFEE2E2,
+                                ); // Absent - Light red
+                              } else if (status == 'On Leave') {
+                                bgColor = const Color(
+                                  0xFFBFDBFE,
+                                ); // On Leave - light blue
+                              }
+                            }
+                            // 8. Absent from backend (never show today as absent - day may be in progress or data stale)
+                            else if (absentDateSet.contains(dateStr)) {
+                              if (!isWeekOff && !isToday) {
+                                bgColor = const Color(
+                                  0xFFFEE2E2,
+                                ); // Absent - Light red
+                              } else if (isToday) {
+                                // Today: show as not marked so user isn't shown absent incorrectly
+                                bgColor = const Color(
+                                  0xFFE2E8F0,
+                                ); // Not Marked - Light grey
+                              }
+                            }
+                            // 9. Future dates
+                            else {
+                              final todayOnly = DateTime(
+                                now.year,
+                                now.month,
+                                now.day,
+                              );
+                              final dateOnly = DateTime(
+                                dayDate.year,
+                                dayDate.month,
+                                dayDate.day,
+                              );
+                              if (dateOnly.isAfter(todayOnly)) {
+                                bgColor = const Color(
+                                  0xFFE2E8F0,
+                                ); // Not Marked - Light grey
+                              }
+                            }
+
+                            // For today: prefer live _todayAttendance so we show Present if user has punched in
+                            if (isToday && _todayAttendance != null) {
+                              final st =
+                                  _todayAttendance!['status']
+                                      ?.toString()
+                                      .toLowerCase() ??
+                                  '';
+                              if (st == 'present' || st == 'approved') {
+                                bgColor = const Color(
+                                  0xFFDCFCE7,
+                                ); // Present - Light Green
+                              }
+                            }
+
+                            Map<String, dynamic>? dayEntry;
+                            for (final e in attendanceDeduped) {
+                              if (e is! Map) continue;
+                              if (_attendanceDateKey(e) == dateStr) {
+                                dayEntry = Map<String, dynamic>.from(e);
+                                break;
+                              }
+                            }
+                            punchInFmt = _formatCalendarPunchTime(
+                              dayEntry?['punchIn'],
+                            );
+                            punchOutFmt = _formatCalendarPunchTime(
+                              dayEntry?['punchOut'],
+                            );
+                            if (isToday && _todayAttendance != null) {
+                              punchInFmt ??= _formatCalendarPunchTime(
+                                _todayAttendance!['punchIn'],
+                              );
+                              punchOutFmt ??= _formatCalendarPunchTime(
+                                _todayAttendance!['punchOut'],
+                              );
+                            }
+
+                            // Status flags for chips, low-hours, leave interactions
+                            final statusForDay = dayStatusByDate[dateStr] ?? '';
+                            final statusLower = statusForDay
+                                .toString()
+                                .toLowerCase();
+                            final isAbsentStatusForAbbr =
+                                statusLower == 'absent';
+                            final isPresentStatusForAbbr =
+                                (statusForDay == 'Present' ||
+                                    statusForDay == 'Approved' ||
+                                    isPresentFromBackend) &&
+                                statusForDay != 'Pending' &&
+                                !isAbsentStatusForAbbr &&
+                                statusForDay != 'Rejected';
+                            final isHalfDayStatusForAbbr =
+                                statusForDay == 'Half Day' ||
+                                statusLower == 'half day';
+                            final isOnLeaveStatus = statusLower == 'on leave';
+                            final compType =
+                                dayCompensationTypeByDate[dateStr] ?? '';
+
+                            // Low work-hours indicator
+                            workHours = dayWorkHoursByDate[dateStr];
+
+                            // Calculate workHours from punchIn and punchOut if not available
+                            if ((workHours == null || workHours == 0) &&
+                                _monthData != null &&
+                                _monthData!['attendance'] != null) {
+                              try {
+                                final entry =
+                                    (_monthData!['attendance'] as List)
+                                        .firstWhere((e) {
+                                          try {
+                                            final d = DateTime.parse(
+                                              e['date'],
+                                            ).toLocal();
+                                            final eDateStr = DateFormat(
+                                              'yyyy-MM-dd',
+                                            ).format(d);
+                                            return eDateStr == dateStr;
+                                          } catch (_) {
+                                            return false;
+                                          }
+                                        }, orElse: () => null);
+
+                                if (entry != null) {
+                                  final punchIn = entry['punchIn'];
+                                  final punchOut = entry['punchOut'];
+                                  if (punchIn != null && punchOut != null) {
+                                    try {
+                                      final punchInTime = DateTime.parse(
+                                        punchIn.toString(),
+                                      ).toLocal();
+                                      final punchOutTime = DateTime.parse(
+                                        punchOut.toString(),
+                                      ).toLocal();
+                                      final duration = punchOutTime.difference(
+                                        punchInTime,
+                                      );
+                                      if (duration.inMinutes > 0) {
+                                        workHours =
+                                            duration.inMinutes /
+                                            60.0; // Convert to hours
+                                      }
+                                    } catch (_) {
+                                      // If parsing fails, leave workHours as null
+                                    }
+                                  }
+                                }
+                              } catch (_) {
+                                // If lookup fails, leave workHours as is
+                              }
+                            }
+
+                            // workHours from API/local are in minutes; threshold = resolved shift (or 9h default)
+                            final workHoursMins = _workHoursToMinutes(
+                              workHours,
+                            );
+                            final requiredWorkMins =
+                                effShiftForCell?.requiredWorkMinutes() ?? 540;
+                            isLowHours =
+                                workHoursMins != null &&
+                                workHoursMins < requiredWorkMins;
+                            // Don't show low work hours red dot for comp off, leave, week off, or absent
+                            if (isWeekOff ||
+                                compType == 'compoff' ||
+                                compType == 'comp off' ||
+                                isOnLeaveStatus ||
+                                isAbsentStatusForAbbr ||
+                                (leaveDateSet.contains(dateStr) &&
+                                    !isPresentStatusForAbbr)) {
+                              isLowHours = false;
+                            }
+                            isFuture = DateTime(
+                              dayDate.year,
+                              dayDate.month,
+                              dayDate.day,
+                            ).isAfter(DateTime(now.year, now.month, now.day));
+
+                            // Web-style top-right status chip (single label per day)
+                            final bool pureWeekOff =
+                                isWeekOff &&
+                                !alternateWorkDatesInMonthSet.contains(dateStr);
+                            if (pureWeekOff) {
+                              webBadgeLabel = 'Week Off';
+                              webBadgeBg = const Color(0xFFE5E7EB);
+                              webBadgeFg = const Color(0xFF374151);
+                            } else if (isHoliday) {
+                              webBadgeLabel = 'Holiday';
+                              webBadgeBg = const Color(0xFFFEF3C7);
+                              webBadgeFg = const Color(0xFF92400E);
+                            } else if (isAbsentStatusForAbbr ||
+                                statusForDay == 'Rejected') {
+                              webBadgeLabel = 'Absent';
+                              webBadgeBg = const Color(0xFFFEE2E2);
+                              webBadgeFg = const Color(0xFFB91C1C);
+                            } else if (isPresentStatusForAbbr) {
+                              webBadgeLabel = 'Present';
+                              webBadgeBg = const Color(0xFFDCFCE7);
+                              webBadgeFg = const Color(0xFF166534);
+                            } else if (status == 'Pending' ||
+                                pendingWithCheckInDateSet.contains(dateStr)) {
+                              webBadgeLabel = 'Pending';
+                              webBadgeBg = const Color(0xFFE2E8F0);
+                              webBadgeFg = const Color(0xFF475569);
+                            } else if (isOnLeaveStatus ||
+                                (leaveDateSet.contains(dateStr) &&
+                                    !isPresentStatusForAbbr &&
+                                    !isHalfDayStatusForAbbr)) {
+                              webBadgeLabel = 'On Leave';
+                              webBadgeBg = const Color(0xFFEDE9FE);
+                              webBadgeFg = const Color(0xFF5B21B6);
+                            } else if (isHalfDayStatusForAbbr) {
+                              webBadgeLabel = 'Half Day';
+                              webBadgeBg = const Color(0xFFFEF9C3);
+                              webBadgeFg = const Color(0xFFA16207);
+                            } else if (absentDateSet.contains(dateStr) &&
+                                !isWeekOff &&
+                                !isToday) {
+                              webBadgeLabel = 'Absent';
+                              webBadgeBg = const Color(0xFFFEE2E2);
+                              webBadgeFg = const Color(0xFFB91C1C);
+                            }
+
+                            calendarCellIsWeekOff = isWeekOff;
+                          }
+
+                          if (!isCurrentMonth) {
+                            return Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Align(
+                                alignment: Alignment.topLeft,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    4,
+                                    4,
+                                    2,
+                                    2,
+                                  ),
+                                  child: Text(
+                                    '${dayDate.day}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      height: 1.0,
+                                      fontWeight: FontWeight.w500,
+                                      color: textColor,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+
+                          return Container(
+                            clipBehavior: Clip.antiAlias,
+                            decoration: BoxDecoration(
+                              color: bgColor,
+                              borderRadius: BorderRadius.circular(8),
+                              border: isToday
+                                  ? Border.all(
+                                      color: AppColors.primary,
+                                      width: 2,
+                                    )
+                                  : null,
+                            ),
+                            child: Stack(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    3,
+                                    4,
+                                    3,
+                                    4,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${dayDate.day}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              height: 1.0,
+                                              fontWeight: isToday
+                                                  ? FontWeight.bold
+                                                  : FontWeight.w500,
+                                              color: textColor,
+                                            ),
+                                          ),
+                                          const Spacer(),
+                                          if (webBadgeLabel != null &&
+                                              webBadgeBg != null &&
+                                              webBadgeFg != null)
+                                            Flexible(
+                                              child: Align(
+                                                alignment:
+                                                    Alignment.centerRight,
+                                                child:
+                                                    _dashboardCalendarStatusChip(
+                                                      webBadgeLabel,
+                                                      webBadgeBg,
+                                                      webBadgeFg,
+                                                    ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      Expanded(
+                                        child: Align(
+                                          alignment: Alignment.center,
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 1,
+                                            ),
+                                            child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                if (punchInFmt != null)
+                                                  _dashboardCalendarPunchRow(
+                                                    const Color(0xFF22C55E),
+                                                    punchInFmt,
+                                                    textColor,
+                                                  ),
+                                                if (punchOutFmt != null)
+                                                  _dashboardCalendarPunchRow(
+                                                    const Color(0xFFEF4444),
+                                                    punchOutFmt,
+                                                    textColor,
+                                                  ),
+                                                if (!calendarCellIsWeekOff &&
+                                                    effShiftForCell !=
+                                                        null) ...[
+                                                  if (punchInFmt != null ||
+                                                      punchOutFmt != null)
+                                                    const SizedBox(height: 3),
+                                                  Text(
+                                                    effShiftForCell
+                                                        .compactLine(),
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    textAlign: TextAlign.center,
+                                                    style: const TextStyle(
+                                                      fontSize: 8,
+                                                      height: 1.1,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color: Color(0xFF6B7280),
+                                                    ),
+                                                  ),
+                                                  if (effShiftForCell
+                                                          .rotationCalendarFooter() !=
+                                                      null)
+                                                    Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                            top: 2,
+                                                          ),
+                                                      child: Text(
+                                                        effShiftForCell
+                                                            .rotationCalendarFooter()!,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        textAlign:
+                                                            TextAlign.center,
+                                                        style: const TextStyle(
+                                                          fontSize: 7,
+                                                          height: 1.05,
+                                                          fontWeight:
+                                                              FontWeight.w500,
+                                                          color: Color(
+                                                            0xFF6B7280,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (isLowHours &&
+                                    !isFuture &&
+                                    bgColor != Colors.transparent)
+                                  const Positioned(
+                                    top: 2,
+                                    left: 2,
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        color: Colors.red,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: SizedBox(width: 5, height: 5),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ),
-                  ),
-                  // Red dot indicator for low work hours (top-left corner)
-                  if (isLowHours &&
-                      !isFuture &&
-                      bgColor.value != Colors.transparent.value)
-                    Positioned(
-                      top: 4,
-                      left: 4,
-                      child: Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            );
-          },
+            ),
+          ),
         ),
       ],
     );

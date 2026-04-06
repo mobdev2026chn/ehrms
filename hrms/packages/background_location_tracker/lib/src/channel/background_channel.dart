@@ -33,7 +33,7 @@ class BackgroundChannel {
     final isLoggingEnabled =
         data['logging_enabled'] as bool; // ignore: avoid_as
     BackgroundLocationTrackerLogger.enableLogging = isLoggingEnabled;
-    BackgroundLocationTrackerLogger.log('locationUpdate: ${call.arguments}');
+    // BackgroundLocationTrackerLogger.log('locationUpdate: ${call.arguments}');
     final lat = data['lat'] as double; // ignore: avoid_as
     final lon = data['lon'] as double; // ignore: avoid_as
     final alt = data['alt'] as double; // ignore: avoid_as

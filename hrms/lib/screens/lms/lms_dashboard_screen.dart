@@ -287,7 +287,7 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String?>(
-                    value: _categoryFilter,
+                    initialValue: _categoryFilter,
                     decoration: InputDecoration(
                       filled: true,
                       fillColor: AppColors.surface,
@@ -446,7 +446,7 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String?>(
-                    value: _libraryCategoryFilter,
+                    initialValue: _libraryCategoryFilter,
                     decoration: InputDecoration(
                       filled: true,
                       fillColor: AppColors.surface,

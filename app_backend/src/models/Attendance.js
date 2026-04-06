@@ -41,7 +41,12 @@ const attendanceSchema = new mongoose.Schema(
     approvedAt: Date,
     remarks: String,
     workHours: Number,
+    /** Eligible overtime minutes; standard shifts: past shift end minus otBuffer; open shifts: full minutes over required daily hours. */
     overtime: Number,
+    /** Open shift only: sum of full buffer blocks covered by extra time, floor(extra/buffer)*buffer (tracking only; OT is not reduced). */
+    bufferTime: { type: Number, default: 0 },
+    /** Overtime pay in base currency when OT minutes >= shift otBufferMinutes and payroll fine/OT formula applies. */
+    overtimeAmount: { type: Number, default: 0 },
     /** Total fine duration in MINUTES (late + early). Display as hours by dividing by 60. */
     fineHours: Number,
     lateMinutes: Number,
