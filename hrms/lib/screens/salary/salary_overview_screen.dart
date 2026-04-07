@@ -379,6 +379,13 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     return s == 'processed' || s == 'paid';
   }
 
+  /// Web TS `POST /payroll/preview` — `salaryBasis` (contract month + per-day rates).
+  Map<String, dynamic>? get _previewSalaryBasis {
+    final b = _payrollPreview?['salaryBasis'];
+    if (b is Map) return Map<String, dynamic>.from(b);
+    return null;
+  }
+
   /// Build [CalculatedSalaryStructure] from profile staff.salary (new structure or legacy gross-only).
   void _resolveCalculatedSalaryFromStaff(Map<String, dynamic> raw) {
     _staffSalary = Map<String, dynamic>.from(raw);
@@ -418,12 +425,29 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           _payrollPreview = Map<String, dynamic>.from(p);
           final att = _payrollPreview!['attendance'];
           if (att is Map) {
-            _payableDaysBase =
-                (att['payableDaysBase'] as num?)?.toInt() ?? _payableDaysBase;
-            _payableRule = att['payableRule']?.toString() ?? _payableRule;
+            final attMap = Map<String, dynamic>.from(att);
+            // TS `backend` preview: denominator often only as `fullMonthWorkingDays` (template-linked).
+            _payableDaysBase = (attMap['payableDaysBase'] as num?)?.toInt() ??
+                (attMap['fullMonthWorkingDays'] as num?)?.toInt() ??
+                _payableDaysBase;
+            _payableRule = attMap['payableRule']?.toString() ?? _payableRule;
+
+            final fm = (attMap['fullMonthWorkingDays'] as num?)?.toInt();
+            final till = (attMap['workingDaysTillCurrentDate'] as num?)?.toInt();
+            if (_workingDaysInfo != null && (fm != null || till != null)) {
+              _workingDaysInfo = WorkingDaysInfo(
+                totalDays: _workingDaysInfo!.totalDays,
+                workingDays: till ?? _workingDaysInfo!.workingDays,
+                weekends: _workingDaysInfo!.weekends,
+                holidayCount: _workingDaysInfo!.holidayCount,
+                workingDaysFullMonth:
+                    fm ?? _workingDaysInfo!.workingDaysFullMonth,
+              );
+            }
           }
           debugPrint(
             '[SalaryOverview] preview MTD gross=${_payrollPreview!['grossSalary']} net=${_payrollPreview!['netPay']} '
+            'salaryBasis=${_payrollPreview!['salaryBasis'] != null} '
             'attendance=${_payrollPreview!['attendance']} payableDaysBase=$_payableDaysBase payableRule=$_payableRule',
           );
         }
@@ -812,12 +836,41 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         }
       }
 
-      // 2. Fetch payroll stats from backend (has correct working days calculation)
+      // 2. Kick off network calls in parallel (reduces Salary tab load time).
+      final statsFuture = _salaryService
+          .getSalaryStats(month: monthIndex, year: year)
+          .timeout(_networkTimeout);
+
+      final monthAttendanceFuture = _attendanceService
+          .getMonthAttendance(year, monthIndex)
+          .timeout(_networkTimeout);
+
+      Future<Map<String, dynamic>>? employeeAttendanceFuture;
+      if (_staffId != null && _staffId!.isNotEmpty) {
+        final monthStart = DateTime(year, monthIndex, 1);
+        final monthEnd = DateTime(year, monthIndex + 1, 0);
+        final todayNav = DateTime.now();
+        final todayOnly = DateTime(todayNav.year, todayNav.month, todayNav.day);
+        final attendanceEndDate = _isCurrentMonth(monthIndex, year)
+            ? todayOnly
+            : monthEnd;
+        final startDateStr = DateFormat('yyyy-MM-dd').format(monthStart);
+        final endDateStr = DateFormat('yyyy-MM-dd').format(attendanceEndDate);
+        employeeAttendanceFuture = _attendanceService
+            .getEmployeeAttendance(
+              employeeId: _staffId!,
+              startDate: startDateStr,
+              endDate: endDateStr,
+              page: 1,
+              limit: 100,
+            )
+            .timeout(_networkTimeout);
+      }
+
+      // 2a. Consume payroll stats first (drives payable rule + MTD amounts).
       Map<String, dynamic>? backendStats;
       try {
-        final statsResult = await _salaryService
-            .getSalaryStats(month: monthIndex, year: year)
-            .timeout(_networkTimeout);
+        final statsResult = await statsFuture;
         final stats = statsResult['stats'] as Map<String, dynamic>?;
         if (stats != null) {
           backendStats = stats;
@@ -829,22 +882,22 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           final earningsRaw = stats['earnings'];
           _backendEarnings = earningsRaw is List
               ? earningsRaw
-                    .whereType<Map>()
-                    .map((e) => Map<String, dynamic>.from(e))
-                    .toList()
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList()
               : [];
           final deductionsRaw = stats['deductionComponents'];
           _backendDeductionComponents = deductionsRaw is List
               ? deductionsRaw
-                    .whereType<Map>()
-                    .map((e) => Map<String, dynamic>.from(e))
-                    .toList()
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList()
               : [];
-          _backendDeductionsTotal = (stats['deductions'] as num?)?.toDouble() ?? 0.0;
+          _backendDeductionsTotal =
+              (stats['deductions'] as num?)?.toDouble() ?? 0.0;
           final attendance = stats['attendance'];
           if (attendance is Map) {
-            _payableDaysBase =
-                (attendance['payableDaysBase'] as num?)?.toInt();
+            _payableDaysBase = (attendance['payableDaysBase'] as num?)?.toInt();
             _payableRule = attendance['payableRule']?.toString();
           }
           debugPrint(
@@ -861,7 +914,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           _payableDaysBase = null;
           _payableRule = null;
         }
-      } catch (e) {
+      } catch (_) {
         _backendThisMonthNet = null;
         _backendThisMonthGross = null;
         _backendEarnings = [];
@@ -878,37 +931,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       final prevProratedSalary = _proratedSalary;
       bool attendanceUpdated = false;
 
-      // Add a small delay on first load to avoid immediate rate limiting
-      // when multiple screens load simultaneously
-      if (_attendanceRecords.isEmpty && prevAttendanceRecords.isEmpty) {
-        await Future.delayed(const Duration(milliseconds: 300));
-      }
-
-      // Web parity: rows from GET /attendance/employee/:id?startDate&endDate (Attendance collection),
-      // same range as web (month start → today for current month, else full month).
-      final monthStart = DateTime(year, monthIndex, 1);
-      final monthEnd = DateTime(year, monthIndex + 1, 0);
-      final todayNav = DateTime.now();
-      final todayOnly = DateTime(todayNav.year, todayNav.month, todayNav.day);
-      final attendanceEndDate = _isCurrentMonth(monthIndex, year)
-          ? todayOnly
-          : monthEnd;
-      final startDateStr = DateFormat('yyyy-MM-dd').format(monthStart);
-      final endDateStr = DateFormat('yyyy-MM-dd').format(attendanceEndDate);
-
-      if (_staffId != null && _staffId!.isNotEmpty) {
+      // Web parity: range-based employee rows (Attendance collection).
+      if (employeeAttendanceFuture != null) {
         try {
-          final employeeResult = await _attendanceService
-              .getEmployeeAttendance(
-                employeeId: _staffId!,
-                startDate: startDateStr,
-                endDate: endDateStr,
-                page: 1,
-                limit: 100,
-              )
-              .timeout(_networkTimeout);
+          final employeeResult = await employeeAttendanceFuture;
           debugPrint(
-            '[SalaryOverview] GET attendance/employee start=$startDateStr end=$endDateStr '
+            '[SalaryOverview] GET attendance/employee '
             'success=${employeeResult['success']}',
           );
           if (employeeResult['success'] == true &&
@@ -935,9 +963,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       // Month endpoint: calendar sets (weekOffDates, server date sets) and stats fallback.
       Map<String, dynamic> attendanceResult = {'success': false};
       try {
-        attendanceResult = await _attendanceService
-            .getMonthAttendance(year, monthIndex)
-            .timeout(_networkTimeout);
+        attendanceResult = await monthAttendanceFuture;
       } catch (e) {
         debugPrint('[SalaryOverview] month attendance fetch error: $e');
       }
@@ -1198,6 +1224,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       } else if (jdRaw is DateTime) {
         joiningDateParsed = jdRaw;
       }
+      final todayNav = DateTime.now();
       final rotationalRefDay = _isCurrentMonth(monthIndex, year)
           ? DateTime(todayNav.year, todayNav.month, todayNav.day)
           : DateTime(year, monthIndex, 15);
@@ -2507,6 +2534,13 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       '${_backendEarnings.map((e) => '${e['name']}:${e['amount']}').join(', ')}',
     );
     final pfStaticMonthly = monthly?.pfStaticAmount ?? 0.0;
+    final previewBasis = _previewSalaryBasis;
+    final apiPerDayGross =
+        (previewBasis?['perDayGrossSalary'] as num?)?.toDouble() ?? 0.0;
+    final apiPerDayNet =
+        (previewBasis?['perDayNetSalary'] as num?)?.toDouble() ?? 0.0;
+    final apiRateDivisor =
+        (previewBasis?['payableDaysForRate'] as num?)?.toInt() ?? 0;
 
     return Container(
       decoration: BoxDecoration(
@@ -2614,57 +2648,82 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (monthly != null && wdm > 0) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue.shade100),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+                  Builder(
+                    builder: (context) {
+                      final m = monthly;
+                      final useApiRates = previewBasis != null &&
+                          apiPerDayGross > 0.004 &&
+                          apiPerDayNet > 0.004 &&
+                          apiRateDivisor > 0;
+                      final perDayGrossVal = useApiRates
+                          ? apiPerDayGross
+                          : m.grossSalary / wdm;
+                      final perDayNetVal = useApiRates
+                          ? apiPerDayNet
+                          : m.netMonthlySalary / wdm;
+                      final divisorLabel = useApiRates ? apiRateDivisor : wdm;
+                      final basisMap = previewBasis;
+                      final monthNetCap = useApiRates && basisMap != null
+                          ? ((basisMap['monthlyNetSalary'] as num?)
+                                  ?.toDouble() ??
+                              m.netMonthlySalary)
+                          : m.netMonthlySalary;
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue.shade100),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.today, size: 16, color: Colors.blue.shade700),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Per-day salary',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue.shade700,
+                            Row(
+                              children: [
+                                Icon(Icons.today,
+                                    size: 16, color: Colors.blue.shade700),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Per-day salary',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue.shade700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            _buildMiniRow(
+                              '1 day gross',
+                              perDayGrossVal,
+                              currencyFormat,
+                            ),
+                            _buildMiniRow(
+                              'Daily salary (1 day net)',
+                              perDayNetVal,
+                              currencyFormat,
+                              valueText:
+                                  '${currencyFormat.format(perDayNetVal)} '
+                                  '(${currencyFormat.format(monthNetCap)} / $divisorLabel)',
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                useApiRates
+                                    ? 'Matches web preview: contract month gross & net ÷ $divisorLabel payable days for rate'
+                                    : 'Monthly gross & net ÷ $wdm working days this month',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.grey.shade600,
+                                ),
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 6),
-                        _buildMiniRow(
-                          '1 day gross',
-                          monthly.grossSalary / wdm,
-                          currencyFormat,
-                        ),
-                        _buildMiniRow(
-                          'Daily salary (1 day net)',
-                          monthly.netMonthlySalary / wdm,
-                          currencyFormat,
-                          valueText:
-                              '${currencyFormat.format(monthly.netMonthlySalary / wdm)} '
-                              '(${currencyFormat.format(monthly.netMonthlySalary)} / $wdm)',
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            'Monthly gross & net ÷ $wdm working days this month',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -2878,20 +2937,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   )
                 else if (useWebStyleStructure) ...[
                   if (mtdStruct != null) ...[
-                    if (mtdStruct.employerPF > 0.005)
-                      _buildComponentRow(
-                        'Employer PF',
-                        mtdStruct.employerPF,
-                        currencyFormat,
-                        isDeduction: true,
-                      ),
-                    if (mtdStruct.employerESI > 0.005)
-                      _buildComponentRow(
-                        'Employer ESI',
-                        mtdStruct.employerESI,
-                        currencyFormat,
-                        isDeduction: true,
-                      ),
                     _buildComponentRow(
                       employeePFRate != null
                           ? 'Employee PF (${employeePFRate.toStringAsFixed(0)}%)'
@@ -2909,20 +2954,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                       isDeduction: true,
                     ),
                   ] else ...[
-                    if (monthly.employerPF * f > 0.005)
-                      _buildComponentRow(
-                        'Employer PF',
-                        monthly.employerPF * f,
-                        currencyFormat,
-                        isDeduction: true,
-                      ),
-                    if (monthly.employerESI * f > 0.005)
-                      _buildComponentRow(
-                        'Employer ESI',
-                        monthly.employerESI * f,
-                        currencyFormat,
-                        isDeduction: true,
-                      ),
                     _buildComponentRow(
                       employeePFRate != null
                           ? 'Employee PF (${employeePFRate.toStringAsFixed(0)}%)'
@@ -3037,9 +3068,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     'Net Salary',
                     mtdStruct != null
                         ? mtdStruct.netMonthlySalary - fineAmount
-                        : monthly.grossSalary * f -
-                            monthly.totalMonthlyDeductions * f -
-                            fineAmount,
+                        : monthly.netMonthlySalary * f - fineAmount,
                     currencyFormat,
                   )
                 else if (_backendThisMonthNet != null)
@@ -3249,8 +3278,13 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         locale: 'en_IN',
         symbol: '₹',
       );
-      final gross = _calculatedSalary?.monthly.grossSalary ?? 0.0;
-      final net = _calculatedSalary?.monthly.netMonthlySalary ?? 0.0;
+      final sb = _previewSalaryBasis;
+      final gross = (sb?['monthlyGrossSalary'] as num?)?.toDouble() ??
+          _calculatedSalary?.monthly.grossSalary ??
+          0.0;
+      final net = (sb?['monthlyNetSalary'] as num?)?.toDouble() ??
+          _calculatedSalary?.monthly.netMonthlySalary ??
+          0.0;
       final selectedPayroll = _pastMonthPayroll ?? _currentPayroll;
       final payrollGross = (selectedPayroll?['grossSalary'] as num?)?.toDouble();
       final payrollNet = (selectedPayroll?['netPay'] as num?)?.toDouble();
@@ -3268,9 +3302,11 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           : hasPreview
               ? 'From payroll preview (estimated)'
               : 'Payroll not available';
-      final subtitle = _calculatedSalary != null
-          ? 'From salary structure'
-          : 'Salary structure not available';
+      final subtitle = sb != null
+          ? 'From payroll preview (contract month)'
+          : _calculatedSalary != null
+              ? 'From salary structure'
+              : 'Salary structure not available';
 
       return LayoutBuilder(
         builder: (context, constraints) {
@@ -3397,9 +3433,25 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final salaryCardPresentDays = salaryCardCounts['presentDays'] ?? _presentDays;
     final salaryCardWorkingTill =
         salaryCardCounts['workingDays']?.toInt() ?? (_workingDaysInfo?.workingDays ?? 0);
-    final attendancePercentForCards = salaryCardWorkingTill > 0
-        ? (salaryCardPresentDays / salaryCardWorkingTill) * 100
+    // Web: % and "out of X" use full-month payable base (week-off excluded), not till-date working days only.
+    var denomForSalaryCards = salaryCardWorkingTill;
+    if (_workingDaysInfo != null) {
+      final wdmCards = _salaryPayableBaseDays(
+        _workingDaysInfo!.workingDaysFullMonth ??
+            _workingDaysInfo!.workingDays,
+      );
+      if (wdmCards > 0) denomForSalaryCards = wdmCards;
+    }
+    var attendancePercentForCards = denomForSalaryCards > 0
+        ? (salaryCardPresentDays / denomForSalaryCards) * 100
         : 0.0;
+    if (!payrollFinal && _payrollPreview != null) {
+      final pa = _payrollPreview!['attendance'];
+      if (pa is Map) {
+        final ap = (pa['attendancePercentage'] as num?)?.toDouble();
+        if (ap != null) attendancePercentForCards = ap;
+      }
+    }
 
     // Do not show negative net for card display – clamp at 0
     final displayThisMonthNet = rawThisMonthNet < 0 ? 0.0 : rawThisMonthNet;
@@ -3410,7 +3462,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       netCardExtra.write('From generated payroll');
     } else if (_workingDaysInfo != null || _attendanceRecords.isNotEmpty) {
       netCardExtra.write(
-        'Based on ${_formatDayChip(salaryCardPresentDays)} days out of $salaryCardWorkingTill',
+        'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards month working days',
       );
       if (fineAmt > 0) {
         netCardExtra.write(' (Fine: ${currencyFormat.format(fineAmt)})');
@@ -3429,7 +3481,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       'previewGross=$previewGross previewDed=$previewDeductions previewNet=$previewNet '
       'proratedGross=${_proratedSalary?.proratedGrossSalary} proratedNet=${_proratedSalary?.proratedNetSalary} '
       'displayDed=$thisMonthDeductionsDisplay '
-      'salaryCardPresentDays=$salaryCardPresentDays workTill=$salaryCardWorkingTill '
+      'salaryCardPresentDays=$salaryCardPresentDays workTill=$salaryCardWorkingTill denomForCards=$denomForSalaryCards '
       'displayGross=$thisMonthGrossDisplay displayNet=$displayThisMonthNet',
     );
 
@@ -3438,20 +3490,31 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         // Use Grid or Row based on width
         bool isWide = constraints.maxWidth > 600;
 
+        final basis = _previewSalaryBasis;
+        final monthGrossCard = (basis?['monthlyGrossSalary'] as num?)?.toDouble() ??
+            _calculatedSalary?.monthly.grossSalary ??
+            0.0;
+        final monthNetCard = (basis?['monthlyNetSalary'] as num?)?.toDouble() ??
+            _calculatedSalary?.monthly.netMonthlySalary ??
+            0.0;
+        final monthCardSubtitle = basis != null
+            ? 'From payroll preview (contract month)'
+            : 'From salary structure';
+
         // Row 1: Monthly Gross, Monthly Net | Row 2: This Month Gross, This Month Net
         final List<Widget> cards = [
           _buildStatCard(
             'Monthly Gross',
-            currencyFormat.format(_calculatedSalary?.monthly.grossSalary ?? 0.0),
-            'From salary structure',
+            currencyFormat.format(monthGrossCard),
+            monthCardSubtitle,
             AppColors.primary,
             textColor: Colors.white,
             usePrimaryGradient: true,
           ),
           _buildStatCard(
             'Monthly Net',
-            currencyFormat.format(_calculatedSalary?.monthly.netMonthlySalary ?? 0.0),
-            'From salary structure',
+            currencyFormat.format(monthNetCard),
+            monthCardSubtitle,
             AppColors.primary,
             textColor: Colors.white,
             usePrimaryGradient: true,
@@ -3460,7 +3523,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             'This Month Gross',
             currencyFormat.format(thisMonthGrossDisplay),
             (_workingDaysInfo != null || _payrollPreview != null)
-                ? 'Based on ${_formatDayChip(salaryCardPresentDays)} present days out of $salaryCardWorkingTill working days\n${attendancePercentForCards.toStringAsFixed(1)}% attendance'
+                ? 'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards month working days\n${attendancePercentForCards.toStringAsFixed(1)}% of month base'
                 : 'Pro-rated',
             Colors.black,
             textColor: Colors.white,
@@ -4825,15 +4888,15 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           ? 'present_only:$presentValue'
                           : 'present=$presentValue paidLeave=$paidLeaveValue')
                       : 'excluded';
-                  debugPrint(
-                    '[SalaryOverviewCalendar] date=$dateStr '
-                    'rowStatus=${dayStatusByDate[dateStr] ?? "—"} '
-                    'abbr=${leaveTypeAbbr ?? "—"} '
-                    'wa=${pendingWithCheckInDateSet.contains(dateStr)} '
-                    'includedInSalary=$includedInSalary '
-                    'payableValue=${payableValue.toStringAsFixed(2)} '
-                    'rule=$effectiveRule reason=$includeReason',
-                  );
+                  // debugPrint(
+                  //   '[SalaryOverviewCalendar] date=$dateStr '
+                  //   'rowStatus=${dayStatusByDate[dateStr] ?? "—"} '
+                  //   'abbr=${leaveTypeAbbr ?? "—"} '
+                  //   'wa=${pendingWithCheckInDateSet.contains(dateStr)} '
+                  //   'includedInSalary=$includedInSalary '
+                  //   'payableValue=${payableValue.toStringAsFixed(2)} '
+                  //   'rule=$effectiveRule reason=$includeReason',
+                  // );
                 }
               }
 

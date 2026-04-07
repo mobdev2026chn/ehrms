@@ -331,22 +331,10 @@ class _SalaryStructureDetailScreenState
                                   'yearly',
                             ),
                           ], null),
-                          // Deductions (web payslip: employer PF/ESI shown here; net = gross − this total)
+                          // Deductions (web payslip: employee PF + ESI only; employer items are under gross above)
                           _buildSectionCard(
                             'Deductions',
                             [
-                              _buildTableRow(
-                                'Employer contribution to PF (${_salaryInputs?.employerPFRate.toStringAsFixed(0) ?? '0'}%)',
-                                _salaryStructure!.monthly.employerPF,
-                                _salaryStructure!.monthly.employerPF * 12,
-                                currencyFormat,
-                              ),
-                              _buildTableRow(
-                                'Employer contribution to ESI (${_salaryInputs?.employerESIRate.toStringAsFixed(2) ?? '0.00'}%)',
-                                _salaryStructure!.monthly.employerESI,
-                                _salaryStructure!.monthly.employerESI * 12,
-                                currencyFormat,
-                              ),
                               _buildTableRow(
                                 'Employee contribution to PF (${_salaryInputs?.employeePFRate.toStringAsFixed(0) ?? '0'}%)',
                                 _salaryStructure!.monthly.employeePF,

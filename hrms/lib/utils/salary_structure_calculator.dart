@@ -11,7 +11,7 @@ class SalaryStructureInputs {
 
   // Employer Contribution Rates (%)
   final double employerPFRate; // % of Basic
-  final double employerESIRate; // % of Gross Fixed Salary
+  final double employerESIRate; // % of Basic+DA+HRA (web TS `baseGross`)
 
   // Variable Pay Rate (%)
   final double incentiveRate; // % of Annual Gross Salary
@@ -27,7 +27,7 @@ class SalaryStructureInputs {
 
   // Employee Deduction Rates (%)
   final double employeePFRate; // % of Basic
-  final double employeeESIRate; // % of Gross Salary
+  final double employeeESIRate; // % of Basic+DA+HRA (web TS `baseGross`)
 
   SalaryStructureInputs({
     required this.basicSalary,
@@ -100,15 +100,16 @@ class MonthlySalaryStructure {
   final double specialAllowance;
   final double grossFixedSalary; // basicSalary + DA + HRA + specialAllowance
   final double employerPF; // basicSalary × employerPFRate / 100
-  final double employerESI; // grossFixedSalary × employerESIRate / 100
+  final double employerESI; // (Basic+DA+HRA) × employerESIRate / 100
   final double pfStaticAmount; // ₹1800 in gross when Basic+DA ≥ 15000 (web)
   final double grossSalary; // grossFixedSalary + employerPF + employerESI + pfStaticAmount
   final double employeePF; // basicSalary × employeePFRate / 100
-  final double employeeESI; // grossSalary × employeeESIRate / 100
-  /// Web `salaryStructureCalculation.util.ts`: employeePF + employeeESI + employerPF + employerESI
-  /// (employer amounts are already in [grossSalary]; subtracting them yields take-home = fixed + pfStatic − employeePF − employeeESI).
+  /// Employee ESI: % of Basic+DA+HRA only (`baseGross`), same as web TS.
+  final double employeeESI;
+  /// Payslip total: employee PF + employee ESI only (web `totalMonthlyDeductions`).
   final double totalMonthlyDeductions;
-  final double netMonthlySalary; // grossSalary - totalMonthlyDeductions
+  /// Take-home: `basic+DA+HRA − employeePF − employeeESI` (web TS; excludes special from this net base).
+  final double netMonthlySalary;
 
   MonthlySalaryStructure({
     required this.basicSalary,
@@ -168,22 +169,22 @@ class CalculatedSalaryStructure {
 /// Calculate complete salary structure from inputs
 /// All values are calculated dynamically - no stored totals
 ///
-/// VERIFIED FORMULAS (Based on Payroll Standards):
+/// Web parity (`backend/src/utils/salaryStructureCalculation.util.ts`):
 ///
 /// 1. Fixed Gross = Basic + DA + HRA + Special Allowance
-/// 2. Gross Salary = Fixed Gross + Employer PF + Employer ESI
-///    - Employer PF = % of Basic
-///    - Employer ESI = % of Fixed Gross
-/// 3. Net Salary (web) = Gross Salary - (Employee PF + Employee ESI + Employer PF + Employer ESI)
-///    i.e. take-home = Gross Fixed + PF static − Employee PF − Employee ESI
-///    - Employee PF = % of Basic (or PF static when PF not applicable)
-///    - Employee ESI = % of Gross Salary (NOT Fixed Gross)
-/// 4. Annual Gross = Monthly Gross × 12
-/// 5. Incentive = % of Annual Gross Salary
-/// 6. Benefits = Gratuity + Statutory Bonus + Medical Insurance
+/// 2. `baseGross` = Basic + DA + HRA (excludes special)
+/// 3. Gross Salary = Fixed Gross + Employer PF + Employer ESI + pfStaticAmount
+///    - Employer PF = % of Basic when Basic+DA < 15000
+///    - Employer ESI = % of `baseGross` when Basic+DA+HRA < 21000
+/// 4. Employee PF / ESI on thresholds; ESI uses `baseGross`, not full gross
+/// 5. `totalMonthlyDeductions` = Employee PF + Employee ESI only
+/// 6. `netMonthlySalary` = `baseGross` − (Employee PF + Employee ESI)
+/// 7. Annual Gross = Monthly Gross × 12
+/// 8. Incentive = % of Annual Basic Salary (Basic × 12)
+/// 9. Benefits = Gratuity + Statutory Bonus + Medical Insurance
 ///    - Gratuity = % of (Basic × 12)
 ///    - Statutory Bonus = % of (Basic × 12)
-/// 7. CTC = Annual Gross + Incentive + Benefits + Allowances
+/// 10. CTC = Annual Gross + Incentive + Benefits + Allowances
 ///    NOTE: Employee deductions are NOT part of CTC
 CalculatedSalaryStructure calculateSalaryStructure(
   SalaryStructureInputs inputs,
@@ -210,6 +211,7 @@ CalculatedSalaryStructure calculateSalaryStructure(
   final basicPlusDAPlusHRA = basicSalary + dearnessAllowance + houseRentAllowance;
   final isPFApplicable = basicPlusDA < 15000;
   final isESIApplicable = basicPlusDAPlusHRA < 21000;
+  final baseGross = basicPlusDAPlusHRA;
 
   final effectiveEmployerPFRate = isPFApplicable ? inputs.employerPFRate : 0.0;
   final effectiveEmployerESIRate = isESIApplicable ? inputs.employerESIRate : 0.0;
@@ -221,9 +223,9 @@ CalculatedSalaryStructure calculateSalaryStructure(
       ? (basicSalary * effectiveEmployerPFRate / 100)
       : 0;
 
-  // Employer ESI = % of Gross Fixed Salary (when applicable)
+  // Employer ESI = % of Basic+DA+HRA (web TS), not full fixed gross
   final employerESI = effectiveEmployerESIRate > 0
-      ? (grossFixedSalary * effectiveEmployerESIRate / 100)
+      ? (baseGross * effectiveEmployerESIRate / 100)
       : 0;
 
   // When PF is not applicable, web logic adds a static 1800 to gross
@@ -240,20 +242,17 @@ CalculatedSalaryStructure calculateSalaryStructure(
       ? (basicSalary * effectiveEmployeePFRate / 100)
       : pfStaticAmount;
 
-  // Employee ESI = % of Gross Salary (NOT Fixed Gross)
-  // IMPORTANT: This is calculated on Gross Salary, not Gross Fixed
+  // Employee ESI = % of baseGross (Basic+DA+HRA), same as employer ESI base (web TS)
   final employeeESI = effectiveEmployeeESIRate > 0
-      ? (grossSalary * effectiveEmployeeESIRate / 100)
+      ? (baseGross * effectiveEmployeeESIRate / 100)
       : 0;
 
-  // Must match web: totalMonthlyDeductions includes employer PF/ESI (see backend TS util).
-  final totalMonthlyDeductions =
-      employeePF + employeeESI + employerPF + employerESI;
+  final totalMonthlyDeductions = employeePF + employeeESI;
 
   // ============================================
   // STEP 4: Net Salary (Take-Home Pay)
   // ============================================
-  final netMonthlySalary = grossSalary - totalMonthlyDeductions;
+  final netMonthlySalary = baseGross - totalMonthlyDeductions;
 
   // ============================================
   // STEP 5: Yearly Calculations
@@ -463,7 +462,9 @@ ProratedSalary calculateProratedSalary(
 
   final totalDeductions = proratedDeductions + fineAmount;
 
-  final proratedNetSalary = proratedGrossSalary - totalDeductions;
+  // Align with net = baseGross − employee deductions; scaling gross×f − ded×f is not equal when gross includes employer pieces + special.
+  final proratedNetSalary =
+      calculatedSalary.monthly.netMonthlySalary * prorationFactor - fineAmount;
 
   return ProratedSalary(
     proratedGrossSalary: proratedGrossSalary.toDouble(),

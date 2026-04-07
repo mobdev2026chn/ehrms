@@ -42,15 +42,14 @@ function getEffectiveFineConfig(company) {
 
 /**
  * Calculate fine amount for late arrival or early exit using formula and optional fineRules.
- * Formula: Fine = (Daily Salary ÷ Shift Hours) × (Minutes ÷ 60)
- * @param {number} minutes - Late or early minutes
- * @param {'lateArrival'|'earlyExit'} applyToType - For which type we're calculating
- * @param {Object} fineConfig - From getEffectiveFineConfig
- * @param {number} dailySalary - Daily salary for shift-based
- * @param {number} shiftHours - Shift duration in hours
+ * Parity with web `backend/src/utils/fineCalculation.util.ts` (`calculateFineAmount`).
+ *
+ * @param {number} dailySalary - Daily **net** (used for fixedPerHour derivation & default base when gross omitted)
+ * @param {number|null|undefined} dailyGrossForRules - Daily **gross** for 1x/2x/3x/halfDay/fullDay/custom rules &
+ *   shiftBased default; when null/0, falls back to dailySalary (backward compatible)
  * @returns {number} Fine amount (>= 0)
  */
-function calculateFineAmount(minutes, applyToType, fineConfig, dailySalary, shiftHours) {
+function calculateFineAmount(minutes, applyToType, fineConfig, dailySalary, shiftHours, dailyGrossForRules = null) {
     const logPrefix = '[Fine]';
     const testTag = '[Fine][formula][test]';
     if (minutes > 0) {
@@ -79,24 +78,28 @@ function calculateFineAmount(minutes, applyToType, fineConfig, dailySalary, shif
 
     let amount = 0;
     let formulaUsed = '';
+    const grossBase =
+        dailyGrossForRules != null && Number(dailyGrossForRules) > 0
+            ? Number(dailyGrossForRules)
+            : (dailySalary != null ? Number(dailySalary) : 0);
 
     if (matchingRule) {
-        const hourlyRate = shiftHours > 0 && dailySalary != null ? dailySalary / shiftHours : 0;
+        const hourlyRate = shiftHours > 0 && grossBase > 0 ? grossBase / shiftHours : 0;
         const hours = minutes / 60;
-        amount = applyRuleAmount(matchingRule, minutes, dailySalary, shiftHours);
-        formulaUsed = `rule type=${matchingRule.type} applyTo=${matchingRule.applyTo || 'both'} | dailySalary=${dailySalary} shiftHours=${shiftHours} hourlyRate=${hourlyRate.toFixed(4)} minutes=${minutes} hours=${hours.toFixed(4)}`;
+        amount = applyRuleAmount(matchingRule, minutes, grossBase, shiftHours);
+        formulaUsed = `rule type=${matchingRule.type} applyTo=${matchingRule.applyTo || 'both'} | dailyGross=${grossBase} dailyNet=${dailySalary} shiftHours=${shiftHours} hourlyRate=${hourlyRate.toFixed(4)} minutes=${minutes} hours=${hours.toFixed(4)}`;
         const rt = String(matchingRule.type || '').toLowerCase();
         let ruleExpansion = '';
         if (rt === '1xsalary') {
-            ruleExpansion = `1xSalary: (dailySalary÷shiftHours)×(minutes÷60) = (${dailySalary}÷${shiftHours})×(${minutes}÷60) = ${hourlyRate.toFixed(4)}×${hours.toFixed(4)} = ${(hourlyRate * hours).toFixed(4)}`;
+            ruleExpansion = `1xSalary: (gross÷shiftHours)×(minutes÷60) = (${grossBase}÷${shiftHours})×(${minutes}÷60) = ${hourlyRate.toFixed(4)}×${hours.toFixed(4)} = ${(hourlyRate * hours).toFixed(4)}`;
         } else if (rt === '2xsalary') {
-            ruleExpansion = `2xSalary: 2×(dailySalary÷shiftHours)×(minutes÷60) = 2×${hourlyRate.toFixed(4)}×${hours.toFixed(4)} = ${(2 * hourlyRate * hours).toFixed(4)}`;
+            ruleExpansion = `2xSalary: 2×(gross÷shiftHours)×(minutes÷60) = 2×${hourlyRate.toFixed(4)}×${hours.toFixed(4)} = ${(2 * hourlyRate * hours).toFixed(4)}`;
         } else if (rt === '3xsalary') {
-            ruleExpansion = `3xSalary: 3×(dailySalary÷shiftHours)×(minutes÷60) = 3×${hourlyRate.toFixed(4)}×${hours.toFixed(4)} = ${(3 * hourlyRate * hours).toFixed(4)}`;
+            ruleExpansion = `3xSalary: 3×(gross÷shiftHours)×(minutes÷60) = 3×${hourlyRate.toFixed(4)}×${hours.toFixed(4)} = ${(3 * hourlyRate * hours).toFixed(4)}`;
         } else if (rt === 'halfday') {
-            ruleExpansion = `halfDay: dailySalary÷2 = ${dailySalary != null ? (dailySalary / 2).toFixed(4) : '0'}`;
+            ruleExpansion = `halfDay: 0.5×hourlyRate×hours = 0.5×${hourlyRate.toFixed(4)}×${hours.toFixed(4)} = ${(hourlyRate * hours * 0.5).toFixed(4)}`;
         } else if (rt === 'fullday') {
-            ruleExpansion = `fullDay: dailySalary = ${dailySalary != null ? Number(dailySalary).toFixed(4) : '0'}`;
+            ruleExpansion = `fullDay: ${hours >= shiftHours ? 'gross' : 'gross×(hours/shiftHours)'} => ${Number(amount).toFixed(4)}`;
         } else if (rt === 'custom') {
             const ca = matchingRule.customAmount ?? 0;
             const unit = (matchingRule.customAmountUnit || 'perHour').toLowerCase();
@@ -123,16 +126,24 @@ function calculateFineAmount(minutes, applyToType, fineConfig, dailySalary, shif
         const calcType =
             fineConfig.calculationType === 'fixedPerHour' ? 'fixedPerHour' : 'shiftBased';
         console.log(testTag, applyToType, '| path=defaultFormula (fineRules empty) | calcType=', calcType);
-        if (calcType === 'fixedPerHour' && (fineConfig.finePerHour != null && fineConfig.finePerHour > 0)) {
+        if (calcType === 'fixedPerHour') {
             const hours = minutes / 60;
-            amount = fineConfig.finePerHour * hours;
-            formulaUsed = `fixedPerHour: Fine = finePerHour × (minutes÷60) = ${fineConfig.finePerHour} × (${minutes}÷60) = ${fineConfig.finePerHour} × ${hours.toFixed(4)}`;
+            const baseNet = dailySalary != null && Number(dailySalary) > 0 ? Number(dailySalary) : 0;
+            let finePerHour = 0;
+            if (shiftHours > 0 && baseNet > 0) {
+                finePerHour = baseNet / shiftHours;
+            }
+            if (finePerHour <= 0 && fineConfig.finePerHour != null && fineConfig.finePerHour > 0) {
+                finePerHour = Number(fineConfig.finePerHour);
+            }
+            amount = finePerHour * hours;
+            formulaUsed = `fixedPerHour: finePerHour = max(net/shiftHours, config.finePerHour) × (minutes÷60) | finePerHour=${finePerHour.toFixed(4)} × ${hours.toFixed(4)}`;
             console.log(testTag, applyToType, '|', formulaUsed, '| product=', amount.toFixed(6));
-        } else if (calcType === 'shiftBased' && dailySalary != null && shiftHours > 0) {
-            const hourlyRate = dailySalary / shiftHours;
+        } else if (calcType === 'shiftBased' && grossBase > 0 && shiftHours > 0) {
+            const hourlyRate = grossBase / shiftHours;
             const hours = minutes / 60;
             amount = hourlyRate * hours;
-            formulaUsed = `shiftBased: Fine = (DailySalary÷ShiftHours) × (Minutes÷60) = (${dailySalary}÷${shiftHours}) × (${minutes}÷60)`;
+            formulaUsed = `shiftBased: Fine = (DailyGross÷ShiftHours) × (Minutes÷60) = (${grossBase}÷${shiftHours}) × (${minutes}÷60)`;
             console.log(
                 testTag,
                 applyToType,
@@ -148,6 +159,21 @@ function calculateFineAmount(minutes, applyToType, fineConfig, dailySalary, shif
     }
 
     const result = Math.round((amount || 0) * 100) / 100;
+    if ((amount || 0) > 0 && Number(shiftHours) > 0 && Number(minutes) > 0) {
+        const baseDailySalary = Number(grossBase) > 0 ? Number(grossBase) : (Number(dailySalary) || 0);
+        const minuteHours = Number(minutes) / 60;
+        const perHourRate = baseDailySalary / Number(shiftHours);
+        console.log(
+            testTag,
+            applyToType,
+            '| Fine = (Daily Salary ÷ Shift Hours) × (Minutes ÷ 60)',
+            `= (${baseDailySalary} ÷ ${shiftHours}) × (${minutes} ÷ 60)`,
+            `= ${perHourRate.toFixed(6)} × ${minuteHours.toFixed(6)}`,
+            `= ${(perHourRate * minuteHours).toFixed(6)}`,
+            '| roundedFine=',
+            result
+        );
+    }
     console.log(logPrefix, 'FORMULA', applyToType, '| minutes=', minutes, '|', formulaUsed, '| => fineAmount=', result);
     console.log(testTag, applyToType, '| FINAL round2dp:', (amount || 0), '→ fineAmount=', result);
     return result;
@@ -230,9 +256,16 @@ function applyRuleAmount(rule, minutes, dailySalary, shiftHours) {
         case '3xsalary':
             return 3 * hourlyRate * hours;
         case 'halfday':
-            return dailySalary != null ? dailySalary / 2 : 0;
-        case 'fullday':
-            return dailySalary != null ? dailySalary : 0;
+            // Web parity: 0.5 × hourlyRate × hours (proportional to late/early duration)
+            return hourlyRate * hours * 0.5;
+        case 'fullday': {
+            const ds = dailySalary != null ? Number(dailySalary) : 0;
+            if (ds <= 0) return 0;
+            const sh = Number(shiftHours) || 0;
+            if (sh <= 0) return ds;
+            if (hours >= sh) return ds;
+            return ds * (hours / sh);
+        }
         default:
             return hourlyRate * hours;
     }

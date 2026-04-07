@@ -269,7 +269,7 @@ const getEmployeeDashboardStats = async (req, res) => {
                     const oneYearAfterJoining = new Date(d.getFullYear() + 1, jMonth, jDay);
                     const hasCompletedOneYear = now >= oneYearAfterJoining;
                     if (!hasCompletedOneYear || yearsOfService < 1) {
-                        console.log('[Dashboard] Anniversary skipped: name=%s joiningDate=%s oneYearAfter=%s hasCompletedOneYear=%s yearsOfService=%d', s.name, d.toISOString().slice(0, 10), oneYearAfterJoining.toISOString().slice(0, 10), hasCompletedOneYear, yearsOfService);
+                        // console.log('[Dashboard] Anniversary skipped: name=%s joiningDate=%s oneYearAfter=%s hasCompletedOneYear=%s yearsOfService=%d', s.name, d.toISOString().slice(0, 10), oneYearAfterJoining.toISOString().slice(0, 10), hasCompletedOneYear, yearsOfService);
                         continue;
                     }
                     const daysLeft = Math.ceil((nextAnniv - now) / (24 * 60 * 60 * 1000));

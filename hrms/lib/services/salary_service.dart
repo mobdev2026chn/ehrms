@@ -1,7 +1,12 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import '../services/auth_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../config/constants.dart';
+import '../core/network/dio_client.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
+import 'interaction_service.dart';
 
 class SalaryService {
   final AuthService _authService = AuthService();
@@ -131,34 +136,117 @@ class SalaryService {
     }
   }
 
+  /// True when the geo app uses a different API host than [AppConstants.webBaseUrl].
+  /// Then [previewPayroll] calls the TypeScript HRMS API (same as web) so the payload
+  /// includes `salaryBasis`, `mockPayroll`, and template-linked `attendance`.
+  static bool get _previewShouldUseWebHrmsHost {
+    final main = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
+    return main != web;
+  }
+
+  static Dio _webHrmsPreviewDio() {
+    var base = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
+    if (base.endsWith('/')) base = base.substring(0, base.length - 1);
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: base,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 45),
+        sendTimeout: const Duration(seconds: 45),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ),
+    );
+    dio.interceptors.add(FormDataContentTypeInterceptor());
+    dio.interceptors.add(RetryOnRateLimitInterceptor(dio));
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          final prefs = await SharedPreferences.getInstance();
+          var t = InteractionService.normalizeAccessToken(
+            prefs.getString(AppConstants.interactionAccessTokenPrefsKey),
+          );
+          t ??= InteractionService.normalizeAccessToken(prefs.getString('token'));
+          if (t == null) {
+            final auth = ApiClient().dio.options.headers['Authorization'];
+            if (auth is String) {
+              t = InteractionService.normalizeAccessToken(
+                auth.startsWith('Bearer ') ? auth.substring(7) : auth,
+              );
+            }
+          }
+          if (t != null) {
+            options.headers['Authorization'] = 'Bearer $t';
+          }
+          handler.next(options);
+        },
+      ),
+    );
+    return dio;
+  }
+
   /// Web RTK `previewPayroll` / EmployeeSalaryOverview: tier 2 MTD (after processed payroll).
-  /// Only valid when there is no payroll row for that month; uses
-  /// (presentDays + paidLeaveDays) / fullMonthWorkingDays — see app_backend `previewPayrollEmployee`.
+  /// When [baseUrl] ≠ [webBaseUrl], calls `POST` on the TS backend (`hrms.askeva.net`-style)
+  /// so the response matches web (`salaryBasis`, per-day rates, `fullMonthWorkingDays`, etc.).
+  /// Otherwise uses the current app API (e.g. app_backend).
   Future<Map<String, dynamic>> previewPayroll({
     required String employeeId,
     required int month,
     required int year,
   }) async {
+    final body = <String, dynamic>{
+      'employeeId': employeeId,
+      'month': month,
+      'year': year,
+    };
+
+    Map<String, dynamic> parseResponse(Response<Map<String, dynamic>>? r) {
+      final data = r?.data;
+      if (data != null) return Map<String, dynamic>.from(data);
+      return {'success': false, 'data': null};
+    }
+
+    if (_previewShouldUseWebHrmsHost) {
+      try {
+        if (kDebugMode) {
+          debugPrint(
+            '[SalaryOverview] POST ${AppConstants.webBaseUrl}/payroll/preview '
+            'month=$month year=$year employeeId=$employeeId (web HRMS)',
+          );
+        }
+        final r = await _webHrmsPreviewDio().post<Map<String, dynamic>>(
+          '/payroll/preview',
+          data: body,
+        );
+        return parseResponse(r);
+      } on DioException catch (e) {
+        if (kDebugMode) {
+          debugPrint(
+            '[SalaryOverview] previewPayroll web HRMS error: ${e.message} — retry main API',
+          );
+        }
+      }
+    }
+
     final token = await _authService.getToken();
     if (token == null) {
       return {'success': false, 'data': null};
     }
     try {
       _api.setAuthToken(token);
-      debugPrint(
-        '[SalaryOverview] POST /payroll/preview month=$month year=$year employeeId=$employeeId',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          '[SalaryOverview] POST /payroll/preview month=$month year=$year employeeId=$employeeId',
+        );
+      }
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/payroll/preview',
-        data: {
-          'employeeId': employeeId,
-          'month': month,
-          'year': year,
-        },
+        data: body,
       );
-      final data = response.data;
-      if (data != null) return Map<String, dynamic>.from(data);
-      return {'success': false, 'data': null};
+      return parseResponse(response);
     } on DioException catch (e) {
       debugPrint('[SalaryOverview] previewPayroll error: ${e.message}');
       return {'success': false, 'data': null};

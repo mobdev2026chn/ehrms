@@ -1,4 +1,5 @@
 // hrms/lib/screens/interaction/interaction_chat_list_screen.dart
+// Messages list: search, All / Unread / Groups (web parity with ektaHR Interaction).
 
 import 'dart:async';
 
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../utils/interaction_avatar_theme.dart';
 import '../../utils/error_message_utils.dart';
 import '../../services/interaction_service.dart';
 import '../../services/interaction_socket_service.dart';
@@ -21,10 +23,18 @@ class InteractionChatListScreen extends StatefulWidget {
 }
 
 class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
+  final _search = TextEditingController();
   List<Map<String, dynamic>> _chats = [];
+  List<Map<String, dynamic>> _groupDirectory = [];
+  List<Map<String, dynamic>> _suggestions = [];
   bool _loading = true;
+  bool _suggestionsLoading = false;
   String? _error;
   StreamSubscription<Map<String, dynamic>>? _sub;
+  Timer? _suggestDebounce;
+
+  /// 0 All, 1 Unread, 2 Groups (matches web tabs).
+  int _segment = 0;
 
   @override
   void initState() {
@@ -32,11 +42,23 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     _sub = InteractionSocketService.instance.onNewMessage.listen((_) {
       _load();
     });
+    _search.addListener(_onSearchChanged);
     _load();
+  }
+
+  void _onSearchChanged() {
+    setState(() {});
+    if (_segment == 1) {
+      _suggestDebounce?.cancel();
+      _suggestDebounce = Timer(const Duration(milliseconds: 400), _loadSuggestions);
+    }
   }
 
   @override
   void dispose() {
+    _suggestDebounce?.cancel();
+    _search.removeListener(_onSearchChanged);
+    _search.dispose();
     _sub?.cancel();
     super.dispose();
   }
@@ -49,15 +71,25 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     try {
       try {
         final groupsRes = await InteractionService.instance.getGroups();
-        final groupList = groupsRes['data'];
-        if (groupList is List) {
-          final ids = groupList
-              .map((g) => g is Map ? (g['_id'] ?? g['id'])?.toString() : null)
-              .whereType<String>()
-              .where((s) => s.isNotEmpty)
-              .toList();
-          InteractionSocketService.instance.joinGroupChats(ids);
+        final data = groupsRes['data'];
+        final gList = <Map<String, dynamic>>[];
+        if (data is List) {
+          for (final e in data) {
+            if (e is Map) {
+              final m = <String, dynamic>{};
+              e.forEach((k, v) => m[k.toString()] = v);
+              gList.add(m);
+            }
+          }
         }
+        if (mounted) setState(() => _groupDirectory = gList);
+        final ids = gList
+            .map((g) => g['_id'] ?? g['id'])
+            .whereType<Object>()
+            .map((x) => x.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        InteractionSocketService.instance.joinGroupChats(ids);
       } on DioException catch (e) {
         if (!InteractionService.isInteractionApiUnavailable(e)) rethrow;
       }
@@ -88,6 +120,9 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
           _loading = false;
         });
       }
+      if (_segment == 1 && _visibleChats.isEmpty && mounted) {
+        await _loadSuggestions();
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -100,32 +135,133 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     }
   }
 
+  List<Map<String, dynamic>> get _visibleChats {
+    var list = List<Map<String, dynamic>>.from(_chats);
+    final q = _search.text.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      list = list.where((row) {
+        final t = _title(row).toLowerCase();
+        final s = _subtitle(row).toLowerCase();
+        return t.contains(q) || s.contains(q);
+      }).toList();
+    }
+    switch (_segment) {
+      case 1:
+        return list
+            .where((r) => ((r['unreadCount'] as num?)?.toInt() ?? 0) > 0)
+            .toList();
+      case 2:
+        return list.where((r) => r['groupId'] != null).toList();
+      case 0:
+      default:
+        return list;
+    }
+  }
+
+  Future<void> _loadSuggestions() async {
+    if (!mounted) return;
+    setState(() => _suggestionsLoading = true);
+    try {
+      final q = _search.text.trim();
+      final res = await InteractionService.instance.getChatSuggestions(
+        query: q.isEmpty ? null : q,
+      );
+      final data = res['data'];
+      final list = <Map<String, dynamic>>[];
+      if (data is List) {
+        for (final e in data) {
+          if (e is Map) {
+            final m = <String, dynamic>{};
+            e.forEach((k, v) => m[k.toString()] = v);
+            list.add(m);
+          }
+        }
+      }
+      if (mounted) setState(() => _suggestions = list);
+    } catch (_) {
+      if (mounted) setState(() => _suggestions = []);
+    } finally {
+      if (mounted) setState(() => _suggestionsLoading = false);
+    }
+  }
+
+  String _groupDisplayName(Map<String, dynamic> g) {
+    final raw = g['groupName'] ?? g['name'] ?? g['title'];
+    if (raw != null && raw.toString().trim().isNotEmpty) return raw.toString().trim();
+    return 'Group';
+  }
+
+  String? _nameForGroupId(String gid) {
+    for (final m in _groupDirectory) {
+      if (m['_id']?.toString() == gid || m['id']?.toString() == gid) {
+        return _groupDisplayName(m);
+      }
+    }
+    return null;
+  }
+
   String _title(Map<String, dynamic> row) {
     final g = row['group'];
-    if (g is Map) return (g['name'] ?? 'Group').toString();
+    if (g is Map) {
+      final raw = g['name'] ?? g['groupName'] ?? g['title'];
+      if (raw != null && raw.toString().trim().isNotEmpty) {
+        return raw.toString().trim();
+      }
+    }
+    final gid = row['groupId']?.toString();
+    if (gid != null && gid.isNotEmpty) {
+      final n = _nameForGroupId(gid);
+      if (n != null && n.isNotEmpty) return n;
+    }
     final r = row['receiver'];
     if (r is Map) return (r['name'] ?? 'Chat').toString();
     return 'Chat';
+  }
+
+  String _groupTypeForRow(Map<String, dynamic> row) {
+    final g = row['group'];
+    if (g is Map && g['groupType'] != null) {
+      return g['groupType'].toString();
+    }
+    final gid = row['groupId']?.toString();
+    if (gid == null) return '';
+    for (final m in _groupDirectory) {
+      if (m['_id']?.toString() == gid || m['id']?.toString() == gid) {
+        return m['groupType']?.toString() ?? '';
+      }
+    }
+    return '';
   }
 
   String? _avatar(Map<String, dynamic> row) {
     final g = row['group'];
     if (g is Map) {
       final u = g['avatarUrl'] ?? g['avatar'];
-      if (u != null && u.toString().startsWith('http')) return u.toString();
+      final s = uToString(u);
+      if (s.startsWith('http')) return s;
+    }
+    final gid = row['groupId']?.toString();
+    if (gid != null) {
+      for (final m in _groupDirectory) {
+        if (m['_id']?.toString() == gid || m['id']?.toString() == gid) {
+          final u = m['avatarUrl'] ?? m['avatar'];
+          final s = uToString(u);
+          if (s.startsWith('http')) return s;
+        }
+      }
     }
     final r = row['receiver'];
     if (r is Map) {
       final a = r['avatar'];
-      if (a != null && a.toString().startsWith('http')) return a.toString();
+      if (a != null && uToString(a).startsWith('http')) return uToString(a);
     }
     return null;
   }
 
+  static String uToString(dynamic u) => u.toString();
+
   String _groupTypePrefix(Map<String, dynamic> row) {
-    final g = row['group'];
-    if (g is! Map) return '';
-    final t = g['groupType']?.toString() ?? '';
+    final t = _groupTypeForRow(row);
     switch (t) {
       case 'broadcast':
         return 'Broadcast · ';
@@ -170,6 +306,348 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     return DateFormat.MMMd().format(dt);
   }
 
+  bool _isBroadcastGroup(Map<String, dynamic> g) =>
+      g['groupType']?.toString() == 'broadcast';
+
+  Future<void> _openThread(Map<String, dynamic> row) async {
+    final chatId = row['chatId']?.toString() ?? 'personal';
+    final receiverId = row['receiverId']?.toString();
+    final groupId = row['groupId']?.toString();
+    final isGroup = row['groupId'] != null;
+    bool? canSend;
+    final csTop = row['canSendMessages'];
+    if (csTop is bool) {
+      canSend = csTop;
+    } else {
+      final g = row['group'];
+      if (g is Map && g['canSendMessages'] is bool) {
+        canSend = g['canSendMessages'] as bool;
+      }
+    }
+    bool? peerOnline;
+    if (!isGroup) {
+      final v = row['isOnline'];
+      peerOnline = v is bool ? v : null;
+    } else {
+      peerOnline = null;
+    }
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => InteractionChatThreadScreen(
+          chatId: isGroup ? (groupId ?? chatId) : chatId,
+          receiverId: isGroup ? null : receiverId,
+          title: _title(row),
+          avatarUrl: _avatar(row),
+          isGroup: isGroup,
+          peerIsOnline: peerOnline,
+          canSendMessages: canSend,
+        ),
+      ),
+    );
+    _load();
+  }
+
+  Future<void> _openQuickGroup(Map<String, dynamic> group) async {
+    final gid = group['_id']?.toString() ?? group['id']?.toString() ?? '';
+    final name = _groupDisplayName(group);
+    if (gid.isEmpty) return;
+    Map<String, dynamic>? row;
+    for (final c in _chats) {
+      if (c['groupId']?.toString() == gid) {
+        row = c;
+        break;
+      }
+    }
+    if (row != null) {
+      await _openThread(row);
+      return;
+    }
+    final cs = group['canSendMessages'];
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => InteractionChatThreadScreen(
+          chatId: gid,
+          receiverId: null,
+          title: name,
+          avatarUrl: null,
+          isGroup: true,
+          canSendMessages: cs is bool ? cs : null,
+        ),
+      ),
+    );
+    _load();
+  }
+
+  Widget _segmentBar() {
+    const labels = ['All', 'Unread', 'Groups'];
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: List.generate(3, (i) {
+          final sel = _segment == i;
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                decoration: BoxDecoration(
+                  color: sel ? Colors.white : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: sel
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () {
+                      setState(() => _segment = i);
+                      if (i == 1) {
+                        _loadSuggestions();
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Text(
+                        labels[i],
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontWeight: sel ? FontWeight.w600 : FontWeight.w500,
+                          fontSize: 13,
+                          color: sel ? AppColors.primary : Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _groupsQuickCard() {
+    if (_segment != 2 || _groupDirectory.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+          child: Text(
+            'GROUPS',
+            style: TextStyle(
+              fontSize: 11,
+              letterSpacing: 0.6,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
+        ),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: Colors.grey.shade300),
+          ),
+          child: Column(
+            children: _groupDirectory.map((g) {
+              final name = _groupDisplayName(g);
+              final broadcast = _isBroadcastGroup(g);
+              return ListTile(
+                title: Row(
+                  children: [
+                    Expanded(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    if (broadcast)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.indigo.shade50,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          'Broadcast',
+                          style: TextStyle(fontSize: 11, color: Colors.indigo.shade900),
+                        ),
+                      ),
+                  ],
+                ),
+                onTap: () => _openQuickGroup(g),
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _suggestionsBlock() {
+    if (_segment != 1 || _visibleChats.isNotEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 24),
+        Text(
+          'No chats yet',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey.shade800),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Start a conversation:',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 16),
+        if (_suggestionsLoading) const LinearProgressIndicator(),
+        ..._suggestions.map((u) {
+          final id = u['_id']?.toString() ?? '';
+          final name = u['name']?.toString() ?? 'User';
+          final role = u['role']?.toString() ?? u['designation']?.toString() ?? '';
+          final avatar = u['avatar']?.toString();
+          final url = avatar != null && avatar.startsWith('http') ? avatar : null;
+          final sugBg = InteractionAvatarTheme.backgroundForTitle(name);
+          final sugFg = InteractionAvatarTheme.letterColor(sugBg);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.grey.shade300),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: id.isEmpty
+                    ? null
+                    : () async {
+                        await Navigator.push<void>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => InteractionChatThreadScreen(
+                              chatId: 'personal',
+                              receiverId: id,
+                              title: name,
+                              avatarUrl: url,
+                              isGroup: false,
+                            ),
+                          ),
+                        );
+                        _load();
+                      },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: sugBg,
+                        backgroundImage: url != null ? NetworkImage(url) : null,
+                        child: url == null
+                            ? Text(
+                                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                style: TextStyle(
+                                  color: sugFg,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            if (role.isNotEmpty)
+                              Text(
+                                role,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _chatTile(Map<String, dynamic> row) {
+    final peer = row['receiverId']?.toString() ?? '';
+    final gid = row['groupId']?.toString() ?? '';
+    final listKey = gid.isNotEmpty ? 'g:$gid' : 'p:$peer';
+    final unread = (row['unreadCount'] as num?)?.toInt() ?? 0;
+    final avatarUrl = _avatar(row);
+    final title = _title(row);
+    final gt = _groupTypeForRow(row);
+    final letterBg =
+        InteractionAvatarTheme.backgroundForTitle(title, groupType: gt.isEmpty ? null : gt);
+    final letterFg = InteractionAvatarTheme.letterColor(letterBg);
+    return ListTile(
+      key: ValueKey(listKey),
+      leading: CircleAvatar(
+        backgroundColor: letterBg,
+        backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
+        child: avatarUrl == null
+            ? Text(
+                title.isNotEmpty ? title[0].toUpperCase() : '?',
+                style: TextStyle(color: letterFg, fontWeight: FontWeight.bold),
+              )
+            : null,
+      ),
+      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        _subtitle(row),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(_time(row), style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+          if (unread > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  unread > 99 ? '99+' : '$unread',
+                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                ),
+              ),
+            ),
+        ],
+      ),
+      onTap: () => _openThread(row),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading && _chats.isEmpty) {
@@ -190,80 +668,85 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
         ),
       );
     }
+
+    final visible = _visibleChats;
+
     return Scaffold(
+      backgroundColor: const Color(0xFFF5F5F5),
       body: RefreshIndicator(
         onRefresh: _load,
-        child: ListView.builder(
+        child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          itemCount: _chats.length,
-          itemBuilder: (context, i) {
-            final row = _chats[i];
-            final peer = row['receiverId']?.toString() ?? '';
-            final gid = row['groupId']?.toString() ?? '';
-            final listKey = gid.isNotEmpty ? 'g:$gid' : 'p:$peer';
-            final unread = (row['unreadCount'] as num?)?.toInt() ?? 0;
-            final avatarUrl = _avatar(row);
-            final isGroup = row['groupId'] != null;
-            return ListTile(
-              key: ValueKey(listKey),
-              leading: CircleAvatar(
-                backgroundColor: AppColors.primary.withOpacity(0.2),
-                backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                child: avatarUrl == null
-                    ? Text(
-                        _title(row).isNotEmpty ? _title(row)[0].toUpperCase() : '?',
-                        style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold),
-                      )
-                    : null,
-              ),
-              title: Text(_title(row), maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(
-                _subtitle(row),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(_time(row), style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                  if (unread > 0)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary,
-                          borderRadius: BorderRadius.circular(12),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Messages',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF0F172A),
+                          ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _search,
+                      style: const TextStyle(fontSize: 15),
+                      decoration: InputDecoration(
+                        hintText: 'Search conversations...',
+                        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 15),
+                        prefixIcon: Icon(Icons.search, color: Colors.grey.shade600),
+                        filled: true,
+                        fillColor: Colors.white,
+                        isDense: true,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
                         ),
-                        child: Text(
-                          unread > 99 ? '99+' : '$unread',
-                          style: const TextStyle(color: Colors.white, fontSize: 11),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
                         ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                          borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
                       ),
                     ),
-                ],
+                    const SizedBox(height: 12),
+                    _segmentBar(),
+                    _groupsQuickCard(),
+                  ],
+                ),
               ),
-              onTap: () async {
-                final chatId = row['chatId']?.toString() ?? 'personal';
-                final receiverId = row['receiverId']?.toString();
-                final groupId = row['groupId']?.toString();
-                await Navigator.push<void>(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => InteractionChatThreadScreen(
-                      chatId: isGroup ? (groupId ?? chatId) : chatId,
-                      receiverId: isGroup ? null : receiverId,
-                      title: _title(row),
-                      avatarUrl: _avatar(row),
-                      isGroup: isGroup,
-                    ),
+            ),
+            if (_segment == 1 && visible.isEmpty)
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                sliver: SliverToBoxAdapter(child: _suggestionsBlock()),
+              ),
+            if (visible.isEmpty && !(_segment == 1))
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: Text(
+                    _segment == 2 ? 'No group threads yet.' : 'No conversations match your search.',
+                    style: TextStyle(color: Colors.grey.shade600),
                   ),
-                );
-                _load();
-              },
-            );
-          },
+                ),
+              ),
+            if (visible.isNotEmpty)
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) => _chatTile(visible[i]),
+                  childCount: visible.length,
+                ),
+              ),
+          ],
         ),
       ),
       floatingActionButton: FloatingActionButton(

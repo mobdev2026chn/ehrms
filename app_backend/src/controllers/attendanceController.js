@@ -296,7 +296,7 @@ const { getEffectiveFineConfig, calculateFineAmount, calculateOvertimePayAmount 
 // Helper function to calculate fine for late arrival.
 // Uses formula: Fine = (Daily Salary ÷ Shift Hours) × (Late Minutes ÷ 60). Applies fineRules when present.
 // When businessTimezone is provided, shift boundaries are built in that TZ (fixes production UTC server showing lateMinutes=0).
-function calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, dailySalary, shiftHours, fineConfig = null, businessTimezone = null, isOpenShiftDay = false) {
+function calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, dailySalary, shiftHours, fineConfig = null, businessTimezone = null, isOpenShiftDay = false, dailyGrossForRules = null) {
     console.log('[Fine] calculateLateFine called: isOpenShiftDay=', isOpenShiftDay, 'punchInTime=', punchInTime?.toISOString?.());
     if (isOpenShiftDay) {
         console.log('[Fine] calculateLateFine: Skipping late fine for open shift.');
@@ -320,14 +320,14 @@ function calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePer
     const lateMinutes = Math.max(0, Math.round((punchInTime.getTime() - shiftStart.getTime()) / (1000 * 60)));
     if (lateMinutes <= 0) return { lateMinutes, fineAmount: 0 };
     if (fineConfig && fineConfig.enabled === false) return { lateMinutes, fineAmount: 0 };
-    const fineAmount = calculateFineAmount(lateMinutes, 'lateArrival', fineConfig, dailySalary, shiftHours);
+    const fineAmount = calculateFineAmount(lateMinutes, 'lateArrival', fineConfig, dailySalary, shiftHours, dailyGrossForRules);
     return { lateMinutes, fineAmount };
 }
 
 // Helper function to calculate fine for early exit.
 // Uses formula: Fine = (Daily Salary ÷ Shift Hours) × (Early Minutes ÷ 60). Applies fineRules when present.
 // When businessTimezone is provided, shift end is built in that TZ (consistent with late calculation).
-function calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, dailySalary, shiftHours, fineConfig = null, businessTimezone = null) {
+function calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, dailySalary, shiftHours, fineConfig = null, businessTimezone = null, dailyGrossForRules = null) {
     let shiftEnd;
     if (businessTimezone) {
         const { getShiftBoundaryAsUTCDate } = require('../utils/leaveAttendanceHelper');
@@ -342,7 +342,7 @@ function calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, dailySal
     const earlyMinutes = Math.max(0, Math.round((shiftEnd.getTime() - punchOutTime.getTime()) / (1000 * 60)));
     if (earlyMinutes <= 0) return { earlyMinutes, fineAmount: 0 };
     if (fineConfig && fineConfig.enabled === false) return { earlyMinutes, fineAmount: 0 };
-    const fineAmount = calculateFineAmount(earlyMinutes, 'earlyExit', fineConfig, dailySalary, shiftHours);
+    const fineAmount = calculateFineAmount(earlyMinutes, 'earlyExit', fineConfig, dailySalary, shiftHours, dailyGrossForRules);
     return { earlyMinutes, fineAmount };
 }
 
@@ -399,19 +399,24 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         
         const gracePeriodMinutes = dbGracePeriodMinutes || template.gracePeriodMinutes || (fineConfig && fineConfig.graceTimeMinutes != null ? fineConfig.graceTimeMinutes : 0);
         
-        // Per-day salary for fine: same as dashboard — monthly NET salary first, then daily = netMonthlySalary / thisMonthWorkingDays
+        // Per-day for fines: web parity — daily **net** for fixedPerHour derivation; daily **gross** for rule multipliers & shiftBased default.
         const salaryStructure = staff.salary ? calculateSalaryStructure(staff.salary) : null;
         const netMonthlySalary = salaryStructure?.monthly?.netMonthlySalary != null ? Number(salaryStructure.monthly.netMonthlySalary) : 0;
+        const grossMonthlySalary = salaryStructure?.monthly?.grossSalary != null ? Number(salaryStructure.monthly.grossSalary) : 0;
         const attendanceYear = attendanceDate.getFullYear();
         const attendanceMonth1Based = attendanceDate.getMonth() + 1; // 1-12 for calculateAttendanceStats
-        let dailySalary = null;
+        let dailyNet = null;
+        let dailyGross = null;
         if (netMonthlySalary > 0 && staff._id) {
             try {
                 const attendanceStats = await calculateAttendanceStats(staff._id, attendanceMonth1Based, attendanceYear);
                 const thisMonthWorkingDays = attendanceStats.workingDaysFullMonth ?? attendanceStats.workingDays ?? 0;
                 if (thisMonthWorkingDays > 0) {
-                    dailySalary = netMonthlySalary / thisMonthWorkingDays;
-                    console.log('[Fine] Daily salary (dashboard formula): netMonthlySalary=', netMonthlySalary, ', thisMonthWorkingDays=', thisMonthWorkingDays, '=> dailySalary=', dailySalary);
+                    dailyNet = netMonthlySalary / thisMonthWorkingDays;
+                    if (grossMonthlySalary > 0) {
+                        dailyGross = grossMonthlySalary / thisMonthWorkingDays;
+                    }
+                    console.log('[Fine] Daily (web-style): netMonthly=', netMonthlySalary, 'grossMonthly=', grossMonthlySalary, 'wd=', thisMonthWorkingDays, '=> dailyNet=', dailyNet, 'dailyGross=', dailyGross);
                 }
             } catch (err) {
                 console.error('[Fine] calculateAttendanceStats failed, using fallback working days:', err.message);
@@ -425,21 +430,26 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 const weeklyOffPattern = businessSettings.weeklyOffPattern || 'standard';
                 const weeklyHolidays = businessSettings.weeklyHolidays || [{ day: 0, name: 'Sunday' }];
                 const workingDays = calculateWorkingDays(attendanceYear, attendanceMonth0Based, monthHolidays, weeklyOffPattern, weeklyHolidays);
-                if (workingDays > 0) dailySalary = netMonthlySalary / workingDays;
+                if (workingDays > 0) {
+                    dailyNet = netMonthlySalary / workingDays;
+                    if (grossMonthlySalary > 0) dailyGross = grossMonthlySalary / workingDays;
+                }
             }
         }
         
-        // For half-day: fine is based on half-day salary (1 day salary / 2). Full-day: use full daily salary.
-        let effectiveDailySalary = (dailySalary && dailySalary > 0) ? dailySalary : 0;
-        if (isHalfDay && effectiveDailySalary > 0) {
-            effectiveDailySalary = effectiveDailySalary / 2;
-            console.log('[Fine] Half-day: using half-day salary for fine (dailySalary/2)=', effectiveDailySalary);
+        // Half-day session: halve both net and gross (matches web half-day fine inputs).
+        let effectiveDailyNet = (dailyNet && dailyNet > 0) ? dailyNet : 0;
+        let effectiveDailyGross = (dailyGross && dailyGross > 0) ? dailyGross : effectiveDailyNet;
+        if (isHalfDay && effectiveDailyNet > 0) {
+            effectiveDailyNet = effectiveDailyNet / 2;
+            effectiveDailyGross = effectiveDailyGross / 2;
+            console.log('[Fine] Half-day: dailyNet/Gross halved for session => net=', effectiveDailyNet, 'gross=', effectiveDailyGross);
         }
-        if (effectiveDailySalary <= 0) {
-            console.log('[Fine] dailySalary missing or 0; late/early minutes will still be computed, fineAmount will be 0');
+        if (effectiveDailyNet <= 0) {
+            console.log('[Fine] dailyNet missing or 0; late/early minutes will still be computed, fineAmount will be 0');
         }
 
-        console.log('[Fine] Config: source=payroll.fineCalculation', 'enabled=', fineConfig?.enabled, 'calculationType=', fineConfig?.calculationType || 'shiftBased', 'dailySalary=', effectiveDailySalary, 'shiftHours=', shiftHours, 'shiftStart=', shiftStartTime, 'shiftEnd=', shiftEndTime, 'businessTimezone=', businessTimezone);
+        console.log('[Fine] Config: source=payroll.fineCalculation', 'enabled=', fineConfig?.enabled, 'calculationType=', fineConfig?.calculationType || 'shiftBased', 'dailyNet=', effectiveDailyNet, 'dailyGross=', effectiveDailyGross, 'shiftHours=', shiftHours, 'shiftStart=', shiftStartTime, 'shiftEnd=', shiftEndTime, 'businessTimezone=', businessTimezone);
 
         let lateFine;
         if (isOpenShiftDay) {
@@ -447,9 +457,9 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
             const { calculateHalfDayLateFine } = require('../utils/leaveAttendanceHelper');
             const halfDayGrace = session === 'First Half Day' ? 0 : gracePeriodMinutes;
-            lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, halfDayGrace, effectiveDailySalary, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings);
+            lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, halfDayGrace, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross);
         } else {
-            lateFine = calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, effectiveDailySalary, shiftHours, fineConfig, businessTimezone, isOpenShiftDay);
+            lateFine = calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, effectiveDailyNet, shiftHours, fineConfig, businessTimezone, isOpenShiftDay, effectiveDailyGross);
         }
         let earlyFine = { earlyMinutes: 0, fineAmount: 0 };
         if (punchOutTime) {
@@ -466,14 +476,14 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 const workedMin = Math.max(0, Math.round((punchOutTime.getTime() - effectivePunchIn.getTime()) / (1000 * 60)));
                 const shortBy = Math.max(0, requiredMin - workedMin);
                 earlyFine.earlyMinutes = shortBy;
-                if (fineConfig && fineConfig.enabled && shortBy > 0 && effectiveDailySalary > 0) {
-                    earlyFine.fineAmount = calculateFineAmount(shortBy, 'earlyExit', fineConfig, effectiveDailySalary, shiftHours);
+                if (fineConfig && fineConfig.enabled && shortBy > 0 && effectiveDailyNet > 0) {
+                    earlyFine.fineAmount = calculateFineAmount(shortBy, 'earlyExit', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross);
                 }
             } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
                 const { calculateHalfDayEarlyFine } = require('../utils/leaveAttendanceHelper');
-                earlyFine = calculateHalfDayEarlyFine(punchOutTime, attendanceDate, session, effectiveDailySalary, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings);
+                earlyFine = calculateHalfDayEarlyFine(punchOutTime, attendanceDate, session, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross);
             } else {
-                earlyFine = calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, effectiveDailySalary, shiftHours, fineConfig, businessTimezone);
+                earlyFine = calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, effectiveDailyNet, shiftHours, fineConfig, businessTimezone, effectiveDailyGross);
             }
         }
 
@@ -486,8 +496,8 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
 
         // Reference shiftBased breakdown for manual testing (actual lines may use fineRules; see [Fine][formula][test] per leg)
         const testTag = '[Fine][formula][test]';
-        if (fineConfig && fineConfig.enabled && effectiveDailySalary > 0 && shiftHours > 0) {
-            const refHourly = effectiveDailySalary / shiftHours;
+        if (fineConfig && fineConfig.enabled && effectiveDailyGross > 0 && shiftHours > 0) {
+            const refHourly = effectiveDailyGross / shiftHours;
             const lateH = (Number(lateFine.lateMinutes) || 0) / 60;
             const earlyH = (Number(earlyFine.earlyMinutes) || 0) / 60;
             const refLatePart = refHourly * lateH;
@@ -495,7 +505,7 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             console.log(
                 testTag,
                 'combined | ref_hourly_rate = dailySalary ÷ shiftHours =',
-                effectiveDailySalary,
+                effectiveDailyGross,
                 '÷',
                 shiftHours,
                 '=',
@@ -544,14 +554,14 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         console.log('[Fine] Result:', JSON.stringify(out));
         // Formula summary with check-in/check-out times for debugging why lateMinutes might be 0
         console.log('[Fine FORMULA] Summary: checkInTime=', checkInStr, 'checkOutTime=', checkOutStr,
-            '| dailySalary=', effectiveDailySalary, 'shiftHours=', shiftHours, 'shiftStart=', shiftStartTime, 'shiftEnd=', shiftEndTime, 'businessTimezone=', businessTimezone,
+            '| dailyNet=', effectiveDailyNet, 'dailyGross=', effectiveDailyGross, 'shiftHours=', shiftHours, 'shiftStart=', shiftStartTime, 'shiftEnd=', shiftEndTime, 'businessTimezone=', businessTimezone,
             '| lateMinutes=', lateFine.lateMinutes, 'lateFineAmount=', lateFineAmount,
             '| earlyMinutes=', earlyFine.earlyMinutes, 'earlyFineAmount=', earlyFineAmount,
             '| totalFineAmount=', fineAmount);
         const formulaDesc = (fineConfig && fineConfig.calculationType) ? fineConfig.calculationType : 'shiftBased';
         console.log('[Fine AMOUNT TEST] --- Formula: ' + formulaDesc + ' ---');
         console.log('[Fine AMOUNT TEST] Times: checkInTime=' + checkInStr + ' | checkOutTime=' + (checkOutStr || 'null') + ' | attendanceDate=' + (attendanceDate?.toISOString?.() || ''));
-        console.log('[Fine AMOUNT TEST] Inputs: dailySalary=' + effectiveDailySalary + ', shiftHours=' + shiftHours + ', shiftStart=' + shiftStartTime + ', shiftEnd=' + shiftEndTime + ', businessTimezone=' + businessTimezone);
+        console.log('[Fine AMOUNT TEST] Inputs: dailyNet=' + effectiveDailyNet + ' dailyGross=' + effectiveDailyGross + ', shiftHours=' + shiftHours + ', shiftStart=' + shiftStartTime + ', shiftEnd=' + shiftEndTime + ', businessTimezone=' + businessTimezone);
         console.log('[Fine AMOUNT TEST] Late: minutes=' + lateFine.lateMinutes + ' => fineAmount=' + lateFineAmount + ' | Early: minutes=' + earlyFine.earlyMinutes + ' => fineAmount=' + earlyFineAmount);
         console.log('[Fine AMOUNT TEST] Formula (shiftBased): totalFineAmount = (dailySalary/shiftHours)*(lateMinutes/60) + (dailySalary/shiftHours)*(earlyMinutes/60) = lateFineAmount + earlyFineAmount');
         console.log('[Fine AMOUNT TEST] Result: totalFineAmount = ' + lateFineAmount + ' + ' + earlyFineAmount + ' = ' + fineAmount);

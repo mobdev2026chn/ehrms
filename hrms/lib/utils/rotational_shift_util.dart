@@ -7,11 +7,14 @@ import 'package:flutter/foundation.dart';
 String _calendarDateLog(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
+/// Set to `true` only when debugging shift calendar resolution (very chatty per day).
+const _kLogShiftCalendarRows = false;
+
 void _debugLogShiftCalendarRow({
   required DateTime dayLocal,
   required String message,
 }) {
-  if (!kDebugMode) return;
+  if (!kDebugMode || !_kLogShiftCalendarRows) return;
   debugPrint('[ShiftCalendar] date=${_calendarDateLog(dayLocal)} $message');
 }
 

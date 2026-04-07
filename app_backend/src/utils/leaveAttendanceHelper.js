@@ -1684,7 +1684,7 @@ const getWorkingSessionTimings = (session, shiftStartTime, shiftEndTime, halfDay
  * @param {Object} [fineConfig] - from getEffectiveFineConfig(company)
  * @returns {{ lateMinutes: number, fineAmount: number }}
  */
-const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePeriodMinutes, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null) => {
+const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePeriodMinutes, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null, dailyGrossForRules = null) => {
     const timings = getWorkingSessionTimings(session, shiftStartTime, shiftEndTime, halfDaySettings);
     if (!timings) return { lateMinutes: 0, fineAmount: 0 };
     const [startHours, startMins] = timings.startTime.split(':').map(Number);
@@ -1696,7 +1696,19 @@ const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePer
     const lateMinutes = Math.max(0, Math.round((punchInTime.getTime() - shiftStart.getTime()) / (1000 * 60)));
     if (lateMinutes <= 0) return { lateMinutes, fineAmount: 0 };
     if (fineConfig && fineConfig.enabled === false) return { lateMinutes, fineAmount: 0 };
-    const fineAmount = calculateFineAmount(lateMinutes, 'lateArrival', fineConfig, dailySalary, shiftHours);
+    console.log(
+        '[Fine][formula][test][half-day][lateArrival] input | minutes=%s dailyNet=%s dailyGross=%s shiftHours=%s calcType=%s',
+        lateMinutes,
+        dailySalary,
+        dailyGrossForRules,
+        shiftHours,
+        fineConfig?.calculationType || 'shiftBased'
+    );
+    const fineAmount = calculateFineAmount(lateMinutes, 'lateArrival', fineConfig, dailySalary, shiftHours, dailyGrossForRules);
+    console.log(
+        '[Fine][formula][test][half-day][lateArrival] output | formula=Fine=(base÷shiftHours)×(minutes÷60) | finalFine=%s',
+        fineAmount
+    );
     return { lateMinutes, fineAmount };
 };
 
@@ -1705,7 +1717,7 @@ const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePer
  * @param {Object} [fineConfig] - from getEffectiveFineConfig(company)
  * @returns {{ earlyMinutes: number, fineAmount: number }}
  */
-const calculateHalfDayEarlyFine = (punchOutTime, attendanceDate, session, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null) => {
+const calculateHalfDayEarlyFine = (punchOutTime, attendanceDate, session, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null, dailyGrossForRules = null) => {
     const timings = getWorkingSessionTimings(session, shiftStartTime, shiftEndTime, halfDaySettings);
     if (!timings) return { earlyMinutes: 0, fineAmount: 0 };
     const [endHours, endMins] = timings.endTime.split(':').map(Number);
@@ -1715,7 +1727,19 @@ const calculateHalfDayEarlyFine = (punchOutTime, attendanceDate, session, dailyS
     const earlyMinutes = Math.max(0, Math.round((shiftEnd.getTime() - punchOutTime.getTime()) / (1000 * 60)));
     if (earlyMinutes <= 0) return { earlyMinutes, fineAmount: 0 };
     if (fineConfig && fineConfig.enabled === false) return { earlyMinutes, fineAmount: 0 };
-    const fineAmount = calculateFineAmount(earlyMinutes, 'earlyExit', fineConfig, dailySalary, shiftHours);
+    console.log(
+        '[Fine][formula][test][half-day][earlyExit] input | minutes=%s dailyNet=%s dailyGross=%s shiftHours=%s calcType=%s',
+        earlyMinutes,
+        dailySalary,
+        dailyGrossForRules,
+        shiftHours,
+        fineConfig?.calculationType || 'shiftBased'
+    );
+    const fineAmount = calculateFineAmount(earlyMinutes, 'earlyExit', fineConfig, dailySalary, shiftHours, dailyGrossForRules);
+    console.log(
+        '[Fine][formula][test][half-day][earlyExit] output | formula=Fine=(base÷shiftHours)×(minutes÷60) | finalFine=%s',
+        fineAmount
+    );
     return { earlyMinutes, fineAmount };
 };
 

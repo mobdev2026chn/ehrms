@@ -235,6 +235,13 @@ class InteractionService {
     return res.data ?? {};
   }
 
+  Future<Map<String, dynamic>> getGroupMembers(String groupId) async {
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/groups/$groupId/members',
+    );
+    return res.data ?? {};
+  }
+
   Future<Map<String, dynamic>> getPolls() async {
     final res = await _client().get<Map<String, dynamic>>('/interaction/polls');
     return res.data ?? {};
@@ -265,6 +272,12 @@ class InteractionService {
 
   Future<Map<String, dynamic>> getPollResults(String pollId) async {
     final res = await _client().get<Map<String, dynamic>>('/interaction/polls/$pollId/results');
+    return res.data ?? {};
+  }
+
+  /// Same as web: `GET /api/lms/me/access` on the HRMS API host.
+  Future<Map<String, dynamic>> getLmsMyAccess() async {
+    final res = await _client().get<Map<String, dynamic>>('/lms/me/access');
     return res.data ?? {};
   }
 }

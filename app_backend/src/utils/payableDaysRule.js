@@ -1,16 +1,23 @@
 const mongoose = require('mongoose');
 const SalaryTemplate = require('../models/SalaryTemplate');
 const SalaryPayableDaysRule = require('../models/SalaryPayableDaysRule');
+const {
+    getCalendarDaysInMonth,
+    calculateDaysExcludingWeeklyOffsOnly,
+} = require('./salaryCalendarDays.util');
 
 /**
- * Same denominator as web `resolveTemplatePayableDays` in payroll.controller.ts (TypeScript):
- * only SalaryTemplate.payableDaysRule with type `fixedDays` + daysPerMonth uses a fixed divisor;
- * `calendarMonth` (or missing rule) uses full-month working-day count.
+ * Same denominator as web `resolveTemplatePayableDays` / `payableDaysRule.util.ts`:
+ * - FIXED / fixedDays + positive days → fixed divisor
+ * - EXCLUDE_WEEK_OFFS → full-month count of days that are not weekly offs (holidays kept in month)
+ * - CALENDAR_DAYS / calendarMonth → calendar length of month (28–31)
+ * - Otherwise → fallback (full-month working days excl. week offs + holidays, from attendance stats)
  */
 async function resolveTemplateLinkedPayableDenominatorDays({
     staff,
     company,
     fullMonthWorkingDays,
+    calendarContext,
 }) {
     const fallback = Number(fullMonthWorkingDays) || 0;
     const businessId = staff?.businessId || company?._id;
@@ -34,13 +41,61 @@ async function resolveTemplateLinkedPayableDenominatorDays({
             _id: template.payableDaysRuleId,
             businessId: new mongoose.Types.ObjectId(String(businessId)),
         })
-            .select('type daysPerMonth')
+            .select('type daysPerMonth fixedPayableDays')
             .lean();
         if (!rule) return fallback;
-        const t = String(rule.type || '').trim().toLowerCase();
+        const rawType = String(rule.type || '').trim();
+        const t = rawType.toLowerCase().replace(/_/g, '');
         const dpm = Number(rule.daysPerMonth) || 0;
-        if (t === 'fixeddays' && dpm > 0) return dpm;
-        return fallback;
+        const fp = Number(rule.fixedPayableDays) || 0;
+        const fixedN = fp > 0 ? fp : dpm;
+
+        if (t === 'fixeddays' || rawType === 'FIXED') {
+            if (Number.isFinite(fixedN) && fixedN > 0) {
+                return Math.max(1, Math.floor(fixedN));
+            }
+            return Math.max(1, fallback);
+        }
+
+        if (t === 'excludeweekoffs' || rawType === 'EXCLUDE_WEEK_OFFS') {
+            const y = calendarContext?.year;
+            const m1 = calendarContext?.month;
+            if (y != null && m1 != null && m1 >= 1 && m1 <= 12) {
+                const monthIndex0 = m1 - 1;
+                const pattern = calendarContext.weeklyOffPattern === 'oddEvenSaturday'
+                    ? 'oddEvenSaturday'
+                    : 'standard';
+                const wh = Array.isArray(calendarContext.weeklyHolidays)
+                    ? calendarContext.weeklyHolidays
+                    : null;
+                const n = calculateDaysExcludingWeeklyOffsOnly(
+                    y,
+                    monthIndex0,
+                    pattern,
+                    null,
+                    wh,
+                );
+                return Math.max(1, n);
+            }
+            return Math.max(1, fallback);
+        }
+
+        if (
+            t === 'calendardays'
+            || t === 'calendarmonth'
+            || rawType === 'CALENDAR_DAYS'
+        ) {
+            const y = calendarContext?.year;
+            const m1 = calendarContext?.month;
+            if (y != null && m1 != null && m1 >= 1 && m1 <= 12) {
+                const monthIndex0 = m1 - 1;
+                const n = getCalendarDaysInMonth(y, monthIndex0);
+                return Math.max(1, n);
+            }
+            return Math.max(1, fallback);
+        }
+
+        return Math.max(1, fallback);
     } catch (_) {
         return fallback;
     }

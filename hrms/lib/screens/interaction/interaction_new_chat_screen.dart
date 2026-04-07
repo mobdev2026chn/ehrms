@@ -114,6 +114,7 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
                                 title: name,
                                 avatarUrl: url,
                                 isGroup: false,
+                                peerIsOnline: null,
                               ),
                             ),
                           );

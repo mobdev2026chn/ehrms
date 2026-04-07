@@ -74,6 +74,9 @@ dependencies:
   pdfx: ^2.9.2
   share_plus: ^11.1.0
   socket_io_client: ^3.1.4
+  # 6.x pulls record_linux 1.x compatible with record_platform_interface (5.x was broken on Linux/desktop resolve).
+  record: ^6.0.0
+  just_audio: ^0.10.5
 
 dev_dependencies:
   flutter_test:

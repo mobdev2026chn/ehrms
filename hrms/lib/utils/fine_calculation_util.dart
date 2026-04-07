@@ -173,12 +173,22 @@ FineCalculationResult calculateFine({
   double fineAmount = 0;
   String formulaLog = '';
 
-  if (fineSettings.calculationType == 'fixedPerHour' &&
-      fineSettings.finePerHour != null) {
-    // Fixed per hour calculation
-    final lateHours = lateMinutes / 60;
-    fineAmount = fineSettings.finePerHour! * lateHours;
-    formulaLog = 'fixedPerHour: Fine = finePerHour × (minutes÷60) = ${fineSettings.finePerHour} × ($lateMinutes÷60) = ${fineSettings.finePerHour} × ${lateHours.toStringAsFixed(2)}';
+  if (fineSettings.calculationType == 'fixedPerHour') {
+    // Web parity: hourly rate = dailyNet÷shiftHours when possible, else config finePerHour
+    final lateHours = lateMinutes / 60.0;
+    final baseNet = dailyNetSalary ?? dailySalary;
+    double finePerHour = 0;
+    if (baseNet != null && baseNet > 0 && shiftHoursTotal > 0) {
+      finePerHour = baseNet / shiftHoursTotal;
+    }
+    if (finePerHour <= 0 &&
+        fineSettings.finePerHour != null &&
+        fineSettings.finePerHour! > 0) {
+      finePerHour = fineSettings.finePerHour!;
+    }
+    fineAmount = finePerHour * lateHours;
+    formulaLog =
+        'fixedPerHour: (net÷shiftH)×lateH = ($baseNet÷$shiftHoursTotal)×$lateHours => finePerHour=${finePerHour.toStringAsFixed(4)}';
   } else {
     // Shift-based calculation (default)
     // Daily Salary = Monthly Gross Salary / Working Days
@@ -194,10 +204,22 @@ FineCalculationResult calculateFine({
   }
 
   // Round to 2 decimal places
+  final preRoundFineAmount = fineAmount;
   fineAmount = (fineAmount * 100).round() / 100;
   if (formulaLog.isNotEmpty) {
     final staffPart = staffLabel != null && staffLabel.isNotEmpty ? 'staff=$staffLabel | ' : '';
     debugPrint('[Fine FORMULA] $staffPart dailySalary=$dailySalary | lateMinutes=$lateMinutes | $formulaLog | => fineAmount=$fineAmount');
+  }
+  if (shiftHoursTotal > 0 && lateMinutes > 0 && dailySalary != null && dailySalary > 0) {
+    final minuteHours = lateMinutes / 60.0;
+    final hourlyRate = dailySalary / shiftHoursTotal;
+    debugPrint(
+      '[Fine][formula][test] Fine = (Daily Salary ÷ Shift Hours) × (Minutes ÷ 60) '
+      '= ($dailySalary ÷ $shiftHoursTotal) × ($lateMinutes ÷ 60) '
+      '= ${hourlyRate.toStringAsFixed(6)} × ${minuteHours.toStringAsFixed(6)} '
+      '= ${(hourlyRate * minuteHours).toStringAsFixed(6)} | '
+      'preRound=${preRoundFineAmount.toStringAsFixed(6)} final=$fineAmount',
+    );
   }
   debugPrint('[Fine TEST] => result: lateMinutes=$lateMinutes, fineAmount=$fineAmount, shiftHoursTotal=$shiftHoursTotal');
 
@@ -260,25 +282,52 @@ double calculatePayrollFine({
 
     if (lateMinutes > 0) {
       double fineAmount = 0;
+      String formulaLog = '';
 
-      if (fineSettings.calculationType == 'fixedPerHour' &&
-          fineSettings.finePerHour != null) {
-        // Fixed per hour calculation
-        final lateHours = lateMinutes / 60;
-        fineAmount = fineSettings.finePerHour! * lateHours;
+      if (fineSettings.calculationType == 'fixedPerHour') {
+        final lateHours = lateMinutes / 60.0;
+        final baseNet = dailyNetSalary ?? dailySalary;
+        double finePerHour = 0;
+        if (baseNet > 0 && shiftHours > 0) {
+          finePerHour = baseNet / shiftHours;
+        }
+        if (finePerHour <= 0 &&
+            fineSettings.finePerHour != null &&
+            fineSettings.finePerHour! > 0) {
+          finePerHour = fineSettings.finePerHour!;
+        }
+        fineAmount = finePerHour * lateHours;
+        formulaLog =
+            'fixedPerHour: fine = (net÷shiftH)×(lateMin÷60) = ($baseNet÷$shiftHours)×($lateMinutes÷60) = ${finePerHour.toStringAsFixed(4)}×${lateHours.toStringAsFixed(4)}';
       } else {
         // Shift-based calculation (default)
         if (dailySalary > 0 && shiftHours > 0) {
           final hourlyRate = dailySalary / shiftHours;
           final lateHours = lateMinutes / 60;
           fineAmount = hourlyRate * lateHours;
+          formulaLog =
+              'shiftBased: fine = (dailySalary÷shiftH)×(lateMin÷60) = ($dailySalary÷$shiftHours)×($lateMinutes÷60) = ${hourlyRate.toStringAsFixed(4)}×${lateHours.toStringAsFixed(4)}';
         }
       }
 
       // Round to 2 decimal places
+      final preRoundFineAmount = fineAmount;
       fineAmount = (fineAmount * 100).round() / 100;
       totalFine += fineAmount;
-      debugPrint('[Fine TEST] payroll record: date=${record['date']}, lateMinutes=$lateMinutes, fineAmount=$fineAmount');
+      debugPrint(
+        '[Fine][formula][test][payroll] date=${record['date']} | lateMinutes=$lateMinutes | $formulaLog | preRound=${preRoundFineAmount.toStringAsFixed(6)} | final=$fineAmount',
+      );
+      if (shiftHours > 0 && dailySalary > 0) {
+        final minuteHours = lateMinutes / 60.0;
+        final hourlyRate = dailySalary / shiftHours;
+        debugPrint(
+          '[Fine][formula][test][payroll] Fine = (Daily Salary ÷ Shift Hours) × (Minutes ÷ 60) '
+          '= ($dailySalary ÷ $shiftHours) × ($lateMinutes ÷ 60) '
+          '= ${hourlyRate.toStringAsFixed(6)} × ${minuteHours.toStringAsFixed(6)} '
+          '= ${(hourlyRate * minuteHours).toStringAsFixed(6)} | '
+          'preRound=${preRoundFineAmount.toStringAsFixed(6)} final=$fineAmount',
+        );
+      }
     } else {
       // Use existing fineAmount if available (for backward compatibility)
       final existingFine = (record['fineAmount'] as num?)?.toDouble() ?? 0.0;

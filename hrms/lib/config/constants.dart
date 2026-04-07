@@ -1,8 +1,8 @@
 // hrms/lib/config/constants.dart
 class AppConstants {
   /// General app API (attendance, geo, profile, …).
- // static const String baseUrl = 'http://10.243.42.36:9001/api';
-  static const String baseUrl = 'https://ehrms.askeva.net/api';
+  static const String baseUrl = 'http://192.168.1.35:9001/api';
+ // static const String baseUrl = 'https://ehrms.askeva.net/api';
 
   /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
   static const String webBaseUrl = 'https://hrms.askeva.net/api';
@@ -16,9 +16,13 @@ class AppConstants {
   /// Prefs key: JWT for [webBaseUrl] when [baseUrl] is another server (set after web login sync).
   static const String interactionAccessTokenPrefsKey = 'interaction_access_token';
 
-  /// REST base for `/interaction/*`.
+  /// REST base for `/interaction/*` and LMS routes on the same host as the web app.
   static String get interactionApiBaseUrl =>
       interactionUseWebHost ? webBaseUrl : baseUrl;
+
+  /// WhatsApp-style background for Interaction message threads (`pubspec`: `assets/images/`).
+  static const String interactionChatBackgroundAsset =
+      'assets/images/chat-bg.jpeg';
 
   /// Socket.IO origin for Interaction (no `/api`, no trailing slash).
   static String get interactionSocketOrigin {

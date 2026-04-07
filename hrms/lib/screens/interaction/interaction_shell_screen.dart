@@ -1,6 +1,8 @@
 // hrms/lib/screens/interaction/interaction_shell_screen.dart
 // Employee Interaction: Chats + Polls (parity with web /interaction/chat and /interaction/polls).
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
@@ -68,6 +70,7 @@ class _InteractionShellScreenState extends State<InteractionShellScreen>
         }
       }
       await InteractionSocketService.instance.connect();
+      unawaited(InteractionService.instance.getLmsMyAccess());
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -86,16 +89,22 @@ class _InteractionShellScreenState extends State<InteractionShellScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        title: const Text('Interaction'),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: const Color(0xFF0F172A),
+        title: const Text('Interaction', style: TextStyle(fontWeight: FontWeight.w600)),
         bottom: TabBar(
           controller: _tabController,
           labelColor: AppColors.primary,
           unselectedLabelColor: Colors.grey,
           indicatorColor: AppColors.primary,
           tabs: const [
-            Tab(icon: Icon(Icons.chat_bubble_outline), text: 'Chats'),
-            Tab(icon: Icon(Icons.poll_outlined), text: 'Polls'),
+            Tab(icon: Icon(Icons.chat_bubble_outline), text: 'Messages'),
+            Tab(icon: Icon(Icons.poll_outlined), text: 'Polls & Surveys'),
           ],
         ),
       ),

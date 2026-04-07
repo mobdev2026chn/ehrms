@@ -55,6 +55,10 @@
 	<string>Background location is used for live task tracking when you are in the field.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Motion and fitness data is used to accurately detect walking, driving, or standing for task tracking.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Microphone access is used to record voice messages in chat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Photo library access is used to attach photos and videos in chat.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

@@ -59,6 +59,7 @@ class HomeDashboardScreen extends StatefulWidget {
 
 class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   static const String _netPerDaySalaryPrefsKey = 'app_net_per_day_salary';
+  static const String _grossPerDaySalaryPrefsKey = 'app_gross_per_day_salary';
   static const String _legacyPerDaySalaryPrefsKey = 'app_per_day_salary';
   String _userName = 'User';
   String _companyName = '';
@@ -118,16 +119,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return s == 'processed' || s == 'paid';
   }
 
-  Future<void> _persistPerDaySalary(double value) async {
+  Future<void> _persistPerDaySalary(double value, {double? grossValue}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_netPerDaySalaryPrefsKey, value);
+      if (grossValue != null) {
+        await prefs.setDouble(_grossPerDaySalaryPrefsKey, grossValue);
+      }
       // Backward compatibility for already released readers.
       await prefs.setDouble(_legacyPerDaySalaryPrefsKey, value);
       if (kDebugMode) {
         debugPrint(
           '[Fine TEST][Dashboard] Stored netPerDaySalary: '
-          'key=$_netPerDaySalaryPrefsKey value=${value.toStringAsFixed(2)}',
+          'key=$_netPerDaySalaryPrefsKey value=${value.toStringAsFixed(2)} '
+          'grossKey=$_grossPerDaySalaryPrefsKey grossValue=${grossValue?.toStringAsFixed(2) ?? "n/a"}',
         );
       }
     } catch (_) {}
@@ -1030,6 +1035,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         'fullMonth=${workingDaysInfo.workingDaysFullMonth} (Salary Overview parity)',
       );
 
+      // 5b. Payable-days divisor from /payroll/stats (web template rule: fixed days, EXCLUDE_WEEK_OFFS, CALENDAR_DAYS, etc.)
+      int? payableDaysBaseFromStats;
+      String? payableRuleFromStats;
+      if (backendStats != null && backendStats['attendance'] is Map) {
+        final att = backendStats['attendance'] as Map;
+        payableDaysBaseFromStats = (att['payableDaysBase'] as num?)?.toInt();
+        payableRuleFromStats = att['payableRule']?.toString();
+      }
+      int salaryPayableBaseDays(int fallbackFullMonthWd) {
+        final b = payableDaysBaseFromStats ?? 0;
+        return b > 0 ? b : fallbackFullMonthWd;
+      }
+
       // 6. Salary structure (same as Salary Overview)
       final salaryInputs = SalaryStructureInputs.fromMap(staffSalary);
       final calculatedSalary = calculateSalaryStructure(salaryInputs);
@@ -1038,15 +1056,32 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final fineSummary = aggregateSalaryFineSummary(attendanceRecords);
       final double totalFineAmount = fineSummary.totalFineAmount;
 
-      // 8. Prorated salary using THIS MONTH working days (same as Salary Overview)
-      final thisMonthWorkingDaysForProration =
+      // 8. Prorated salary: same divisor + numerator as Salary Overview (payable rule + web-style MTD)
+      final fallbackWd =
           workingDaysInfo.workingDaysFullMonth ?? workingDaysInfo.workingDays;
-      final proratedSalary = calculateProratedSalary(
-        calculatedSalary,
-        thisMonthWorkingDaysForProration,
-        presentDays,
-        totalFineAmount,
-      );
+      final thisMonthWorkingDaysForProration =
+          salaryPayableBaseDays(fallbackWd);
+      final ruleLower =
+          (payableRuleFromStats ?? 'present_plus_paid_leave').toLowerCase();
+      final payableNumerator = ruleLower == 'present_only'
+          ? presentDays
+          : presentDays + paidLeaveDays;
+      final ProratedSalary proratedSalary;
+      if (staffSalary['basicSalary'] != null) {
+        proratedSalary = calculateWebStyleMtdProratedSalary(
+          SalaryStructureInputs.fromMap(staffSalary),
+          thisMonthWorkingDaysForProration,
+          payableNumerator,
+          totalFineAmount,
+        );
+      } else {
+        proratedSalary = calculateProratedSalary(
+          calculatedSalary,
+          thisMonthWorkingDaysForProration,
+          payableNumerator,
+          totalFineAmount,
+        );
+      }
       final perDaySalaryForApp = thisMonthWorkingDaysForProration > 0
           ? ((calculatedSalary.monthly.netMonthlySalary /
                             thisMonthWorkingDaysForProration) *
@@ -1054,7 +1089,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     .round() /
                 100
           : 0.0;
-      await _persistPerDaySalary(perDaySalaryForApp);
+      final perDayGrossSalaryForApp = thisMonthWorkingDaysForProration > 0
+          ? ((calculatedSalary.monthly.grossSalary /
+                            thisMonthWorkingDaysForProration) *
+                        100)
+                    .round() /
+                100
+          : 0.0;
+      await _persistPerDaySalary(
+        perDaySalaryForApp,
+        grossValue: perDayGrossSalaryForApp,
+      );
       // Unpaid leave: same as Salary Overview (daily net × unpaid days subtracted from MTD net).
       var proratedNetForMtd = proratedSalary.proratedNetSalary;
       if (thisMonthWorkingDaysForProration > 0 && unpaidLeaveDays > 0) {

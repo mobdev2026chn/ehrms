@@ -7,6 +7,9 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../../config/constants.dart';
 
+/// Verbose per-request Dio logs (options, URLs, bodies). Off by default — very chatty.
+const _kLogDioTraffic = false;
+
 /// Retries on 429 (rate limit) with exponential backoff. Respects Retry-After.
 class RetryOnRateLimitInterceptor extends Interceptor {
   RetryOnRateLimitInterceptor(this.dio);
@@ -93,7 +96,7 @@ class DioClient {
     dio.interceptors.addAll([
       FormDataContentTypeInterceptor(),
       RetryOnRateLimitInterceptor(dio),
-      if (kDebugMode)
+      if (kDebugMode && _kLogDioTraffic)
         LogInterceptor(
           requestBody: true,
           responseBody: false,

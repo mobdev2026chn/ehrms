@@ -21,6 +21,8 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <!-- Camera: selfie for attendance and profile photo. No gallery read. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Voice messages in Interaction chat -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Merged by image_picker / file_picker; Play policy forbids broad media read for infrequent use.
          Use camera + Android system photo picker (no READ_MEDIA_*). -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove" />

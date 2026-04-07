@@ -22,10 +22,17 @@ const SalaryPayableDaysRuleSchema = new mongoose.Schema(
         },
         type: {
             type: String,
-            enum: ['calendarMonth', 'fixedDays'],
+            enum: [
+                'calendarMonth',
+                'fixedDays',
+                'CALENDAR_DAYS',
+                'EXCLUDE_WEEK_OFFS',
+                'FIXED',
+            ],
             required: true,
         },
         daysPerMonth: { type: Number, default: 0 },
+        fixedPayableDays: { type: Number, required: false },
     },
     { timestamps: true }
 );
