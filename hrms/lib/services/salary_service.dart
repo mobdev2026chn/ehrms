@@ -8,6 +8,100 @@ import 'api_client.dart';
 import 'auth_service.dart';
 import 'interaction_service.dart';
 
+final AuthService _salaryAuthServiceForAppPerDay = AuthService();
+
+/// Per-day salary in SharedPreferences (fines, check-in preview). Written from web preview [salaryBasis].
+const kAppNetPerDaySalaryPrefsKey = 'app_net_per_day_salary';
+const kAppGrossPerDaySalaryPrefsKey = 'app_gross_per_day_salary';
+const kAppLegacyPerDaySalaryPrefsKey = 'app_per_day_salary';
+
+/// `salaryBasis.monthlyNet|GrossSalary` ÷ preview full-month working days (web HRMS parity).
+Map<String, double>? perDayRatesFromPayrollPreviewForFine(
+  Map<String, dynamic>? preview,
+) {
+  if (preview == null) return null;
+  final basis = preview['salaryBasis'];
+  final att = preview['attendance'];
+  if (basis is! Map || att is! Map) return null;
+  final b = Map<String, dynamic>.from(basis);
+  final a = Map<String, dynamic>.from(att);
+  final mn = (b['monthlyNetSalary'] as num?)?.toDouble();
+  final mg = (b['monthlyGrossSalary'] as num?)?.toDouble();
+  final wd = (a['fullMonthWorkingDays'] as num?)?.toInt() ??
+      (a['workingDays'] as num?)?.toInt() ??
+      0;
+  if (wd <= 0 || mn == null || mn <= 0) return null;
+  double r2(double x) => (x * 100).round() / 100;
+  return {
+    'net': r2(mn / wd),
+    'gross': (mg != null && mg > 0) ? r2(mg / wd) : r2(mn / wd),
+  };
+}
+
+/// When preview has no salaryBasis: payroll row ÷ full-month working days.
+Map<String, double>? perDayRatesFromPayrollRowForFine(
+  Map<String, dynamic>? payroll,
+  int fullMonthWorkingDays,
+) {
+  if (payroll == null || fullMonthWorkingDays <= 0) return null;
+  final net = (payroll['netPay'] as num?)?.toDouble();
+  final gross = (payroll['grossSalary'] as num?)?.toDouble();
+  if (net == null || net <= 0) return null;
+  double r2(double x) => (x * 100).round() / 100;
+  final wd = fullMonthWorkingDays.toDouble();
+  return {
+    'net': r2(net / wd),
+    'gross': (gross != null && gross > 0) ? r2(gross / wd) : r2(net / wd),
+  };
+}
+
+Future<void> syncPerDaySalaryPrefsFromPayrollPreview(
+  Map<String, dynamic> response, {
+  required int month,
+  required int year,
+}) async {
+  final now = DateTime.now();
+  if (month != now.month || year != now.year) return;
+  if (response['success'] != true) return;
+  final data = response['data'];
+  if (data is! Map) return;
+  final p = data['preview'];
+  if (p is! Map) return;
+  final rates = perDayRatesFromPayrollPreviewForFine(
+    Map<String, dynamic>.from(p),
+  );
+  if (rates == null) return;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(kAppNetPerDaySalaryPrefsKey, rates['net']!);
+    await prefs.setDouble(kAppGrossPerDaySalaryPrefsKey, rates['gross']!);
+    await prefs.setDouble(kAppLegacyPerDaySalaryPrefsKey, rates['net']!);
+    if (kDebugMode) {
+      debugPrint(
+        '[PreviewSalary] SharedPrefs per-day from preview: net=${rates['net']} '
+        'gross=${rates['gross']} month=$month year=$year',
+      );
+    }
+    final syncRes = await _salaryAuthServiceForAppPerDay.updateProfile({
+      'appPerDayNetSalary': rates['net']!,
+      'appPerdayGrossSalary': rates['gross']!,
+    });
+    if (syncRes['success'] != true && kDebugMode) {
+      debugPrint(
+        '[PreviewSalary] Staff DB sync failed: ${syncRes['message'] ?? syncRes}',
+      );
+    } else if (kDebugMode) {
+      debugPrint(
+        '[PreviewSalary] Staff collection appPerDayNetSalary/appPerdayGrossSalary updated',
+      );
+    }
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('[PreviewSalary] prefs/Staff sync error: $e');
+    }
+  }
+}
+
 class SalaryService {
   final AuthService _authService = AuthService();
   final ApiClient _api = ApiClient();
@@ -30,7 +124,12 @@ class SalaryService {
       final data = response.data;
       if (data != null && data['success'] == true) {
         final result = data['data'];
-        return result is Map ? Map<String, dynamic>.from(result) : _getEmptySalaryData();
+        if (result is Map) {
+          final m = Map<String, dynamic>.from(result);
+          _logPayrollStatsForTest(data: m, month: month, year: year);
+          return m;
+        }
+        return _getEmptySalaryData();
       }
       return _getEmptySalaryData();
     } on DioException catch (e) {
@@ -221,7 +320,16 @@ class SalaryService {
           '/payroll/preview',
           data: body,
         );
-        return parseResponse(r);
+        final out = parseResponse(r);
+        _logPreviewSalaryNetGrossForTest(
+          response: out,
+          source: 'webHrms',
+          employeeId: employeeId,
+          month: month,
+          year: year,
+        );
+        await syncPerDaySalaryPrefsFromPayrollPreview(out, month: month, year: year);
+        return out;
       } on DioException catch (e) {
         if (kDebugMode) {
           debugPrint(
@@ -246,7 +354,16 @@ class SalaryService {
         '/payroll/preview',
         data: body,
       );
-      return parseResponse(response);
+      final out = parseResponse(response);
+      _logPreviewSalaryNetGrossForTest(
+        response: out,
+        source: 'mainApi',
+        employeeId: employeeId,
+        month: month,
+        year: year,
+      );
+      await syncPerDaySalaryPrefsFromPayrollPreview(out, month: month, year: year);
+      return out;
     } on DioException catch (e) {
       debugPrint('[SalaryOverview] previewPayroll error: ${e.message}');
       return {'success': false, 'data': null};
@@ -266,5 +383,109 @@ class SalaryService {
     } catch (e) {
       return null;
     }
+  }
+}
+
+/// Debug: log preview MTD + contract month + working days (app_backend + web HRMS).
+void _logPreviewSalaryNetGrossForTest({
+  required Map<String, dynamic> response,
+  required String source,
+  required String employeeId,
+  required int month,
+  required int year,
+}) {
+  if (!kDebugMode) return;
+  try {
+    final data = response['data'];
+    if (data is! Map) {
+      debugPrint(
+        '[PreviewSalary][test] source=$source employeeId=$employeeId '
+        'month=$month year=$year success=${response['success']} data=missing',
+      );
+      return;
+    }
+    final d = Map<String, dynamic>.from(data);
+    final p = d['preview'];
+    if (p is! Map) {
+      debugPrint(
+        '[PreviewSalary][test] source=$source employeeId=$employeeId '
+        'month=$month year=$year preview=null (no payroll preview in body)',
+      );
+      return;
+    }
+    final preview = Map<String, dynamic>.from(p);
+    final mtdGross = preview['grossSalary'] ?? preview['gross'];
+    final mtdNet =
+        preview['netPay'] ?? preview['net'] ?? preview['netSalary'];
+
+    num? monthGross;
+    num? monthNet;
+    final sb = preview['salaryBasis'];
+    if (sb is Map) {
+      final basis = Map<String, dynamic>.from(sb);
+      monthGross = basis['monthlyGrossSalary'] as num?;
+      monthNet = basis['monthlyNetSalary'] as num?;
+    }
+
+    int? workingDaysFullMonth;
+    int? workingDaysTillDate;
+    final att = preview['attendance'];
+    if (att is Map) {
+      final a = Map<String, dynamic>.from(att);
+      workingDaysFullMonth =
+          (a['fullMonthWorkingDays'] as num?)?.toInt() ??
+              (a['workingDays'] as num?)?.toInt();
+      workingDaysTillDate =
+          (a['workingDaysTillCurrentDate'] as num?)?.toInt();
+    }
+
+    debugPrint(
+      '[PreviewSalary][test] source=$source employeeId=$employeeId '
+      'month=$month year=$year '
+      'mtdGross=$mtdGross mtdNet=$mtdNet '
+      'monthGross=$monthGross monthNet=$monthNet '
+      'workingDaysFullMonth=$workingDaysFullMonth '
+      'workingDaysTillDate=$workingDaysTillDate',
+    );
+  } catch (e) {
+    debugPrint('[PreviewSalary][test] parse error: $e');
+  }
+}
+
+/// Debug: full month + MTD + attendance working days from GET /payroll/stats.
+void _logPayrollStatsForTest({
+  required Map<String, dynamic> data,
+  int? month,
+  int? year,
+}) {
+  if (!kDebugMode) return;
+  try {
+    final m = month ?? (data['month'] as num?)?.toInt();
+    final y = year ?? (data['year'] as num?)?.toInt();
+    final stats = data['stats'];
+    if (stats is! Map) {
+      debugPrint(
+        '[PayrollStats][test] month=$m year=$y stats=null '
+        'isProcessed=${data['isProcessed']}',
+      );
+      return;
+    }
+    final s = Map<String, dynamic>.from(stats);
+    int? wdTill;
+    int? wdFull;
+    final att = s['attendance'];
+    if (att is Map) {
+      final a = Map<String, dynamic>.from(att);
+      wdTill = (a['workingDays'] as num?)?.toInt();
+      wdFull = (a['workingDaysFullMonth'] as num?)?.toInt();
+    }
+    debugPrint(
+      '[PayrollStats][test] month=$m year=$y '
+      'monthGross=${s['grossSalary']} monthNet=${s['netSalary']} '
+      'mtdGross=${s['thisMonthGross']} mtdNet=${s['thisMonthNet']} '
+      'workingDaysTillToday=$wdTill workingDaysFullMonth=$wdFull',
+    );
+  } catch (e) {
+    debugPrint('[PayrollStats][test] parse error: $e');
   }
 }

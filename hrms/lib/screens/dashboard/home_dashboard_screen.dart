@@ -58,9 +58,6 @@ class HomeDashboardScreen extends StatefulWidget {
 }
 
 class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
-  static const String _netPerDaySalaryPrefsKey = 'app_net_per_day_salary';
-  static const String _grossPerDaySalaryPrefsKey = 'app_gross_per_day_salary';
-  static const String _legacyPerDaySalaryPrefsKey = 'app_per_day_salary';
   String _userName = 'User';
   String _companyName = '';
   String? _avatarUrl;
@@ -122,17 +119,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   Future<void> _persistPerDaySalary(double value, {double? grossValue}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setDouble(_netPerDaySalaryPrefsKey, value);
+      await prefs.setDouble(kAppNetPerDaySalaryPrefsKey, value);
       if (grossValue != null) {
-        await prefs.setDouble(_grossPerDaySalaryPrefsKey, grossValue);
+        await prefs.setDouble(kAppGrossPerDaySalaryPrefsKey, grossValue);
       }
       // Backward compatibility for already released readers.
-      await prefs.setDouble(_legacyPerDaySalaryPrefsKey, value);
+      await prefs.setDouble(kAppLegacyPerDaySalaryPrefsKey, value);
       if (kDebugMode) {
         debugPrint(
           '[Fine TEST][Dashboard] Stored netPerDaySalary: '
-          'key=$_netPerDaySalaryPrefsKey value=${value.toStringAsFixed(2)} '
-          'grossKey=$_grossPerDaySalaryPrefsKey grossValue=${grossValue?.toStringAsFixed(2) ?? "n/a"}',
+          'key=$kAppNetPerDaySalaryPrefsKey value=${value.toStringAsFixed(2)} '
+          'grossKey=$kAppGrossPerDaySalaryPrefsKey grossValue=${grossValue?.toStringAsFixed(2) ?? "n/a"}',
         );
       }
     } catch (_) {}
@@ -1056,6 +1053,47 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final fineSummary = aggregateSalaryFineSummary(attendanceRecords);
       final double totalFineAmount = fineSummary.totalFineAmount;
 
+      // 7b. Payroll + preview (before per-day prefs for fines — match web preview salaryBasis ÷ fullMonth WD).
+      Map<String, dynamic>? currentPayroll;
+      Map<String, dynamic>? payrollPreview;
+      if (staffId != null && staffId.isNotEmpty) {
+        try {
+          final payrollData = await _salaryService.getPayrolls(
+            month: monthIndex,
+            year: year,
+            page: 1,
+            limit: 1,
+          );
+          if (payrollData['success'] == true && payrollData['data'] != null) {
+            final payrolls = payrollData['data']['payrolls'] as List?;
+            if (payrolls != null && payrolls.isNotEmpty) {
+              final row = payrolls.first;
+              if (row is Map &&
+                  row['month'] == monthIndex &&
+                  row['year'] == year) {
+                currentPayroll = Map<String, dynamic>.from(row);
+              }
+            }
+          }
+        } catch (_) {}
+
+        try {
+          final previewRes = await _salaryService.previewPayroll(
+            employeeId: staffId,
+            month: monthIndex,
+            year: year,
+          );
+          if (previewRes['success'] == true &&
+              previewRes['data'] is Map<String, dynamic>) {
+            final d = previewRes['data'] as Map<String, dynamic>;
+            final p = d['preview'];
+            if (p is Map) {
+              payrollPreview = Map<String, dynamic>.from(p);
+            }
+          }
+        } catch (_) {}
+      }
+
       // 8. Prorated salary: same divisor + numerator as Salary Overview (payable rule + web-style MTD)
       final fallbackWd =
           workingDaysInfo.workingDaysFullMonth ?? workingDaysInfo.workingDays;
@@ -1082,20 +1120,55 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           totalFineAmount,
         );
       }
-      final perDaySalaryForApp = thisMonthWorkingDaysForProration > 0
-          ? ((calculatedSalary.monthly.netMonthlySalary /
+      final previewFineRates =
+          perDayRatesFromPayrollPreviewForFine(payrollPreview);
+      final statsFullMonthWd = (backendStats != null &&
+              backendStats['attendance'] is Map)
+          ? ((backendStats['attendance'] as Map)['workingDaysFullMonth'] as num?)
+                  ?.toInt()
+          : null;
+      final fullWdForPayrollPerDay = statsFullMonthWd ??
+          workingDaysInfo.workingDaysFullMonth ??
+          workingDaysInfo.workingDays;
+      final payrollFineRates = previewFineRates == null
+          ? perDayRatesFromPayrollRowForFine(
+              currentPayroll,
+              fullWdForPayrollPerDay,
+            )
+          : null;
+
+      final perDaySalaryForApp = previewFineRates?['net'] ??
+          payrollFineRates?['net'] ??
+          (thisMonthWorkingDaysForProration > 0
+              ? ((calculatedSalary.monthly.netMonthlySalary /
                             thisMonthWorkingDaysForProration) *
                         100)
                     .round() /
                 100
-          : 0.0;
-      final perDayGrossSalaryForApp = thisMonthWorkingDaysForProration > 0
-          ? ((calculatedSalary.monthly.grossSalary /
+              : 0.0);
+      final perDayGrossSalaryForApp = previewFineRates?['gross'] ??
+          payrollFineRates?['gross'] ??
+          (thisMonthWorkingDaysForProration > 0
+              ? ((calculatedSalary.monthly.grossSalary /
                             thisMonthWorkingDaysForProration) *
                         100)
                     .round() /
                 100
-          : 0.0;
+              : 0.0);
+      if (kDebugMode) {
+        int? previewFullWd;
+        if (payrollPreview != null && payrollPreview['attendance'] is Map) {
+          final a = payrollPreview['attendance'] as Map;
+          previewFullWd = (a['fullMonthWorkingDays'] as num?)?.toInt() ??
+              (a['workingDays'] as num?)?.toInt();
+        }
+        debugPrint(
+          '[SalaryCalc][Dashboard] per-day for fine prefs: '
+          'previewBasis=${previewFineRates != null} payrollRow=${payrollFineRates != null} '
+          'net=$perDaySalaryForApp gross=$perDayGrossSalaryForApp '
+          'fullMonthWdPreview=$previewFullWd',
+        );
+      }
       await _persistPerDaySalary(
         perDaySalaryForApp,
         grossValue: perDayGrossSalaryForApp,
@@ -1112,7 +1185,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           'netMonthly=${calculatedSalary.monthly.netMonthlySalary.toStringAsFixed(2)} '
           'wdForProration=$thisMonthWorkingDaysForProration',
         );
-        final dailyNet =
+        final dailyNet = previewFineRates?['net'] ??
+            payrollFineRates?['net'] ??
             storedDailyNet ??
             calculatedSalary.monthly.netMonthlySalary /
                 thisMonthWorkingDaysForProration;
@@ -1133,45 +1207,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
       // 9. MTD source priority parity with Salary Overview:
       // final payroll -> preview -> prorated, else preview -> prorated -> payroll.
-      Map<String, dynamic>? currentPayroll;
-      Map<String, dynamic>? payrollPreview;
-      try {
-        final payrollData = await _salaryService.getPayrolls(
-          month: monthIndex,
-          year: year,
-          page: 1,
-          limit: 1,
-        );
-        if (payrollData['success'] == true && payrollData['data'] != null) {
-          final payrolls = payrollData['data']['payrolls'] as List?;
-          if (payrolls != null && payrolls.isNotEmpty) {
-            final row = payrolls.first;
-            if (row is Map &&
-                row['month'] == monthIndex &&
-                row['year'] == year) {
-              currentPayroll = Map<String, dynamic>.from(row);
-            }
-          }
-        }
-      } catch (_) {}
-
-      if (currentPayroll == null && staffId != null && staffId.isNotEmpty) {
-        try {
-          final previewRes = await _salaryService.previewPayroll(
-            employeeId: staffId,
-            month: monthIndex,
-            year: year,
-          );
-          if (previewRes['success'] == true &&
-              previewRes['data'] is Map<String, dynamic>) {
-            final d = previewRes['data'] as Map<String, dynamic>;
-            final p = d['preview'];
-            if (p is Map) {
-              payrollPreview = Map<String, dynamic>.from(p);
-            }
-          }
-        } catch (_) {}
-      }
+      // (payroll + preview already loaded in step 7b)
 
       final payrollMtdNet = (currentPayroll?['netPay'] as num?)?.toDouble();
       final previewNet = (payrollPreview?['netPay'] as num?)?.toDouble();

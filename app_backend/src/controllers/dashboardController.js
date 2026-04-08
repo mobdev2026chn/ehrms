@@ -10,37 +10,6 @@ const Announcement = require('../models/Announcement');
 const { audienceFilter, dateFilter, statusFilter } = require('./announcementController');
 const { calculateAttendanceStats } = require('./payrollController');
 
-function computeMonthlySalaryFromStaffSalary(staffSalary = {}) {
-    const basicSalary = staffSalary.basicSalary || 0;
-    const dearnessAllowance = staffSalary.dearnessAllowance || 0;
-    const houseRentAllowance = staffSalary.houseRentAllowance || 0;
-    const specialAllowance = staffSalary.specialAllowance || 0;
-
-    const basicPlusDA = basicSalary + dearnessAllowance;
-    const basicPlusDAPlusHRA = basicSalary + dearnessAllowance + houseRentAllowance;
-    const isPFApplicable = basicPlusDA < 15000;
-    const isESIApplicable = basicPlusDAPlusHRA < 21000;
-
-    const employerPFRate = isPFApplicable ? (staffSalary.employerPFRate || 0) : 0;
-    const employerESIRate = isESIApplicable ? (staffSalary.employerESIRate || 0) : 0;
-    const employeePFRate = isPFApplicable ? (staffSalary.employeePFRate || 0) : 0;
-    const employeeESIRate = isESIApplicable ? (staffSalary.employeeESIRate || 0) : 0;
-
-    const pfStaticAmount = isPFApplicable ? 0 : 1800;
-    const grossFixedSalary = basicSalary + dearnessAllowance + houseRentAllowance + specialAllowance;
-
-    const employerPF = employerPFRate / 100 * basicSalary;
-    const employerESI = employerESIRate / 100 * grossFixedSalary;
-    const grossSalary = grossFixedSalary + employerPF + employerESI + pfStaticAmount;
-
-    const employeePF = employeePFRate > 0 ? (employeePFRate / 100 * basicSalary) : pfStaticAmount;
-    const employeeESI = employeeESIRate / 100 * grossSalary;
-    const totalMonthlyDeductions = employeePF + employeeESI + employerPF + employerESI;
-
-    const netSalary = grossSalary - totalMonthlyDeductions;
-    return { grossSalary, netSalary };
-}
-
 /** Get month/day for comparison (birthday/anniversary). */
 function getMonthDay(d) {
     return [d.getMonth(), d.getDate()];
@@ -135,45 +104,9 @@ const getEmployeeDashboardStats = async (req, res) => {
         const effectivePaidDays = presentDays + paidLeaveDays;
         const absentDays = attendanceStats.absentDays ?? Math.max(0, totalWorkingDays - effectivePaidDays);
 
-        // Cache daily net salary for the current month (used by client fine/salary UI).
-        // Formula parity with salary overview: daily net = monthly net / this month working days.
-        let appPerdayGrossSalaryToStore = null;
-        let appPerDayNetSalaryToStore = null;
-        if (staff?.salary && thisMonthWorkingDays > 0) {
-            const monthly = computeMonthlySalaryFromStaffSalary(staff.salary);
-            if (Number.isFinite(monthly?.grossSalary)) {
-                appPerdayGrossSalaryToStore = (monthly.grossSalary / thisMonthWorkingDays);
-            }
-            if (Number.isFinite(monthly?.netSalary)) {
-                appPerDayNetSalaryToStore = (monthly.netSalary / thisMonthWorkingDays);
-            }
-        }
-        if ((appPerdayGrossSalaryToStore != null && Number.isFinite(appPerdayGrossSalaryToStore)) ||
-            (appPerDayNetSalaryToStore != null && Number.isFinite(appPerDayNetSalaryToStore))) {
-            const roundedGross = appPerdayGrossSalaryToStore != null
-                ? Math.round(appPerdayGrossSalaryToStore * 100) / 100
-                : null;
-            const roundedNet = appPerDayNetSalaryToStore != null
-                ? Math.round(appPerDayNetSalaryToStore * 100) / 100
-                : null;
-            await Staff.updateOne(
-                { _id: staffId },
-                {
-                    $set: {
-                        appPerdayGrossSalary: roundedGross,
-                        appPerDayNetSalary: roundedNet
-                    },
-                    $unset: {
-                        appPerDaySalary: "",
-                        appperdaysalary: ""
-                    }
-                }
-            );
-            console.log(
-                `[getEmployeeDashboardStats] Stored appPerdayGrossSalary=${roundedGross} `
-                + `appPerDayNetSalary=${roundedNet} for staff=${staffId} month=${month} year=${year}`
-            );
-        }
+        // appPerDayNetSalary / appPerdayGrossSalary: updated by mobile app from web payroll preview
+        // (PUT /auth/profile with salaryBasis ÷ fullMonth WD). Do not overwrite here — attendance WD
+        // divisor can differ from template preview (24 vs 26) and would break fine parity.
 
         console.log(`[getEmployeeDashboardStats] attendanceStats (same as payslip/salary): thisMonthWD=${thisMonthWorkingDays}, workingDaysTillToday=${totalWorkingDays}, presentDays=${presentDays}, paidLeaveDays=${paidLeaveDays}, absentDays=${absentDays}`);
 

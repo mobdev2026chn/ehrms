@@ -348,7 +348,7 @@ function calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, dailySal
 
 // Helper function to calculate combined fine (late + early)
 // @param {Object} leave - Optional approved leave (for Half Day session-aware calculation)
-async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, template, staff, company, leave = null) {
+async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, template, staff, company, leave = null, perDayOverride = null) {
     try {
         const checkInStr = punchInTime ? punchInTime.toISOString() : null;
         const checkOutStr = punchOutTime ? punchOutTime.toISOString() : null;
@@ -407,16 +407,35 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         const attendanceMonth1Based = attendanceDate.getMonth() + 1; // 1-12 for calculateAttendanceStats
         let dailyNet = null;
         let dailyGross = null;
+
+        // For app punches, prefer per-day rates sent by the app (SharedPreferences preview parity).
+        // This ensures fine + OT use the same per-day values the app used to compute/preview.
+        const overrideNet = Number(perDayOverride?.appPerDayNetSalary);
+        const overrideGross = Number(perDayOverride?.appPerdayGrossSalary);
+        if (Number.isFinite(overrideNet) && overrideNet > 0) dailyNet = overrideNet;
+        if (Number.isFinite(overrideGross) && overrideGross > 0) dailyGross = overrideGross;
+        if ((dailyNet || dailyGross) && console && console.log) {
+            console.log(
+                '[Fine] perDaySource=appOverride',
+                '| appPerDayNetSalary=',
+                perDayOverride?.appPerDayNetSalary,
+                'appPerdayGrossSalary=',
+                perDayOverride?.appPerdayGrossSalary
+            );
+        }
+
         if (netMonthlySalary > 0 && staff._id) {
             try {
                 const attendanceStats = await calculateAttendanceStats(staff._id, attendanceMonth1Based, attendanceYear);
                 const thisMonthWorkingDays = attendanceStats.workingDaysFullMonth ?? attendanceStats.workingDays ?? 0;
                 if (thisMonthWorkingDays > 0) {
-                    dailyNet = netMonthlySalary / thisMonthWorkingDays;
-                    if (grossMonthlySalary > 0) {
+                    if (dailyNet == null || dailyNet <= 0) dailyNet = netMonthlySalary / thisMonthWorkingDays;
+                    if ((dailyGross == null || dailyGross <= 0) && grossMonthlySalary > 0) {
                         dailyGross = grossMonthlySalary / thisMonthWorkingDays;
                     }
-                    console.log('[Fine] Daily (web-style): netMonthly=', netMonthlySalary, 'grossMonthly=', grossMonthlySalary, 'wd=', thisMonthWorkingDays, '=> dailyNet=', dailyNet, 'dailyGross=', dailyGross);
+                    if (!(Number.isFinite(overrideNet) && overrideNet > 0) && !(Number.isFinite(overrideGross) && overrideGross > 0)) {
+                        console.log('[Fine] Daily (web-style): netMonthly=', netMonthlySalary, 'grossMonthly=', grossMonthlySalary, 'wd=', thisMonthWorkingDays, '=> dailyNet=', dailyNet, 'dailyGross=', dailyGross);
+                    }
                 }
             } catch (err) {
                 console.error('[Fine] calculateAttendanceStats failed, using fallback working days:', err.message);
@@ -431,8 +450,8 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 const weeklyHolidays = businessSettings.weeklyHolidays || [{ day: 0, name: 'Sunday' }];
                 const workingDays = calculateWorkingDays(attendanceYear, attendanceMonth0Based, monthHolidays, weeklyOffPattern, weeklyHolidays);
                 if (workingDays > 0) {
-                    dailyNet = netMonthlySalary / workingDays;
-                    if (grossMonthlySalary > 0) dailyGross = grossMonthlySalary / workingDays;
+                    if (dailyNet == null || dailyNet <= 0) dailyNet = netMonthlySalary / workingDays;
+                    if ((dailyGross == null || dailyGross <= 0) && grossMonthlySalary > 0) dailyGross = grossMonthlySalary / workingDays;
                 }
             }
         }
@@ -584,7 +603,8 @@ async function applyOvertimeAmountForAttendance(
     template,
     shiftTiming,
     attendanceDate,
-    leaveForOt
+    leaveForOt,
+    perDayOverride
 ) {
     const logTag = '[OT Calc][amount]';
     const otRounded = Math.floor(Number(attendance.overtime) || 0);
@@ -675,10 +695,58 @@ async function applyOvertimeAmountForAttendance(
         salaryStructure?.monthly?.netMonthlySalary != null
             ? Number(salaryStructure.monthly.netMonthlySalary)
             : 0;
+    const grossMonthlySalary =
+        salaryStructure?.monthly?.grossSalary != null
+            ? Number(salaryStructure.monthly.grossSalary)
+            : 0;
     const attendanceYear = attendanceDate.getFullYear();
     const attendanceMonth1Based = attendanceDate.getMonth() + 1;
-    let dailySalary = null;
-    if (netMonthlySalary > 0 && staff._id) {
+    let dailyNet = null;
+    let dailyGross = null;
+
+    // Prefer per-day rates passed from the mobile app on punch-out (SharedPreferences preview parity),
+    // then staff preview fields (current month only).
+    const overrideNet = Number(perDayOverride?.appPerDayNetSalary);
+    const overrideGross = Number(perDayOverride?.appPerdayGrossSalary);
+    if (Number.isFinite(overrideNet) && overrideNet > 0) dailyNet = overrideNet;
+    if (Number.isFinite(overrideGross) && overrideGross > 0) dailyGross = overrideGross;
+    if ((dailyNet || dailyGross) && console && console.log) {
+        console.log(
+            logTag,
+            'perDaySource=appOverride',
+            '| appPerDayNetSalary=',
+            perDayOverride?.appPerDayNetSalary,
+            'appPerdayGrossSalary=',
+            perDayOverride?.appPerdayGrossSalary
+        );
+    }
+
+    // Prefer per-day rates synced from payroll preview by the mobile app (current month only).
+    const nowForMonthGuard = new Date();
+    const isCurrentMonth =
+        attendanceYear === nowForMonthGuard.getFullYear() &&
+        attendanceMonth1Based === (nowForMonthGuard.getMonth() + 1);
+    const appPerDayNet = Number(staff.appPerDayNetSalary);
+    const appPerDayGross = Number(staff.appPerdayGrossSalary);
+
+    // Note: dailyNet/dailyGross may already be set by app override.
+    if (isCurrentMonth) {
+        if ((dailyNet == null || dailyNet <= 0) && Number.isFinite(appPerDayNet) && appPerDayNet > 0) dailyNet = appPerDayNet;
+        if ((dailyGross == null || dailyGross <= 0) && Number.isFinite(appPerDayGross) && appPerDayGross > 0) dailyGross = appPerDayGross;
+        if ((dailyNet || dailyGross) && console && console.log && !(Number.isFinite(overrideNet) && overrideNet > 0) && !(Number.isFinite(overrideGross) && overrideGross > 0)) {
+            console.log(
+                logTag,
+                'perDaySource=staffPreview',
+                '| appPerDayNetSalary=',
+                staff.appPerDayNetSalary,
+                'appPerdayGrossSalary=',
+                staff.appPerdayGrossSalary
+            );
+        }
+    }
+
+    // Fallback: derive per-day from monthly salary ÷ full-month working days (existing behavior).
+    if ((dailyNet == null || dailyNet <= 0) && netMonthlySalary > 0 && staff._id) {
         try {
             const attendanceStats = await calculateAttendanceStats(
                 staff._id,
@@ -688,7 +756,24 @@ async function applyOvertimeAmountForAttendance(
             const thisMonthWorkingDays =
                 attendanceStats.workingDaysFullMonth ?? attendanceStats.workingDays ?? 0;
             if (thisMonthWorkingDays > 0) {
-                dailySalary = netMonthlySalary / thisMonthWorkingDays;
+                dailyNet = netMonthlySalary / thisMonthWorkingDays;
+                if (grossMonthlySalary > 0) {
+                    dailyGross = grossMonthlySalary / thisMonthWorkingDays;
+                }
+                console.log(
+                    logTag,
+                    'perDaySource=monthlyWd',
+                    '| netMonthly=',
+                    netMonthlySalary,
+                    'grossMonthly=',
+                    grossMonthlySalary,
+                    'wd=',
+                    thisMonthWorkingDays,
+                    '=> dailyNet=',
+                    dailyNet,
+                    'dailyGross=',
+                    dailyGross
+                );
             }
         } catch (err) {
             console.error('[OT Pay] calculateAttendanceStats failed:', err.message);
@@ -712,11 +797,17 @@ async function applyOvertimeAmountForAttendance(
                 weeklyOffPattern,
                 weeklyHolidays
             );
-            if (workingDays > 0) dailySalary = netMonthlySalary / workingDays;
+            if (workingDays > 0) {
+                dailyNet = netMonthlySalary / workingDays;
+                if (grossMonthlySalary > 0) dailyGross = grossMonthlySalary / workingDays;
+            }
         }
     }
 
-    let effectiveDailySalary = dailySalary && dailySalary > 0 ? dailySalary : 0;
+    // OT shiftBased base uses gross when available (same as fine calculation’s base daily salary).
+    const baseDailyForOt =
+        (dailyGross != null && dailyGross > 0) ? dailyGross : (dailyNet != null ? dailyNet : 0);
+    let effectiveDailySalary = baseDailyForOt && baseDailyForOt > 0 ? baseDailyForOt : 0;
     if (isHalfDay && effectiveDailySalary > 0) {
         effectiveDailySalary = effectiveDailySalary / 2;
     }
@@ -1007,7 +1098,11 @@ const checkIn = async (req, res) => {
                 fineTemplate,
                 staff,
                 company,
-                activeLeave
+                activeLeave,
+                {
+                    appPerDayNetSalary: req.body?.appPerDayNetSalary,
+                    appPerdayGrossSalary: req.body?.appPerdayGrossSalary
+                }
             );
             existing.punchIn = now;
 
@@ -1659,7 +1754,11 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
             template,
             shiftTiming,
             shiftDay,
-            leaveForOt
+            leaveForOt,
+            {
+                appPerDayNetSalary: data?.appPerDayNetSalary,
+                appPerdayGrossSalary: data?.appPerdayGrossSalary
+            }
         );
     } else {
         attendance.overtimeAmount = 0;
@@ -1698,7 +1797,11 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         fineTemplate,
         staff,
         company,
-        leaveForFine
+        leaveForFine,
+        {
+            appPerDayNetSalary: data?.appPerDayNetSalary,
+            appPerdayGrossSalary: data?.appPerdayGrossSalary
+        }
     );
     const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
     const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;

@@ -21,6 +21,7 @@ class InteractionShellScreen extends StatefulWidget {
 class _InteractionShellScreenState extends State<InteractionShellScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  String? _role;
 
   @override
   void initState() {
@@ -34,10 +35,12 @@ class _InteractionShellScreenState extends State<InteractionShellScreen>
   Future<void> _ensureTermsAndSocket() async {
     if (!mounted) return;
     try {
+      _role = await InteractionService.currentUserRole();
+      final isAdminLike = InteractionService.isInteractionAdminLikeRole(_role);
       final status = await InteractionService.instance.getChatTermsStatus();
       final data = status['data'];
       final approved = data is Map && data['chatTermsApproved'] == true;
-      if (!approved && mounted) {
+      if (!approved && !isAdminLike && mounted) {
         final accept = await showDialog<bool>(
           context: context,
           barrierDismissible: false,

@@ -166,14 +166,38 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     return (s == peer && r == me) || (s == me && r == peer);
   }
 
+  /// One logical message per `_id`. Socket and REST response can both arrive (any order);
+  /// we dedupe so the chat never shows duplicates until the next full reload.
+  void _upsertMessageFromSendOrSocket(Map<String, dynamic> msg) {
+    final id = msg['_id']?.toString();
+    if (!mounted) return;
+    if (id != null && id.isNotEmpty) {
+      _seenIds.add(id);
+      setState(() {
+        final rest = _messages.where((m) => m['_id']?.toString() != id).toList();
+        _messages = [msg, ...rest];
+      });
+    } else {
+      setState(() => _messages = [msg, ..._messages]);
+    }
+    _markVisibleRead();
+  }
+
+  void _scrollChatToLatest() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
   void _onSocketMessage(Map<String, dynamic> msg) {
     if (!_matchesThread(msg)) return;
-    final id = msg['_id']?.toString();
-    if (id != null && _seenIds.contains(id)) return;
-    if (id != null) _seenIds.add(id);
     if (!mounted) return;
-    setState(() => _messages = [msg, ..._messages]);
-    _markVisibleRead();
+    _upsertMessageFromSendOrSocket(msg);
   }
 
   void _onScroll() {
@@ -280,9 +304,23 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       if (data is Map) {
         final m = <String, dynamic>{};
         data.forEach((k, v) => m[k.toString()] = v);
-        final id = m['_id']?.toString();
-        if (id != null) _seenIds.add(id);
-        if (mounted) setState(() => _messages = [m, ..._messages]);
+        // Upload API may return relative paths; convert immediately so
+        // new media messages render right away without reopening chat.
+        final fileUrl = m['fileUrl']?.toString();
+        if (fileUrl != null && fileUrl.isNotEmpty && !fileUrl.startsWith('http')) {
+          m['fileUrl'] = AppConstants.getLmsFileUrl(fileUrl);
+        }
+        final voiceUrl = m['voiceUrl']?.toString();
+        if (voiceUrl != null && voiceUrl.isNotEmpty && !voiceUrl.startsWith('http')) {
+          m['voiceUrl'] = AppConstants.getLmsFileUrl(voiceUrl);
+        }
+        final genericUrl = m['url']?.toString();
+        if (genericUrl != null && genericUrl.isNotEmpty && !genericUrl.startsWith('http')) {
+          m['url'] = AppConstants.getLmsFileUrl(genericUrl);
+        }
+        if (!mounted) return;
+        _upsertMessageFromSendOrSocket(m);
+        _scrollChatToLatest();
       }
     } catch (e) {
       if (mounted) {
@@ -339,9 +377,9 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       if (data is Map) {
         final m = <String, dynamic>{};
         data.forEach((k, v) => m[k.toString()] = v);
-        final id = m['_id']?.toString();
-        if (id != null) _seenIds.add(id);
-        if (mounted) setState(() => _messages = [m, ..._messages]);
+        if (!mounted) return;
+        _upsertMessageFromSendOrSocket(m);
+        _scrollChatToLatest();
       }
     } catch (e) {
       if (mounted) {
@@ -523,6 +561,20 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     return u.startsWith('http') ? u : null;
   }
 
+  String? _messageMediaUrl(Map<String, dynamic> msg) {
+    final raw =
+        msg['fileUrl']?.toString() ??
+        msg['voiceUrl']?.toString() ??
+        msg['url']?.toString() ??
+        msg['file']?.toString();
+    if (raw == null || raw.isEmpty) return null;
+    final normalized =
+        raw.startsWith('http://') || raw.startsWith('https://')
+            ? raw
+            : AppConstants.getLmsFileUrl(raw);
+    return normalized.startsWith('http') ? normalized : null;
+  }
+
   DateTime? _msgLocalTime(Map<String, dynamic> msg) {
     return DateTime.tryParse(msg['sentTime']?.toString() ?? '')?.toLocal();
   }
@@ -607,8 +659,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     Widget inner;
     switch (type) {
       case 'image':
-        final url = msg['fileUrl']?.toString();
-        inner = url == null || !url.startsWith('http')
+        final url = _messageMediaUrl(msg);
+        inner = url == null
             ? Text('Image', style: TextStyle(color: textColor.withValues(alpha: 0.7)))
             : ClipRRect(
                 borderRadius: BorderRadius.circular(8),
@@ -617,9 +669,9 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         break;
       case 'file':
         final name = msg['fileName']?.toString() ?? 'File';
-        final url = msg['fileUrl']?.toString();
+        final url = _messageMediaUrl(msg);
         inner = InkWell(
-          onTap: url != null && url.startsWith('http') ? () => launchUrl(Uri.parse(url)) : null,
+          onTap: url != null ? () => launchUrl(Uri.parse(url)) : null,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -631,8 +683,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         );
         break;
       case 'voice':
-        final url = msg['voiceUrl']?.toString();
-        inner = (url == null || !url.startsWith('http'))
+        final url = _messageMediaUrl(msg);
+        inner = (url == null)
             ? Text('Voice message', style: TextStyle(color: textColor.withValues(alpha: 0.75)))
             : _InlineVoiceMessagePlayer(url: url, isMine: isMine);
         break;
@@ -1160,6 +1212,21 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                         child: Padding(
                                           padding: const EdgeInsets.all(10),
                                           child: Icon(Icons.attach_file, color: Colors.grey.shade600, size: 22),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 2, bottom: 6),
+                                    child: Material(
+                                      color: Colors.grey.shade100,
+                                      shape: const CircleBorder(),
+                                      child: InkWell(
+                                        customBorder: const CircleBorder(),
+                                        onTap: () => _pickImage(ImageSource.camera),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(10),
+                                          child: Icon(Icons.photo_camera_outlined, color: Colors.grey.shade600, size: 22),
                                         ),
                                       ),
                                     ),

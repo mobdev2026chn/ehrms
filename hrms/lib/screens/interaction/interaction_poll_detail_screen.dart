@@ -164,7 +164,7 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
                       child: const Padding(
                         padding: EdgeInsets.all(12),
                         child: Text(
-                          'Admin accounts can manage polls on the web but cannot vote in the app, same as the web app.',
+                          'Admin-side roles can manage polls on web and cannot vote in app (web parity).',
                         ),
                       ),
                     ),

@@ -675,10 +675,33 @@ const updateProfile = async (req, res) => {
             if (pfNumber !== undefined) updateData.pfNumber = pfNumber;
             if (esiNumber !== undefined) updateData.esiNumber = esiNumber;
 
-            await Staff.findByIdAndUpdate(req.staff._id, updateData, {
-                runValidators: false,
-                new: true
-            });
+            // App sync: per-day net/gross from web payroll preview (salaryBasis ÷ fullMonth WD) — fines / salary UI parity.
+            const { appPerDayNetSalary, appPerdayGrossSalary } = req.body;
+            if (appPerDayNetSalary !== undefined && appPerDayNetSalary !== null && appPerDayNetSalary !== '') {
+                const v = Number(appPerDayNetSalary);
+                if (Number.isFinite(v) && v >= 0 && v < 1e9) {
+                    updateData.appPerDayNetSalary = Math.round(v * 100) / 100;
+                }
+            }
+            if (appPerdayGrossSalary !== undefined && appPerdayGrossSalary !== null && appPerdayGrossSalary !== '') {
+                const v = Number(appPerdayGrossSalary);
+                if (Number.isFinite(v) && v >= 0 && v < 1e9) {
+                    updateData.appPerdayGrossSalary = Math.round(v * 100) / 100;
+                }
+            }
+            if (Object.keys(updateData).length > 0) {
+                if (updateData.appPerDayNetSalary != null || updateData.appPerdayGrossSalary != null) {
+                    console.log(
+                        '[updateProfile] app per-day from client:',
+                        `appPerDayNetSalary=${updateData.appPerDayNetSalary}`,
+                        `appPerdayGrossSalary=${updateData.appPerdayGrossSalary}`
+                    );
+                }
+                await Staff.findByIdAndUpdate(req.staff._id, updateData, {
+                    runValidators: false,
+                    new: true
+                });
+            }
         }
 
         res.json({

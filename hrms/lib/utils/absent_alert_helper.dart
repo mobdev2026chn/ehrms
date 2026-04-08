@@ -343,6 +343,39 @@ Map<String, dynamic>? flattenTodayAttendancePayload(dynamic apiBody) {
   return out.isEmpty ? null : out;
 }
 
+/// True if [value] is a non-empty string (or value) that parses as [DateTime].
+/// Used for attendance collection [punchIn] / [punchOut] fields from the API.
+bool hasParsablePunchDateTime(dynamic value) {
+  if (value == null) return false;
+  final s = value.toString().trim();
+  if (s.isEmpty) return false;
+  return DateTime.tryParse(s) != null;
+}
+
+/// Whether the today API payload implies the user is **checked in** and should see **Punch Out**.
+/// Matches backend `getTodayAttendance`: [checkedIn], else [hasPunchIn]/[hasPunchOut], else parsed [punchIn]/[punchOut].
+bool isAwaitingPunchOutFromTodayAttendance(Map<String, dynamic>? attendance) {
+  if (attendance == null) return false;
+  final checkedIn = attendance['checkedIn'];
+  if (checkedIn is bool) return checkedIn;
+
+  final hasInFlag = attendance['hasPunchIn'] == true;
+  final hasOutFlag = attendance['hasPunchOut'] == true;
+  final hasInTime = hasParsablePunchDateTime(attendance['punchIn']);
+  final hasOutTime = hasParsablePunchDateTime(attendance['punchOut']);
+  final hasIn = hasInFlag || hasInTime;
+  final hasOut = hasOutFlag || hasOutTime;
+  return hasIn && !hasOut;
+}
+
+/// Same rule as [isAwaitingPunchOutFromTodayAttendance] using only cached punch strings (e.g. prefs).
+bool isAwaitingPunchOutFromCachedPunchStrings({
+  required String? punchIn,
+  required String? punchOut,
+}) {
+  return hasParsablePunchDateTime(punchIn) && !hasParsablePunchDateTime(punchOut);
+}
+
 bool shouldSuppressAbsentAlert(Map<String, dynamic>? todayAttendance) {
   if (todayAttendance == null) return false;
 

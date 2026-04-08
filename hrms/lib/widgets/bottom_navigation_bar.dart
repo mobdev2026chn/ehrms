@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_colors.dart';
 import '../services/break_service.dart';
 import '../screens/dashboard/dashboard_screen.dart';
+import '../utils/absent_alert_helper.dart';
 import '../utils/break_datetime_util.dart';
 import 'break_status_card.dart';
 
@@ -82,6 +83,18 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     _fetchActiveBreak();
   }
 
+  @override
+  void didUpdateWidget(AppBottomNavigationBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Dashboard passes live [isPunchedInToday]; other routes use prefs only, refreshed here
+    // when the bar rebuilds so Punch In/Out matches after check-in/out.
+    if (widget.isPunchedInToday == null &&
+        (oldWidget.isPunchedInToday != widget.isPunchedInToday ||
+            oldWidget.currentIndex != widget.currentIndex)) {
+      _checkPunchState();
+    }
+  }
+
   bool get _useExternalBreakState =>
       widget.onEndBreakTap != null ||
       widget.activeBreakStartTime != null ||
@@ -134,15 +147,24 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
       final todayKey = '${today.year}-${today.month}-${today.day}';
       final cacheDay = prefs.getString('today_punch_date');
 
-      final hasIn = punchIn != null && punchIn.toString().trim().isNotEmpty;
-      final hasOut = punchOut != null && punchOut.toString().trim().isNotEmpty;
-      final isPunchedInFromPrefs = cacheDay == todayKey && hasIn && !hasOut;
+      final isPunchedInFromPrefs = cacheDay == todayKey &&
+          isAwaitingPunchOutFromCachedPunchStrings(
+            punchIn: punchIn,
+            punchOut: punchOut,
+          );
 
       if (kDebugMode) {
+        final label = isPunchedInFromPrefs ? 'Punch Out' : 'Punch In';
         debugPrint(
           '[AppBottomNav] _checkPunchState: todayKey=$todayKey cacheDay=$cacheDay '
           'punchIn=${punchIn != null ? "set" : "null"} punchOut=${punchOut != null ? "set" : "null"} '
-          'hasIn=$hasIn hasOut=$hasOut => isPunchedIn=$isPunchedInFromPrefs',
+          'awaitingPunchOut=$isPunchedInFromPrefs',
+        );
+        debugPrint(
+          '[PunchButton][BottomNav][today-from-prefs] '
+          'todayKey=$todayKey cacheDay=$cacheDay '
+          'punchIn="${punchIn ?? ""}" punchOut="${punchOut ?? ""}" '
+          'awaitingPunchOut=$isPunchedInFromPrefs => label="$label"',
         );
       }
 

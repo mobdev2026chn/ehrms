@@ -143,7 +143,29 @@ class InteractionService {
 
   static bool roleCannotVote(String? role) {
     final r = (role ?? '').trim();
-    return r == 'Super Admin' || r == 'Admin' || r == 'HR';
+    return interactionAdminLikeRoles.contains(r);
+  }
+
+  /// Web ChatPage `isAdminUser` parity.
+  static const Set<String> interactionAdminLikeRoles = {
+    'Admin',
+    'Super Admin',
+    'HR',
+    'Senior HR',
+    'Manager',
+    'EmployeeAdmin',
+  };
+
+  /// Web canManageGroups parity.
+  static const Set<String> interactionGroupManagerRoles = {
+    'Super Admin',
+    'Admin',
+    'HR',
+  };
+
+  static bool isInteractionAdminLikeRole(String? role) {
+    final r = (role ?? '').trim();
+    return interactionAdminLikeRoles.contains(r);
   }
 
   /// Same as web: `GET {api}/interaction/chats` with Bearer token (web: https://hrms.askeva.net/api/interaction/chats).

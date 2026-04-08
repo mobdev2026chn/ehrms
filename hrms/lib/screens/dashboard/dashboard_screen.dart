@@ -25,6 +25,7 @@ import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
 import '../../services/geo/location_service.dart';
 import '../../services/presence_tracking_service.dart';
+import '../../services/salary_service.dart';
 import '../../bloc/attendance/attendance_bloc.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../utils/attendance_template_util.dart';
@@ -57,8 +58,6 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen>
     with WidgetsBindingObserver {
-  static const String _netPerDaySalaryPrefsKey = 'app_net_per_day_salary';
-  static const String _legacyPerDaySalaryPrefsKey = 'app_per_day_salary';
   static const String _dashboardLocationPromptLastShownKey =
       'dashboard_location_prompt_last_shown_ms';
   late int _currentIndex;
@@ -94,12 +93,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   static bool _isAttendancePunchedIn(Map<String, dynamic>? attendance) {
-    if (attendance == null) return false;
-    final hasIn = _hasPunchValue(attendance['punchIn']);
-    final hasOut =
-        _hasPunchValue(attendance['punchOut']) ||
-        attendance['hasPunchOut'] == true;
-    return hasIn && !hasOut;
+    return isAwaitingPunchOutFromTodayAttendance(attendance);
   }
 
   static bool _isAttendanceCompleted(Map<String, dynamic>? attendance) {
@@ -148,7 +142,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Presence resume is handled app-wide in DeactivationCheckWrapper so it runs from any screen.
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_fetchPunchStatusForNavBar());
+    }
   }
 
   Future<void> _showLocationCardsAfterDelay() async {
@@ -164,6 +160,50 @@ class _DashboardScreenState extends State<DashboardScreen>
     await LocationService.ensureAppLocationAccess(context);
   }
 
+  /// When GET /today fails (throttle, offline), keep nav label aligned with last known prefs
+  /// instead of forcing "Punch In" and clearing cache.
+  Future<void> _applyPunchNavFromPrefsIfAny() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final punchIn = prefs.getString('today_punch_in') ?? '';
+      final punchOut = prefs.getString('today_punch_out') ?? '';
+      final today = DateTime.now();
+      final todayKey = '${today.year}-${today.month}-${today.day}';
+      final cacheDay = prefs.getString('today_punch_date');
+      final isIn = cacheDay == todayKey &&
+          isAwaitingPunchOutFromCachedPunchStrings(
+            punchIn: punchIn,
+            punchOut: punchOut,
+          );
+      if (mounted) setState(() => _isPunchedInToday = isIn);
+    } catch (_) {}
+  }
+
+  Future<void> _optimisticPunchInPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final today = DateTime.now();
+      final todayKey = '${today.year}-${today.month}-${today.day}';
+      await prefs.setString('today_punch_date', todayKey);
+      await prefs.setString('today_punch_in', today.toIso8601String());
+      await prefs.setString('today_punch_out', '');
+    } catch (_) {}
+  }
+
+  Future<void> _optimisticPunchOutPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final today = DateTime.now();
+      final todayKey = '${today.year}-${today.month}-${today.day}';
+      await prefs.setString('today_punch_date', todayKey);
+      final existingIn = prefs.getString('today_punch_in') ?? '';
+      if (existingIn.trim().isEmpty) {
+        await prefs.setString('today_punch_in', today.toIso8601String());
+      }
+      await prefs.setString('today_punch_out', today.toIso8601String());
+    } catch (_) {}
+  }
+
   Future<void> _fetchPunchStatusForNavBar() async {
     final res = await _attendanceService.getTodayAttendance(forceRefresh: true);
     if (!mounted) return;
@@ -172,13 +212,45 @@ class _DashboardScreenState extends State<DashboardScreen>
       // Same merge as home dashboard today card (nested `data` + root flags).
       final attendance =
           flattenTodayAttendancePayload(data) ?? _extractAttendanceRecord(data) ?? data;
+      // Some server responses can be "success" but still have no attendance document
+      // (timezone/date mismatch). In that case, don't wipe a known punch-in state:
+      // fall back to today's cached punch strings in prefs.
+      final hasPunchSignal =
+          (attendance['checkedIn'] is bool) ||
+          attendance['hasPunchIn'] == true ||
+          attendance['hasPunchOut'] == true ||
+          hasParsablePunchDateTime(attendance['punchIn']) ||
+          hasParsablePunchDateTime(attendance['punchOut']);
+      if (!hasPunchSignal) {
+        if (kDebugMode) {
+          debugPrint(
+            '[Dashboard] _fetchPunchStatusForNavBar: success but no punch fields; using prefs fallback',
+          );
+        }
+        await _applyPunchNavFromPrefsIfAny();
+        await PresenceTrackingService().ensureTrackingIfPunchedIn(_isPunchedInToday);
+        return;
+      }
+
       final isPunchedIn = _isAttendancePunchedIn(attendance);
       final hasIn = _hasPunchValue(attendance['punchIn']);
       final hasOut = _hasPunchValue(attendance['punchOut']);
       if (kDebugMode) {
+        final rawIn = attendance['punchIn']?.toString();
+        final rawOut = attendance['punchOut']?.toString();
+        final checkedIn = attendance['checkedIn'];
+        final hasInFlag = attendance['hasPunchIn'];
+        final hasOutFlag = attendance['hasPunchOut'];
+        final awaiting = isAwaitingPunchOutFromTodayAttendance(attendance);
+        final label = awaiting ? 'Punch Out' : 'Punch In';
         debugPrint(
           '[Dashboard] _fetchPunchStatusForNavBar: '
           'hasIn=$hasIn hasOut=$hasOut => isPunchedInToday=$isPunchedIn',
+        );
+        debugPrint(
+          '[PunchButton][Dashboard][today-from-api] '
+          'checkedIn=$checkedIn hasPunchIn=$hasInFlag hasPunchOut=$hasOutFlag '
+          'punchIn="$rawIn" punchOut="$rawOut" awaitingPunchOut=$awaiting => label="$label"',
         );
       }
       setState(() {
@@ -190,10 +262,14 @@ class _DashboardScreenState extends State<DashboardScreen>
       }
       await PresenceTrackingService().ensureTrackingIfPunchedIn(isPunchedIn);
     } else {
-      if (kDebugMode) debugPrint('[Dashboard] _fetchPunchStatusForNavBar: no data => isPunchedInToday=false');
-      setState(() => _isPunchedInToday = false);
-      await _clearTodayPunchPrefs();
-      await PresenceTrackingService().ensureTrackingIfPunchedIn(false);
+      if (kDebugMode) {
+        debugPrint(
+          '[Dashboard] _fetchPunchStatusForNavBar: fetch failed '
+          '${res['message'] ?? ''} — keeping prefs-backed punch nav state',
+        );
+      }
+      await _applyPunchNavFromPrefsIfAny();
+      await PresenceTrackingService().ensureTrackingIfPunchedIn(_isPunchedInToday);
     }
   }
 
@@ -204,21 +280,14 @@ class _DashboardScreenState extends State<DashboardScreen>
       final todayKey = '${today.year}-${today.month}-${today.day}';
       final punchIn = attendance['punchIn']?.toString().trim() ?? '';
       final punchOut = attendance['punchOut']?.toString().trim() ?? '';
+      // Only overwrite cached times when server actually returned valid punch timestamps.
+      // This prevents a "success" response with null attendance from wiping a real punch-in.
       await prefs.setString('today_punch_date', todayKey);
-      await prefs.setString('today_punch_in', punchIn);
-      await prefs.setString('today_punch_out', punchOut);
-    } catch (_) {}
-  }
-
-  Future<void> _clearTodayPunchPrefs() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final today = DateTime.now();
-      final todayKey = '${today.year}-${today.month}-${today.day}';
-      final cacheDay = prefs.getString('today_punch_date');
-      if (cacheDay == todayKey) {
-        await prefs.setString('today_punch_in', '');
-        await prefs.setString('today_punch_out', '');
+      if (hasParsablePunchDateTime(punchIn)) {
+        await prefs.setString('today_punch_in', punchIn);
+      }
+      if (hasParsablePunchDateTime(punchOut)) {
+        await prefs.setString('today_punch_out', punchOut);
       }
     } catch (_) {}
   }
@@ -354,12 +423,18 @@ class _DashboardScreenState extends State<DashboardScreen>
   Future<double?> _loadPerDaySalaryFromPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final direct = prefs.getDouble(_netPerDaySalaryPrefsKey);
+      final grossDirect = prefs.getDouble(kAppGrossPerDaySalaryPrefsKey);
+      if (grossDirect != null && grossDirect > 0) return grossDirect;
+      final grossAsString = prefs.getString(kAppGrossPerDaySalaryPrefsKey);
+      final grossParsed =
+          grossAsString == null ? null : double.tryParse(grossAsString);
+      if (grossParsed != null && grossParsed > 0) return grossParsed;
+      final direct = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
       if (direct != null && direct > 0) return direct;
-      final asString = prefs.getString(_netPerDaySalaryPrefsKey);
+      final asString = prefs.getString(kAppNetPerDaySalaryPrefsKey);
       final parsed = asString == null ? null : double.tryParse(asString);
       if (parsed != null && parsed > 0) return parsed;
-      final legacyDirect = prefs.getDouble(_legacyPerDaySalaryPrefsKey);
+      final legacyDirect = prefs.getDouble(kAppLegacyPerDaySalaryPrefsKey);
       if (legacyDirect != null && legacyDirect > 0) return legacyDirect;
     } catch (_) {}
     return null;
@@ -720,6 +795,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     final normalized = _normalizeTabIndex(index);
     if (index >= 0 && (index <= 4 || index == 5)) {
       setState(() => _currentIndex = normalized);
+      unawaited(_fetchPunchStatusForNavBar());
     }
   }
 
@@ -733,6 +809,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       if (index == 1) _requestsSubTabIndex = subTabIndex;
       if (normalized == 4) _attendanceSubTabIndex = subTabIndex;
     });
+    unawaited(_fetchPunchStatusForNavBar());
   }
 
   void _onRequestsTabIndexChanged(int index) {
@@ -1460,16 +1537,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     } catch (_) {
       return null;
     }
-  }
-
-  static String _formatHhMmForDisplay(String hhmm) {
-    final parts = hhmm.split(':');
-    final h = int.tryParse(parts[0].trim()) ?? 0;
-    final m = parts.length > 1 ? (int.tryParse(parts[1].trim()) ?? 0) : 0;
-    final hour = h % 12 == 0 ? 12 : h % 12;
-    final ampm = h < 12 ? 'AM' : 'PM';
-    if (m == 0) return '$hour:00 $ampm';
-    return '$hour:${m.toString().padLeft(2, '0')} $ampm';
   }
 
   static String _shiftDisplayNameForWarningDialog(
@@ -2462,7 +2529,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               Navigator.of(context).pop();
             }
             _setPunchActionInProgress(false);
+            setState(() => _isPunchedInToday = true);
           }
+          await _optimisticPunchInPrefs();
           _attendanceService.clearCachesForRefresh();
           unawaited(_fetchPunchStatusForNavBar());
           _dashboardRefreshTrigger.value++;
@@ -2499,7 +2568,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               Navigator.of(context).pop();
             }
             _setPunchActionInProgress(false);
+            setState(() => _isPunchedInToday = false);
           }
+          await _optimisticPunchOutPrefs();
           _attendanceService.clearCachesForRefresh();
           unawaited(_fetchPunchStatusForNavBar());
           _dashboardRefreshTrigger.value++;
@@ -2750,6 +2821,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               if (index == 2 && !_hasSalaryOverviewAccess) return;
               final normalized = _normalizeTabIndex(index);
               setState(() => _currentIndex = normalized);
+              unawaited(_fetchPunchStatusForNavBar());
             },
           ),
         ),

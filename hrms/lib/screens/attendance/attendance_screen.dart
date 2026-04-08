@@ -27,6 +27,7 @@ import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/absent_alert_helper.dart';
 import '../../utils/fine_calculation_util.dart';
+import '../../services/salary_service.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/attendance_success_overlay.dart';
@@ -55,8 +56,6 @@ class AttendanceScreen extends StatefulWidget {
 
 class _AttendanceScreenState extends State<AttendanceScreen>
     with SingleTickerProviderStateMixin {
-  static const String _netPerDaySalaryPrefsKey = 'app_net_per_day_salary';
-  static const String _legacyPerDaySalaryPrefsKey = 'app_per_day_salary';
   static const Duration _networkTimeout = Duration(seconds: 45);
   Map<String, dynamic>? _attendanceData;
 
@@ -2355,12 +2354,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   Future<double?> _loadPerDaySalaryFromPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final direct = prefs.getDouble(_netPerDaySalaryPrefsKey);
+      final grossDirect = prefs.getDouble(kAppGrossPerDaySalaryPrefsKey);
+      if (grossDirect != null && grossDirect > 0) return grossDirect;
+      final grossAsString = prefs.getString(kAppGrossPerDaySalaryPrefsKey);
+      final grossParsed =
+          grossAsString == null ? null : double.tryParse(grossAsString);
+      if (grossParsed != null && grossParsed > 0) return grossParsed;
+      final direct = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
       if (direct != null && direct > 0) return direct;
-      final asString = prefs.getString(_netPerDaySalaryPrefsKey);
+      final asString = prefs.getString(kAppNetPerDaySalaryPrefsKey);
       final parsed = asString == null ? null : double.tryParse(asString);
       if (parsed != null && parsed > 0) return parsed;
-      final legacyDirect = prefs.getDouble(_legacyPerDaySalaryPrefsKey);
+      final legacyDirect = prefs.getDouble(kAppLegacyPerDaySalaryPrefsKey);
       if (legacyDirect != null && legacyDirect > 0) return legacyDirect;
     } catch (_) {}
     return null;

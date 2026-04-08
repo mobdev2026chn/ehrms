@@ -162,6 +162,9 @@ class AttendanceService {
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
+      final prefs = await SharedPreferences.getInstance();
+      final appPerDayNetSalary = prefs.getDouble('app_net_per_day_salary');
+      final appPerdayGrossSalary = prefs.getDouble('app_gross_per_day_salary');
       final body = {
         'latitude': lat,
         'longitude': lng,
@@ -176,6 +179,10 @@ class AttendanceService {
         'lateMinutes': lateMinutes,
         'earlyMinutes': earlyMinutes,
         'fineAmount': fineAmount,
+        if (appPerDayNetSalary != null && appPerDayNetSalary > 0)
+          'appPerDayNetSalary': appPerDayNetSalary,
+        if (appPerdayGrossSalary != null && appPerdayGrossSalary > 0)
+          'appPerdayGrossSalary': appPerdayGrossSalary,
       };
       final response = await _api.dio.put<Map<String, dynamic>>(
         '/attendance/checkout',
@@ -251,9 +258,9 @@ class AttendanceService {
         return {'success': true, 'data': _cachedTodayAttendance};
       }
 
-      // Throttle repeated calls within a short window
-      if (date == null && _isThrottled(url)) {
-        // If we have cache, return it, otherwise surface a friendly message
+      // Throttle repeated calls within a short window. [forceRefresh] skips throttle so
+      // post check-in/out refetches do not hit empty-cache "too many requests".
+      if (date == null && !forceRefresh && _isThrottled(url)) {
         if (_cachedTodayAttendance != null) {
           return {'success': true, 'data': _cachedTodayAttendance};
         }
@@ -261,6 +268,9 @@ class AttendanceService {
           'success': false,
           'message': 'Too many requests. Please wait a moment.',
         };
+      }
+      if (date == null && forceRefresh) {
+        _lastCallTimestamps[url] = DateTime.now();
       }
 
       final headers = await _getHeaders();
