@@ -306,12 +306,33 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     return DateFormat.MMMd().format(dt);
   }
 
+  int _unreadCount(Map<String, dynamic> row) {
+    final raw = row['unreadCount'];
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw.trim()) ?? 0;
+    final lm = row['lastMessage'];
+    if (lm is Map) {
+      final nested = lm['unreadCount'];
+      if (nested is num) return nested.toInt();
+      if (nested is String) return int.tryParse(nested.trim()) ?? 0;
+    }
+    return 0;
+  }
+
   bool _isBroadcastGroup(Map<String, dynamic> g) =>
       g['groupType']?.toString() == 'broadcast';
 
   Future<void> _openThread(Map<String, dynamic> row) async {
     final chatId = row['chatId']?.toString() ?? 'personal';
-    final receiverId = row['receiverId']?.toString();
+    final receiver = row['receiver'];
+    final receiverFromObj =
+        receiver is Map ? (receiver['_id']?.toString() ?? receiver['id']?.toString()) : null;
+    final receiverFromRow = row['receiverId']?.toString();
+    // Web uses the selected receiver object id for personal thread fetch.
+    // Prefer receiver object id, fallback to receiverId field.
+    String? receiverId = (receiverFromObj != null && receiverFromObj.isNotEmpty)
+        ? receiverFromObj
+        : receiverFromRow;
     final groupId = row['groupId']?.toString();
     final isGroup = row['groupId'] != null;
     bool? canSend;
@@ -325,11 +346,15 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
       }
     }
     bool? peerOnline;
+    String? peerLastSeenAt;
     if (!isGroup) {
       final v = row['isOnline'];
       peerOnline = v is bool ? v : null;
+      final ls = row['lastSeenAt']?.toString();
+      peerLastSeenAt = (ls != null && ls.isNotEmpty) ? ls : null;
     } else {
       peerOnline = null;
+      peerLastSeenAt = null;
     }
     await Navigator.push<void>(
       context,
@@ -341,6 +366,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
           avatarUrl: _avatar(row),
           isGroup: isGroup,
           peerIsOnline: peerOnline,
+          peerLastSeenAt: peerLastSeenAt,
           canSendMessages: canSend,
         ),
       ),
@@ -597,7 +623,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     final peer = row['receiverId']?.toString() ?? '';
     final gid = row['groupId']?.toString() ?? '';
     final listKey = gid.isNotEmpty ? 'g:$gid' : 'p:$peer';
-    final unread = (row['unreadCount'] as num?)?.toInt() ?? 0;
+    final unread = _unreadCount(row);
     final avatarUrl = _avatar(row);
     final title = _title(row);
     final gt = _groupTypeForRow(row);
@@ -633,7 +659,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppColors.primary,
+                  color: const Color(0xFFE9A820),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(

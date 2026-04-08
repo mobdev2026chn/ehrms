@@ -3,9 +3,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
@@ -19,6 +22,7 @@ import '../../config/app_colors.dart';
 import '../../config/constants.dart';
 import '../../services/interaction_service.dart';
 import '../../services/interaction_socket_service.dart';
+import '../../utils/error_message_utils.dart';
 import '../../utils/interaction_avatar_theme.dart';
 import 'interaction_poll_detail_screen.dart';
 
@@ -32,6 +36,7 @@ class InteractionChatThreadScreen extends StatefulWidget {
     required this.isGroup,
     /// From chat list `isOnline` (socket-backed on server). Omit for unknown.
     this.peerIsOnline,
+    this.peerLastSeenAt,
     /// From API `canSendMessages` (e.g. broadcast read-only). When false, composer is disabled.
     this.canSendMessages,
   });
@@ -42,6 +47,7 @@ class InteractionChatThreadScreen extends StatefulWidget {
   final String? avatarUrl;
   final bool isGroup;
   final bool? peerIsOnline;
+  final String? peerLastSeenAt;
   final bool? canSendMessages;
 
   @override
@@ -52,6 +58,80 @@ const Color _kChatHeaderIconGrey = Color(0xFF4A4A4A);
 /// Web / WhatsApp-style outgoing bubble (light mint green).
 const Color _kChatSentBubble = Color(0xFFDCF8C6);
 const Color _kChatReceivedBubble = Color(0xFFFFFFFF);
+OverlayEntry? _chatTopBannerEntry;
+Timer? _chatTopBannerTimer;
+
+void _hideChatTopBanner() {
+  _chatTopBannerTimer?.cancel();
+  _chatTopBannerTimer = null;
+  _chatTopBannerEntry?.remove();
+  _chatTopBannerEntry = null;
+}
+
+void showChatTopBanner(BuildContext context, String message) {
+  _hideChatTopBanner();
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  if (overlay == null) return;
+  final topInset = MediaQuery.of(context).padding.top + 10;
+  final entry = OverlayEntry(
+    builder: (ctx) => Positioned(
+      left: 12,
+      right: 12,
+      top: topInset,
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF1B434),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 16,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 26,
+                height: 26,
+                decoration: const BoxDecoration(
+                  color: Color(0x33FFFFFF),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.notifications_none, size: 16, color: Colors.white),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: _hideChatTopBanner,
+                child: const Icon(Icons.close, size: 18, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+  _chatTopBannerEntry = entry;
+  overlay.insert(entry);
+  _chatTopBannerTimer = Timer(const Duration(seconds: 3), _hideChatTopBanner);
+}
 
 class _InteractionChatThreadScreenState extends State<InteractionChatThreadScreen> {
   final _text = TextEditingController();
@@ -71,15 +151,95 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   String? _myDisplayAvatarUrl;
   String _myDisplayName = '';
   int? _memberCount;
+  String _groupType = 'custom';
+  String _groupName = '';
+  List<String> _allowedSenderIds = [];
+  List<Map<String, dynamic>> _groupMembers = [];
+  String? _myRole;
+  bool _isCurrentGroupAdmin = false;
   StreamSubscription<Map<String, dynamic>>? _sub;
   final _seenIds = <String>{};
   Timer? _typingTimer;
   /// From `GET /interaction/polls` — option ids the current user selected per poll.
   Map<String, List<String>> _myPollOptionIds = {};
   bool _showScrollToBottom = false;
+  bool? _resolvedCanSendMessages;
+  String? _sendBlockedReason;
+  Map<String, dynamic>? _replyTo;
+  String? _highlightMessageId;
+  final Set<String> _failedAvatarUrls = <String>{};
 
-  /// `null` / missing from API → allow send; explicit `false` = broadcast read-only (matches web).
-  bool get _maySend => widget.canSendMessages != false;
+  /// Web parity:
+  /// - explicit false means read-only for regular users
+  /// - but broadcast admins/allowed senders can still send.
+  bool get _maySend {
+    final base = (_resolvedCanSendMessages ?? widget.canSendMessages) != false;
+    if (base) return true;
+    if (!widget.isGroup || !_isBroadcast) return false;
+    final me = _myUserId;
+    if (me == null || me.isEmpty) return false;
+    return _canSendForUserId(me);
+  }
+
+  void _showTopSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    showChatTopBanner(context, message);
+  }
+
+  Widget _safeInitialAvatar({
+    required String name,
+    String? avatarUrl,
+    required double radius,
+    Color? fallbackBg,
+    Color? fallbackFg,
+  }) {
+    final letter = name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : '?';
+    final bg = fallbackBg ?? InteractionAvatarTheme.backgroundForTitle(name.isEmpty ? 'U' : name);
+    final fg = fallbackFg ?? InteractionAvatarTheme.letterColor(bg);
+    final url = (avatarUrl != null && avatarUrl.startsWith('http') && !_failedAvatarUrls.contains(avatarUrl))
+        ? avatarUrl
+        : null;
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: url != null ? Colors.transparent : bg,
+      backgroundImage: url != null ? NetworkImage(url) : null,
+      onBackgroundImageError: url == null
+          ? null
+          : (_, __) {
+              if (!mounted) return;
+              setState(() => _failedAvatarUrls.add(url));
+            },
+      child: url == null
+          ? Text(
+              letter,
+              style: TextStyle(
+                color: fg,
+                fontWeight: FontWeight.bold,
+                fontSize: radius * 0.8,
+              ),
+            )
+          : null,
+    );
+  }
+
+  void _applySendPermissionFromError(Object error) {
+    if (error is! DioException) return;
+    final code = error.response?.statusCode;
+    if (code != 403) return;
+    final msg = ErrorMessageUtils.messageFromDioException(error, fallback: 'You cannot send messages in this chat.');
+    final lower = msg.toLowerCase();
+    if (lower.contains('cannot send') ||
+        lower.contains('view this broadcast') ||
+        lower.contains('no longer a member') ||
+        lower.contains('not a member')) {
+      if (mounted) {
+        setState(() {
+          _resolvedCanSendMessages = false;
+          _sendBlockedReason = msg;
+        });
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -89,6 +249,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
 
   Future<void> _init() async {
     _myUserId = await InteractionService.currentUserId();
+    _myRole = await InteractionService.currentUserRole();
     await _loadMyDisplay();
     if (widget.isGroup) {
       InteractionSocketService.instance.joinGroupChats([widget.chatId]);
@@ -100,8 +261,28 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     _scrollController.addListener(_onScroll);
     await _loadPage(1, replace: true);
     unawaited(_loadGroupMeta());
+    unawaited(_refreshSendCapabilityFromGroup());
     unawaited(_hydratePollVotes());
     await _markVisibleRead();
+  }
+
+  Future<void> _refreshSendCapabilityFromGroup() async {
+    if (!widget.isGroup) return;
+    try {
+      final res = await InteractionService.instance.getGroups();
+      final data = res['data'];
+      if (data is! List || !mounted) return;
+      for (final g in data) {
+        if (g is! Map) continue;
+        final gid = g['_id']?.toString() ?? g['id']?.toString() ?? '';
+        if (gid != widget.chatId) continue;
+        final cs = g['canSendMessages'];
+        if (cs is bool && mounted) {
+          setState(() => _resolvedCanSendMessages = cs);
+        }
+        break;
+      }
+    } catch (_) {}
   }
 
   Future<void> _hydratePollVotes() async {
@@ -144,13 +325,740 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
 
   Future<void> _loadGroupMeta() async {
     if (!widget.isGroup) return;
+    bool? canSendFromGroupRow;
     try {
+      final groupsRes = await InteractionService.instance.getGroups();
+      final gdata = groupsRes['data'];
+      if (gdata is List) {
+        for (final e in gdata) {
+          if (e is! Map) continue;
+          final gid = e['_id']?.toString() ?? e['id']?.toString() ?? '';
+          if (gid != widget.chatId) continue;
+          _groupType = e['groupType']?.toString() ?? 'custom';
+          _groupName = e['groupName']?.toString() ?? e['name']?.toString() ?? widget.title;
+          final as = e['allowedSenderIds'];
+          if (as is List) {
+            _allowedSenderIds = as.map((x) => x.toString()).toList();
+          }
+          final cs = e['canSendMessages'];
+          if (cs is bool) canSendFromGroupRow = cs;
+          break;
+        }
+      }
       final res = await InteractionService.instance.getGroupMembers(widget.chatId);
       final data = res['data'];
       if (data is List && mounted) {
-        setState(() => _memberCount = data.length);
+        final members = <Map<String, dynamic>>[];
+        for (final e in data) {
+          if (e is Map) {
+            final m = <String, dynamic>{};
+            e.forEach((k, v) => m[k.toString()] = v);
+            members.add(m);
+          }
+        }
+        final myIdLookup = _myUserId ?? '';
+        final meRow = members.where((m) {
+          final user = m['user'];
+          final uid = user is Map ? (user['_id']?.toString() ?? user['id']?.toString() ?? '') : '';
+          return uid == myIdLookup;
+        }).cast<Map<String, dynamic>>().firstOrNull;
+        final isAdmin = meRow != null && meRow['role']?.toString() == 'admin';
+        final myId = _myUserId;
+        bool? resolved = canSendFromGroupRow;
+        if (resolved == null && _groupType == 'broadcast' && myId != null && myId.isNotEmpty) {
+          // Web parity: if explicit server flag is absent, infer from broadcast sender rules.
+          resolved = _canSendForUserId(myId);
+        }
+        setState(() {
+          _groupMembers = members;
+          _memberCount = members.length;
+          _isCurrentGroupAdmin = isAdmin;
+          if (resolved != null) _resolvedCanSendMessages = resolved;
+        });
       }
     } catch (_) {}
+  }
+
+  bool get _canManageGroupSettings {
+    if (!widget.isGroup) return false;
+    final byRole = InteractionService.interactionGroupManagerRoles.contains((_myRole ?? '').trim());
+    return byRole || _isCurrentGroupAdmin;
+  }
+
+  bool get _isBroadcast => _groupType == 'broadcast';
+
+  bool _canSendForUserId(String userId) {
+    final role = (_myRole ?? '').trim();
+    if (role == 'Super Admin' || role == 'Admin' || role == 'HR' || role == 'Senior HR') return true;
+    if (_isCurrentGroupAdmin) return true;
+    return _allowedSenderIds.contains(userId);
+  }
+
+  Future<void> _openGroupSettingsSheet() async {
+    if (!_canManageGroupSettings) return;
+    final canAssignAdmin = _isCurrentGroupAdmin ||
+        InteractionService.interactionGroupManagerRoles.contains((_myRole ?? '').trim());
+    final tabs = <Tab>[
+      const Tab(text: 'Profile'),
+      const Tab(text: 'Members'),
+      const Tab(text: 'Add people'),
+      if (_isBroadcast) const Tab(text: 'Broadcast'),
+    ];
+    var ids = <String>{..._allowedSenderIds};
+    var members = List<Map<String, dynamic>>.from(_groupMembers);
+    var draftGroupName = _groupName.isNotEmpty ? _groupName : widget.title;
+    var addSearch = '';
+    var membersSearch = '';
+    var broadcastSearch = '';
+    var addLoading = false;
+    var addResults = <Map<String, dynamic>>[];
+    var selectedAddIds = <String>{};
+    var savingName = false;
+    var savingBroadcast = false;
+    var mutatingMemberId = '';
+
+    Future<void> runAddSearch(StateSetter setSheetState) async {
+      final q = addSearch.trim();
+      setSheetState(() => addLoading = true);
+      try {
+        final res = await InteractionService.instance.getChatSuggestions(query: q.isEmpty ? null : q);
+        final data = res['data'];
+        final list = <Map<String, dynamic>>[];
+        if (data is List) {
+          for (final e in data) {
+            if (e is Map) {
+              final m = <String, dynamic>{};
+              e.forEach((k, v) => m[k.toString()] = v);
+              list.add(m);
+            }
+          }
+        }
+        setSheetState(() => addResults = list);
+      } catch (_) {
+        setSheetState(() => addResults = []);
+      } finally {
+        setSheetState(() => addLoading = false);
+      }
+    }
+
+    Future<void> refreshGroupState(StateSetter setSheetState) async {
+      await _loadGroupMeta();
+      if (!mounted) return;
+      setSheetState(() {
+        members = List<Map<String, dynamic>>.from(_groupMembers);
+        ids = <String>{..._allowedSenderIds};
+      });
+    }
+
+    try {
+      final res = await InteractionService.instance.getChatSuggestions();
+      final data = res['data'];
+      if (data is List) {
+        final list = <Map<String, dynamic>>[];
+        for (final e in data) {
+          if (e is Map) {
+            final m = <String, dynamic>{};
+            e.forEach((k, v) => m[k.toString()] = v);
+            list.add(m);
+          }
+        }
+        addResults = list;
+      }
+    } catch (_) {}
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Group settings',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (ctx, _, __) {
+        final width = math.min(MediaQuery.sizeOf(ctx).width * 0.88, 460.0);
+        return Align(
+          alignment: Alignment.centerRight,
+          child: Material(
+            color: Colors.white,
+            child: SizedBox(
+              width: width,
+              child: SafeArea(
+                minimum: const EdgeInsets.only(bottom: 8),
+                child: DefaultTabController(
+                  length: tabs.length,
+                  child: StatefulBuilder(
+                    builder: (ctx, setSheetState) {
+                      return Padding(
+                        padding: EdgeInsets.only(
+                          left: 14,
+                          right: 14,
+                          top: 10,
+                          bottom: 10 +
+                              MediaQuery.viewInsetsOf(ctx).bottom +
+                              MediaQuery.viewPaddingOf(ctx).bottom,
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Group settings',
+                                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () => Navigator.of(ctx).pop(),
+                                  icon: const Icon(Icons.close),
+                                ),
+                              ],
+                            ),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Profile, members, and permissions — same actions as before, organized in tabs.',
+                                style: TextStyle(
+                                  color: Colors.blueGrey.shade500,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            TabBar(isScrollable: true, tabs: tabs),
+                            const SizedBox(height: 8),
+                            Expanded(
+                              child: TabBarView(
+                                children: [
+                                  ListView(
+                                    children: [
+                                      ListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        leading: _safeInitialAvatar(
+                                          name: draftGroupName.isNotEmpty ? draftGroupName : 'Group',
+                                          avatarUrl: widget.avatarUrl,
+                                          radius: 30,
+                                          fallbackBg: Colors.blueGrey.shade200,
+                                          fallbackFg: Colors.white,
+                                        ),
+                                        title: const Text('Update group photo (optional).'),
+                                        trailing: TextButton(
+                                          onPressed: () async {
+                                            try {
+                                              final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+                                              if (picked == null) return;
+                                              await InteractionService.instance.uploadGroupAvatar(
+                                                groupId: widget.chatId,
+                                                filePath: picked.path,
+                                                filename: picked.name,
+                                              );
+                                              if (!mounted) return;
+                                              await refreshGroupState(setSheetState);
+                                              if (!mounted) return;
+                                              _showTopSnackBar('Group photo updated');
+                                            } catch (e) {
+                                              if (!mounted) return;
+                                              _showTopSnackBar(
+                                                ErrorMessageUtils.toUserFriendlyMessage(e),
+                                                isError: true,
+                                              );
+                                            }
+                                          },
+                                          child: const Text('Edit'),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      TextFormField(
+                                        initialValue: draftGroupName,
+                                        onChanged: (v) => draftGroupName = v,
+                                        decoration: const InputDecoration(labelText: 'Group name'),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: FilledButton(
+                                          style: FilledButton.styleFrom(
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(6),
+                                            ),
+                                          ),
+                                        onPressed: savingName
+                                            ? null
+                                            : () async {
+                                                final next = draftGroupName.trim();
+                                                if (next.isEmpty) return;
+                                                setSheetState(() => savingName = true);
+                                                try {
+                                                  await InteractionService.instance.updateGroup(
+                                                    widget.chatId,
+                                                    groupName: next,
+                                                  );
+                                                  if (!mounted) return;
+                                                  setState(() => _groupName = next);
+                                                  _showTopSnackBar('Group name updated');
+                                                } catch (e) {
+                                                  if (!mounted) return;
+                                                  _showTopSnackBar(
+                                                    ErrorMessageUtils.toUserFriendlyMessage(e),
+                                                    isError: true,
+                                                  );
+                                                } finally {
+                                                  setSheetState(() => savingName = false);
+                                                }
+                                              },
+                                          child: const Text('Save name'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  ListView.builder(
+                                    itemCount: members.where((row) {
+                                      final user = row['user'];
+                                      if (user is! Map) return false;
+                                      final q = membersSearch.trim().toLowerCase();
+                                      if (q.isEmpty) return true;
+                                      final name = (user['name']?.toString() ?? '').toLowerCase();
+                                      final email = (user['email']?.toString() ?? '').toLowerCase();
+                                      final code =
+                                          ((user['employeeCode']?.toString() ?? user['empCode']?.toString() ?? ''))
+                                              .toLowerCase();
+                                      return name.contains(q) || email.contains(q) || code.contains(q);
+                                    }).length + 1,
+                                    itemBuilder: (_, i) {
+                                      if (i == 0) {
+                                        return Padding(
+                                          padding: const EdgeInsets.only(bottom: 8),
+                                          child: TextField(
+                                            decoration: const InputDecoration(
+                                              hintText: 'Search members...',
+                                            ),
+                                            onChanged: (v) => setSheetState(() => membersSearch = v),
+                                          ),
+                                        );
+                                      }
+                                      final filtered = members.where((row) {
+                                        final user = row['user'];
+                                        if (user is! Map) return false;
+                                        final q = membersSearch.trim().toLowerCase();
+                                        if (q.isEmpty) return true;
+                                        final name = (user['name']?.toString() ?? '').toLowerCase();
+                                        final email = (user['email']?.toString() ?? '').toLowerCase();
+                                        final code =
+                                            ((user['employeeCode']?.toString() ?? user['empCode']?.toString() ?? ''))
+                                                .toLowerCase();
+                                        return name.contains(q) || email.contains(q) || code.contains(q);
+                                      }).toList();
+                                      final row = filtered[i - 1];
+                                      final user = row['user'];
+                                      if (user is! Map) return const SizedBox.shrink();
+                                      final uid = user['_id']?.toString() ?? user['id']?.toString() ?? '';
+                                      final name = user['name']?.toString() ?? 'User';
+                                      final email = user['email']?.toString() ?? '';
+                                      final code = user['employeeCode']?.toString() ?? user['empCode']?.toString() ?? '';
+                                      final role = row['role']?.toString() ?? 'member';
+                                      if (uid.isEmpty) return const SizedBox.shrink();
+                                      final isSelf = uid == _myUserId;
+                                      return Container(
+                                        margin: const EdgeInsets.only(bottom: 10),
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(10),
+                                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 18,
+                                              backgroundColor: Colors.blueGrey.shade400,
+                                              child: Text(
+                                                name.isEmpty ? 'U' : name[0].toUpperCase(),
+                                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    '${code.isNotEmpty ? '$code  ' : ''}${email.isNotEmpty ? email : '-'}',
+                                                    style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 12),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    role == 'admin' ? 'Admin' : 'Member',
+                                                    style: TextStyle(color: Colors.blueGrey.shade500, fontSize: 11),
+                                                  ),
+                                                  if (role == 'admin') ...[
+                                                    const SizedBox(height: 4),
+                                                    Container(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                                      decoration: BoxDecoration(
+                                                        color: const Color(0xFFFFF4D9),
+                                                        borderRadius: BorderRadius.circular(999),
+                                                      ),
+                                                      child: Text(
+                                                        'group admin',
+                                                        style: TextStyle(
+                                                          color: Colors.orange.shade700,
+                                                          fontSize: 11,
+                                                          fontWeight: FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
+                                              ),
+                                            ),
+                                            if (_canManageGroupSettings && !isSelf)
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  if (canAssignAdmin && role != 'admin')
+                                                    TextButton(
+                                                      onPressed: mutatingMemberId == uid
+                                                          ? null
+                                                          : () async {
+                                                              setSheetState(() => mutatingMemberId = uid);
+                                                              try {
+                                                                await InteractionService.instance.updateGroupMemberRole(
+                                                                  widget.chatId,
+                                                                  userId: uid,
+                                                                  role: 'admin',
+                                                                );
+                                                                await refreshGroupState(setSheetState);
+                                                              } catch (e) {
+                                                                if (!mounted) return;
+                                                                _showTopSnackBar(
+                                                                  ErrorMessageUtils.toUserFriendlyMessage(e),
+                                                                  isError: true,
+                                                                );
+                                                              } finally {
+                                                                setSheetState(() => mutatingMemberId = '');
+                                                              }
+                                                            },
+                                                      style: TextButton.styleFrom(
+                                                        foregroundColor: const Color(0xFFE4A115),
+                                                        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                                                      ),
+                                                      child: const Text('Make admin'),
+                                                    ),
+                                                  if (canAssignAdmin && role == 'admin')
+                                                    TextButton(
+                                                      onPressed: mutatingMemberId == uid
+                                                          ? null
+                                                          : () async {
+                                                              setSheetState(() => mutatingMemberId = uid);
+                                                              try {
+                                                                await InteractionService.instance.updateGroupMemberRole(
+                                                                  widget.chatId,
+                                                                  userId: uid,
+                                                                  role: 'member',
+                                                                );
+                                                                await refreshGroupState(setSheetState);
+                                                              } catch (e) {
+                                                                if (!mounted) return;
+                                                                _showTopSnackBar(
+                                                                  ErrorMessageUtils.toUserFriendlyMessage(e),
+                                                                  isError: true,
+                                                                );
+                                                              } finally {
+                                                                setSheetState(() => mutatingMemberId = '');
+                                                              }
+                                                            },
+                                                      style: TextButton.styleFrom(
+                                                        foregroundColor: const Color(0xFFE4A115),
+                                                        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                                                      ),
+                                                      child: const Text('Make member'),
+                                                    ),
+                                                  TextButton(
+                                                    onPressed: mutatingMemberId == uid
+                                                        ? null
+                                                        : () async {
+                                                            setSheetState(() => mutatingMemberId = uid);
+                                                            try {
+                                                              await InteractionService.instance.removeGroupMember(
+                                                                widget.chatId,
+                                                                userId: uid,
+                                                              );
+                                                              await refreshGroupState(setSheetState);
+                                                            } catch (e) {
+                                                              if (!mounted) return;
+                                                              _showTopSnackBar(
+                                                                ErrorMessageUtils.toUserFriendlyMessage(e),
+                                                                isError: true,
+                                                              );
+                                                            } finally {
+                                                              setSheetState(() => mutatingMemberId = '');
+                                                            }
+                                                          },
+                                                    style: TextButton.styleFrom(
+                                                      foregroundColor: const Color(0xFFFF4D4F),
+                                                      textStyle: const TextStyle(fontWeight: FontWeight.w500),
+                                                    ),
+                                                    child: const Text('Remove'),
+                                                  ),
+                                                ],
+                                              ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  Column(
+                                    children: [
+                                      Text(
+                                        'People already in this group are hidden here. Search by name, email, or employee code.',
+                                        style: TextStyle(color: Colors.blueGrey.shade500),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      TextField(
+                                        decoration: const InputDecoration(
+                                          hintText: 'Search to add...',
+                                        ),
+                                        onChanged: (v) {
+                                          addSearch = v;
+                                          runAddSearch(setSheetState);
+                                        },
+                                      ),
+                                      const SizedBox(height: 8),
+                                      if (addLoading) const LinearProgressIndicator(minHeight: 2),
+                                      const SizedBox(height: 8),
+                                      Expanded(
+                                        child: ListView.builder(
+                                          itemCount: addResults.length,
+                                          itemBuilder: (_, i) {
+                                            final u = addResults[i];
+                                            final uid = u['_id']?.toString() ?? u['id']?.toString() ?? '';
+                                            final name = u['name']?.toString() ?? 'User';
+                                            final email = u['email']?.toString() ?? '';
+                                            final code = u['employeeCode']?.toString() ?? u['empCode']?.toString() ?? '';
+                                            if (uid.isEmpty) return const SizedBox.shrink();
+                                            final already = members.any((m) {
+                                              final user = m['user'];
+                                              if (user is! Map) return false;
+                                              final id = user['_id']?.toString() ?? user['id']?.toString() ?? '';
+                                              return id == uid;
+                                            });
+                                            if (already) return const SizedBox.shrink();
+                                            final checked = selectedAddIds.contains(uid);
+                                            return Container(
+                                              margin: const EdgeInsets.only(bottom: 10),
+                                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                borderRadius: BorderRadius.circular(10),
+                                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Checkbox(
+                                                    value: checked,
+                                                    onChanged: (v) {
+                                                      setSheetState(() {
+                                                        if (v == true) {
+                                                          selectedAddIds.add(uid);
+                                                        } else {
+                                                          selectedAddIds.remove(uid);
+                                                        }
+                                                      });
+                                                    },
+                                                  ),
+                                                  CircleAvatar(
+                                                    radius: 16,
+                                                    backgroundColor: Colors.blueGrey.shade400,
+                                                    child: Text(
+                                                      name.isEmpty ? 'U' : name[0].toUpperCase(),
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontWeight: FontWeight.w700,
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 10),
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                                      children: [
+                                                        Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                                        const SizedBox(height: 2),
+                                                        Text(
+                                                          '${code.isNotEmpty ? '$code  ' : ''}${email.isNotEmpty ? email : '-'}',
+                                                          style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 12),
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow.ellipsis,
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: FilledButton(
+                                          style: FilledButton.styleFrom(
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(6),
+                                            ),
+                                          ),
+                                        onPressed: selectedAddIds.isEmpty
+                                            ? null
+                                            : () async {
+                                                try {
+                                                  await InteractionService.instance.addGroupMembers(
+                                                    widget.chatId,
+                                                    userIds: selectedAddIds.toList(),
+                                                  );
+                                                  selectedAddIds = <String>{};
+                                                  await refreshGroupState(setSheetState);
+                                                  if (!mounted) return;
+                                                  _showTopSnackBar('Members added');
+                                                } catch (e) {
+                                                  if (!mounted) return;
+                                                  _showTopSnackBar(
+                                                    ErrorMessageUtils.toUserFriendlyMessage(e),
+                                                    isError: true,
+                                                  );
+                                                }
+                                              },
+                                          child: const Text('Add members'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (_isBroadcast)
+                                    Column(
+                                      children: [
+                                        TextField(
+                                          decoration: const InputDecoration(
+                                            hintText: 'Search people...',
+                                          ),
+                                          onChanged: (v) => setSheetState(() => broadcastSearch = v),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Expanded(
+                                          child: ListView.builder(
+                                            itemCount: members.where((row) {
+                                              final user = row['user'];
+                                              if (user is! Map) return false;
+                                              final q = broadcastSearch.trim().toLowerCase();
+                                              if (q.isEmpty) return true;
+                                              final name = (user['name']?.toString() ?? '').toLowerCase();
+                                              final email = (user['email']?.toString() ?? '').toLowerCase();
+                                              final code = ((user['employeeCode']?.toString() ??
+                                                          user['empCode']?.toString() ??
+                                                          ''))
+                                                      .toLowerCase();
+                                              return name.contains(q) || email.contains(q) || code.contains(q);
+                                            }).length,
+                                            itemBuilder: (_, i) {
+                                              final filtered = members.where((row) {
+                                                final user = row['user'];
+                                                if (user is! Map) return false;
+                                                final q = broadcastSearch.trim().toLowerCase();
+                                                if (q.isEmpty) return true;
+                                                final name = (user['name']?.toString() ?? '').toLowerCase();
+                                                final email = (user['email']?.toString() ?? '').toLowerCase();
+                                                final code = ((user['employeeCode']?.toString() ??
+                                                            user['empCode']?.toString() ??
+                                                            ''))
+                                                        .toLowerCase();
+                                                return name.contains(q) || email.contains(q) || code.contains(q);
+                                              }).toList();
+                                              final row = filtered[i];
+                                              final user = row['user'];
+                                              if (user is! Map) return const SizedBox.shrink();
+                                              final uid = user['_id']?.toString() ?? user['id']?.toString() ?? '';
+                                              final name = user['name']?.toString() ?? 'User';
+                                              if (uid.isEmpty) return const SizedBox.shrink();
+                                              final on = ids.contains(uid);
+                                              return SwitchListTile(
+                                                title: Text(name),
+                                                value: on,
+                                                contentPadding: EdgeInsets.zero,
+                                                onChanged: (v) {
+                                                  setSheetState(() {
+                                                    if (v) {
+                                                      ids.add(uid);
+                                                    } else {
+                                                      ids.remove(uid);
+                                                    }
+                                                  });
+                                                },
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: FilledButton(
+                                            style: FilledButton.styleFrom(
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                            ),
+                                          onPressed: savingBroadcast
+                                              ? null
+                                              : () async {
+                                                  setSheetState(() => savingBroadcast = true);
+                                                  try {
+                                                    await InteractionService.instance.updateGroup(
+                                                      widget.chatId,
+                                                      allowedSenderIds: ids.toList(),
+                                                    );
+                                                    if (!mounted) return;
+                                                    setState(() {
+                                                      _allowedSenderIds = ids.toList();
+                                                      if (_myUserId != null) {
+                                                        _resolvedCanSendMessages = _canSendForUserId(_myUserId!);
+                                                      }
+                                                    });
+                                                    _showTopSnackBar('Broadcast permissions updated');
+                                                  } catch (e) {
+                                                    if (!mounted) return;
+                                                    _showTopSnackBar(
+                                                      ErrorMessageUtils.toUserFriendlyMessage(e),
+                                                      isError: true,
+                                                    );
+                                                  } finally {
+                                                    setSheetState(() => savingBroadcast = false);
+                                                  }
+                                                },
+                                            child: const Text('Save permissions'),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (ctx, animation, _, child) {
+        return SlideTransition(
+          position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero).animate(
+            CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+          ),
+          child: child,
+        );
+      },
+    );
   }
 
   bool _matchesThread(Map<String, dynamic> msg) {
@@ -244,6 +1152,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       }
       if (!mounted) return;
       setState(() {
+        _sendBlockedReason = null;
         if (replace) {
           _messages = list;
           _page = 1;
@@ -264,7 +1173,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         _loading = false;
         _loadingMore = false;
       });
-    } catch (_) {
+    } catch (e) {
+      _applySendPermissionFromError(e);
       if (mounted) {
         setState(() {
           _loading = false;
@@ -292,39 +1202,29 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (!_maySend) return;
     final text = _text.text.trim();
     if (text.isEmpty) return;
+    final replyPrefix = _replyPrefixFor(_replyTo);
+    final outbound = replyPrefix == null ? text : '$replyPrefix\n$text';
     _text.clear();
     if (mounted) setState(() {});
     try {
       final res = await InteractionService.instance.sendTextMessage(
         chatId: widget.isGroup ? widget.chatId : 'personal',
-        messageContent: text,
+        messageContent: outbound,
         receiverId: widget.isGroup ? null : widget.receiverId,
       );
       final data = res['data'];
       if (data is Map) {
         final m = <String, dynamic>{};
         data.forEach((k, v) => m[k.toString()] = v);
-        // Upload API may return relative paths; convert immediately so
-        // new media messages render right away without reopening chat.
-        final fileUrl = m['fileUrl']?.toString();
-        if (fileUrl != null && fileUrl.isNotEmpty && !fileUrl.startsWith('http')) {
-          m['fileUrl'] = AppConstants.getLmsFileUrl(fileUrl);
-        }
-        final voiceUrl = m['voiceUrl']?.toString();
-        if (voiceUrl != null && voiceUrl.isNotEmpty && !voiceUrl.startsWith('http')) {
-          m['voiceUrl'] = AppConstants.getLmsFileUrl(voiceUrl);
-        }
-        final genericUrl = m['url']?.toString();
-        if (genericUrl != null && genericUrl.isNotEmpty && !genericUrl.startsWith('http')) {
-          m['url'] = AppConstants.getLmsFileUrl(genericUrl);
-        }
         if (!mounted) return;
         _upsertMessageFromSendOrSocket(m);
+        if (mounted) setState(() => _replyTo = null);
         _scrollChatToLatest();
       }
     } catch (e) {
+      _applySendPermissionFromError(e);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        _showTopSnackBar('$e', isError: true);
       }
     }
   }
@@ -379,13 +1279,42 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         data.forEach((k, v) => m[k.toString()] = v);
         if (!mounted) return;
         _upsertMessageFromSendOrSocket(m);
+        final id = m['_id']?.toString() ?? '';
+        final mediaMissing = (type == 'image' || type == 'file' || type == 'voice') &&
+            _messageMediaUrl(m) == null &&
+            id.isNotEmpty;
+        if (mediaMissing) {
+          unawaited(_refreshMessageById(id));
+        }
         _scrollChatToLatest();
       }
     } catch (e) {
+      _applySendPermissionFromError(e);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        _showTopSnackBar('$e', isError: true);
       }
     }
+  }
+
+  Future<void> _refreshMessageById(String id) async {
+    try {
+      final res = await InteractionService.instance.getChatMessages(
+        chatId: widget.isGroup ? widget.chatId : 'personal',
+        page: 1,
+        receiverId: widget.isGroup ? null : widget.receiverId,
+      );
+      final data = res['data'];
+      if (data is! List || !mounted) return;
+      for (final e in data) {
+        if (e is! Map) continue;
+        final mid = e['_id']?.toString() ?? '';
+        if (mid != id) continue;
+        final m = <String, dynamic>{};
+        e.forEach((k, v) => m[k.toString()] = v);
+        _upsertMessageFromSendOrSocket(m);
+        break;
+      }
+    } catch (_) {}
   }
 
   void _emitTyping() {
@@ -527,8 +1456,9 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     final mic = await Permission.microphone.request();
     if (!mic.isGranted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Microphone permission is required for voice messages.')),
+        _showTopSnackBar(
+          'Microphone permission is required for voice messages.',
+          isError: true,
         );
       }
       return;
@@ -551,6 +1481,65 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     return '';
   }
 
+  String _replyLabelFor(Map<String, dynamic> msg) {
+    final me = _myUserId;
+    final isMine = me != null && msg['senderId']?.toString() == me;
+    if (isMine) return 'You';
+    final s = _senderLabel(msg).trim();
+    if (s.isNotEmpty) return s;
+    return widget.title;
+  }
+
+  String _replySnippetFor(Map<String, dynamic> msg) {
+    final t = msg['messageType']?.toString() ?? 'text';
+    if (t == 'image') return 'Photo';
+    if (t == 'file') return msg['fileName']?.toString() ?? 'Document';
+    if (t == 'voice') return 'Voice message';
+    if (t == 'poll') return 'Poll';
+    final c = msg['messageContent']?.toString().trim() ?? '';
+    if (c.isEmpty) return 'Message';
+    return c.replaceAll('\n', ' ');
+  }
+
+  String? _replyPrefixFor(Map<String, dynamic>? msg) {
+    if (msg == null) return null;
+    final id = msg['_id']?.toString() ?? '';
+    if (id.isEmpty) return null;
+    final sender = _replyLabelFor(msg).replaceAll('|', '/').replaceAll(']', ')');
+    final snippet = _replySnippetFor(msg).replaceAll('|', '/').replaceAll(']', ')');
+    return '[reply_to:$id|$sender|$snippet]';
+  }
+
+  ({String? replyId, String? sender, String? snippet, String body}) _splitReplyPrefix(String raw) {
+    final rx = RegExp(r'^\[reply_to:[^|]*\|([^|]*)\|([^\]]*)\]\n?');
+    final m = rx.firstMatch(raw);
+    if (m == null) return (replyId: null, sender: null, snippet: null, body: raw);
+    final full = m.group(0) ?? '';
+    final rid = full.replaceFirst(RegExp(r'^\[reply_to:'), '').split('|').first.trim();
+    final sender = m.group(1)?.trim();
+    final snippet = m.group(2)?.trim();
+    final body = raw.substring(m.end).trimLeft();
+    return (replyId: rid, sender: sender, snippet: snippet, body: body);
+  }
+
+  void _jumpToRepliedMessage(String? replyId) {
+    if (replyId == null || replyId.isEmpty || !_scrollController.hasClients) return;
+    final idx = _messages.indexWhere((m) => m['_id']?.toString() == replyId);
+    if (idx < 0) return;
+    final target = (idx * 120).toDouble();
+    _scrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+    setState(() => _highlightMessageId = replyId);
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      if (mounted && _highlightMessageId == replyId) {
+        setState(() => _highlightMessageId = null);
+      }
+    });
+  }
+
   String? _peerAvatarUrl(Map<String, dynamic> msg) {
     final s = msg['sender'];
     if (s is! Map) return null;
@@ -568,15 +1557,58 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         msg['url']?.toString() ??
         msg['file']?.toString();
     if (raw == null || raw.isEmpty) return null;
-    final normalized =
-        raw.startsWith('http://') || raw.startsWith('https://')
-            ? raw
-            : AppConstants.getLmsFileUrl(raw);
-    return normalized.startsWith('http') ? normalized : null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    if (raw.startsWith('/') || raw.contains('/uploads/') || raw.startsWith('uploads/')) {
+      final u = AppConstants.getLmsFileUrl(raw);
+      return u.startsWith('http') ? u : null;
+    }
+    return null;
   }
 
   DateTime? _msgLocalTime(Map<String, dynamic> msg) {
     return DateTime.tryParse(msg['sentTime']?.toString() ?? '')?.toLocal();
+  }
+
+  static final RegExp _urlRegex = RegExp(r'(https?:\/\/[^\s]+)', caseSensitive: false);
+
+  Widget _linkifiedText(
+    String raw, {
+    required TextStyle style,
+    Color linkColor = const Color(0xFF1565C0),
+  }) {
+    if (raw.isEmpty || !_urlRegex.hasMatch(raw)) {
+      return Text(raw, style: style);
+    }
+    final spans = <InlineSpan>[];
+    var start = 0;
+    final matches = _urlRegex.allMatches(raw).toList();
+    for (final m in matches) {
+      final s = m.start;
+      final e = m.end;
+      if (s > start) {
+        spans.add(TextSpan(text: raw.substring(start, s), style: style));
+      }
+      final url = raw.substring(s, e);
+      spans.add(
+        TextSpan(
+          text: url,
+          style: style.copyWith(
+            color: linkColor,
+            decoration: TextDecoration.underline,
+          ),
+          recognizer: TapGestureRecognizer()
+            ..onTap = () {
+              final uri = Uri.tryParse(url);
+              if (uri != null) unawaited(launchUrl(uri));
+            },
+        ),
+      );
+      start = e;
+    }
+    if (start < raw.length) {
+      spans.add(TextSpan(text: raw.substring(start), style: style));
+    }
+    return RichText(text: TextSpan(children: spans));
   }
 
   String _dayPillLabel(DateTime dt) => DateFormat('EEE MMM dd yyyy').format(dt);
@@ -606,21 +1638,17 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
 
   Widget _messageSideAvatar({required bool isMine, required Map<String, dynamic> msg}) {
     final peerName = _senderLabel(msg);
-    final label = isMine
-        ? (_myDisplayName.isNotEmpty ? _myDisplayName[0].toUpperCase() : '?')
-        : (peerName.isNotEmpty ? peerName[0].toUpperCase() : '?');
     final bg = isMine
         ? InteractionAvatarTheme.backgroundForTitle(_myDisplayName.isNotEmpty ? _myDisplayName : 'U')
         : InteractionAvatarTheme.backgroundForTitle(peerName.isNotEmpty ? peerName : 'U');
     final fg = InteractionAvatarTheme.letterColor(bg);
     final url = isMine ? _myDisplayAvatarUrl : _peerAvatarUrl(msg);
-    return CircleAvatar(
+    return _safeInitialAvatar(
+      name: isMine ? _myDisplayName : peerName,
+      avatarUrl: url,
       radius: 18,
-      backgroundColor: url != null ? Colors.transparent : bg,
-      backgroundImage: url != null ? NetworkImage(url) : null,
-      child: url == null
-          ? Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.bold, fontSize: 13))
-          : null,
+      fallbackBg: bg,
+      fallbackFg: fg,
     );
   }
 
@@ -635,9 +1663,9 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFF9C4),
+              color: const Color(0xFFF6F3C6),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.grey.shade300),
+              border: Border.all(color: const Color(0xFFEAE3A4)),
             ),
             child: Text(
               msg['messageContent']?.toString() ?? '',
@@ -655,6 +1683,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
 
     final bubbleColor = isMine ? _kChatSentBubble : _kChatReceivedBubble;
     final textColor = const Color(0xFF0F172A);
+    final parsedReply = _splitReplyPrefix(msg['messageContent']?.toString() ?? '');
 
     Widget inner;
     switch (type) {
@@ -739,8 +1768,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
               );
         break;
       default:
-        inner = Text(
-          msg['messageContent']?.toString() ?? '',
+        inner = _linkifiedText(
+          parsedReply.body,
           style: TextStyle(color: textColor, fontSize: 15, height: 1.35),
         );
     }
@@ -784,6 +1813,40 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                       ),
                     ),
                   ),
+                if (type == 'text' && parsedReply.sender != null && parsedReply.snippet != null)
+                  InkWell(
+                    onTap: () => _jumpToRepliedMessage(parsedReply.replyId),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border(
+                          left: BorderSide(color: const Color(0xFFF59E0B), width: 3),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            parsedReply.sender!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFF59E0B)),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            parsedReply.snippet!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: Colors.grey.shade800),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 inner,
               ],
             ),
@@ -807,13 +1870,28 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       ),
     );
 
+    final highlighted = _highlightMessageId != null &&
+        _highlightMessageId == (msg['_id']?.toString() ?? '');
     final column = Column(
       crossAxisAlignment: isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
-      children: [bubble, meta],
+      children: [
+        if (highlighted)
+          Container(
+            width: 4,
+            height: 16,
+            margin: const EdgeInsets.only(bottom: 4),
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        bubble,
+        meta,
+      ],
     );
 
-    return Padding(
+    final row = Padding(
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -830,6 +1908,26 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                 Flexible(child: column),
               ],
       ),
+    );
+    if (type == 'system') return row;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onLongPress: () {
+        showModalBottomSheet<void>(
+          context: context,
+          builder: (ctx) => SafeArea(
+            child: ListTile(
+              leading: const Icon(Icons.reply),
+              title: const Text('Reply'),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() => _replyTo = msg);
+              },
+            ),
+          ),
+        );
+      },
+      child: row,
     );
   }
 
@@ -866,6 +1964,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     }
     if (!widget.isGroup && widget.peerIsOnline != null) {
       final online = widget.peerIsOnline == true;
+      final lastSeen = DateTime.tryParse(widget.peerLastSeenAt ?? '')?.toLocal();
+      final off = lastSeen == null ? 'Offline' : 'Last seen ${DateFormat.yMd().add_jm().format(lastSeen)}';
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -879,7 +1979,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
           ),
           const SizedBox(width: 6),
           Text(
-            online ? 'Online' : 'Offline',
+            online ? 'Online' : off,
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w500,
@@ -940,6 +2040,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   @override
   void dispose() {
     _typingTimer?.cancel();
+    _hideChatTopBanner();
     _sub?.cancel();
     _scrollController.dispose();
     _text.dispose();
@@ -983,7 +2084,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
           },
         ),
         titleSpacing: 4,
-        toolbarHeight: _searchOpen ? 96 : kToolbarHeight,
+        toolbarHeight: kToolbarHeight,
         title: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -991,94 +2092,88 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                CircleAvatar(
+                _safeInitialAvatar(
+                  name: title,
+                  avatarUrl: widget.avatarUrl,
                   radius: 20,
-                  backgroundColor:
-                      (widget.avatarUrl != null && widget.avatarUrl!.startsWith('http'))
-                      ? Colors.transparent
-                      : letterBg,
-                  backgroundImage:
-                      widget.avatarUrl != null && widget.avatarUrl!.startsWith('http')
-                          ? NetworkImage(widget.avatarUrl!)
-                          : null,
-                  child: widget.avatarUrl != null && widget.avatarUrl!.startsWith('http')
-                      ? null
-                      : Text(
-                          title.isNotEmpty ? title[0].toUpperCase() : '?',
-                          style: TextStyle(color: letterFg, fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
+                  fallbackBg: letterBg,
+                  fallbackFg: letterFg,
                 ),
                 const SizedBox(width: 10),
-                if (!_searchOpen)
+                Expanded(
+                  child: _searchOpen
+                      ? Container(
+                          height: 40,
+                          padding: const EdgeInsets.only(left: 4, right: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(22),
+                            border: Border.all(color: Colors.grey.shade400),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.search, color: Colors.grey.shade600, size: 22),
+                              Expanded(
+                                child: TextField(
+                                  controller: _searchQuery,
+                                  focusNode: _searchFocus,
+                                  style: const TextStyle(fontSize: 15, color: Color(0xFF0F172A)),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    border: InputBorder.none,
+                                    hintText: 'Search messages...',
+                                    hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 15),
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                                  ),
+                                  onChanged: (_) => setState(() {}),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                        _groupName.isNotEmpty ? _groupName : title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            _subtitleRow(),
+                          ],
+                        ),
+                ),
+                if (_searchOpen)
+                  IconButton(
+                    icon: Icon(Icons.close, size: 20, color: Colors.grey.shade700),
+                    onPressed: () {
+                      if (_searchQuery.text.isEmpty) {
+                        _closeMessageSearch();
+                      } else {
+                        _searchQuery.clear();
+                        setState(() {});
+                      }
+                    },
+                    tooltip: 'Clear',
+                  )
+                else
                   IconButton(
                     icon: Icon(Icons.search, color: Colors.grey.shade700),
                     onPressed: _openMessageSearch,
                   ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 16,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      _subtitleRow(),
-                    ],
+                if (!_searchOpen && _canManageGroupSettings)
+                  IconButton(
+                    icon: Icon(Icons.settings, color: Colors.grey.shade700),
+                    onPressed: _openGroupSettingsSheet,
                   ),
-                ),
               ],
             ),
-            if (_searchOpen) ...[
-              const SizedBox(height: 6),
-              Container(
-                height: 40,
-                padding: const EdgeInsets.only(left: 4, right: 2),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: Colors.grey.shade400),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.search, color: Colors.grey.shade600, size: 22),
-                    Expanded(
-                      child: TextField(
-                        controller: _searchQuery,
-                        focusNode: _searchFocus,
-                        style: const TextStyle(fontSize: 15, color: Color(0xFF0F172A)),
-                        decoration: InputDecoration(
-                          isDense: true,
-                          border: InputBorder.none,
-                          hintText: 'Search messages...',
-                          hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 15),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                        ),
-                        onChanged: (_) => setState(() {}),
-                      ),
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.close, size: 20, color: Colors.grey.shade700),
-                      onPressed: () {
-                        if (_searchQuery.text.isEmpty) {
-                          _closeMessageSearch();
-                        } else {
-                          _searchQuery.clear();
-                          setState(() {});
-                        }
-                      },
-                      tooltip: 'Clear',
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -1124,6 +2219,12 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                               }
                               final msg = _messages[i];
                               final pieces = <Widget>[];
+                              if (i == 0) {
+                                final tFirst = _msgLocalTime(msg);
+                                if (tFirst != null) {
+                                  pieces.add(_dateSeparatorPill(tFirst));
+                                }
+                              }
                               if (i > 0) {
                                 final newer = _messages[i - 1];
                                 final tCur = _msgLocalTime(msg);
@@ -1171,7 +2272,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'You can view this broadcast but cannot send messages.',
+                              _sendBlockedReason ??
+                                  'You can view this broadcast chat, but only selected users can send messages.',
                               style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
                             ),
                           ),
@@ -1188,9 +2290,50 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                     top: false,
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (_replyTo != null)
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _replyLabelFor(_replyTo!),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF1565C0)),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _replySnippetFor(_replyTo!),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close, size: 18),
+                                    onPressed: () => setState(() => _replyTo = null),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
                           Expanded(
                             child: Container(
                               decoration: BoxDecoration(
@@ -1216,21 +2359,6 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                       ),
                                     ),
                                   ),
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 2, bottom: 6),
-                                    child: Material(
-                                      color: Colors.grey.shade100,
-                                      shape: const CircleBorder(),
-                                      child: InkWell(
-                                        customBorder: const CircleBorder(),
-                                        onTap: () => _pickImage(ImageSource.camera),
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(10),
-                                          child: Icon(Icons.photo_camera_outlined, color: Colors.grey.shade600, size: 22),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
                                   Expanded(
                                     child: TextField(
                                       controller: _text,
@@ -1247,6 +2375,21 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                         _emitTyping();
                                         setState(() {});
                                       },
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 6, bottom: 6),
+                                    child: Material(
+                                      color: Colors.grey.shade100,
+                                      shape: const CircleBorder(),
+                                      child: InkWell(
+                                        customBorder: const CircleBorder(),
+                                        onTap: () => _pickImage(ImageSource.camera),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(10),
+                                          child: Icon(Icons.photo_camera_outlined, color: Colors.grey.shade600, size: 22),
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -1293,6 +2436,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                 onPressed: _toggleRecording,
                               ),
                             ),
+                        ],
+                          ),
                         ],
                       ),
                     ),
@@ -1366,6 +2511,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
   String _serverTitle = '';
   String _pollType = 'single';
   bool _isClosed = false;
+  bool _isActive = true;
   bool _isAnonymous = false;
   List<Map<String, dynamic>> _results = [];
   final Set<String> _selected = {};
@@ -1405,6 +2551,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
         _serverTitle = m['title']?.toString() ?? widget.titleText;
         _pollType = m['pollType']?.toString() ?? 'single';
         _isClosed = m['isClosed'] == true;
+        _isActive = m['isActive'] != false;
         _isAnonymous = m['isAnonymous'] == true;
         final opts = m['options'];
         if (opts is List) {
@@ -1458,7 +2605,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
       return;
     }
     if (_selected.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Choose at least one option')));
+      showChatTopBanner(context, 'Choose at least one option');
       return;
     }
     setState(() => _submitting = true);
@@ -1469,9 +2616,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
       );
       if (r['success'] == false) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(r['message']?.toString() ?? 'Could not submit vote')),
-          );
+          showChatTopBanner(context, r['message']?.toString() ?? 'Could not submit vote');
         }
         return;
       }
@@ -1561,7 +2706,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
   @override
   Widget build(BuildContext context) {
     final titleUpper = (_serverTitle.isNotEmpty ? _serverTitle : widget.titleText).toUpperCase();
-    final showVoteUi = !_loading && !_isClosed && !_cannotVote && !_alreadyVoted && _options.isNotEmpty;
+    final showVoteUi = !_loading && !_isClosed && _isActive && !_cannotVote && !_alreadyVoted && _options.isNotEmpty;
     final showSubmittedUi = !_loading && _alreadyVoted && _results.isNotEmpty;
 
     return Material(
@@ -1734,6 +2879,11 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                               TextButton(
                                 onPressed: _openDetailSync,
                                 child: const Text('View'),
+                              )
+                            else if (!_isActive)
+                              Text(
+                                'Poll inactive',
+                                style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w600),
                               ),
                           ],
                         ),

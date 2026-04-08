@@ -18,6 +18,8 @@ class InteractionSocketService {
   io.Socket? _socket;
   final _newMessage = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get onNewMessage => _newMessage.stream;
+  DateTime? _lastConnectErrorLogAt;
+  String _lastConnectErrorText = '';
 
   bool get isConnected => _socket?.connected ?? false;
 
@@ -60,13 +62,31 @@ class InteractionSocketService {
     });
 
     _socket!.onConnect((_) {
+      _lastConnectErrorLogAt = null;
+      _lastConnectErrorText = '';
       if (kDebugMode) debugPrint('[InteractionSocket] connected');
     });
     _socket!.onDisconnect((_) {
       if (kDebugMode) debugPrint('[InteractionSocket] disconnected');
     });
     _socket!.onConnectError((e) {
-      if (kDebugMode) debugPrint('[InteractionSocket] connect_error: $e');
+      final msg = e.toString();
+      final now = DateTime.now();
+      final tooSoon = _lastConnectErrorLogAt != null &&
+          now.difference(_lastConnectErrorLogAt!).inSeconds < 10 &&
+          msg == _lastConnectErrorText;
+      if (tooSoon) return;
+      _lastConnectErrorLogAt = now;
+      _lastConnectErrorText = msg;
+      if (kDebugMode) {
+        if (msg.contains('Failed host lookup')) {
+          debugPrint(
+            '[InteractionSocket] connect_error: DNS/network issue while resolving socket host. Will retry automatically.',
+          );
+        } else {
+          debugPrint('[InteractionSocket] connect_error: $msg');
+        }
+      }
     });
 
     _socket!.connect();

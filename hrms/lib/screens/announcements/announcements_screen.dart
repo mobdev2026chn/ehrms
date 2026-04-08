@@ -4,7 +4,7 @@ import '../../config/app_colors.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
-import '../../services/request_service.dart';
+import '../../services/interaction_service.dart';
 import 'announcement_detail_screen.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -17,8 +17,8 @@ class AnnouncementsScreen extends StatefulWidget {
 }
 
 class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
-  final RequestService _requestService = RequestService();
   List<dynamic> _announcements = [];
+  int _unseenEngagementTotal = 0;
   bool _isLoading = true;
   String? _error;
 
@@ -34,12 +34,24 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
       _error = null;
     });
     try {
-      final result = await _requestService.getAnnouncementsForEmployee();
+      final result = await InteractionService.instance.getAnnouncements();
+      final unseen = await InteractionService.instance
+          .getAnnouncementsUnseenHrTotal();
       if (!mounted) return;
       if (result['success'] == true) {
-        final data = result['data'];
+        final data = result['data'] is List
+            ? result['data']
+            : result['announcements'];
+        final unseenData = unseen['data'];
+        int unseenTotal = 0;
+        if (unseenData is Map && unseenData['total'] is num) {
+          unseenTotal = (unseenData['total'] as num).toInt();
+        } else if (unseen['total'] is num) {
+          unseenTotal = (unseen['total'] as num).toInt();
+        }
         setState(() {
           _announcements = data is List ? List<dynamic>.from(data) : [];
+          _unseenEngagementTotal = unseenTotal;
           _isLoading = false;
         });
       } else {
@@ -86,10 +98,10 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
         child: _isLoading
             ? _buildLoadingState(context)
             : _error != null
-                ? _buildErrorState(context)
-                : _announcements.isEmpty
-                    ? _buildEmptyState(context)
-                    : _buildContent(context),
+            ? _buildErrorState(context)
+            : _announcements.isEmpty
+            ? _buildEmptyState(context)
+            : _buildContent(context),
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
@@ -105,10 +117,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
           const SizedBox(height: 16),
           Text(
             'Loading announcements...',
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 14,
-            ),
+            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
           ),
         ],
       ),
@@ -256,6 +265,27 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                     color: colorScheme.onSurfaceVariant,
                   ),
                 ),
+                if (_unseenEngagementTotal > 0) ...[
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      'Engagement unseen: $_unseenEngagementTotal',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -263,29 +293,32 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
           sliver: SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final a = _announcements[index] as Map<String, dynamic>;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: _buildAnnouncementCard(context, a, index),
-                  );
-                },
-              childCount: _announcements.length,
-            ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final a = _announcements[index] as Map<String, dynamic>;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: _buildAnnouncementCard(context, a, index),
+              );
+            }, childCount: _announcements.length),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildAnnouncementCard(BuildContext context, Map<String, dynamic> a, int index) {
+  Widget _buildAnnouncementCard(
+    BuildContext context,
+    Map<String, dynamic> a,
+    int index,
+  ) {
     final colorScheme = Theme.of(context).colorScheme;
     final title = a['title']?.toString() ?? 'Announcement';
     final description = a['description']?.toString() ?? '';
     final fromName = a['fromName']?.toString();
     final date = _parseDate(a['publishDate']) ?? _parseDate(a['effectiveDate']);
-    final dateStr = date != null ? DateFormat('d MMM y, h:mm a').format(date) : '';
+    final dateStr = date != null
+        ? DateFormat('d MMM y, h:mm a').format(date)
+        : '';
 
     return Container(
       decoration: BoxDecoration(
@@ -362,7 +395,11 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                             const SizedBox(height: 2),
                             Row(
                               children: [
-                                Icon(Icons.schedule_rounded, size: 14, color: colorScheme.onSurfaceVariant),
+                                Icon(
+                                  Icons.schedule_rounded,
+                                  size: 14,
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
                                 const SizedBox(width: 4),
                                 Text(
                                   dateStr,

@@ -3430,17 +3430,32 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             payrollMtdNet ??
             (thisMonthGrossDisplay - thisMonthDeductionsDisplay));
 
-    final salaryCardPresentDays = salaryCardCounts['presentDays'] ?? _presentDays;
+    final previewAttRaw = _payrollPreview?['attendance'];
+    final previewAttMap = previewAttRaw is Map
+        ? Map<String, dynamic>.from(previewAttRaw)
+        : null;
+    final previewPresentForCards =
+        (previewAttMap?['presentDays'] as num?)?.toDouble();
+    final salaryCardPresentDays =
+        (!payrollFinal && previewPresentForCards != null)
+            ? previewPresentForCards
+            : (salaryCardCounts['presentDays'] ?? _presentDays);
     final salaryCardWorkingTill =
         salaryCardCounts['workingDays']?.toInt() ?? (_workingDaysInfo?.workingDays ?? 0);
-    // Web: % and "out of X" use full-month payable base (week-off excluded), not till-date working days only.
+    // Web salary card label/percentage uses till-date working days (preview attendance.workingDaysTillCurrentDate),
+    // while payable base/full-month denominator is only for salary proration.
     var denomForSalaryCards = salaryCardWorkingTill;
-    if (_workingDaysInfo != null) {
-      final wdmCards = _salaryPayableBaseDays(
-        _workingDaysInfo!.workingDaysFullMonth ??
-            _workingDaysInfo!.workingDays,
-      );
-      if (wdmCards > 0) denomForSalaryCards = wdmCards;
+    if (previewAttMap != null) {
+      final p = previewAttMap;
+      final previewWorkingTill =
+          (p['workingDaysTillCurrentDate'] as num?)?.toInt();
+      final previewWorking =
+          (p['workingDays'] as num?)?.toInt();
+      final d = previewWorkingTill ?? previewWorking;
+      if (d != null && d > 0) denomForSalaryCards = d;
+    }
+    if (denomForSalaryCards <= 0 && _workingDaysInfo != null) {
+      denomForSalaryCards = _workingDaysInfo!.workingDays;
     }
     var attendancePercentForCards = denomForSalaryCards > 0
         ? (salaryCardPresentDays / denomForSalaryCards) * 100
@@ -3448,8 +3463,35 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     if (!payrollFinal && _payrollPreview != null) {
       final pa = _payrollPreview!['attendance'];
       if (pa is Map) {
-        final ap = (pa['attendancePercentage'] as num?)?.toDouble();
-        if (ap != null) attendancePercentForCards = ap;
+        final p = Map<String, dynamic>.from(pa);
+        final ap = (p['attendancePercentage'] as num?)?.toDouble();
+        final previewPresent = (p['presentDays'] as num?)?.toDouble();
+        final previewWorkingTill =
+            (p['workingDaysTillCurrentDate'] as num?)?.toDouble();
+        final previewWorking = (p['workingDays'] as num?)?.toDouble();
+        // Web card parity: derive from preview present ÷ workingDaysTillCurrentDate when available.
+        final derivedFromPreview = (previewPresent != null &&
+                previewWorkingTill != null &&
+                previewWorkingTill > 0)
+            ? (previewPresent / previewWorkingTill) * 100
+            : null;
+        if (derivedFromPreview != null) {
+          attendancePercentForCards = derivedFromPreview;
+        } else if (ap != null && ap >= 0) {
+          attendancePercentForCards = ap;
+        } else if (previewPresent != null &&
+            previewWorking != null &&
+            previewWorking > 0) {
+          attendancePercentForCards = (previewPresent / previewWorking) * 100;
+        }
+        debugPrint(
+          '[SalaryOverview][cardsAttPct] payrollFinal=$payrollFinal '
+          'presentForCard=$salaryCardPresentDays localPresent=${salaryCardCounts['presentDays'] ?? _presentDays} '
+          'denomForCards=$denomForSalaryCards '
+          'preview.present=$previewPresent preview.wdTill=$previewWorkingTill preview.wd=$previewWorking '
+          'preview.ap=$ap derived=${derivedFromPreview?.toStringAsFixed(2) ?? "n/a"} '
+          'final=${attendancePercentForCards.toStringAsFixed(2)}',
+        );
       }
     }
 
@@ -3462,7 +3504,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       netCardExtra.write('From generated payroll');
     } else if (_workingDaysInfo != null || _attendanceRecords.isNotEmpty) {
       netCardExtra.write(
-        'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards month working days',
+        'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards working days till date',
       );
       if (fineAmt > 0) {
         netCardExtra.write(' (Fine: ${currencyFormat.format(fineAmt)})');
@@ -3523,7 +3565,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             'This Month Gross',
             currencyFormat.format(thisMonthGrossDisplay),
             (_workingDaysInfo != null || _payrollPreview != null)
-                ? 'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards month working days\n${attendancePercentForCards.toStringAsFixed(1)}% of month base'
+                ? 'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards working days till date\n${attendancePercentForCards.toStringAsFixed(1)}% attendance'
                 : 'Pro-rated',
             Colors.black,
             textColor: Colors.white,
@@ -3866,19 +3908,46 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   double _monthGrossCardAttendancePercent() {
     final previewAtt = _payrollPreview?['attendance'] as Map<String, dynamic>?;
     final previewPct = (previewAtt?['attendancePercentage'] as num?)?.toDouble();
-    if (previewPct != null) return previewPct;
     final previewDays = (previewAtt?['presentDays'] as num?)?.toDouble();
+    final previewWdTill =
+        (previewAtt?['workingDaysTillCurrentDate'] as num?)?.toDouble();
+    final previewWd =
+        (previewAtt?['workingDays'] as num?)?.toDouble();
+    // Web parity: derive from preview present/workingDaysTillCurrentDate when those values exist.
+    if (previewDays != null && previewWdTill != null && previewWdTill > 0) {
+      final pct = (previewDays / previewWdTill) * 100;
+      debugPrint(
+        '[SalaryOverview][summaryAttPct] source=previewDerived '
+        'preview.present=$previewDays preview.wdTill=$previewWdTill '
+        'preview.ap=$previewPct final=${pct.toStringAsFixed(2)}',
+      );
+      return pct;
+    }
+    if (previewPct != null && previewPct >= 0) {
+      debugPrint(
+        '[SalaryOverview][summaryAttPct] source=previewAttendancePercentage '
+        'preview.ap=$previewPct preview.present=$previewDays '
+        'preview.wdTill=$previewWdTill preview.wd=$previewWd',
+      );
+      return previewPct;
+    }
     final salaryCardCounts = _computeSalaryCardDayCountsFromAttendance();
     final days = previewDays ?? (salaryCardCounts['presentDays'] ?? _presentDays);
-    final previewWd =
+    final previewWdInt =
         (previewAtt?['workingDaysTillCurrentDate'] as num?)?.toInt() ??
-        (previewAtt?['workingDays'] as num?)?.toInt();
-    final w = previewWd ??
+            (previewAtt?['workingDays'] as num?)?.toInt();
+    final w = previewWdInt ??
         (salaryCardCounts['workingDays']?.toInt() ??
             _workingDaysInfo?.workingDays ??
             0);
     if (w <= 0) return 0;
-    return (days / w) * 100;
+    final pct = (days / w) * 100;
+    debugPrint(
+      '[SalaryOverview][summaryAttPct] source=fallback '
+      'days=$days w=$w preview.ap=$previewPct preview.present=$previewDays '
+      'preview.wdTill=$previewWdTill preview.wd=$previewWd final=${pct.toStringAsFixed(2)}',
+    );
+    return pct;
   }
 
   Widget _buildAttendanceSummary() {

@@ -38,7 +38,8 @@ class InteractionService {
     final raw = ErrorMessageUtils.messageFromResponseData(error.response?.data);
     final msg = (raw ?? '').toLowerCase();
     if (code == 404) return true;
-    if (msg.contains('route not found') && msg.contains('interaction')) return true;
+    if (msg.contains('route not found') && msg.contains('interaction'))
+      return true;
     return false;
   }
 
@@ -56,7 +57,10 @@ class InteractionService {
   }
 
   Dio _client() {
-    final wantedBase = AppConstants.interactionApiBaseUrl.replaceAll(RegExp(r'/+$'), '');
+    final wantedBase = AppConstants.interactionApiBaseUrl.replaceAll(
+      RegExp(r'/+$'),
+      '',
+    );
     if (_dio != null && _dioBaseUsed == wantedBase) return _dio!;
     _dio = null;
     _dioBaseUsed = wantedBase;
@@ -112,7 +116,9 @@ class InteractionService {
       );
     }
     if (kDebugMode) {
-      debugPrint('[InteractionService] interaction API: ${_dio!.options.baseUrl}');
+      debugPrint(
+        '[InteractionService] interaction API: ${_dio!.options.baseUrl}',
+      );
     }
     return _dio!;
   }
@@ -174,6 +180,147 @@ class InteractionService {
     return res.data ?? {};
   }
 
+  /// Web parity: announcements feed from interaction service.
+  Future<Map<String, dynamic>> getAnnouncements() async {
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/announcements',
+    );
+    return res.data ?? {};
+  }
+
+  /// Web parity: unseen HR engagement count for announcement badge.
+  Future<Map<String, dynamic>> getAnnouncementsUnseenHrTotal() async {
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/announcements/engagement/unseen-hr-total',
+    );
+    return res.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> markAnnouncementRead(
+    String announcementId,
+  ) async {
+    final path = '/interaction/announcements/$announcementId/read';
+    try {
+      final res = await _client().patch<Map<String, dynamic>>(path);
+      return res.data ?? {};
+    } on DioException catch (e) {
+      final code = e.response?.statusCode ?? 0;
+      if (code == 404 || code == 405) {
+        final res = await _client().get<Map<String, dynamic>>(path);
+        return res.data ?? {};
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> markAnnouncementHrSeen(
+    String announcementId,
+  ) async {
+    final path =
+        '/interaction/announcements/$announcementId/engagement/mark-hr-seen';
+    try {
+      final res = await _client().patch<Map<String, dynamic>>(path);
+      return res.data ?? {};
+    } on DioException catch (e) {
+      final code = e.response?.statusCode ?? 0;
+      if (code == 404 || code == 405) {
+        final res = await _client().get<Map<String, dynamic>>(path);
+        return res.data ?? {};
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> getAnnouncementMyReplies(
+    String announcementId,
+  ) async {
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/announcements/$announcementId/my-replies',
+    );
+    return res.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> getAnnouncementById(
+    String announcementId,
+  ) async {
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/announcements/$announcementId',
+    );
+    return res.data ?? {};
+  }
+
+  /// Fetch engagement messages/threads for one announcement.
+  /// Tries web-compatible variants and returns first successful payload.
+  Future<Map<String, dynamic>> getAnnouncementEngagement(
+    String announcementId,
+  ) async {
+    final paths = <String>[
+      '/interaction/announcements/$announcementId/engagement',
+      '/interaction/announcements/$announcementId/my-replies',
+    ];
+    DioException? lastError;
+    for (final path in paths) {
+      try {
+        final res = await _client().get<Map<String, dynamic>>(path);
+        return res.data ?? {};
+      } on DioException catch (e) {
+        lastError = e;
+        final code = e.response?.statusCode ?? 0;
+        if (code == 404 || code == 405) continue;
+        rethrow;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return {};
+  }
+
+  /// Web-style announcement engagement message send.
+  /// Uses same route as web: POST /interaction/announcements/:id/reply
+  Future<Map<String, dynamic>> sendAnnouncementEngagementMessage(
+    String announcementId, {
+    required String message,
+  }) async {
+    const pathSuffix = '/reply';
+    final payloads = <Map<String, dynamic>>[
+      {'replyText': message},
+      {'message': message},
+      {'reply': message},
+    ];
+    DioException? lastError;
+    for (final payload in payloads) {
+      try {
+        final res = await _client().post<Map<String, dynamic>>(
+          '/interaction/announcements/$announcementId$pathSuffix',
+          data: payload,
+        );
+        return res.data ?? {'success': true};
+      } on DioException catch (e) {
+        final code = e.response?.statusCode ?? 0;
+        lastError = e;
+        if (code == 400 || code == 422) continue;
+        rethrow;
+      }
+    }
+    if (lastError != null) {
+      final code = lastError.response?.statusCode ?? 0;
+      if (code == 404) {
+        return {
+          'success': false,
+          'message':
+              'Engagement send API is not available on this server route yet. Please try again later.',
+        };
+      }
+      return {
+        'success': false,
+        'message': ErrorMessageUtils.messageFromDioException(
+          lastError,
+          fallback: 'Unable to send engagement message',
+        ),
+      };
+    }
+    return {'success': false, 'message': 'Unable to send engagement message'};
+  }
+
   Future<Map<String, dynamic>> getChatMessages({
     required String chatId,
     int page = 1,
@@ -183,7 +330,8 @@ class InteractionService {
       '/interaction/chats/$chatId/messages',
       queryParameters: {
         'page': page,
-        if (receiverId != null && receiverId.isNotEmpty) 'receiverId': receiverId,
+        if (receiverId != null && receiverId.isNotEmpty)
+          'receiverId': receiverId,
       },
     );
     return res.data ?? {};
@@ -235,13 +383,17 @@ class InteractionService {
   Future<Map<String, dynamic>> getChatSuggestions({String? query}) async {
     final res = await _client().get<Map<String, dynamic>>(
       '/interaction/chats/suggestions',
-      queryParameters: {if (query != null && query.trim().isNotEmpty) 'q': query.trim()},
+      queryParameters: {
+        if (query != null && query.trim().isNotEmpty) 'q': query.trim(),
+      },
     );
     return res.data ?? {};
   }
 
   Future<Map<String, dynamic>> getChatTermsStatus() async {
-    final res = await _client().get<Map<String, dynamic>>('/interaction/chats/terms/status');
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/chats/terms/status',
+    );
     return res.data ?? {};
   }
 
@@ -253,7 +405,9 @@ class InteractionService {
   }
 
   Future<Map<String, dynamic>> getGroups() async {
-    final res = await _client().get<Map<String, dynamic>>('/interaction/groups');
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/groups',
+    );
     return res.data ?? {};
   }
 
@@ -264,13 +418,88 @@ class InteractionService {
     return res.data ?? {};
   }
 
+  Future<Map<String, dynamic>> updateGroup(
+    String groupId, {
+    String? groupName,
+    String? description,
+    List<String>? allowedSenderIds,
+  }) async {
+    final body = <String, dynamic>{
+      if (groupName != null) 'groupName': groupName,
+      if (description != null) 'description': description,
+      if (allowedSenderIds != null) 'allowedSenderIds': allowedSenderIds,
+    };
+    final res = await _client().patch<Map<String, dynamic>>(
+      '/interaction/groups/$groupId',
+      data: body,
+    );
+    return res.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> uploadGroupAvatar({
+    required String groupId,
+    required String filePath,
+    required String filename,
+  }) async {
+    final form = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath, filename: filename),
+    });
+    final res = await _client().post<Map<String, dynamic>>(
+      '/interaction/groups/$groupId/avatar',
+      data: form,
+    );
+    return res.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> addGroupMembers(
+    String groupId, {
+    required List<String> userIds,
+  }) async {
+    final res = await _client().post<Map<String, dynamic>>(
+      '/interaction/groups/$groupId/members',
+      data: {'userIds': userIds},
+    );
+    return res.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> removeGroupMember(
+    String groupId, {
+    required String userId,
+  }) async {
+    final res = await _client().delete<Map<String, dynamic>>(
+      '/interaction/groups/$groupId/members/$userId',
+    );
+    return res.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> updateGroupMemberRole(
+    String groupId, {
+    required String userId,
+    required String role, // member | admin
+  }) async {
+    final res = await _client().patch<Map<String, dynamic>>(
+      '/interaction/groups/$groupId/members/$userId/role',
+      data: {'role': role},
+    );
+    return res.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> deleteGroup(String groupId) async {
+    final res = await _client().delete<Map<String, dynamic>>(
+      '/interaction/groups/$groupId',
+    );
+    return res.data ?? {};
+  }
+
   Future<Map<String, dynamic>> getPolls() async {
     final res = await _client().get<Map<String, dynamic>>('/interaction/polls');
     return res.data ?? {};
   }
 
   Future<Map<String, dynamic>> getPoll(String pollId) async {
-    final res = await _client().get<Map<String, dynamic>>('/interaction/polls/$pollId');
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/polls/$pollId',
+    );
     return res.data ?? {};
   }
 
@@ -286,14 +515,19 @@ class InteractionService {
       );
       return res.data ?? {'success': true};
     } on DioException catch (e) {
-      final msg = ErrorMessageUtils.messageFromDioException(e, fallback: 'Vote failed');
+      final msg = ErrorMessageUtils.messageFromDioException(
+        e,
+        fallback: 'Vote failed',
+      );
       if (kDebugMode) debugPrint('[InteractionService] votePoll: $msg');
       return {'success': false, 'message': msg};
     }
   }
 
   Future<Map<String, dynamic>> getPollResults(String pollId) async {
-    final res = await _client().get<Map<String, dynamic>>('/interaction/polls/$pollId/results');
+    final res = await _client().get<Map<String, dynamic>>(
+      '/interaction/polls/$pollId/results',
+    );
     return res.data ?? {};
   }
 
