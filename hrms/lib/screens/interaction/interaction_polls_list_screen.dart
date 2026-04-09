@@ -139,18 +139,6 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text(
-                'Polls & Surveys',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFF0F172A),
-                    ),
-              ),
-            ),
-          ),
           if (_polls.isEmpty)
             const SliverFillRemaining(
               hasScrollBody: false,

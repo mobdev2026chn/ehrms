@@ -34,6 +34,8 @@ class AppBottomNavigationBar extends StatefulWidget {
 
   /// When provided, used for Punch button label (Punch In vs Punch Out). From today's attendance.
   final bool? isPunchedInToday;
+  /// When provided, controls hide/show of punch CTA based on today's completion state.
+  final bool? isPunchCompletedToday;
   final bool isPunchActionInProgress;
   final bool isBreakActive;
   final bool isBreakActionInProgress;
@@ -46,6 +48,7 @@ class AppBottomNavigationBar extends StatefulWidget {
     this.onTap,
     this.items,
     this.isPunchedInToday,
+    this.isPunchCompletedToday,
     this.isPunchActionInProgress = false,
     this.isBreakActive = false,
     this.isBreakActionInProgress = false,
@@ -72,8 +75,20 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   // ignore: unused_field
   bool _isCandidate = false;
   bool _isPunchedIn = false;
+  bool _isPunchCompletedToday = false;
   final BreakService _breakService = BreakService();
   DateTime? _fetchedBreakStartTime;
+
+  bool _isSameLocalDate(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  bool _isPunchDateForToday(String? rawValue, DateTime today) {
+    if (!hasParsablePunchDateTime(rawValue)) return false;
+    final parsed = DateTime.tryParse(rawValue!.trim())?.toLocal();
+    if (parsed == null) return false;
+    return _isSameLocalDate(parsed, today);
+  }
 
   @override
   void initState() {
@@ -86,11 +101,10 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   @override
   void didUpdateWidget(AppBottomNavigationBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Dashboard passes live [isPunchedInToday]; other routes use prefs only, refreshed here
-    // when the bar rebuilds so Punch In/Out matches after check-in/out.
-    if (widget.isPunchedInToday == null &&
-        (oldWidget.isPunchedInToday != widget.isPunchedInToday ||
-            oldWidget.currentIndex != widget.currentIndex)) {
+    // Refresh cached today punch state whenever nav context changes so label/visibility
+    // tracks check-in/check-out updates and day rollover.
+    if (oldWidget.isPunchedInToday != widget.isPunchedInToday ||
+        oldWidget.currentIndex != widget.currentIndex) {
       _checkPunchState();
     }
   }
@@ -146,19 +160,24 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
       final today = DateTime.now();
       final todayKey = '${today.year}-${today.month}-${today.day}';
       final cacheDay = prefs.getString('today_punch_date');
+      final hasPunchInToday = _isPunchDateForToday(punchIn, today);
+      final hasPunchOutToday = _isPunchDateForToday(punchOut, today);
 
       final isPunchedInFromPrefs = cacheDay == todayKey &&
           isAwaitingPunchOutFromCachedPunchStrings(
             punchIn: punchIn,
             punchOut: punchOut,
           );
+      final isPunchCompletedTodayFromPrefs =
+          cacheDay == todayKey && hasPunchInToday && hasPunchOutToday;
 
       if (kDebugMode) {
         final label = isPunchedInFromPrefs ? 'Punch Out' : 'Punch In';
         debugPrint(
           '[AppBottomNav] _checkPunchState: todayKey=$todayKey cacheDay=$cacheDay '
           'punchIn=${punchIn != null ? "set" : "null"} punchOut=${punchOut != null ? "set" : "null"} '
-          'awaitingPunchOut=$isPunchedInFromPrefs',
+          'hasPunchInToday=$hasPunchInToday hasPunchOutToday=$hasPunchOutToday '
+          'awaitingPunchOut=$isPunchedInFromPrefs completedToday=$isPunchCompletedTodayFromPrefs',
         );
         debugPrint(
           '[PunchButton][BottomNav][today-from-prefs] '
@@ -171,6 +190,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
       if (mounted) {
         setState(() {
           _isPunchedIn = isPunchedInFromPrefs;
+          _isPunchCompletedToday = isPunchCompletedTodayFromPrefs;
         });
       }
     } catch (e) {
@@ -443,16 +463,17 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
                     ),
                   ),
                   // Punch CTA: ~3/8 of bar — larger pill (reference ~30–35% width).
-                  Expanded(
-                    flex: 3,
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 4, right: 10),
-                      child: KeyedSubtree(
-                        key: const ValueKey('bottom_nav_punch'),
-                        child: _buildPunchButton(context, fillNavColumn: true),
+                  if (!(widget.isPunchCompletedToday ?? _isPunchCompletedToday))
+                    Expanded(
+                      flex: 3,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 4, right: 10),
+                        child: KeyedSubtree(
+                          key: const ValueKey('bottom_nav_punch'),
+                          child: _buildPunchButton(context, fillNavColumn: true),
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),

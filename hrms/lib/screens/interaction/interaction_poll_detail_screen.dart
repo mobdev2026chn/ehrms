@@ -5,6 +5,9 @@ import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
 import '../../services/interaction_service.dart';
+import '../../widgets/app_drawer.dart';
+import '../../widgets/bottom_navigation_bar.dart';
+import '../../widgets/menu_icon_button.dart';
 
 class InteractionPollDetailScreen extends StatefulWidget {
   const InteractionPollDetailScreen({
@@ -133,7 +136,11 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
     final end = DateTime.tryParse(_poll?['endDate']?.toString() ?? '')?.toLocal();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Poll')),
+      drawer: const AppDrawer(),
+      appBar: AppBar(
+        leading: const MenuIconButton(),
+        title: const Text('Poll'),
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
@@ -258,6 +265,7 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
                 ],
               ),
             ),
+      bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
   }
 }

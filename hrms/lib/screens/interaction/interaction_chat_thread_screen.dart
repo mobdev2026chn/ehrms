@@ -81,6 +81,7 @@ void showChatTopBanner(BuildContext context, String message) {
       child: Material(
         color: Colors.transparent,
         child: Container(
+          constraints: const BoxConstraints(minHeight: 64),
           decoration: BoxDecoration(
             color: const Color(0xFFF1B434),
             borderRadius: BorderRadius.circular(16),
@@ -94,6 +95,7 @@ void showChatTopBanner(BuildContext context, String message) {
           ),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 width: 26,
@@ -108,8 +110,8 @@ void showChatTopBanner(BuildContext context, String message) {
               Expanded(
                 child: Text(
                   message,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 6,
+                  overflow: TextOverflow.fade,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
@@ -133,7 +135,24 @@ void showChatTopBanner(BuildContext context, String message) {
   _chatTopBannerTimer = Timer(const Duration(seconds: 3), _hideChatTopBanner);
 }
 
+class _ChatThreadCacheEntry {
+  _ChatThreadCacheEntry({
+    required this.messages,
+    required this.seenIds,
+    required this.page,
+    required this.hasMore,
+    required this.cachedAt,
+  });
+
+  final List<Map<String, dynamic>> messages;
+  final Set<String> seenIds;
+  final int page;
+  final bool hasMore;
+  final DateTime cachedAt;
+}
+
 class _InteractionChatThreadScreenState extends State<InteractionChatThreadScreen> {
+  static final Map<String, _ChatThreadCacheEntry> _threadCache = {};
   final _text = TextEditingController();
   final _searchQuery = TextEditingController();
   final _searchFocus = FocusNode();
@@ -145,6 +164,11 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   bool _loadingMore = false;
   bool _hasMore = true;
   bool _recording = false;
+  DateTime? _recordingStartedAt;
+  Timer? _recordingTimer;
+  Duration _recordingElapsed = Duration.zero;
+  String? _pendingVoicePath;
+  String? _pendingVoiceName;
   /// Inline header search (web-style); chat list hidden while active.
   bool _searchOpen = false;
   String? _myUserId;
@@ -160,11 +184,14 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   StreamSubscription<Map<String, dynamic>>? _sub;
   final _seenIds = <String>{};
   Timer? _typingTimer;
+  Timer? _markReadDebounce;
+  final Set<String> _markReadInFlight = <String>{};
   /// From `GET /interaction/polls` — option ids the current user selected per poll.
   Map<String, List<String>> _myPollOptionIds = {};
   bool _showScrollToBottom = false;
   bool? _resolvedCanSendMessages;
   String? _sendBlockedReason;
+  String? _resolvedReceiverId;
   Map<String, dynamic>? _replyTo;
   String? _highlightMessageId;
   final Set<String> _failedAvatarUrls = <String>{};
@@ -181,9 +208,71 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     return _canSendForUserId(me);
   }
 
+  String? get _personalPeerId {
+    if (widget.isGroup) return null;
+    final raw = (_resolvedReceiverId ?? widget.receiverId)?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return raw;
+  }
+
+  String get _threadCacheKey {
+    if (widget.isGroup) return 'g:${widget.chatId}';
+    return 'p:${_personalPeerId ?? widget.receiverId ?? widget.chatId}';
+  }
+
+  bool _restoreFromCache() {
+    final cache = _threadCache[_threadCacheKey];
+    if (cache == null) return false;
+    // Keep cache reasonably fresh.
+    if (DateTime.now().difference(cache.cachedAt) > const Duration(minutes: 10)) {
+      _threadCache.remove(_threadCacheKey);
+      return false;
+    }
+    _messages = List<Map<String, dynamic>>.from(cache.messages);
+    _seenIds
+      ..clear()
+      ..addAll(cache.seenIds);
+    _page = cache.page;
+    _hasMore = cache.hasMore;
+    _loading = false;
+    _loadingMore = false;
+    return _messages.isNotEmpty;
+  }
+
+  void _saveToCache() {
+    if (_messages.isEmpty) return;
+    _threadCache[_threadCacheKey] = _ChatThreadCacheEntry(
+      messages: List<Map<String, dynamic>>.from(_messages),
+      seenIds: Set<String>.from(_seenIds),
+      page: _page,
+      hasMore: _hasMore,
+      cachedAt: DateTime.now(),
+    );
+  }
+
   void _showTopSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
     showChatTopBanner(context, message);
+  }
+
+  String _friendlyErrorMessage(Object error) {
+    if (error is DioException) {
+      final t = error.type;
+      if (t == DioExceptionType.connectionTimeout ||
+          t == DioExceptionType.sendTimeout ||
+          t == DioExceptionType.receiveTimeout) {
+        return 'Request timed out. Please check your internet and try again.';
+      }
+      final msg = ErrorMessageUtils.messageFromDioException(
+        error,
+        fallback: 'Unable to send. Please try again.',
+      );
+      if (msg.toLowerCase().contains('timed out')) {
+        return 'Request timed out. Please check your internet and try again.';
+      }
+      return msg;
+    }
+    return error.toString();
   }
 
   Widget _safeInitialAvatar({
@@ -249,6 +338,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
 
   Future<void> _init() async {
     _myUserId = await InteractionService.currentUserId();
+    _resolvedReceiverId = widget.receiverId?.trim();
     _myRole = await InteractionService.currentUserRole();
     await _loadMyDisplay();
     if (widget.isGroup) {
@@ -259,11 +349,14 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     await InteractionSocketService.instance.connect();
     _sub = InteractionSocketService.instance.onNewMessage.listen(_onSocketMessage);
     _scrollController.addListener(_onScroll);
-    await _loadPage(1, replace: true);
+    final restored = _restoreFromCache();
+    if (!restored) {
+      await _loadPage(1, replace: true);
+    }
     unawaited(_loadGroupMeta());
     unawaited(_refreshSendCapabilityFromGroup());
     unawaited(_hydratePollVotes());
-    await _markVisibleRead();
+    _scheduleMarkVisibleRead();
   }
 
   Future<void> _refreshSendCapabilityFromGroup() async {
@@ -1065,7 +1158,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (widget.isGroup) {
       return msg['groupId']?.toString() == widget.chatId;
     }
-    final peer = widget.receiverId;
+    final peer = _personalPeerId;
     if (peer == null) return false;
     final s = msg['senderId']?.toString();
     final r = msg['receiverId']?.toString();
@@ -1082,13 +1175,18 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (id != null && id.isNotEmpty) {
       _seenIds.add(id);
       setState(() {
-        final rest = _messages.where((m) => m['_id']?.toString() != id).toList();
-        _messages = [msg, ...rest];
+        final idx = _messages.indexWhere((m) => m['_id']?.toString() == id);
+        if (idx >= 0) {
+          _messages[idx] = msg;
+        } else {
+          _messages.insert(0, msg);
+        }
       });
     } else {
-      setState(() => _messages = [msg, ..._messages]);
+      setState(() => _messages.insert(0, msg));
     }
-    _markVisibleRead();
+    _saveToCache();
+    _scheduleMarkVisibleRead();
   }
 
   void _scrollChatToLatest() {
@@ -1137,7 +1235,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       final res = await InteractionService.instance.getChatMessages(
         chatId: widget.isGroup ? widget.chatId : 'personal',
         page: page,
-        receiverId: widget.isGroup ? null : widget.receiverId,
+        receiverId: widget.isGroup ? null : _personalPeerId,
       );
       final data = res['data'];
       final list = <Map<String, dynamic>>[];
@@ -1150,6 +1248,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
           }
         }
       }
+      _resolveReceiverFromMessages(list);
       if (!mounted) return;
       setState(() {
         _sendBlockedReason = null;
@@ -1173,6 +1272,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         _loading = false;
         _loadingMore = false;
       });
+      _saveToCache();
     } catch (e) {
       _applySendPermissionFromError(e);
       if (mounted) {
@@ -1184,22 +1284,68 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     }
   }
 
+  void _resolveReceiverFromMessages(List<Map<String, dynamic>> list) {
+    if (widget.isGroup) return;
+    if (_personalPeerId != null) return;
+    final me = _myUserId;
+    if (me == null || me.isEmpty) return;
+    for (final msg in list) {
+      final s = msg['senderId']?.toString();
+      final r = msg['receiverId']?.toString();
+      if (s == me && r != null && r.isNotEmpty) {
+        _resolvedReceiverId = r;
+        return;
+      }
+      if (r == me && s != null && s.isNotEmpty) {
+        _resolvedReceiverId = s;
+        return;
+      }
+    }
+  }
+
   Future<void> _markVisibleRead() async {
     final me = _myUserId;
     if (me == null) return;
-    for (final m in _messages) {
+    final ids = <String>[];
+    for (final m in _messages.take(30)) {
       if (m['readStatus'] == true) continue;
       if (m['senderId']?.toString() == me) continue;
       final id = m['_id']?.toString();
-      if (id == null) continue;
-      try {
-        await InteractionService.instance.markMessageRead(id);
-      } catch (_) {}
+      if (id == null || id.isEmpty) continue;
+      if (_markReadInFlight.contains(id)) continue;
+      ids.add(id);
+      _markReadInFlight.add(id);
     }
+    if (ids.isEmpty) return;
+    await Future.wait(
+      ids.map((id) async {
+        try {
+          await InteractionService.instance.markMessageRead(id);
+        } catch (_) {
+          // Ignore read receipt failures for smooth chat UX.
+        } finally {
+          _markReadInFlight.remove(id);
+        }
+      }),
+    );
+  }
+
+  void _scheduleMarkVisibleRead() {
+    _markReadDebounce?.cancel();
+    _markReadDebounce = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_markVisibleRead());
+    });
   }
 
   Future<void> _sendText() async {
     if (!_maySend) return;
+    if (!widget.isGroup && _personalPeerId == null) {
+      _showTopSnackBar(
+        'Unable to identify recipient for this personal chat. Please reopen this chat and try again.',
+        isError: true,
+      );
+      return;
+    }
     final text = _text.text.trim();
     if (text.isEmpty) return;
     final replyPrefix = _replyPrefixFor(_replyTo);
@@ -1210,7 +1356,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       final res = await InteractionService.instance.sendTextMessage(
         chatId: widget.isGroup ? widget.chatId : 'personal',
         messageContent: outbound,
-        receiverId: widget.isGroup ? null : widget.receiverId,
+        receiverId: widget.isGroup ? null : _personalPeerId,
       );
       final data = res['data'];
       if (data is Map) {
@@ -1224,7 +1370,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     } catch (e) {
       _applySendPermissionFromError(e);
       if (mounted) {
-        _showTopSnackBar('$e', isError: true);
+        _showTopSnackBar(_friendlyErrorMessage(e), isError: true);
       }
     }
   }
@@ -1265,13 +1411,20 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   }
 
   Future<void> _upload(String path, String filename, String type) async {
+    if (!widget.isGroup && _personalPeerId == null) {
+      _showTopSnackBar(
+        'Unable to identify recipient for this personal chat. Please reopen this chat and try again.',
+        isError: true,
+      );
+      return;
+    }
     try {
       final res = await InteractionService.instance.uploadChatMedia(
         chatId: widget.isGroup ? widget.chatId : 'personal',
         filePath: path,
         filename: filename,
         type: type,
-        receiverId: widget.isGroup ? null : widget.receiverId,
+        receiverId: widget.isGroup ? null : _personalPeerId,
       );
       final data = res['data'];
       if (data is Map) {
@@ -1291,7 +1444,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     } catch (e) {
       _applySendPermissionFromError(e);
       if (mounted) {
-        _showTopSnackBar('$e', isError: true);
+        _showTopSnackBar(_friendlyErrorMessage(e), isError: true);
       }
     }
   }
@@ -1301,7 +1454,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       final res = await InteractionService.instance.getChatMessages(
         chatId: widget.isGroup ? widget.chatId : 'personal',
         page: 1,
-        receiverId: widget.isGroup ? null : widget.receiverId,
+        receiverId: widget.isGroup ? null : _personalPeerId,
       );
       final data = res['data'];
       if (data is! List || !mounted) return;
@@ -1320,15 +1473,15 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   void _emitTyping() {
     if (widget.isGroup) {
       InteractionSocketService.instance.emitTyping(groupId: widget.chatId);
-    } else if (widget.receiverId != null) {
-      InteractionSocketService.instance.emitTyping(receiverId: widget.receiverId);
+    } else if (_personalPeerId != null) {
+      InteractionSocketService.instance.emitTyping(receiverId: _personalPeerId);
     }
     _typingTimer?.cancel();
     _typingTimer = Timer(const Duration(seconds: 2), () {
       if (widget.isGroup) {
         InteractionSocketService.instance.emitStopTyping(groupId: widget.chatId);
-      } else if (widget.receiverId != null) {
-        InteractionSocketService.instance.emitStopTyping(receiverId: widget.receiverId);
+      } else if (_personalPeerId != null) {
+        InteractionSocketService.instance.emitStopTyping(receiverId: _personalPeerId);
       }
     });
   }
@@ -1445,11 +1598,19 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (_recording) {
       final path = await _audioRecorder.stop();
       if (mounted) setState(() => _recording = false);
+      _recordingTimer?.cancel();
+      _recordingTimer = null;
+      _recordingStartedAt = null;
       if (path != null && path.isNotEmpty) {
         final name = path.contains(Platform.pathSeparator)
             ? path.split(Platform.pathSeparator).last
             : path.split('/').last;
-        await _upload(path, name, 'voice');
+        if (mounted) {
+          setState(() {
+            _pendingVoicePath = path;
+            _pendingVoiceName = name;
+          });
+        }
       }
       return;
     }
@@ -1466,12 +1627,27 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (!mounted) return;
     if (!await _audioRecorder.hasPermission()) return;
     final dir = await getTemporaryDirectory();
-    final filePath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    final filePath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.ogg';
     await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc),
+      const RecordConfig(encoder: AudioEncoder.opus),
       path: filePath,
     );
-    if (mounted) setState(() => _recording = true);
+    if (mounted) {
+      setState(() {
+        _recording = true;
+        _pendingVoicePath = null;
+        _pendingVoiceName = null;
+        _recordingStartedAt = DateTime.now();
+        _recordingElapsed = Duration.zero;
+      });
+    }
+    _recordingTimer?.cancel();
+    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_recording) return;
+      final started = _recordingStartedAt;
+      if (started == null) return;
+      setState(() => _recordingElapsed = DateTime.now().difference(started));
+    });
   }
 
   String _senderLabel(Map<String, dynamic> msg) {
@@ -2040,14 +2216,44 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   @override
   void dispose() {
     _typingTimer?.cancel();
+    _markReadDebounce?.cancel();
     _hideChatTopBanner();
     _sub?.cancel();
+    _recordingTimer?.cancel();
     _scrollController.dispose();
     _text.dispose();
     _searchQuery.dispose();
     _searchFocus.dispose();
     unawaited(_audioRecorder.dispose());
     super.dispose();
+  }
+
+  String _fmtMmSs(Duration d) {
+    final total = d.inSeconds;
+    final m = total ~/ 60;
+    final s = total % 60;
+    final ss = s < 10 ? '0$s' : '$s';
+    return '$m:$ss';
+  }
+
+  void _discardPendingVoice() {
+    if (!mounted) return;
+    setState(() {
+      _pendingVoicePath = null;
+      _pendingVoiceName = null;
+    });
+  }
+
+  Future<void> _sendPendingVoice() async {
+    final path = _pendingVoicePath;
+    final name = _pendingVoiceName ?? 'voice.m4a';
+    if (path == null || path.isEmpty) return;
+    await _upload(path, name, 'voice');
+    if (!mounted) return;
+    setState(() {
+      _pendingVoicePath = null;
+      _pendingVoiceName = null;
+    });
   }
 
   @override
@@ -2253,7 +2459,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                     dense: true,
                     leading: Icon(Icons.fiber_manual_record, color: Colors.red.shade700, size: 20),
                     title: Text(
-                      'Recording… Tap the microphone again to send',
+                      'Recording… ${_fmtMmSs(_recordingElapsed)}',
                       style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
                     ),
                   ),
@@ -2360,22 +2566,57 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                     ),
                                   ),
                                   Expanded(
-                                    child: TextField(
-                                      controller: _text,
-                                      minLines: 1,
-                                      maxLines: 4,
-                                      decoration: const InputDecoration(
-                                        hintText: 'Type a message...',
-                                        hintStyle: TextStyle(color: Color(0xFF94A3B8)),
-                                        border: InputBorder.none,
-                                        isDense: true,
-                                        contentPadding: EdgeInsets.fromLTRB(4, 12, 12, 12),
-                                      ),
-                                      onChanged: (_) {
-                                        _emitTyping();
-                                        setState(() {});
-                                      },
-                                    ),
+                                    child: _pendingVoicePath != null
+                                        ? Padding(
+                                            padding: const EdgeInsets.fromLTRB(6, 10, 6, 10),
+                                            child: Row(
+                                              children: [
+                                                Container(
+                                                  width: 28,
+                                                  height: 28,
+                                                  decoration: BoxDecoration(
+                                                    color: AppColors.primary.withValues(alpha: 0.12),
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  alignment: Alignment.center,
+                                                  child: Icon(Icons.play_arrow_rounded, color: AppColors.primary, size: 18),
+                                                ),
+                                                const SizedBox(width: 10),
+                                                const Icon(Icons.mic_rounded, size: 18, color: Color(0xFF0F172A)),
+                                                const SizedBox(width: 8),
+                                                Expanded(
+                                                  child: Text(
+                                                    'Voice message',
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: TextStyle(color: const Color(0xFF0F172A).withValues(alpha: 0.75)),
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  visualDensity: VisualDensity.compact,
+                                                  padding: EdgeInsets.zero,
+                                                  icon: Icon(Icons.close, size: 18, color: Colors.grey.shade700),
+                                                  onPressed: _discardPendingVoice,
+                                                ),
+                                              ],
+                                            ),
+                                          )
+                                        : TextField(
+                                            controller: _text,
+                                            minLines: 1,
+                                            maxLines: 4,
+                                            decoration: const InputDecoration(
+                                              hintText: 'Type a message...',
+                                              hintStyle: TextStyle(color: Color(0xFF94A3B8)),
+                                              border: InputBorder.none,
+                                              isDense: true,
+                                              contentPadding: EdgeInsets.fromLTRB(4, 12, 12, 12),
+                                            ),
+                                            onChanged: (_) {
+                                              _emitTyping();
+                                              setState(() {});
+                                            },
+                                          ),
                                   ),
                                   Padding(
                                     padding: const EdgeInsets.only(right: 6, bottom: 6),
@@ -2408,6 +2649,19 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                 icon: const Icon(Icons.stop_circle_outlined),
                                 color: Colors.red.shade700,
                                 onPressed: _toggleRecording,
+                              ),
+                            )
+                          else if (_pendingVoicePath != null)
+                            Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(Icons.send_rounded),
+                                color: AppColors.primary,
+                                onPressed: _sendPendingVoice,
                               ),
                             )
                           else if (_text.text.trim().isNotEmpty)

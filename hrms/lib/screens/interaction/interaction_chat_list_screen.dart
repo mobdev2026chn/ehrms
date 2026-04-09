@@ -319,9 +319,6 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     return 0;
   }
 
-  bool _isBroadcastGroup(Map<String, dynamic> g) =>
-      g['groupType']?.toString() == 'broadcast';
-
   Future<void> _openThread(Map<String, dynamic> row) async {
     final chatId = row['chatId']?.toString() ?? 'personal';
     final receiver = row['receiver'];
@@ -368,38 +365,6 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
           peerIsOnline: peerOnline,
           peerLastSeenAt: peerLastSeenAt,
           canSendMessages: canSend,
-        ),
-      ),
-    );
-    _load();
-  }
-
-  Future<void> _openQuickGroup(Map<String, dynamic> group) async {
-    final gid = group['_id']?.toString() ?? group['id']?.toString() ?? '';
-    final name = _groupDisplayName(group);
-    if (gid.isEmpty) return;
-    Map<String, dynamic>? row;
-    for (final c in _chats) {
-      if (c['groupId']?.toString() == gid) {
-        row = c;
-        break;
-      }
-    }
-    if (row != null) {
-      await _openThread(row);
-      return;
-    }
-    final cs = group['canSendMessages'];
-    await Navigator.push<void>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => InteractionChatThreadScreen(
-          chatId: gid,
-          receiverId: null,
-          title: name,
-          avatarUrl: null,
-          isGroup: true,
-          canSendMessages: cs is bool ? cs : null,
         ),
       ),
     );
@@ -464,60 +429,6 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
           );
         }),
       ),
-    );
-  }
-
-  Widget _groupsQuickCard() {
-    if (_segment != 2 || _groupDirectory.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
-          child: Text(
-            'GROUPS',
-            style: TextStyle(
-              fontSize: 11,
-              letterSpacing: 0.6,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade600,
-            ),
-          ),
-        ),
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: Colors.grey.shade300),
-          ),
-          child: Column(
-            children: _groupDirectory.map((g) {
-              final name = _groupDisplayName(g);
-              final broadcast = _isBroadcastGroup(g);
-              return ListTile(
-                title: Row(
-                  children: [
-                    Expanded(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis)),
-                    if (broadcast)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.indigo.shade50,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          'Broadcast',
-                          style: TextStyle(fontSize: 11, color: Colors.indigo.shade900),
-                        ),
-                      ),
-                  ],
-                ),
-                onTap: () => _openQuickGroup(g),
-              );
-            }).toList(),
-          ),
-        ),
-      ],
     );
   }
 
@@ -710,14 +621,6 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'Messages',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: const Color(0xFF0F172A),
-                          ),
-                    ),
-                    const SizedBox(height: 12),
                     TextField(
                       controller: _search,
                       style: const TextStyle(fontSize: 15),
@@ -745,7 +648,6 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
                     ),
                     const SizedBox(height: 12),
                     _segmentBar(),
-                    _groupsQuickCard(),
                   ],
                 ),
               ),

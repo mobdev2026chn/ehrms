@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,6 +15,16 @@ final AuthService _salaryAuthServiceForAppPerDay = AuthService();
 const kAppNetPerDaySalaryPrefsKey = 'app_net_per_day_salary';
 const kAppGrossPerDaySalaryPrefsKey = 'app_gross_per_day_salary';
 const kAppLegacyPerDaySalaryPrefsKey = 'app_per_day_salary';
+
+// Salary debug logs toggle.
+// Set true when you need these verbose salary traces again.
+const bool _kEnableSalaryVerboseLogs = false;
+
+void _salaryLog(String message) {
+  if (_kEnableSalaryVerboseLogs) {
+    debugPrint(message);
+  }
+}
 
 /// `salaryBasis.monthlyNet|GrossSalary` ÷ preview full-month working days (web HRMS parity).
 Map<String, double>? perDayRatesFromPayrollPreviewForFine(
@@ -77,7 +88,7 @@ Future<void> syncPerDaySalaryPrefsFromPayrollPreview(
     await prefs.setDouble(kAppGrossPerDaySalaryPrefsKey, rates['gross']!);
     await prefs.setDouble(kAppLegacyPerDaySalaryPrefsKey, rates['net']!);
     if (kDebugMode) {
-      debugPrint(
+      _salaryLog(
         '[PreviewSalary] SharedPrefs per-day from preview: net=${rates['net']} '
         'gross=${rates['gross']} month=$month year=$year',
       );
@@ -87,17 +98,17 @@ Future<void> syncPerDaySalaryPrefsFromPayrollPreview(
       'appPerdayGrossSalary': rates['gross']!,
     });
     if (syncRes['success'] != true && kDebugMode) {
-      debugPrint(
+      _salaryLog(
         '[PreviewSalary] Staff DB sync failed: ${syncRes['message'] ?? syncRes}',
       );
     } else if (kDebugMode) {
-      debugPrint(
+      _salaryLog(
         '[PreviewSalary] Staff collection appPerDayNetSalary/appPerdayGrossSalary updated',
       );
     }
   } catch (e) {
     if (kDebugMode) {
-      debugPrint('[PreviewSalary] prefs/Staff sync error: $e');
+      _salaryLog('[PreviewSalary] prefs/Staff sync error: $e');
     }
   }
 }
@@ -105,13 +116,14 @@ Future<void> syncPerDaySalaryPrefsFromPayrollPreview(
 class SalaryService {
   final AuthService _authService = AuthService();
   final ApiClient _api = ApiClient();
+  static const Duration _salaryRequestTimeout = Duration(seconds: 25);
 
   Future<Map<String, dynamic>> getSalaryStats({int? month, int? year}) async {
     final token = await _authService.getToken();
     if (token == null) return _getEmptySalaryData();
     try {
       _api.setAuthToken(token);
-      debugPrint(
+      _salaryLog(
         '[SalaryOverview] GET /payroll/stats month=$month year=$year',
       );
       final response = await _api.dio.get<Map<String, dynamic>>(
@@ -120,6 +132,11 @@ class SalaryService {
           if (month != null) 'month': month,
           if (year != null) 'year': year,
         },
+        options: Options(
+          sendTimeout: _salaryRequestTimeout,
+          receiveTimeout: _salaryRequestTimeout,
+          extra: const {'disable_429_retry': true},
+        ),
       );
       final data = response.data;
       if (data != null && data['success'] == true) {
@@ -167,12 +184,17 @@ class SalaryService {
       };
       if (month != null) q['month'] = month;
       if (year != null) q['year'] = year;
-      debugPrint(
+      _salaryLog(
         '[SalaryOverview] GET /payroll query=$q',
       );
       final response = await _api.dio.get<Map<String, dynamic>>(
         '/payroll',
         queryParameters: q,
+        options: Options(
+          sendTimeout: _salaryRequestTimeout,
+          receiveTimeout: _salaryRequestTimeout,
+          extra: const {'disable_429_retry': true},
+        ),
       );
       final data = response.data;
       if (data != null) return data;
@@ -220,7 +242,7 @@ class SalaryService {
       final path = download
           ? '/payroll/$payrollId/payslip/download'
           : '/payroll/$payrollId/payslip/view';
-      debugPrint('[SalaryOverview] GET $path');
+      _salaryLog('[SalaryOverview] GET $path');
       final response = await _api.dio.get<dynamic>(
         path,
         options: Options(responseType: ResponseType.bytes),
@@ -230,7 +252,7 @@ class SalaryService {
       return null;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) return null;
-      debugPrint('[SalaryOverview] getPayslipPdfBytes: ${e.message}');
+      _salaryLog('[SalaryOverview] getPayslipPdfBytes: ${e.message}');
       return null;
     }
   }
@@ -311,7 +333,7 @@ class SalaryService {
     if (_previewShouldUseWebHrmsHost) {
       try {
         if (kDebugMode) {
-          debugPrint(
+          _salaryLog(
             '[SalaryOverview] POST ${AppConstants.webBaseUrl}/payroll/preview '
             'month=$month year=$year employeeId=$employeeId (web HRMS)',
           );
@@ -319,6 +341,11 @@ class SalaryService {
         final r = await _webHrmsPreviewDio().post<Map<String, dynamic>>(
           '/payroll/preview',
           data: body,
+          options: Options(
+            sendTimeout: _salaryRequestTimeout,
+            receiveTimeout: _salaryRequestTimeout,
+            extra: const {'disable_429_retry': true},
+          ),
         );
         final out = parseResponse(r);
         _logPreviewSalaryNetGrossForTest(
@@ -328,11 +355,17 @@ class SalaryService {
           month: month,
           year: year,
         );
-        await syncPerDaySalaryPrefsFromPayrollPreview(out, month: month, year: year);
+        unawaited(
+          syncPerDaySalaryPrefsFromPayrollPreview(
+            out,
+            month: month,
+            year: year,
+          ),
+        );
         return out;
       } on DioException catch (e) {
         if (kDebugMode) {
-          debugPrint(
+          _salaryLog(
             '[SalaryOverview] previewPayroll web HRMS error: ${e.message} — retry main API',
           );
         }
@@ -346,13 +379,18 @@ class SalaryService {
     try {
       _api.setAuthToken(token);
       if (kDebugMode) {
-        debugPrint(
+        _salaryLog(
           '[SalaryOverview] POST /payroll/preview month=$month year=$year employeeId=$employeeId',
         );
       }
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/payroll/preview',
         data: body,
+        options: Options(
+          sendTimeout: _salaryRequestTimeout,
+          receiveTimeout: _salaryRequestTimeout,
+          extra: const {'disable_429_retry': true},
+        ),
       );
       final out = parseResponse(response);
       _logPreviewSalaryNetGrossForTest(
@@ -362,10 +400,16 @@ class SalaryService {
         month: month,
         year: year,
       );
-      await syncPerDaySalaryPrefsFromPayrollPreview(out, month: month, year: year);
+      unawaited(
+        syncPerDaySalaryPrefsFromPayrollPreview(
+          out,
+          month: month,
+          year: year,
+        ),
+      );
       return out;
     } on DioException catch (e) {
-      debugPrint('[SalaryOverview] previewPayroll error: ${e.message}');
+      _salaryLog('[SalaryOverview] previewPayroll error: ${e.message}');
       return {'success': false, 'data': null};
     }
   }
@@ -398,7 +442,7 @@ void _logPreviewSalaryNetGrossForTest({
   try {
     final data = response['data'];
     if (data is! Map) {
-      debugPrint(
+      _salaryLog(
         '[PreviewSalary][test] source=$source employeeId=$employeeId '
         'month=$month year=$year success=${response['success']} data=missing',
       );
@@ -407,7 +451,7 @@ void _logPreviewSalaryNetGrossForTest({
     final d = Map<String, dynamic>.from(data);
     final p = d['preview'];
     if (p is! Map) {
-      debugPrint(
+      _salaryLog(
         '[PreviewSalary][test] source=$source employeeId=$employeeId '
         'month=$month year=$year preview=null (no payroll preview in body)',
       );
@@ -439,7 +483,7 @@ void _logPreviewSalaryNetGrossForTest({
           (a['workingDaysTillCurrentDate'] as num?)?.toInt();
     }
 
-    debugPrint(
+    _salaryLog(
       '[PreviewSalary][test] source=$source employeeId=$employeeId '
       'month=$month year=$year '
       'mtdGross=$mtdGross mtdNet=$mtdNet '
@@ -448,7 +492,7 @@ void _logPreviewSalaryNetGrossForTest({
       'workingDaysTillDate=$workingDaysTillDate',
     );
   } catch (e) {
-    debugPrint('[PreviewSalary][test] parse error: $e');
+    _salaryLog('[PreviewSalary][test] parse error: $e');
   }
 }
 
@@ -464,7 +508,7 @@ void _logPayrollStatsForTest({
     final y = year ?? (data['year'] as num?)?.toInt();
     final stats = data['stats'];
     if (stats is! Map) {
-      debugPrint(
+      _salaryLog(
         '[PayrollStats][test] month=$m year=$y stats=null '
         'isProcessed=${data['isProcessed']}',
       );
@@ -479,13 +523,13 @@ void _logPayrollStatsForTest({
       wdTill = (a['workingDays'] as num?)?.toInt();
       wdFull = (a['workingDaysFullMonth'] as num?)?.toInt();
     }
-    debugPrint(
+    _salaryLog(
       '[PayrollStats][test] month=$m year=$y '
       'monthGross=${s['grossSalary']} monthNet=${s['netSalary']} '
       'mtdGross=${s['thisMonthGross']} mtdNet=${s['thisMonthNet']} '
       'workingDaysTillToday=$wdTill workingDaysFullMonth=$wdFull',
     );
   } catch (e) {
-    debugPrint('[PayrollStats][test] parse error: $e');
+    _salaryLog('[PayrollStats][test] parse error: $e');
   }
 }

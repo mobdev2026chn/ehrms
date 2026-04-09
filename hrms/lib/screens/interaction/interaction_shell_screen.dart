@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
 import '../../services/interaction_service.dart';
 import '../../services/interaction_socket_service.dart';
+import '../../widgets/app_drawer.dart';
+import '../../widgets/bottom_navigation_bar.dart';
 import 'interaction_chat_list_screen.dart';
 import 'interaction_polls_list_screen.dart';
 
@@ -93,6 +95,7 @@ class _InteractionShellScreenState extends State<InteractionShellScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
+      drawer: const AppDrawer(),
       appBar: AppBar(
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -118,6 +121,7 @@ class _InteractionShellScreenState extends State<InteractionShellScreen>
           InteractionPollsListScreen(),
         ],
       ),
+      bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
   }
 }

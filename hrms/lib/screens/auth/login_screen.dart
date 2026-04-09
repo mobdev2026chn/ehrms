@@ -30,6 +30,7 @@ class _LoginScreenState extends State<LoginScreen>
   String _2faEmail = '';
   String _2faPassword = '';
   final _otpController = TextEditingController();
+  bool _loginSubmitLocked = false;
 
   // Entrance animations
   late AnimationController _entranceController;
@@ -123,7 +124,9 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   void _handleLogin() {
+    if (_loginSubmitLocked) return;
     if (_formKey.currentState!.validate()) {
+      setState(() => _loginSubmitLocked = true);
       context.read<AuthBloc>().add(
         AuthLoginRequested(
           _emailController.text.trim(),
@@ -185,6 +188,9 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   void _onAuthStateChanged(BuildContext context, AuthState state) {
+    if (state is! AuthLoadInProgress && _loginSubmitLocked) {
+      setState(() => _loginSubmitLocked = false);
+    }
     if (state is AuthRequires2FA) {
       setState(() {
         _show2FAInput = true;
@@ -223,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen>
     return BlocConsumer<AuthBloc, AuthState>(
       listener: _onAuthStateChanged,
       builder: (context, state) {
-        final isLoading = state is AuthLoadInProgress;
+        final isLoading = state is AuthLoadInProgress || _loginSubmitLocked;
         return Scaffold(
           resizeToAvoidBottomInset: false,
           backgroundColor: const Color(0xFF1A1A1A),

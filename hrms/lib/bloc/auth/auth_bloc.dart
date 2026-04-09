@@ -23,44 +23,56 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
   Future<void> _onLoginRequested(AuthLoginRequested event, Emitter<AuthState> emit) async {
     emit(AuthLoadInProgress());
-    final result = await _repo.login(event.email, event.password);
-    if (result['requiresOTP'] == true) {
-      emit(AuthRequires2FA(
-        email: event.email,
-        password: event.password,
-        message: result['message'] as String? ?? 'OTP sent to your email.',
-      ));
-    } else if (result['success'] == true) {
-      emit(AuthLoginSuccess(data: result['data']));
-    } else {
-      emit(AuthFailure(message: result['message'] as String? ?? 'Login failed'));
+    try {
+      final result = await _repo.login(event.email, event.password);
+      if (result['requiresOTP'] == true) {
+        emit(AuthRequires2FA(
+          email: event.email,
+          password: event.password,
+          message: result['message'] as String? ?? 'OTP sent to your email.',
+        ));
+      } else if (result['success'] == true) {
+        emit(AuthLoginSuccess(data: result['data']));
+      } else {
+        emit(AuthFailure(message: result['message'] as String? ?? 'Login failed'));
+      }
+    } catch (_) {
+      emit(const AuthFailure(message: 'Login failed. Please try again.'));
     }
   }
 
   Future<void> _on2FALoginRequested(Auth2FALoginRequested event, Emitter<AuthState> emit) async {
     emit(AuthLoadInProgress());
-    final result = await _repo.login(event.email, event.password, otp: event.otp);
-    if (result['success'] == true && result['requiresOTP'] != true) {
-      emit(AuthLoginSuccess(data: result['data']));
-    } else if (result['requiresOTP'] == true) {
-      // OTP invalid or expired — stay on 2FA screen with error
-      emit(AuthRequires2FA(
-        email: event.email,
-        password: event.password,
-        message: result['message'] as String? ?? 'Invalid OTP. Please try again.',
-      ));
-    } else {
-      emit(AuthFailure(message: result['message'] as String? ?? 'OTP verification failed'));
+    try {
+      final result = await _repo.login(event.email, event.password, otp: event.otp);
+      if (result['success'] == true && result['requiresOTP'] != true) {
+        emit(AuthLoginSuccess(data: result['data']));
+      } else if (result['requiresOTP'] == true) {
+        // OTP invalid or expired — stay on 2FA screen with error
+        emit(AuthRequires2FA(
+          email: event.email,
+          password: event.password,
+          message: result['message'] as String? ?? 'Invalid OTP. Please try again.',
+        ));
+      } else {
+        emit(AuthFailure(message: result['message'] as String? ?? 'OTP verification failed'));
+      }
+    } catch (_) {
+      emit(const AuthFailure(message: 'OTP verification failed. Please try again.'));
     }
   }
 
   Future<void> _onGoogleLoginRequested(AuthGoogleLoginRequested event, Emitter<AuthState> emit) async {
     emit(AuthLoadInProgress());
-    final result = await _repo.googleLoginBackend(event.email);
-    if (result['success'] == true) {
-      emit(AuthLoginSuccess(data: result['data']));
-    } else {
-      emit(AuthFailure(message: result['message'] as String? ?? 'Login failed'));
+    try {
+      final result = await _repo.googleLoginBackend(event.email);
+      if (result['success'] == true) {
+        emit(AuthLoginSuccess(data: result['data']));
+      } else {
+        emit(AuthFailure(message: result['message'] as String? ?? 'Login failed'));
+      }
+    } catch (_) {
+      emit(const AuthFailure(message: 'Login failed. Please try again.'));
     }
   }
 

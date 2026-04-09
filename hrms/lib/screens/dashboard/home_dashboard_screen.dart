@@ -42,6 +42,8 @@ class HomeDashboardScreen extends StatefulWidget {
 
   /// When this notifier fires (e.g. after attendance submit), refresh dashboard data.
   final ValueListenable<int>? refreshTrigger;
+  /// Optional parent callback to recompute bottom-nav punch visibility after refresh.
+  final Future<void> Function()? onDashboardDataRefreshed;
 
   const HomeDashboardScreen({
     super.key,
@@ -51,6 +53,7 @@ class HomeDashboardScreen extends StatefulWidget {
     this.onNavigateToIndex,
     this.isActiveTab,
     this.refreshTrigger,
+    this.onDashboardDataRefreshed,
   });
 
   @override
@@ -267,8 +270,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
 
     try {
+      const dashboardLoadTimeout = Duration(seconds: 35);
+      final sw = Stopwatch()..start();
+      if (kDebugMode) {
+        debugPrint(
+          '[DashboardLoad] start | hasCachedData=$hasCachedData | '
+          'timeout=${dashboardLoadTimeout.inSeconds}s',
+        );
+      }
       // Load local user data (name, company) from SharedPreferences
       final prefs = await SharedPreferences.getInstance();
+      if (kDebugMode) {
+        debugPrint('[DashboardLoad] prefs loaded in ${sw.elapsedMilliseconds}ms');
+      }
       final userString = prefs.getString('user');
       if (userString != null) {
         final data = jsonDecode(userString);
@@ -308,25 +322,80 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final businessFuture = _settingsService.getBusiness();
       _fetchMonthAttendance(forceRefresh: true);
       _fetchActiveLoans();
-
-      final result = await dashboardFuture;
-      final liveTodayResult = await liveTodayFuture;
-      final profileResult = await profileFuture;
-      Map<String, dynamic>? businessFromSettings;
-      try {
-        final gb = await businessFuture;
-        if (gb['success'] == true && gb['data'] is Map<String, dynamic>) {
-          final b = (gb['data'] as Map<String, dynamic>)['business'];
-          if (b is Map) businessFromSettings = Map<String, dynamic>.from(b);
-        }
-      } catch (_) {}
-      if (profileResult['success'] == true && profileResult['data'] is Map) {
-        _applyShiftContextFromProfile(
-          Map<String, dynamic>.from(profileResult['data'] as Map),
-          businessFromSettingsApi: businessFromSettings,
+      final fcmFuture = FcmService.getStoredNotifications();
+      if (kDebugMode) {
+        debugPrint(
+          '[DashboardLoad] parallel requests started at ${sw.elapsedMilliseconds}ms',
         );
       }
-      final fcmList = await FcmService.getStoredNotifications();
+
+      final settled = await Future.wait<dynamic>([
+        dashboardFuture.timeout(
+          dashboardLoadTimeout,
+          onTimeout: () => {'success': false, 'message': 'Dashboard timeout'},
+        ),
+        liveTodayFuture.timeout(
+          dashboardLoadTimeout,
+          onTimeout: () => {'success': false, 'data': null},
+        ),
+        fcmFuture.timeout(
+          dashboardLoadTimeout,
+          onTimeout: () => <Map<String, dynamic>>[],
+        ),
+      ]);
+
+      final result = settled[0] as Map<String, dynamic>;
+      final liveTodayResult = settled[1] as Map<String, dynamic>;
+      final fcmList = settled[2] as List<dynamic>;
+      if (kDebugMode) {
+        debugPrint(
+          '[DashboardLoad] core requests settled in ${sw.elapsedMilliseconds}ms | '
+          'dashboardSuccess=${result['success']} | '
+          'liveTodaySuccess=${liveTodayResult['success']} | '
+          'fcmCount=${fcmList.length}',
+        );
+      }
+
+      // Keep profile/settings enrichment non-blocking so dashboard content is not delayed.
+      Future<void>(() async {
+        try {
+          final profileSettled = await profileFuture.timeout(
+            dashboardLoadTimeout,
+            onTimeout: () => {'success': false, 'data': null},
+          );
+          final businessSettled = await businessFuture.timeout(
+            dashboardLoadTimeout,
+            onTimeout: () => {'success': false, 'data': null},
+          );
+          if (!mounted) return;
+          Map<String, dynamic>? businessFromSettings;
+          if (businessSettled['success'] == true &&
+              businessSettled['data'] is Map<String, dynamic>) {
+            final b =
+                (businessSettled['data'] as Map<String, dynamic>)['business'];
+            if (b is Map) {
+              businessFromSettings = Map<String, dynamic>.from(b);
+            }
+          }
+          if (profileSettled['success'] == true && profileSettled['data'] is Map) {
+            _applyShiftContextFromProfile(
+              Map<String, dynamic>.from(profileSettled['data'] as Map),
+              businessFromSettingsApi: businessFromSettings,
+            );
+          }
+          if (kDebugMode) {
+            debugPrint(
+              '[DashboardLoad] background profile/settings settled at ${sw.elapsedMilliseconds}ms | '
+              'profileSuccess=${profileSettled['success']} | '
+              'businessSuccess=${businessSettled['success']}',
+            );
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('[DashboardLoad] background profile/settings error: $e');
+          }
+        }
+      });
       if (mounted) {
         if (result['success']) {
           final data = result['data'];
@@ -379,6 +448,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 .where((e) => ((e['body']?.toString() ?? '').trim()).isNotEmpty)
                 .length;
           });
+          if (kDebugMode) {
+            debugPrint(
+              '[DashboardLoad] state updated in ${sw.elapsedMilliseconds}ms | '
+              'recentLeaves=${_recentLeaves.length} | '
+              'todayAnnouncements=${_todayAnnouncements.length} | '
+              'todayCelebrations=${_todayCelebrations.length}',
+            );
+          }
           _reconcileShiftKeyWithTodayTemplate();
           _calculateSalaryFromModule();
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -393,23 +470,36 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             );
           });
         } else {
+          if (kDebugMode) {
+            debugPrint(
+              '[DashboardLoad] dashboard API returned failure in ${sw.elapsedMilliseconds}ms | '
+              'message=${result['message']}',
+            );
+          }
           setState(
             () => _fcmNotificationCount = fcmList
                 .where((e) => ((e['body']?.toString() ?? '').trim()).isNotEmpty)
                 .length,
           );
         }
-        setState(() {
-          _isLoadingDashboard = false;
-          _isRefreshingInBackground = false;
-        });
       }
-    } catch (_) {
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[DashboardLoad] exception: $e');
+      }
+      // Keep existing UI data on transient failures.
+    } finally {
+      if (widget.onDashboardDataRefreshed != null) {
+        await widget.onDashboardDataRefreshed!.call();
+      }
       if (mounted) {
         setState(() {
           _isLoadingDashboard = false;
           _isRefreshingInBackground = false;
         });
+      }
+      if (kDebugMode) {
+        debugPrint('[DashboardLoad] finished');
       }
     }
   }

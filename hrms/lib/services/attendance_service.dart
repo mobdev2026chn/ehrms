@@ -11,6 +11,7 @@ class AttendanceService {
   final String baseUrl = AppConstants.baseUrl;
   final ApiClient _api = ApiClient();
   Map<String, dynamic>? attendanceTemplate;
+  static const Duration _punchRequestTimeout = Duration(seconds: 25);
 
   // Shared across all instances so Selfie Check-in (via BLoC) can use cache from Attendance tab.
   static Map<String, dynamic>? _cachedTodayAttendance;
@@ -103,6 +104,11 @@ class AttendanceService {
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/attendance/checkin',
         data: body,
+        options: Options(
+          sendTimeout: _punchRequestTimeout,
+          receiveTimeout: _punchRequestTimeout,
+          extra: const {'disable_429_retry': true},
+        ),
       );
       final data = response.data;
       clearCachesForRefresh();
@@ -187,6 +193,11 @@ class AttendanceService {
       final response = await _api.dio.put<Map<String, dynamic>>(
         '/attendance/checkout',
         data: body,
+        options: Options(
+          sendTimeout: _punchRequestTimeout,
+          receiveTimeout: _punchRequestTimeout,
+          extra: const {'disable_429_retry': true},
+        ),
       );
       final data = response.data;
       clearCachesForRefresh();

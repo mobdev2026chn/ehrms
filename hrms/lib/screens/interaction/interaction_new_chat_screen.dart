@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
 import '../../services/interaction_service.dart';
+import '../../widgets/app_drawer.dart';
+import '../../widgets/bottom_navigation_bar.dart';
+import '../../widgets/menu_icon_button.dart';
 import 'interaction_chat_thread_screen.dart';
 
 class InteractionNewChatScreen extends StatefulWidget {
@@ -63,7 +66,11 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('New chat')),
+      drawer: const AppDrawer(),
+      appBar: AppBar(
+        leading: const MenuIconButton(),
+        title: const Text('New chat'),
+      ),
       body: Column(
         children: [
           Padding(
@@ -125,6 +132,7 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
           ),
         ],
       ),
+      bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
   }
 }

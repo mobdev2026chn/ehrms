@@ -24,6 +24,12 @@ class AuthService {
   final GoogleSignIn _googleSignIn = GoogleSignIn();
   final ApiClient _api = ApiClient();
 
+  static const Duration _loginRequestTimeout = Duration(seconds: 20);
+  static DateTime? _interactionSyncBlockedUntil;
+  static void _authLog(String message) {
+    if (kDebugMode) debugPrint('[AuthService] $message');
+  }
+
   /// Second login to [AppConstants.webBaseUrl] so `/api/interaction/*` matches the web (same JWT host).
   Future<void> _syncInteractionAccessTokenFromWebHost({
     required String email,
@@ -31,6 +37,11 @@ class AuthService {
     String? otp,
   }) async {
     if (!AppConstants.interactionUseWebHost) return;
+    final now = DateTime.now();
+    if (_interactionSyncBlockedUntil != null &&
+        now.isBefore(_interactionSyncBlockedUntil!)) {
+      return;
+    }
     final prefs = await SharedPreferences.getInstance();
     final main = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
     final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
@@ -85,6 +96,15 @@ class AuthService {
       } else {
         await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
       }
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 429) {
+        // Back off secondary host login to avoid increasing auth limiter pressure.
+        _interactionSyncBlockedUntil = DateTime.now().add(
+          const Duration(minutes: 15),
+        );
+      }
+      if (kDebugMode) debugPrint('[AuthService] Web HRMS interaction sync failed: $e');
+      await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
     } catch (e) {
       if (kDebugMode) debugPrint('[AuthService] Web HRMS interaction sync failed: $e');
       await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
@@ -93,13 +113,28 @@ class AuthService {
 
   Future<Map<String, dynamic>> login(String email, String password, {String? otp}) async {
     try {
+      final startedAt = DateTime.now();
       final requestBody = <String, dynamic>{'email': email, 'password': password};
       if (otp != null && otp.isNotEmpty) requestBody['otp'] = otp;
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/auth/login',
-        data: requestBody,
+      _authLog(
+        'login start email=${email.trim()} otp=${otp != null && otp.isNotEmpty} singleApi=${AppConstants.singleApiLoginMode}',
       );
+      // Avoid "stuck" feeling: do not 429-retry login, and enforce tight timeouts.
+      final response = await _api.dio
+          .post<Map<String, dynamic>>(
+            '/auth/login',
+            data: requestBody,
+            options: Options(
+              sendTimeout: _loginRequestTimeout,
+              receiveTimeout: _loginRequestTimeout,
+              extra: const {'disable_429_retry': true},
+            ),
+          )
+          .timeout(_loginRequestTimeout);
       final body = response.data ?? {};
+      _authLog(
+        'login response status=${response.statusCode} elapsed=${DateTime.now().difference(startedAt).inMilliseconds}ms',
+      );
 
       // 2FA: backend asks for OTP before issuing token
       if (body['requiresOTP'] == true) {
@@ -151,15 +186,37 @@ class AuthService {
       }
       await _persistCurrentBaseUrl(prefs);
       _api.setAuthToken(accessToken);
-      await _syncInteractionAccessTokenFromWebHost(
-        email: email.trim(),
-        password: password,
-        otp: otp,
+      if (AppConstants.singleApiLoginMode) {
+        _authLog(
+          'singleApiLoginMode enabled: skipped interaction web-host sync + FCM post-login sync',
+        );
+      } else {
+        // Keep post-login background work non-blocking so login UI can proceed quickly.
+        unawaited(
+          _syncInteractionAccessTokenFromWebHost(
+            email: email.trim(),
+            password: password,
+            otp: otp,
+          ),
+        );
+        _authLog('login success - registering FCM token');
+        unawaited(FcmService.sendTokenToBackendAfterLogin());
+      }
+      _authLog(
+        'login success completed elapsed=${DateTime.now().difference(startedAt).inMilliseconds}ms',
       );
-      if (kDebugMode) debugPrint('[AuthService] login success – registering FCM token');
-      await FcmService.sendTokenToBackendAfterLogin();
       return {'success': true, 'data': data};
+    } on TimeoutException {
+      _authLog('login timeout after ${_loginRequestTimeout.inSeconds}s');
+      return {
+        'success': false,
+        'message':
+            'Login request timed out. Please check your internet and try again.',
+      };
     } on DioException catch (e) {
+      _authLog(
+        'login DioException status=${e.response?.statusCode} path=${e.requestOptions.path}',
+      );
       return _handleDioError(e, 'Login failed', (code, body) {
         if (code != null && code >= 500) {
           return 'Server error ($code). The backend server is not responding. Please try again later.';
@@ -167,6 +224,7 @@ class AuthService {
         return _messageFromBody(body) ?? 'Login failed';
       });
     } catch (e) {
+      _authLog('login unexpected error: ${e.runtimeType}');
       return {'success': false, 'message': _handleException(e)};
     }
   }
@@ -198,6 +256,7 @@ class AuthService {
       bodyMap = Map<String, dynamic>.from(data);
     }
     if (code == 429) {
+      _authLog('rate-limited: status=429 path=${e.requestOptions.path}');
       return {
         'success': false,
         'message': bodyMap != null

@@ -83,9 +83,10 @@ class InteractionService {
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           final prefs = await SharedPreferences.getInstance();
-          var t = normalizeAccessToken(
+          var interactionToken = normalizeAccessToken(
             prefs.getString(AppConstants.interactionAccessTokenPrefsKey),
           );
+          var t = interactionToken;
           t ??= normalizeAccessToken(prefs.getString('token'));
           if (t == null) {
             final auth = ApiClient().dio.options.headers['Authorization'];
@@ -97,8 +98,63 @@ class InteractionService {
           }
           if (t != null) {
             options.headers['Authorization'] = 'Bearer $t';
+            options.extra['auth_source'] = (interactionToken != null)
+                ? 'interaction_token'
+                : 'primary_token';
           }
           handler.next(options);
+        },
+        onError: (err, handler) async {
+          final status = err.response?.statusCode ?? 0;
+          final retried =
+              err.requestOptions.extra['_retried_with_primary'] == true;
+          final source =
+              err.requestOptions.extra['auth_source']?.toString() ?? '';
+          if (status == 401 && !retried && source == 'interaction_token') {
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              var primary = normalizeAccessToken(prefs.getString('token'));
+              if (primary == null) {
+                final auth = ApiClient().dio.options.headers['Authorization'];
+                if (auth is String) {
+                  primary = normalizeAccessToken(
+                    auth.startsWith('Bearer ') ? auth.substring(7) : auth,
+                  );
+                }
+              }
+              if (primary != null) {
+                final retryHeaders = Map<String, dynamic>.from(
+                  err.requestOptions.headers,
+                );
+                retryHeaders['Authorization'] = 'Bearer $primary';
+                final retryExtra = Map<String, dynamic>.from(
+                  err.requestOptions.extra,
+                );
+                retryExtra['_retried_with_primary'] = true;
+                retryExtra['auth_source'] = 'primary_token_retry';
+
+                final retryOptions = err.requestOptions.copyWith(
+                  headers: retryHeaders,
+                  extra: retryExtra,
+                );
+                final retryResponse = await _dio!.fetch<dynamic>(retryOptions);
+                await prefs.setString(
+                  AppConstants.interactionAccessTokenPrefsKey,
+                  primary,
+                );
+                if (kDebugMode) {
+                  debugPrint(
+                    '[InteractionService] 401 recovered using primary token; refreshed interaction token.',
+                  );
+                }
+                handler.resolve(retryResponse);
+                return;
+              }
+            } catch (_) {
+              // Fall through to original error if retry also fails.
+            }
+          }
+          handler.next(err);
         },
       ),
     );
@@ -107,7 +163,7 @@ class InteractionService {
       _dio!.interceptors.add(
         LogInterceptor(
           requestBody: true,
-          responseBody: false,
+          responseBody: true,
           requestHeader: false,
           responseHeader: false,
           error: true,
@@ -361,16 +417,64 @@ class InteractionService {
     required String type, // image | file | voice
     String? receiverId,
   }) async {
-    final form = FormData.fromMap({
-      'type': type,
-      if (receiverId != null) 'receiverId': receiverId,
-      'file': await MultipartFile.fromFile(filePath, filename: filename),
-    });
-    final res = await _client().post<Map<String, dynamic>>(
-      '/interaction/chats/$chatId/upload',
-      data: form,
-    );
-    return res.data ?? {};
+    final endpoint = '/interaction/chats/$chatId/upload';
+    final receiver = receiverId?.trim();
+    final hasReceiver = receiver != null && receiver.isNotEmpty;
+    // Keep retries tight; large fallback matrices can appear as "timeout" after many 400s.
+    final payloads = <({Map<String, dynamic> fields, String fileField})>[
+      (
+        fields: {'messageType': type, if (hasReceiver) 'receiverId': receiver},
+        fileField: 'file',
+      ),
+      (
+        fields: {'type': type, if (hasReceiver) 'receiverId': receiver},
+        fileField: 'file',
+      ),
+      if (type == 'voice')
+        (
+          fields: {
+            // Web voice recording paths are usually treated as audio; keep this fallback only for voice.
+            'messageType': 'audio',
+            if (hasReceiver) 'receiverId': receiver,
+          },
+          fileField: 'file',
+        ),
+      if (type == 'voice')
+        (
+          fields: {
+            'messageType': 'voice',
+            if (hasReceiver) 'receiverId': receiver,
+          },
+          fileField: 'audio',
+        ),
+    ];
+
+    DioException? lastError;
+    for (final candidate in payloads) {
+      try {
+        final form = FormData.fromMap({
+          ...candidate.fields,
+          candidate.fileField: await MultipartFile.fromFile(
+            filePath,
+            filename: filename,
+          ),
+        });
+        final res = await _client().post<Map<String, dynamic>>(
+          endpoint,
+          data: form,
+        );
+        return res.data ?? {};
+      } on DioException catch (e) {
+        lastError = e;
+        final code = e.response?.statusCode ?? 0;
+        if (code == 400 || code == 422) {
+          continue;
+        }
+        rethrow;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return {'success': false, 'message': 'Unable to upload media'};
   }
 
   Future<Map<String, dynamic>> markMessageRead(String messageId) async {

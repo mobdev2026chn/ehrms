@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -24,6 +26,17 @@ import '../../utils/fine_calculation_util.dart';
 import '../../utils/app_event_bus.dart';
 import '../../utils/attendance_display_util.dart';
 import '../../utils/snackbar_utils.dart';
+
+// Salary debug logs toggle.
+// Set true when you need these verbose salary traces again.
+const bool _kEnableSalaryVerboseLogs = false;
+
+void debugPrint(String? message, {int? wrapWidth}) {
+  if (_kEnableSalaryVerboseLogs) {
+    // ignore: avoid_print
+    print(message);
+  }
+}
 
 // -----------------------------------------------------------------------------
 // MTD salary: same blended “sources of truth” as web EmployeeSalaryOverview.tsx
@@ -120,6 +133,13 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   final SettingsService _settingsService = SettingsService();
   final RequestService _requestService = RequestService();
   late final StreamSubscription<AppEvent> _attendanceEventSub;
+  void _perfLog(String message) {
+    if (kDebugMode) {
+      // Keep performance logs visible for testing.
+      // ignore: avoid_print
+      print('[SalaryPerf] $message');
+    }
+  }
   bool _isLoading = true;
   String _error = '';
   bool _isFetching = false; // Prevent concurrent fetches
@@ -128,6 +148,35 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   /// After [AppLifecycleState.paused], refresh on resume if salary tab is still active.
   bool _refreshSalaryWhenAppResumes = false;
   Timer? _debounceTimer; // Debounce timer for rapid calls
+  static const Duration _profileTimeout = Duration(seconds: 12);
+  static const Duration _sameSelectionFetchCooldown = Duration(seconds: 4);
+  DateTime? _lastFetchStartedAt;
+  String? _lastFetchSelectionKey;
+
+  Future<Map<String, dynamic>?> _loadCachedProfileData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userStr = prefs.getString('user');
+      if (userStr == null || userStr.trim().isEmpty) return null;
+      final user = jsonDecode(userStr);
+      if (user is! Map) return null;
+      final profile = Map<String, dynamic>.from(user);
+      Map<String, dynamic>? staffData;
+      final staffStr = prefs.getString('staff');
+      if (staffStr != null && staffStr.trim().isNotEmpty) {
+        final staff = jsonDecode(staffStr);
+        if (staff is Map) {
+          staffData = Map<String, dynamic>.from(staff);
+        }
+      }
+      return {
+        'profile': profile,
+        'staffData': staffData ?? <String, dynamic>{},
+      };
+    } catch (_) {
+      return null;
+    }
+  }
 
   String _selectedMonth = _initialMonth();
   String _selectedYear = _initialYear();
@@ -465,13 +514,15 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     // Use debounce to prevent rapid calls
     _attendanceEventSub = AppEventBus.on(
       AppEventType.attendanceChanged,
-    ).listen((_) => _fetchSalaryData(debounce: true));
+    ).listen((_) {
+      if (widget.isActiveTab == true) {
+        _fetchSalaryData(debounce: true);
+      }
+    });
     // Same as tab open: if salary is visible on first frame (e.g. dashboard initialIndex == 2),
     // clear caches and fetch; otherwise prefetch in background without clearing shared cache.
     if (widget.isActiveTab == true) {
       _onSalaryTabBecameVisible();
-    } else {
-      _fetchSalaryData();
     }
   }
 
@@ -528,12 +579,25 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       return;
     }
 
+    final selectionKey = '$_selectedYear-${_months.indexOf(_selectedMonth) + 1}';
+    final now = DateTime.now();
+    if (_lastFetchStartedAt != null &&
+        _lastFetchSelectionKey == selectionKey &&
+        now.difference(_lastFetchStartedAt!) < _sameSelectionFetchCooldown) {
+      _perfLog('skip duplicate fetch for $selectionKey (cooldown)');
+      return;
+    }
+    _lastFetchStartedAt = now;
+    _lastFetchSelectionKey = selectionKey;
+
+    final sw = Stopwatch()..start();
     // Set fetching flag immediately to prevent concurrent calls
     _isFetching = true;
     _unpaidLeaveDeduction = 0;
     _staffId = null;
-    _salaryDetailsAccessEnabled = false;
-    _allowCurrentCycleSalaryAccess = false;
+    // Keep previous access flags until profile returns fresh values.
+    // Resetting to false here causes intermittent "current cycle restricted"
+    // UI when profile request is slow/times out.
     _payrollPreview = null;
     if (mounted) {
       setState(() {
@@ -542,6 +606,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         _salaryAccessDenied = false;
       });
     }
+    _perfLog('start month=$_selectedMonth year=$_selectedYear');
 
     // Fetch company payslip setting (company.settings.payroll.payslip.isPayslipAutoGenerated)
     try {
@@ -556,6 +621,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         });
       }
     } catch (_) {}
+    _perfLog('fineCalculation ${sw.elapsedMilliseconds}ms');
 
     if (!mounted) return;
 
@@ -565,7 +631,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       try {
         final profileResult = await _authService
             .getProfile()
-            .timeout(_networkTimeout);
+            .timeout(_profileTimeout);
         if (profileResult['success'] == true && profileResult['data'] is Map) {
           profileData = Map<String, dynamic>.from(profileResult['data'] as Map);
           final dynamic rawStaffData = profileData['staffData'];
@@ -586,7 +652,18 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             );
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        final cached = await _loadCachedProfileData();
+        if (cached != null) {
+          profileData = cached;
+          final dynamic rawStaffData = profileData['staffData'];
+          if (rawStaffData is Map) {
+            staffData = Map<String, dynamic>.from(rawStaffData);
+          }
+          _perfLog('profile cache-fallback ${sw.elapsedMilliseconds}ms');
+        }
+      }
+      _perfLog('profile ${sw.elapsedMilliseconds}ms');
 
       int monthIndex = _months.indexOf(_selectedMonth) + 1;
       int year = int.parse(_selectedYear);
@@ -671,7 +748,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         if (_pastMonthPayroll == null) {
           await _tryFetchPayrollPreview(monthIndex, year);
         }
-        await _loadPayrollHistory();
+        unawaited(_loadPayrollHistory());
       } else {
         _pastMonthPayroll = null;
       }
@@ -720,7 +797,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             Map<String, dynamic>.from(staffData['salary'] as Map),
           );
         }
-        await _loadPayrollHistory();
+        unawaited(_loadPayrollHistory());
         if (mounted) {
           setState(() => _isLoading = false);
         }
@@ -866,6 +943,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             )
             .timeout(_networkTimeout);
       }
+      _perfLog('parallel requests started ${sw.elapsedMilliseconds}ms');
 
       // 2a. Consume payroll stats first (drives payable rule + MTD amounts).
       Map<String, dynamic>? backendStats;
@@ -923,6 +1001,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         _payableDaysBase = null;
         _payableRule = null;
       }
+      _perfLog('stats done ${sw.elapsedMilliseconds}ms');
 
       // 3. Fetch attendance for the month
       // Keep previous values in case new fetch fails, so UI doesn't jump to 0
@@ -959,6 +1038,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           debugPrint('[SalaryOverview] employee attendance fetch error: $e');
         }
       }
+      _perfLog('employeeAttendance done ${sw.elapsedMilliseconds}ms');
 
       // Month endpoint: calendar sets (weekOffDates, server date sets) and stats fallback.
       Map<String, dynamic> attendanceResult = {'success': false};
@@ -967,6 +1047,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       } catch (e) {
         debugPrint('[SalaryOverview] month attendance fetch error: $e');
       }
+      _perfLog('monthAttendance done ${sw.elapsedMilliseconds}ms');
       debugPrint(
         '[SalaryOverview] GET attendance/month year=$year month=$monthIndex '
         'success=${attendanceResult['success']}',
@@ -1406,9 +1487,11 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       } catch (e) {
         debugPrint('[SalaryOverview] payroll fetch error: $e');
       }
+      _perfLog('payroll list done ${sw.elapsedMilliseconds}ms');
 
       if (_currentPayroll == null) {
         await _tryFetchPayrollPreview(monthIndex, year);
+        _perfLog('payroll preview done ${sw.elapsedMilliseconds}ms');
       }
       if (kDebugMode && _payrollPreview != null) {
         final a = _payrollPreview!['attendance'];
@@ -1421,7 +1504,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         }
       }
 
-      await _loadPayrollHistory();
+      unawaited(_loadPayrollHistory());
 
       if (mounted) {
         setState(() {
@@ -1430,6 +1513,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           _isLoading = false;
         });
       }
+      _perfLog('success total ${sw.elapsedMilliseconds}ms');
     } catch (e) {
       // Extract a user-friendly error message
       String errorMessage = 'Your salary not updated';
@@ -1450,7 +1534,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           _isLoading = false;
         });
       }
+      _perfLog('failed ${sw.elapsedMilliseconds}ms error=$errorMessage');
     } finally {
+      sw.stop();
       _isFetching = false;
       if (_pendingTabVisibleRefresh && mounted) {
         _pendingTabVisibleRefresh = false;

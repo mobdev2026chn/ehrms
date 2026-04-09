@@ -36,7 +36,7 @@ import '../attendance/attendance_screen.dart';
 import '../attendance/selfie_camera_screen.dart';
 import '../holidays/holidays_screen.dart';
 import '../requests/my_requests_screen.dart';
-import '../salary/salary_overview_screen.dart';
+import '../salary/salary_overview_screen.dart' hide debugPrint;
 
 typedef _ResolvedLocation = ({
   Position? position,
@@ -68,6 +68,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isBreakActionInProgress = false;
   /// Starts false so the bottom bar matches the today card (no stale prefs via null).
   bool _isPunchedInToday = false;
+  bool _isPunchCompletedToday = false;
   Map<String, dynamic>? _activeBreak;
   bool _openBreakAfterBuild = false;
   Map<String, dynamic>? _fineCalculation;
@@ -175,7 +176,16 @@ class _DashboardScreenState extends State<DashboardScreen>
             punchIn: punchIn,
             punchOut: punchOut,
           );
-      if (mounted) setState(() => _isPunchedInToday = isIn);
+      final isCompleted =
+          cacheDay == todayKey &&
+          hasParsablePunchDateTime(punchIn) &&
+          hasParsablePunchDateTime(punchOut);
+      if (mounted) {
+        setState(() {
+          _isPunchedInToday = isIn;
+          _isPunchCompletedToday = isCompleted;
+        });
+      }
     } catch (_) {}
   }
 
@@ -255,6 +265,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       }
       setState(() {
         _isPunchedInToday = isPunchedIn;
+        _isPunchCompletedToday = hasIn && hasOut;
       });
       await _savePunchStateToPrefs(attendance);
       if (isPunchedIn) {
@@ -1060,17 +1071,33 @@ class _DashboardScreenState extends State<DashboardScreen>
   /// Fetches profile + today attendance for fingerprint validation (same data as attendance screen).
   Future<Map<String, dynamic>?> _fetchAttendanceValidationData() async {
     try {
+      const validationTimeout = Duration(seconds: 12);
+      final sw = Stopwatch()..start();
       _attendanceService.clearCachesForRefresh();
-      final profileResult = await _authService.getProfile();
+      final todayStr =
+          '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
+      final settled = await Future.wait<dynamic>([
+        _authService.getProfile().timeout(
+          validationTimeout,
+          onTimeout: () => {'success': false, 'message': 'profile timeout'},
+        ),
+        _attendanceService.getAttendanceByDate(todayStr).timeout(
+          validationTimeout,
+          onTimeout: () => {'success': false, 'message': 'today timeout'},
+        ),
+      ]);
       if (!mounted) return null;
+      final profileResult = settled[0] as Map<String, dynamic>;
+      final result = settled[1] as Map<String, dynamic>;
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
       final templateId = staffData?['attendanceTemplateId'];
-
-      final todayStr =
-          '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
-      final result = await _attendanceService.getAttendanceByDate(todayStr);
-      if (!mounted) return null;
+      if (kDebugMode) {
+        debugPrint(
+          '[PunchFlow] validation data settled in ${sw.elapsedMilliseconds}ms | '
+          'profileSuccess=${profileResult['success']} | todaySuccess=${result['success']}',
+        );
+      }
       if (result['success'] != true || result['data'] == null) return null;
 
       final body = result['data'] as Map<String, dynamic>;
@@ -1117,7 +1144,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         'isCompensationCompOff': body['isCompensationCompOff'] ?? false,
         'isPaidLeaveToday': body['isPaidLeaveToday'] ?? false,
       };
-    } catch (_) {
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[PunchFlow] validation fetch error: $e');
+      }
       return null;
     }
   }
@@ -1218,7 +1248,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   /// Same UI as attendance screen "You are Late" / "You are Early" alert.
   /// Late login: turtle emoji 🐢 shown standing on top of the card.
-  Future<void> _showWarningAlertDialog(
+  Future<bool> _showWarningAlertDialog(
     String message, {
     bool isLate = false,
     bool isEarly = false,
@@ -1229,8 +1259,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         await AttendanceTemplateStore.appendRequireSelfieGeolocationToMessage(
       message,
     );
-    if (!mounted) return;
-    return showDialog<void>(
+    if (!mounted) return false;
+    final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext context) {
@@ -1378,7 +1408,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                           color: AppColors.primary,
                           borderRadius: BorderRadius.circular(12),
                           child: InkWell(
-                            onTap: () => Navigator.of(context).pop(),
+                            onTap: () => Navigator.of(context).pop(true),
                             borderRadius: BorderRadius.circular(12),
                             child: const Padding(
                               padding: EdgeInsets.symmetric(vertical: 14),
@@ -1421,6 +1451,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
       },
     );
+    // Back button / route pop returns null -> treat as cancelled.
+    return result == true;
   }
 
   /// Template helpers (mirror attendance screen for validation only).
@@ -2174,7 +2206,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           tmpl,
         );
       }
-      await _showWarningAlertDialog(
+      final proceedAfterWarning = await _showWarningAlertDialog(
         alertMessage,
         isLate: isLate,
         isEarly: isEarly,
@@ -2182,6 +2214,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         shiftTimingLine: lateShiftTiming,
       );
       if (!mounted) return false;
+      if (!proceedAfterWarning) return false;
       if (shouldBlock) return false;
     }
     return true;
@@ -2492,6 +2525,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         dashboardTabIndex: _currentIndex,
         isActiveTab: _currentIndex == 0,
         refreshTrigger: _dashboardRefreshTrigger,
+        onDashboardDataRefreshed: _fetchPunchStatusForNavBar,
       ),
       MyRequestsScreen(
         key: ValueKey('Requests_$_requestsSubTabIndex'),
@@ -2529,7 +2563,10 @@ class _DashboardScreenState extends State<DashboardScreen>
               Navigator.of(context).pop();
             }
             _setPunchActionInProgress(false);
-            setState(() => _isPunchedInToday = true);
+            setState(() {
+              _isPunchedInToday = true;
+              _isPunchCompletedToday = false;
+            });
           }
           await _optimisticPunchInPrefs();
           _attendanceService.clearCachesForRefresh();
@@ -2568,7 +2605,10 @@ class _DashboardScreenState extends State<DashboardScreen>
               Navigator.of(context).pop();
             }
             _setPunchActionInProgress(false);
-            setState(() => _isPunchedInToday = false);
+            setState(() {
+              _isPunchedInToday = false;
+              _isPunchCompletedToday = true;
+            });
           }
           await _optimisticPunchOutPrefs();
           _attendanceService.clearCachesForRefresh();
@@ -2624,6 +2664,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             currentIndex: _bottomBarSelectedIndex(),
             items: _buildBottomNavItems(),
             isPunchedInToday: _isPunchedInToday,
+            isPunchCompletedToday: _isPunchCompletedToday,
             isPunchActionInProgress: _isPunchActionInProgress,
             isBreakActive: _activeBreak != null,
             isBreakActionInProgress: _isBreakActionInProgress,
@@ -2644,9 +2685,19 @@ class _DashboardScreenState extends State<DashboardScreen>
                   }
                   if (index == 5) {
                 if (_isPunchActionInProgress) return;
+                final punchFlowSw = Stopwatch()..start();
+                if (kDebugMode) {
+                  debugPrint('[PunchFlow] tap received');
+                }
                 _setPunchActionInProgress(true);
                 // Same validations as attendance screen before check-in/check-out
                 final validationData = await _fetchAttendanceValidationData();
+                if (kDebugMode) {
+                  debugPrint(
+                    '[PunchFlow] validation finished in ${punchFlowSw.elapsedMilliseconds}ms | '
+                    'ok=${validationData != null}',
+                  );
+                }
                 if (!mounted) return;
                 if (validationData == null) {
                   _setPunchActionInProgress(false);
@@ -2659,6 +2710,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                 }
                 final canProceed =
                     await _runFingerprintAttendanceValidations(validationData);
+                if (kDebugMode) {
+                  debugPrint(
+                    '[PunchFlow] business validations finished in ${punchFlowSw.elapsedMilliseconds}ms | '
+                    'canProceed=$canProceed',
+                  );
+                }
                 if (!mounted) return;
                 if (!canProceed) {
                   _setPunchActionInProgress(false);
@@ -2708,6 +2765,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ),
                   );
                   final location = await _getCurrentLocation();
+                  if (kDebugMode) {
+                    debugPrint(
+                      '[PunchFlow] location resolved in ${punchFlowSw.elapsedMilliseconds}ms | '
+                      'hasPosition=${location.position != null}',
+                    );
+                  }
                   if (!mounted) return;
                   Navigator.of(context).pop(); // Dismiss "Getting location..."
 
@@ -2753,6 +2816,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                         : null,
                   );
                   if (!mounted) return;
+                  if (kDebugMode) {
+                    debugPrint(
+                      '[PunchFlow] selfie capture finished in ${punchFlowSw.elapsedMilliseconds}ms | '
+                      'hasFile=${result is File}',
+                    );
+                  }
 
                   if (result is File) {
                     file = result;
@@ -2814,6 +2883,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                     city: useCity,
                     pincode: usePincode,
                     precomputedIsCheckedIn: precomputedIsCheckedIn,
+                  );
+                }
+                if (kDebugMode) {
+                  debugPrint(
+                    '[PunchFlow] submit finished in ${punchFlowSw.elapsedMilliseconds}ms',
                   );
                 }
                 return;

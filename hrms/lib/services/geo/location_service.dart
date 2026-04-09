@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:dio/dio.dart';
 import 'package:geolocator/geolocator.dart' as gl;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +25,8 @@ class LocationService {
   static bool _ensureAppLocationAccessInProgress = false;
   static bool _ensurePersistentTaskTrackingAccessInProgress = false;
   static bool _syncLocationPermissionStatusInProgress = false;
+  static DateTime? _lastLocationPermissionSyncAt;
+  static const Duration _locationPermissionSyncCooldown = Duration(minutes: 5);
   static final ApiClient _api = ApiClient();
 
   factory LocationService() {
@@ -505,6 +508,12 @@ class LocationService {
 
   static Future<void> syncLocationPermissionStatusToBackend() async {
     if (_syncLocationPermissionStatusInProgress) return;
+    final now = DateTime.now();
+    if (_lastLocationPermissionSyncAt != null &&
+        now.difference(_lastLocationPermissionSyncAt!) <
+            _locationPermissionSyncCooldown) {
+      return;
+    }
     _syncLocationPermissionStatusInProgress = true;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -529,10 +538,19 @@ class LocationService {
           ),
           'isEnabledPreciseLocation': preciseEnabled,
         },
+        options: Options(extra: const {'disable_429_retry': true}),
       );
+      _lastLocationPermissionSyncAt = now;
     } catch (error) {
+      if (error is DioException && error.response?.statusCode == 429) {
+        // Server rate-limited profile sync; avoid repeated spam and try later.
+        _lastLocationPermissionSyncAt = now;
+        return;
+      }
       if (kDebugMode) {
-        debugPrint('[LocationService] syncLocationPermissionStatus failed: $error');
+        debugPrint(
+          '[LocationService] syncLocationPermissionStatus failed: ${error.runtimeType}',
+        );
       }
     } finally {
       _syncLocationPermissionStatusInProgress = false;

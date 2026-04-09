@@ -22,6 +22,12 @@ class RetryOnRateLimitInterceptor extends Interceptor {
     if (err.response?.statusCode != 429) {
       return handler.next(err);
     }
+    // Some endpoints (e.g. login) should not silently back off/retry because it
+    // feels like the UI is "stuck". Allow opt-out per request.
+    final disableRetry = err.requestOptions.extra['disable_429_retry'] == true;
+    if (disableRetry) {
+      return handler.next(err);
+    }
     final extra = err.requestOptions.extra;
     final retryCount = extra['retry_count'] as int? ?? 0;
     if (retryCount >= maxRetries) {

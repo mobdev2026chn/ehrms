@@ -12,6 +12,9 @@ class AppConstants {
   /// and stores `interaction_access_token` so chat works without changing geo login.
   /// When **false**: Interaction uses [baseUrl] (needs TypeScript `backend` with `/api/interaction` on that host).
   static const bool interactionUseWebHost = true;
+  /// When true, login uses only one network call (`POST /auth/login`) and
+  /// skips post-login network side-effects for troubleshooting rate-limits.
+  static const bool singleApiLoginMode = false;
 
   /// Prefs key: JWT for [webBaseUrl] when [baseUrl] is another server (set after web login sync).
   static const String interactionAccessTokenPrefsKey = 'interaction_access_token';

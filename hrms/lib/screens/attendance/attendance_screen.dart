@@ -96,7 +96,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   final Set<String> _presentDateSet = {};
   final Set<String> _absentDateSet = {};
   final Set<String> _leaveDateSet = {};
-  final Set<String> _pendingWithCheckInDateSet = {}; // Pending + has punchIn → WA
+  final Set<String> _pendingWithCheckInDateSet =
+      {}; // Pending + has punchIn → WA
 
   String _activeFilter = 'All'; // Filter for history list
   bool _showHistoryView =
@@ -140,6 +141,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   /// True while fetching template details on open.
   bool _isFetchingTemplateDetails = false;
+  bool _hasInitializedActiveData = false;
 
   /// Company fine calculation (company.settings.payroll.fineCalculation) fetched by staff's businessId.
   Map<String, dynamic>? _fineCalculation;
@@ -167,8 +169,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }) async {
     try {
       if (isCheckedIn && checkInLat != null && checkInLng != null) {
-        await PresenceTrackingService()
-            .pinOfficeZoneAtCheckIn(checkInLat, checkInLng);
+        await PresenceTrackingService().pinOfficeZoneAtCheckIn(
+          checkInLat,
+          checkInLng,
+        );
       }
       await PresenceTrackingService().ensureTrackingIfPunchedIn(isCheckedIn);
     } catch (e) {
@@ -200,7 +204,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     // Attendance page should open directly in history view; punch in/out stays in bottom navbar.
     _showHistoryView = true;
-    _initData();
+    if (widget.isActiveTab == true) {
+      _hasInitializedActiveData = true;
+      _initData();
+    }
   }
 
   @override
@@ -214,7 +221,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     super.didUpdateWidget(oldWidget);
     // When user opens/switches to Attendance tab, refresh once
     if (widget.isActiveTab == true && oldWidget.isActiveTab != true) {
-      _refreshData(forceRefresh: true);
+      if (_hasInitializedActiveData) {
+        _refreshData(forceRefresh: true);
+      } else {
+        _hasInitializedActiveData = true;
+        _initData(forceRefresh: true);
+      }
     }
   }
 
@@ -249,6 +261,28 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     await _fetchFineCalculation();
   }
 
+  Future<Map<String, dynamic>> _withTimeoutRetry(
+    Future<Map<String, dynamic>> Function() action, {
+    required String tag,
+    int retries = 1,
+  }) async {
+    var attempt = 0;
+    while (true) {
+      attempt++;
+      try {
+        return await action().timeout(_networkTimeout);
+      } on TimeoutException {
+        if (attempt > retries) rethrow;
+        if (kDebugMode) {
+          debugPrint(
+            '[Attendance] $tag timed out (attempt $attempt). Retrying...',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+      }
+    }
+  }
+
   /// Fetches profile + today attendance, saves template details to SharedPrefs.
   /// Ensures fresh shift, attendance template, branch, holiday info when templates change.
   Future<void> _fetchAllTemplateDetails() async {
@@ -256,9 +290,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       debugPrint('[Attendance] Fetching template details...');
       _attendanceService.clearCachesForRefresh();
       // 1. Fresh profile (shift key snapshot for template reconciliation).
-      final profileResult = await _authService
-          .getProfile()
-          .timeout(_networkTimeout);
+      final profileResult = await _withTimeoutRetry(
+        _authService.getProfile,
+        tag: 'Profile fetch',
+      );
       if (!mounted) return;
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
@@ -272,9 +307,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final todayStr =
           '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
       debugPrint('[Attendance] Fetching today attendance: $todayStr');
-      final result = await _attendanceService
-          .getAttendanceByDate(todayStr)
-          .timeout(_networkTimeout);
+      final result = await _withTimeoutRetry(
+        () => _attendanceService.getAttendanceByDate(todayStr),
+        tag: 'Today attendance fetch',
+      );
       if (!mounted) return;
 
       if (result['success'] == true && result['data'] != null) {
@@ -286,8 +322,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           if (mounted) {
             setState(() {
               _attendanceTemplate = template;
-              _staffHasAttendanceTemplate =
-                  staffHasAssignedAttendanceTemplate(
+              _staffHasAttendanceTemplate = staffHasAssignedAttendanceTemplate(
                 profileAttendanceTemplateRef: _profileAttendanceTemplateId,
                 todayAttendanceTemplate: template,
               );
@@ -363,8 +398,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         );
         if (mounted) {
           setState(() {
-            _staffHasAttendanceTemplate =
-                staffHasAssignedAttendanceTemplate(
+            _staffHasAttendanceTemplate = staffHasAssignedAttendanceTemplate(
               profileAttendanceTemplateRef: _profileAttendanceTemplateId,
               todayAttendanceTemplate: _attendanceTemplate,
             );
@@ -378,9 +412,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           await _fetchAllTemplateDetails();
         }
       }
+    } on TimeoutException catch (e) {
+      debugPrint(
+        '[Attendance] Template fetch timed out after retry: ${e.message ?? e.toString()}',
+      );
+      if (mounted) setState(() => _attendanceStatusFetched = true);
     } catch (e, st) {
       debugPrint('[Attendance] Template fetch error: $e');
-      debugPrint('[Attendance] Stack trace: $st');
+      if (kDebugMode) {
+        debugPrint('[Attendance] Stack trace: $st');
+      }
       if (mounted) setState(() => _attendanceStatusFetched = true);
     }
   }
@@ -390,8 +431,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final t = _attendanceTemplate;
     String? templateLabel;
     if (t != null && t.isNotEmpty) {
-      templateLabel =
-          (t['name'] ?? t['shiftName'])?.toString().trim();
+      templateLabel = (t['name'] ?? t['shiftName'])?.toString().trim();
       if (templateLabel != null && templateLabel.isEmpty) {
         templateLabel = null;
       }
@@ -508,190 +548,188 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     try {
       final result = await _attendanceService
-          .getMonthAttendance(
-            year,
-            month,
-            forceRefresh: forceRefresh,
-          )
+          .getMonthAttendance(year, month, forceRefresh: forceRefresh)
           .timeout(_networkTimeout);
       if (!mounted) return;
 
       setState(() {
         _isLoadingMonthData = false;
 
-      if (!result['success']) {
-        return;
-      }
+        if (!result['success']) {
+          return;
+        }
 
-      _monthData = result['data'];
+        _monthData = result['data'];
 
-      // Rebuild lookup maps/sets so History calendar matches dashboard calendar.
-      _dayStatusByDate.clear();
-      _dayLeaveTypeByDate.clear();
-      _dayIsPaidLeaveByDate.clear();
-      _dayCompensationTypeByDate.clear();
-      _dayWorkHoursByDate.clear();
-      _holidayDateSet.clear();
-      _weekOffDateSet.clear();
-      _alternateWorkDatesInMonth.clear();
-      _presentDateSet.clear();
-      _absentDateSet.clear();
-      _leaveDateSet.clear();
-      _pendingWithCheckInDateSet.clear();
+        // Rebuild lookup maps/sets so History calendar matches dashboard calendar.
+        _dayStatusByDate.clear();
+        _dayLeaveTypeByDate.clear();
+        _dayIsPaidLeaveByDate.clear();
+        _dayCompensationTypeByDate.clear();
+        _dayWorkHoursByDate.clear();
+        _holidayDateSet.clear();
+        _weekOffDateSet.clear();
+        _alternateWorkDatesInMonth.clear();
+        _presentDateSet.clear();
+        _absentDateSet.clear();
+        _leaveDateSet.clear();
+        _pendingWithCheckInDateSet.clear();
 
-      if (_monthData != null) {
-        // Attendance-based maps: one record per date (use attendance collection date; deduplicate)
-        if (_monthData!['attendance'] != null) {
-          final attendanceList = _deduplicateAttendanceByDate(_monthData!['attendance'] as List);
-          for (var entry in attendanceList) {
-            try {
-              // Use attendance collection calendar date (UTC/ISO date part only, no timezone shift)
-              final dateStr = _attendanceCalendarDate(entry['date']);
-              if (dateStr.isEmpty) continue;
-              final parts = dateStr.split('-');
-              if (parts.length != 3) continue;
-              final dayYear = int.tryParse(parts[0]) ?? 0;
-              final dayMonth = int.tryParse(parts[1]) ?? 0;
-              if (dayYear != year || dayMonth != month) continue;
+        if (_monthData != null) {
+          // Attendance-based maps: one record per date (use attendance collection date; deduplicate)
+          if (_monthData!['attendance'] != null) {
+            final attendanceList = _deduplicateAttendanceByDate(
+              _monthData!['attendance'] as List,
+            );
+            for (var entry in attendanceList) {
+              try {
+                // Use attendance collection calendar date (UTC/ISO date part only, no timezone shift)
+                final dateStr = _attendanceCalendarDate(entry['date']);
+                if (dateStr.isEmpty) continue;
+                final parts = dateStr.split('-');
+                if (parts.length != 3) continue;
+                final dayYear = int.tryParse(parts[0]) ?? 0;
+                final dayMonth = int.tryParse(parts[1]) ?? 0;
+                if (dayYear != year || dayMonth != month) continue;
 
-              final statusVal = (entry['status'] as String?) ?? 'Present';
-              _dayStatusByDate[dateStr] = statusVal;
-              if (statusVal == 'Pending') {
-                final punchIn = entry['punchIn'];
-                if (punchIn != null && punchIn.toString().trim().isNotEmpty) {
-                  _pendingWithCheckInDateSet.add(dateStr);
-                }
-              }
-              final leaveType = entry['leaveType'] as String?;
-              if (leaveType != null && leaveType.isNotEmpty) {
-                _dayLeaveTypeByDate[dateStr] = leaveType;
-              }
-              if (entry['isPaidLeave'] == true) {
-                _dayIsPaidLeaveByDate[dateStr] = true;
-              }
-              final compType = entry['compensationType'] as String?;
-              if (compType != null && compType.toString().trim().isNotEmpty) {
-                _dayCompensationTypeByDate[dateStr] = compType
-                    .toString()
-                    .trim()
-                    .toLowerCase();
-              }
-
-              num? workHours = entry['workHours'] as num?;
-
-              // Calculate workHours (in minutes) from punchIn and punchOut if not already present
-              if (workHours == null) {
-                final punchIn = entry['punchIn'];
-                final punchOut = entry['punchOut'];
-                if (punchIn != null && punchOut != null) {
-                  try {
-                    final punchInTime = DateTime.parse(
-                      punchIn.toString(),
-                    ).toLocal();
-                    final punchOutTime = DateTime.parse(
-                      punchOut.toString(),
-                    ).toLocal();
-                    final duration = punchOutTime.difference(punchInTime);
-                    if (duration.inMinutes > 0) {
-                      workHours = duration.inMinutes; // store as minutes
-                    }
-                  } catch (_) {
-                    // Ignore parse errors; leave workHours null
+                final statusVal = (entry['status'] as String?) ?? 'Present';
+                _dayStatusByDate[dateStr] = statusVal;
+                if (statusVal == 'Pending') {
+                  final punchIn = entry['punchIn'];
+                  if (punchIn != null && punchIn.toString().trim().isNotEmpty) {
+                    _pendingWithCheckInDateSet.add(dateStr);
                   }
                 }
+                final leaveType = entry['leaveType'] as String?;
+                if (leaveType != null && leaveType.isNotEmpty) {
+                  _dayLeaveTypeByDate[dateStr] = leaveType;
+                }
+                if (entry['isPaidLeave'] == true) {
+                  _dayIsPaidLeaveByDate[dateStr] = true;
+                }
+                final compType = entry['compensationType'] as String?;
+                if (compType != null && compType.toString().trim().isNotEmpty) {
+                  _dayCompensationTypeByDate[dateStr] = compType
+                      .toString()
+                      .trim()
+                      .toLowerCase();
+                }
+
+                num? workHours = entry['workHours'] as num?;
+
+                // Calculate workHours (in minutes) from punchIn and punchOut if not already present
+                if (workHours == null) {
+                  final punchIn = entry['punchIn'];
+                  final punchOut = entry['punchOut'];
+                  if (punchIn != null && punchOut != null) {
+                    try {
+                      final punchInTime = DateTime.parse(
+                        punchIn.toString(),
+                      ).toLocal();
+                      final punchOutTime = DateTime.parse(
+                        punchOut.toString(),
+                      ).toLocal();
+                      final duration = punchOutTime.difference(punchInTime);
+                      if (duration.inMinutes > 0) {
+                        workHours = duration.inMinutes; // store as minutes
+                      }
+                    } catch (_) {
+                      // Ignore parse errors; leave workHours null
+                    }
+                  }
+                }
+
+                _dayWorkHoursByDate[dateStr] = workHours;
+              } catch (_) {
+                // Skip invalid date entries
+                continue;
               }
+            }
+          }
 
-              _dayWorkHoursByDate[dateStr] = workHours;
-            } catch (_) {
-              // Skip invalid date entries
-              continue;
+          // Holiday dates
+          if (_monthData!['holidays'] != null) {
+            for (var h in _monthData!['holidays']) {
+              try {
+                final d = DateTime.parse(h['date'].toString()).toLocal();
+                if (d.year != year || d.month != month) continue;
+                final dateStr = DateFormat('yyyy-MM-dd').format(d);
+                _holidayDateSet.add(dateStr);
+              } catch (_) {
+                continue;
+              }
+            }
+          }
+
+          // Week off dates (already computed by backend)
+          if (_monthData!['weekOffDates'] != null) {
+            for (var dateStr in _monthData!['weekOffDates']) {
+              if (dateStr is String) {
+                _weekOffDateSet.add(dateStr);
+              }
+            }
+          }
+
+          // Alternate work dates in this month (compensation week-off: do not show violet; employee can check-in)
+          _alternateWorkDatesInMonth.clear();
+          if (_monthData!['alternateWorkDatesInMonth'] != null) {
+            for (var dateStr in _monthData!['alternateWorkDatesInMonth']) {
+              if (dateStr is String) {
+                _alternateWorkDatesInMonth.add(dateStr);
+              }
+            }
+          }
+
+          // Present dates
+          if (_monthData!['presentDates'] != null) {
+            for (var dateStr in _monthData!['presentDates']) {
+              if (dateStr is String) {
+                _presentDateSet.add(dateStr);
+              }
+            }
+          }
+
+          // Absent dates
+          if (_monthData!['absentDates'] != null) {
+            for (var dateStr in _monthData!['absentDates']) {
+              if (dateStr is String) {
+                _absentDateSet.add(dateStr);
+              }
+            }
+          }
+
+          // Approved leave dates (treat as On Leave when no overriding attendance)
+          if (_monthData!['leaveDates'] != null) {
+            for (var dateStr in _monthData!['leaveDates']) {
+              if (dateStr is String) {
+                _leaveDateSet.add(dateStr);
+              }
             }
           }
         }
-
-        // Holiday dates
-        if (_monthData!['holidays'] != null) {
-          for (var h in _monthData!['holidays']) {
+        // Recent activity: always today + last 5 days. Only update when fetching current month.
+        final nowDate = DateTime.now();
+        if (year == nowDate.year &&
+            month == nowDate.month &&
+            _monthData != null) {
+          final combined = _getCombinedMonthHistory();
+          final todayOnly = DateTime(nowDate.year, nowDate.month, nowDate.day);
+          _recentActivityList = combined.where((e) {
             try {
-              final d = DateTime.parse(h['date'].toString()).toLocal();
-              if (d.year != year || d.month != month) continue;
-              final dateStr = DateFormat('yyyy-MM-dd').format(d);
-              _holidayDateSet.add(dateStr);
+              final d = _extractDateOnly(e['date']);
+              final dateOnly = DateTime(d.year, d.month, d.day);
+              final diff = todayOnly.difference(dateOnly).inDays;
+              return diff >= 0 && diff < 6; // today and last 5 days
             } catch (_) {
-              continue;
+              return false;
             }
-          }
+          }).toList();
+          _recentActivityList.sort((a, b) {
+            DateTime da = _extractDateOnly(a['date']);
+            DateTime db = _extractDateOnly(b['date']);
+            return db.compareTo(da); // newest first
+          });
         }
-
-        // Week off dates (already computed by backend)
-        if (_monthData!['weekOffDates'] != null) {
-          for (var dateStr in _monthData!['weekOffDates']) {
-            if (dateStr is String) {
-              _weekOffDateSet.add(dateStr);
-            }
-          }
-        }
-
-        // Alternate work dates in this month (compensation week-off: do not show violet; employee can check-in)
-        _alternateWorkDatesInMonth.clear();
-        if (_monthData!['alternateWorkDatesInMonth'] != null) {
-          for (var dateStr in _monthData!['alternateWorkDatesInMonth']) {
-            if (dateStr is String) {
-              _alternateWorkDatesInMonth.add(dateStr);
-            }
-          }
-        }
-
-        // Present dates
-        if (_monthData!['presentDates'] != null) {
-          for (var dateStr in _monthData!['presentDates']) {
-            if (dateStr is String) {
-              _presentDateSet.add(dateStr);
-            }
-          }
-        }
-
-        // Absent dates
-        if (_monthData!['absentDates'] != null) {
-          for (var dateStr in _monthData!['absentDates']) {
-            if (dateStr is String) {
-              _absentDateSet.add(dateStr);
-            }
-          }
-        }
-
-        // Approved leave dates (treat as On Leave when no overriding attendance)
-        if (_monthData!['leaveDates'] != null) {
-          for (var dateStr in _monthData!['leaveDates']) {
-            if (dateStr is String) {
-              _leaveDateSet.add(dateStr);
-            }
-          }
-        }
-      }
-      // Recent activity: always today + last 5 days. Only update when fetching current month.
-      final nowDate = DateTime.now();
-      if (year == nowDate.year &&
-          month == nowDate.month &&
-          _monthData != null) {
-        final combined = _getCombinedMonthHistory();
-        final todayOnly = DateTime(nowDate.year, nowDate.month, nowDate.day);
-        _recentActivityList = combined.where((e) {
-          try {
-            final d = _extractDateOnly(e['date']);
-            final dateOnly = DateTime(d.year, d.month, d.day);
-            final diff = todayOnly.difference(dateOnly).inDays;
-            return diff >= 0 && diff < 6; // today and last 5 days
-          } catch (_) {
-            return false;
-          }
-        }).toList();
-        _recentActivityList.sort((a, b) {
-          DateTime da = _extractDateOnly(a['date']);
-          DateTime db = _extractDateOnly(b['date']);
-          return db.compareTo(da); // newest first
-        });
-      }
       });
     } catch (e) {
       debugPrint('[Attendance] month data fetch failed: $e');
@@ -721,10 +759,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
     try {
       final result = await _attendanceService
-          .getAttendanceHistory(
-            page: pageToFetch,
-            limit: _limit,
-          )
+          .getAttendanceHistory(page: pageToFetch, limit: _limit)
           .timeout(_networkTimeout);
 
       if (result['success'] && mounted) {
@@ -787,8 +822,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
             setState(() {
               _attendanceTemplate = template;
-              _staffHasAttendanceTemplate =
-                  staffHasAssignedAttendanceTemplate(
+              _staffHasAttendanceTemplate = staffHasAssignedAttendanceTemplate(
                 profileAttendanceTemplateRef: _profileAttendanceTemplateId,
                 todayAttendanceTemplate: template,
               );
@@ -987,8 +1021,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               child: Image.network(
                 imageUrl,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    _buildImageNotFoundPlaceholder(),
+                errorBuilder: (_, __, ___) => _buildImageNotFoundPlaceholder(),
               ),
             ),
           ],
@@ -1007,14 +1040,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.broken_image_outlined, size: 48, color: Colors.grey.shade500),
+          Icon(
+            Icons.broken_image_outlined,
+            size: 48,
+            color: Colors.grey.shade500,
+          ),
           const SizedBox(height: 8),
           Text(
             'Image not found',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
           ),
         ],
       ),
@@ -1034,7 +1068,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final s = dateValue.toString().trim();
       if (s.isEmpty) return '';
       if (s.contains('T')) return s.split('T').first;
-      if (s.length >= 10 && s[4] == '-' && s[7] == '-') return s.substring(0, 10);
+      if (s.length >= 10 && s[4] == '-' && s[7] == '-')
+        return s.substring(0, 10);
       final d = DateTime.parse(s);
       final u = d.toUtc();
       return '${u.year}-${u.month.toString().padLeft(2, '0')}-${u.day.toString().padLeft(2, '0')}';
@@ -1062,8 +1097,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         byDate[key] = Map<String, dynamic>.from(r);
         continue;
       }
-      final hasPunchIn = (r['punchIn'] != null && r['punchIn'].toString().trim().isNotEmpty);
-      final existingHasPunchIn = (existing['punchIn'] != null && existing['punchIn'].toString().trim().isNotEmpty);
+      final hasPunchIn =
+          (r['punchIn'] != null && r['punchIn'].toString().trim().isNotEmpty);
+      final existingHasPunchIn =
+          (existing['punchIn'] != null &&
+          existing['punchIn'].toString().trim().isNotEmpty);
       if (hasPunchIn && !existingHasPunchIn) {
         byDate[key] = Map<String, dynamic>.from(r);
       } else if (hasPunchIn == existingHasPunchIn) {
@@ -1196,10 +1234,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (status == 'Pending' && punchIn != null) {
       displayStatus = 'Waiting for Approval';
     }
-    final summaryStatus =
-        displayStatus == 'Waiting for Approval'
-            ? 'Approval Pending'
-            : displayStatus;
+    final summaryStatus = displayStatus == 'Waiting for Approval'
+        ? 'Approval Pending'
+        : displayStatus;
     final isLateIn = _isLateCheckIn(punchIn, record: record);
     final isEarlyOut = _isEarlyCheckOut(punchOut, record: record);
 
@@ -1299,7 +1336,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                      icon: const Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 18,
+                      ),
                       onPressed: () => Navigator.pop(context),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
@@ -1341,17 +1381,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       _buildAttendanceSummaryCard(
                         shiftLabel:
                             (record['shiftName'] ??
-                                        _attendanceTemplate?['name'] ??
-                                        'Shift')
-                                    .toString()
-                                    .trim()
-                                    .isNotEmpty
-                                ? (record['shiftName'] ??
-                                        _attendanceTemplate?['name'] ??
-                                        'Shift')
-                                    .toString()
-                                    .trim()
-                                : 'Shift',
+                                    _attendanceTemplate?['name'] ??
+                                    'Shift')
+                                .toString()
+                                .trim()
+                                .isNotEmpty
+                            ? (record['shiftName'] ??
+                                      _attendanceTemplate?['name'] ??
+                                      'Shift')
+                                  .toString()
+                                  .trim()
+                            : 'Shift',
                         shiftTime: () {
                           if (_isOpenShiftTemplate()) {
                             final h = _openShiftRequiredHours();
@@ -1365,13 +1405,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                           final start = halfDayTimings != null
                               ? halfDayTimings['startTime'] ?? 'N/A'
                               : _attendanceTemplate?['shiftStartTime']
-                                      ?.toString() ??
-                                  'N/A';
+                                        ?.toString() ??
+                                    'N/A';
                           final end = halfDayTimings != null
                               ? halfDayTimings['endTime'] ?? 'N/A'
                               : _attendanceTemplate?['shiftEndTime']
-                                      ?.toString() ??
-                                  'N/A';
+                                        ?.toString() ??
+                                    'N/A';
                           return '$start - $end';
                         }(),
                         status: summaryStatus,
@@ -1388,50 +1428,47 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                         compensationType: _hasMeaningfulValue(compensationType)
                             ? compensationType.trim()
                             : null,
-                        overtimeDisplay:
-                            _formatOvertimeForDisplay(record['overtime']),
+                        overtimeDisplay: _formatOvertimeForDisplay(
+                          record['overtime'],
+                        ),
                         openShiftBufferDisplay:
                             _formatOpenShiftBufferForDisplay(
-                                record['bufferTime'],
+                              record['bufferTime'],
                             ),
                       ),
                       if (hasFineInfo) ...[
                         const SizedBox(height: 20),
-                        _buildDayDetailSection(
-                          'Fine Details',
-                          Icons.money_off,
-                          [
-                            if (lateMinutes != null &&
-                                lateMinutes.toInt() > 0)
-                              _buildDayDetailRow(
-                                'Late Check-in',
-                                '${lateMinutes.toInt()} minutes',
-                                valueColor: Colors.orange.shade700,
-                              ),
-                            if (earlyMinutes != null &&
-                                earlyMinutes.toInt() > 0)
-                              _buildDayDetailRow(
-                                'Early Check-out',
-                                '${earlyMinutes.toInt()} minutes',
-                                valueColor: Colors.orange.shade700,
-                              ),
-                            if (fineHours != null && fineHours > 0)
-                              _buildDayDetailRow(
-                                'Fine Min',
-                                '${fineHours.toInt()} mins',
-                                valueColor: Colors.red.shade700,
-                              ),
-                            if (fineAmount != null && fineAmount > 0)
-                              _buildDayDetailRow(
-                                'Fine Amount',
-                                '₹${NumberFormat('#,##0.00').format(fineAmount)}',
-                                valueColor: Colors.red.shade700,
-                                isBold: true,
-                              ),
-                          ],
-                        ),
+                        _buildDayDetailSection('Fine Details', Icons.money_off, [
+                          if (lateMinutes != null && lateMinutes.toInt() > 0)
+                            _buildDayDetailRow(
+                              'Late Check-in',
+                              '${lateMinutes.toInt()} minutes',
+                              valueColor: Colors.orange.shade700,
+                            ),
+                          if (earlyMinutes != null && earlyMinutes.toInt() > 0)
+                            _buildDayDetailRow(
+                              'Early Check-out',
+                              '${earlyMinutes.toInt()} minutes',
+                              valueColor: Colors.orange.shade700,
+                            ),
+                          if (fineHours != null && fineHours > 0)
+                            _buildDayDetailRow(
+                              'Fine Min',
+                              '${fineHours.toInt()} mins',
+                              valueColor: Colors.red.shade700,
+                            ),
+                          if (fineAmount != null && fineAmount > 0)
+                            _buildDayDetailRow(
+                              'Fine Amount',
+                              '₹${NumberFormat('#,##0.00').format(fineAmount)}',
+                              valueColor: Colors.red.shade700,
+                              isBold: true,
+                            ),
+                        ]),
                       ],
-                      if (logs.isNotEmpty || punchIn != null || punchOut != null) ...[
+                      if (logs.isNotEmpty ||
+                          punchIn != null ||
+                          punchOut != null) ...[
                         const SizedBox(height: 20),
                         _buildDayDetailSection(
                           'Log',
@@ -1441,10 +1478,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                             punchIn: punchIn,
                             punchOut: punchOut,
                             branchName: branchName,
-                            punchInSelfieUrl:
-                                hasPunchInSelfie ? punchInSelfieUrl.toString() : null,
-                            punchOutSelfieUrl:
-                                hasPunchOutSelfie ? punchOutSelfieUrl.toString() : null,
+                            punchInSelfieUrl: hasPunchInSelfie
+                                ? punchInSelfieUrl.toString()
+                                : null,
+                            punchOutSelfieUrl: hasPunchOutSelfie
+                                ? punchOutSelfieUrl.toString()
+                                : null,
                           ),
                         ),
                       ],
@@ -1558,7 +1597,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               ),
               const SizedBox(width: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: statusColor.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(18),
@@ -1720,7 +1762,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           items.add({
             'title': title,
             'headline': headlineParts.where((e) => e.isNotEmpty).join(' | '),
-            'subtitle': _formatLogByline(log['performedByName']?.toString(), when),
+            'subtitle': _formatLogByline(
+              log['performedByName']?.toString(),
+              when,
+            ),
             'imageUrl': null,
             'tileIcon': action == 'REJECTED' ? 'rejection' : 'approval',
           });
@@ -1736,9 +1781,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               if (field != 'fineAmount') continue;
               final oldNum = _parseLogNumericValue(map['oldValue']);
               final newNum = _parseLogNumericValue(map['newValue']);
-              if (oldNum != null &&
-                  newNum != null &&
-                  oldNum == newNum) {
+              if (oldNum != null && newNum != null && oldNum == newNum) {
                 continue;
               }
               final when = log['timestamp'] ?? log['createdAt'];
@@ -1748,8 +1791,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   _formatLogTime(when),
                   '${_formatFineAmountForLog(oldNum)} → ${_formatFineAmountForLog(newNum)}',
                 ].where((e) => e.isNotEmpty).join(' | '),
-                'subtitle':
-                    _formatLogByline(log['performedByName']?.toString(), when),
+                'subtitle': _formatLogByline(
+                  log['performedByName']?.toString(),
+                  when,
+                ),
                 'imageUrl': null,
                 'tileIcon': 'fine',
               });
@@ -1770,7 +1815,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'PUNCH_IN' => log['punchInDateTime'] ?? log['timestamp'],
           'BREAK_START' => log['breakStartDateTime'] ?? log['timestamp'],
           'BREAK_END' => log['breakEndDateTime'] ?? log['timestamp'],
-          _ => log['timestamp'] ?? log['punchOutDateTime'] ?? log['punchInDateTime'],
+          _ =>
+            log['timestamp'] ??
+                log['punchOutDateTime'] ??
+                log['punchInDateTime'],
         };
         final title = switch (action) {
           'PUNCH_IN' => 'Punched In',
@@ -1786,20 +1834,23 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'BREAK_END' => log['breakEndAddress']?.toString(),
           _ => null,
         };
-        final breakDuration =
-            action == 'BREAK_END'
-                ? _formatBreakDuration(log['totalBreakSeconds'])
-                : null;
+        final breakDuration = action == 'BREAK_END'
+            ? _formatBreakDuration(log['totalBreakSeconds'])
+            : null;
         final headlineParts = [
           _formatLogTime(when),
-          if (branchName != null && branchName.trim().isNotEmpty) branchName.trim(),
+          if (branchName != null && branchName.trim().isNotEmpty)
+            branchName.trim(),
           if (breakDuration != null && breakDuration.isNotEmpty) breakDuration,
           if (address != null && address.trim().isNotEmpty) address.trim(),
         ];
         items.add({
           'title': title,
           'headline': headlineParts.whereType<String>().join(' | '),
-          'subtitle': _formatLogByline(log['performedByName']?.toString(), when),
+          'subtitle': _formatLogByline(
+            log['performedByName']?.toString(),
+            when,
+          ),
           'imageUrl': log['selfieUrl']?.toString(),
           'tileIcon': null,
         });
@@ -1808,7 +1859,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (punchOut != null) {
         final headlineParts = [
           _formatLogTime(punchOut),
-          if (branchName != null && branchName.trim().isNotEmpty) branchName.trim(),
+          if (branchName != null && branchName.trim().isNotEmpty)
+            branchName.trim(),
         ];
         items.add({
           'title': 'Punched Out',
@@ -1821,7 +1873,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (punchIn != null) {
         final headlineParts = [
           _formatLogTime(punchIn),
-          if (branchName != null && branchName.trim().isNotEmpty) branchName.trim(),
+          if (branchName != null && branchName.trim().isNotEmpty)
+            branchName.trim(),
         ];
         items.add({
           'title': 'Punched In',
@@ -1871,7 +1924,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           borderRadius: BorderRadius.circular(6),
           color: Colors.green.shade50,
         ),
-        child: Icon(Icons.check_circle_rounded, size: 20, color: Colors.green.shade700),
+        child: Icon(
+          Icons.check_circle_rounded,
+          size: 20,
+          color: Colors.green.shade700,
+        ),
       );
     } else if (tileIcon == 'fine') {
       leading = Container(
@@ -1890,7 +1947,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       );
     } else {
       leading = GestureDetector(
-        onTap: hasImage ? () => _showSelfieDialog(imageUrl, item['title']) : null,
+        onTap: hasImage
+            ? () => _showSelfieDialog(imageUrl, item['title'])
+            : null,
         child: Container(
           width: 34,
           height: 34,
@@ -1928,7 +1987,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 '${item['title']} ${headline.isNotEmpty ? 'at $headline' : ''}',
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               if (subtitle != null && subtitle.trim().isNotEmpty)
                 Padding(
@@ -1959,10 +2021,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   String? _formatBreakDuration(dynamic totalSeconds) {
     if (totalSeconds == null) return null;
-    final seconds =
-        totalSeconds is num
-            ? totalSeconds.toInt()
-            : int.tryParse(totalSeconds.toString());
+    final seconds = totalSeconds is num
+        ? totalSeconds.toInt()
+        : int.tryParse(totalSeconds.toString());
     if (seconds == null || seconds <= 0) return null;
     final minutes = seconds ~/ 60;
     final remainingSeconds = seconds % 60;
@@ -2156,8 +2217,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }) async {
     final fullMessage =
         await AttendanceTemplateStore.appendRequireSelfieGeolocationToMessage(
-      message,
-    );
+          message,
+        );
     if (!mounted) return;
     return showDialog<void>(
       context: context,
@@ -2174,8 +2235,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             ? Icons.schedule_rounded
             : Icons.info_outline_rounded;
         final Color iconColor = AppColors.primary;
-        final String? lateTimingLine =
-            isLate ? _shiftTimingSummaryForWarningDialog() : null;
+        final String? lateTimingLine = isLate
+            ? _shiftTimingSummaryForWarningDialog()
+            : null;
 
         final colorScheme = Theme.of(context).colorScheme;
         return Dialog(
@@ -2193,7 +2255,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   decoration: BoxDecoration(
                     color: const Color(0xFF2A2A2A).withOpacity(0.85),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFF0D0D0D), width: 2),
+                    border: Border.all(
+                      color: const Color(0xFF0D0D0D),
+                      width: 2,
+                    ),
                     boxShadow: [
                       BoxShadow(
                         color: colorScheme.shadow.withOpacity(0.2),
@@ -2357,8 +2422,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final grossDirect = prefs.getDouble(kAppGrossPerDaySalaryPrefsKey);
       if (grossDirect != null && grossDirect > 0) return grossDirect;
       final grossAsString = prefs.getString(kAppGrossPerDaySalaryPrefsKey);
-      final grossParsed =
-          grossAsString == null ? null : double.tryParse(grossAsString);
+      final grossParsed = grossAsString == null
+          ? null
+          : double.tryParse(grossAsString);
       if (grossParsed != null && grossParsed > 0) return grossParsed;
       final direct = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
       if (direct != null && direct > 0) return direct;
@@ -2405,21 +2471,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final rulesRaw = fc?['fineRules'];
       final rules = rulesRaw is List ? rulesRaw.cast<Map>() : const <Map>[];
 
-      final rawCalcType = fc?['calculationType'] ?? fc?['calculationMethod'] ?? 'shiftBased';
-      final normalizedCalcType =
-          rawCalcType == 'fixedPerHour' ? 'fixedPerHour' : 'shiftBased';
+      final rawCalcType =
+          fc?['calculationType'] ?? fc?['calculationMethod'] ?? 'shiftBased';
+      final normalizedCalcType = rawCalcType == 'fixedPerHour'
+          ? 'fixedPerHour'
+          : 'shiftBased';
 
       // Matching logic must mirror backend: rule matches when applyTo is null/empty,
       // or equals the punch type, or equals 'both'.
-      final match = rules.cast<Map>().firstWhere(
-            (r) {
-              final applyTo = r['applyTo'];
-              if (applyTo == null) return true;
-              final s = applyTo.toString();
-              return s == actionApplyToType || s == 'both';
-            },
-            orElse: () => <String, dynamic>{},
-          );
+      final match = rules.cast<Map>().firstWhere((r) {
+        final applyTo = r['applyTo'];
+        if (applyTo == null) return true;
+        final s = applyTo.toString();
+        return s == actionApplyToType || s == 'both';
+      }, orElse: () => <String, dynamic>{});
 
       final hasMatch = match.isNotEmpty && match['type'] != null;
       if (hasMatch) {
@@ -2456,17 +2521,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final rulesRaw = fc?['fineRules'];
     if (rulesRaw is! List) return null;
     final rules = rulesRaw.cast<Map>();
-    final match = rules.cast<Map>().cast<dynamic>().firstWhere(
-          (dynamic r) {
-            if (r is! Map) return false;
-            final applyTo = r['applyTo'];
-            if (applyTo == null) return true;
-            final s = applyTo.toString().trim();
-            if (s.isEmpty) return true;
-            return s == actionApplyToType || s == 'both';
-          },
-          orElse: () => <String, dynamic>{},
-        );
+    final match = rules.cast<Map>().cast<dynamic>().firstWhere((dynamic r) {
+      if (r is! Map) return false;
+      final applyTo = r['applyTo'];
+      if (applyTo == null) return true;
+      final s = applyTo.toString().trim();
+      if (s.isEmpty) return true;
+      return s == actionApplyToType || s == 'both';
+    }, orElse: () => <String, dynamic>{});
     if (match is Map<String, dynamic> && match.isNotEmpty) {
       return match;
     }
@@ -2482,11 +2544,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final type = (rule['type']?.toString() ?? '').toLowerCase();
     if (minutes <= 0) return 0.0;
 
-    debugPrint('[Fine] _computeFineFromRule: type=$type, minutes=$minutes, netPerDaySalary=$netPerDaySalary, shiftHours=$shiftHours');
+    debugPrint(
+      '[Fine] _computeFineFromRule: type=$type, minutes=$minutes, netPerDaySalary=$netPerDaySalary, shiftHours=$shiftHours',
+    );
 
     if (type == 'custom') {
       final customAmount = (rule['customAmount'] as num?)?.toDouble() ?? 0.0;
-      final unit = (rule['customAmountUnit']?.toString() ?? 'perHour').toLowerCase();
+      final unit = (rule['customAmountUnit']?.toString() ?? 'perHour')
+          .toLowerCase();
       if (unit == 'perminute') return customAmount * minutes;
       if (unit == 'perhour') return customAmount * (minutes / 60.0);
       if (unit == 'fixed') return customAmount;
@@ -2508,7 +2573,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final hourlyRate = (shiftHours > 0) ? (netPerDaySalary / shiftHours) : 0.0;
     final hours = minutes / 60.0;
     final amount = hourlyRate * hours * multiplier;
-    debugPrint('[Fine] Rule Result: hourlyRate=$hourlyRate, hours=$hours, multiplier=$multiplier => amount=$amount');
+    debugPrint(
+      '[Fine] Rule Result: hourlyRate=$hourlyRate, hours=$hours, multiplier=$multiplier => amount=$amount',
+    );
     return amount;
   }
 
@@ -2529,60 +2596,62 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         lateMinutes = 0;
         fineAmount = 0;
       } else {
-      final shiftStartStr =
-          sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb();
-      if (shiftStartStr != null && shiftStartStr.isNotEmpty) {
-        try {
-          final parts = shiftStartStr.split(':').map(int.parse).toList();
-          final gracePeriod = _getGracePeriodMinutesForLateCheckIn();
-          final shiftStartOnly = DateTime(
-            now.year,
-            now.month,
-            now.day,
-            parts[0],
-            parts.length > 1 ? parts[1] : 0,
-          );
-          final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
-          if (now.isAfter(graceEnd)) {
-            final shiftEndForFine =
-                sessionTimings?['endTime'] ?? _getShiftEndTime();
-            final fineResult = calculateFine(
-              punchInTime: now,
-              attendanceDate: DateTime(now.year, now.month, now.day),
-              shiftTiming: ShiftTiming(
-                name: 'Current Shift',
-                startTime: shiftStartStr,
-                endTime: shiftEndForFine,
-                graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
-              ),
-              fineSettings: FineSettings(
-                enabled: true,
-                graceTimeMinutes: gracePeriod,
-                calculationType: 'shiftBased',
-              ),
-              dailySalary: netPerDaySalary,
+        final shiftStartStr =
+            sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb();
+        if (shiftStartStr != null && shiftStartStr.isNotEmpty) {
+          try {
+            final parts = shiftStartStr.split(':').map(int.parse).toList();
+            final gracePeriod = _getGracePeriodMinutesForLateCheckIn();
+            final shiftStartOnly = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              parts[0],
+              parts.length > 1 ? parts[1] : 0,
             );
-            lateMinutes = fineResult.lateMinutes;
-            fineAmount = fineResult.fineAmount;
-            final hasRules = _hasFineRules();
-            final lateRule = _matchFineRuleForAction('lateArrival');
-            if (hasRules) {
-              if (lateRule == null) {
-                fineAmount = 0.0;
-              } else {
-                final shiftHoursForFine =
-                    calculateShiftHours(shiftStartStr, shiftEndForFine);
-                fineAmount = _computeFineFromRule(
-                  rule: lateRule,
-                  minutes: lateMinutes,
-                  netPerDaySalary: netPerDaySalary ?? 0.0,
-                  shiftHours: shiftHoursForFine,
-                );
+            final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
+            if (now.isAfter(graceEnd)) {
+              final shiftEndForFine =
+                  sessionTimings?['endTime'] ?? _getShiftEndTime();
+              final fineResult = calculateFine(
+                punchInTime: now,
+                attendanceDate: DateTime(now.year, now.month, now.day),
+                shiftTiming: ShiftTiming(
+                  name: 'Current Shift',
+                  startTime: shiftStartStr,
+                  endTime: shiftEndForFine,
+                  graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
+                ),
+                fineSettings: FineSettings(
+                  enabled: true,
+                  graceTimeMinutes: gracePeriod,
+                  calculationType: 'shiftBased',
+                ),
+                dailySalary: netPerDaySalary,
+              );
+              lateMinutes = fineResult.lateMinutes;
+              fineAmount = fineResult.fineAmount;
+              final hasRules = _hasFineRules();
+              final lateRule = _matchFineRuleForAction('lateArrival');
+              if (hasRules) {
+                if (lateRule == null) {
+                  fineAmount = 0.0;
+                } else {
+                  final shiftHoursForFine = calculateShiftHours(
+                    shiftStartStr,
+                    shiftEndForFine,
+                  );
+                  fineAmount = _computeFineFromRule(
+                    rule: lateRule,
+                    minutes: lateMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: shiftHoursForFine,
+                  );
+                }
               }
             }
-          }
-        } catch (_) {}
-      }
+          } catch (_) {}
+        }
       }
     } else {
       lateMinutes = (_attendanceData?['lateMinutes'] as num?)?.toInt() ?? 0;
@@ -2596,18 +2665,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             final reqH = _openShiftRequiredHours();
             final requiredMin = (reqH * 60).round();
             final workedMin = now.difference(punchIn).inMinutes;
-            earlyMinutes =
-                workedMin >= requiredMin ? 0 : (requiredMin - workedMin);
+            earlyMinutes = workedMin >= requiredMin
+                ? 0
+                : (requiredMin - workedMin);
             final shiftHours = reqH;
             double earlyFine = 0.0;
             if (netPerDaySalary != null &&
                 netPerDaySalary > 0 &&
                 earlyMinutes > 0 &&
                 shiftHours > 0) {
-              earlyFine = ((netPerDaySalary / shiftHours) *
-                      (earlyMinutes / 60) *
-                      100)
-                  .round() /
+              earlyFine =
+                  ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
+                      .round() /
                   100;
             }
             final hasRules = _hasFineRules();
@@ -2628,7 +2697,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           } catch (_) {}
         }
       } else {
-        final shiftEndStr = sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb();
+        final shiftEndStr =
+            sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb();
         if (shiftEndStr != null && shiftEndStr.isNotEmpty) {
           try {
             final parts = shiftEndStr.split(':').map(int.parse).toList();
@@ -2652,9 +2722,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   netPerDaySalary > 0 &&
                   earlyMinutes > 0 &&
                   shiftHours > 0) {
-                earlyFine = ((netPerDaySalary / shiftHours) *
-                            (earlyMinutes / 60) *
-                            100)
+                earlyFine =
+                    ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
                         .round() /
                     100;
               }
@@ -3211,8 +3280,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (t == null) return false;
     final st = (t['shiftType'] ?? '').toString().toLowerCase().trim();
     if (st == 'open' || st == 'open shift') return true;
-    final name =
-        (t['shiftName'] ?? t['name'] ?? '').toString().toLowerCase().trim();
+    final name = (t['shiftName'] ?? t['name'] ?? '')
+        .toString()
+        .toLowerCase()
+        .trim();
     if (name == 'open' || name == 'open shift') return true;
     return false;
   }
@@ -3234,7 +3305,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   /// Returns (emoji, message) for check-in success overlay: before shift = very happy, after shift = happy, in grace = somewhat sad.
-  ({String emoji, String message}) _getCheckInOverlayEmojiAndMessage(String userName) {
+  ({String emoji, String message}) _getCheckInOverlayEmojiAndMessage(
+    String userName,
+  ) {
     final name = userName.isNotEmpty ? userName : 'there';
     if (_isOpenShiftTemplate()) {
       return (
@@ -3244,11 +3317,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     final sessionTimings = _getWorkingSessionTimings();
     final shiftStartStr =
-        sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb() ?? _getShiftStartTime();
+        sessionTimings?['startTime'] ??
+        _getShiftStartTimeFromDb() ??
+        _getShiftStartTime();
     if (shiftStartStr.isEmpty) {
-      return (emoji: '😊', message: 'Hey $name, you have checked in. Have a productive day!');
+      return (
+        emoji: '😊',
+        message: 'Hey $name, you have checked in. Have a productive day!',
+      );
     }
-    final parts = shiftStartStr.split(':').map((s) => int.tryParse(s.trim()) ?? 0).toList();
+    final parts = shiftStartStr
+        .split(':')
+        .map((s) => int.tryParse(s.trim()) ?? 0)
+        .toList();
     final now = DateTime.now();
     final shiftStart = DateTime(
       now.year,
@@ -4906,7 +4987,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           _setPunchActionInProgress(false);
           if (shouldHandleForegroundUi && mounted) {
             if (state is AttendanceCheckInSuccess) {
-              final overlayContent = _getCheckInOverlayEmojiAndMessage(userName);
+              final overlayContent = _getCheckInOverlayEmojiAndMessage(
+                userName,
+              );
               unawaited(
                 AttendanceSuccessOverlay.show(
                   context,
@@ -5032,9 +5115,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const AppTabLoader(),
-                  ],
+                  children: [const AppTabLoader()],
                 ),
               ),
             ),
@@ -5200,7 +5281,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (!mounted) return;
     final lat = position?.latitude ?? 0.0;
     final lng = position?.longitude ?? 0.0;
-    final finePayload = await _buildFinePayloadForPunch(isCheckedIn: isCheckedIn);
+    final finePayload = await _buildFinePayloadForPunch(
+      isCheckedIn: isCheckedIn,
+    );
     _isSubmittingFromAttendanceCamera = true;
     if (isCheckedIn) {
       context.read<AttendanceBloc>().add(
@@ -5245,7 +5328,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required bool isCheckedIn,
   }) async {
     final requireSelfie = _attendanceTemplate?['requireSelfie'] ?? true;
-    final requireGeolocation = _attendanceTemplate?['requireGeolocation'] ?? true;
+    final requireGeolocation =
+        _attendanceTemplate?['requireGeolocation'] ?? true;
     if (kDebugMode) {
       debugPrint(
         '[Attendance][TemplateFlags][no-selfie-submit] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${_attendanceTemplate?['name'] ?? _attendanceTemplate?['title'] ?? 'unknown'}',
@@ -5263,7 +5347,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
     final lat = position?.latitude ?? 0.0;
     final lng = position?.longitude ?? 0.0;
-    final finePayload = await _buildFinePayloadForPunch(isCheckedIn: isCheckedIn);
+    final finePayload = await _buildFinePayloadForPunch(
+      isCheckedIn: isCheckedIn,
+    );
 
     if (isCheckedIn) {
       context.read<AttendanceBloc>().add(
@@ -5480,10 +5566,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         !_isAlternateWorkDate) {
       final now = DateTime.now();
       // Exception: Allow check-in on Saturdays if it's the oddEvenSaturday pattern
-      if (_weeklyOffPattern == 'oddEvenSaturday' && now.weekday == DateTime.saturday) {
+      if (_weeklyOffPattern == 'oddEvenSaturday' &&
+          now.weekday == DateTime.saturday) {
         // Allow check-in to proceed even though it's a Weekly Off
       } else {
-        SnackBarUtils.showSnackBar(context, "Today is a holiday", isError: true);
+        SnackBarUtils.showSnackBar(
+          context,
+          "Today is a holiday",
+          isError: true,
+        );
         _setPunchActionInProgress(false);
         return;
       }
@@ -5540,130 +5631,131 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (_isOpenShiftTemplate()) {
         // Open shift: no late-login confirmation dialog.
       } else {
-      final sessionTimings = _getWorkingSessionTimings();
-      final shiftStartStr =
-          sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb();
-      if (shiftStartStr == null && allowLateEntry == false) {
-        alertMessage = 'Shift start time not set. Contact HR.';
-        shouldBlock = true;
-      } else if (shiftStartStr != null) {
-        try {
-          final parts = shiftStartStr.split(':').map(int.parse).toList();
-          final gracePeriod = _getGracePeriodMinutesForLateCheckIn();
-          final shiftStartOnly = DateTime(
-            now.year,
-            now.month,
-            now.day,
-            parts[0],
-            parts[1],
-          );
-          final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
-          if (now.isAfter(graceEnd)) {
-            final shiftEndForFine =
-                sessionTimings?['endTime'] ?? _getShiftEndTime();
-            final fineResult = calculateFine(
-              punchInTime: now,
-              attendanceDate: DateTime(now.year, now.month, now.day),
-              shiftTiming: ShiftTiming(
-                name: 'Current Shift',
-                startTime: shiftStartStr,
-                endTime: shiftEndForFine,
-                graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
-              ),
-              fineSettings: FineSettings(
-                enabled: true,
-                graceTimeMinutes: gracePeriod,
-                calculationType: 'shiftBased',
-              ),
-              dailySalary: netPerDaySalary,
+        final sessionTimings = _getWorkingSessionTimings();
+        final shiftStartStr =
+            sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb();
+        if (shiftStartStr == null && allowLateEntry == false) {
+          alertMessage = 'Shift start time not set. Contact HR.';
+          shouldBlock = true;
+        } else if (shiftStartStr != null) {
+          try {
+            final parts = shiftStartStr.split(':').map(int.parse).toList();
+            final gracePeriod = _getGracePeriodMinutesForLateCheckIn();
+            final shiftStartOnly = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              parts[0],
+              parts[1],
             );
-            final hasRules = _hasFineRules();
-            final shiftHoursForFormula =
-                calculateShiftHours(shiftStartStr, shiftEndForFine);
-            final lateRule = _matchFineRuleForAction('lateArrival');
-            double lateFineAmount = fineResult.fineAmount;
-            if (hasRules) {
-              if (lateRule == null) {
-                lateFineAmount = 0.0;
-              } else {
-                lateFineAmount = _computeFineFromRule(
-                  rule: lateRule,
-                  minutes: fineResult.lateMinutes,
-                  netPerDaySalary: netPerDaySalary ?? 0.0,
-                  shiftHours: shiftHoursForFormula,
-                );
-              }
-            }
-            if (kDebugMode) {
-              final fineLog = _resolveFineLogForAction('lateArrival');
-              debugPrint(
-                '[Fine TEST][Attendance][LateIn] start=$shiftStartStr '
-                'graceMin=$gracePeriod lateMin=${fineResult.lateMinutes} '
-                'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
-                'fineType=${fineLog['fineType']} '
-                'ruleType=${fineLog['ruleType']} '
-                'ruleApplyTo=${fineLog['ruleApplyTo']} '
-                'fine=${lateFineAmount.toStringAsFixed(2)} '
-                'allowLate=$allowLateEntry',
+            final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
+            if (now.isAfter(graceEnd)) {
+              final shiftEndForFine =
+                  sessionTimings?['endTime'] ?? _getShiftEndTime();
+              final fineResult = calculateFine(
+                punchInTime: now,
+                attendanceDate: DateTime(now.year, now.month, now.day),
+                shiftTiming: ShiftTiming(
+                  name: 'Current Shift',
+                  startTime: shiftStartStr,
+                  endTime: shiftEndForFine,
+                  graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
+                ),
+                fineSettings: FineSettings(
+                  enabled: true,
+                  graceTimeMinutes: gracePeriod,
+                  calculationType: 'shiftBased',
+                ),
+                dailySalary: netPerDaySalary,
               );
-              String fineFormula;
-              String fineFormulaWords;
-              final ruleTypeLower =
-                  (lateRule?['type']?.toString() ?? '').toLowerCase();
-              if (hasRules && lateRule != null && ruleTypeLower == 'custom') {
-                final customAmount =
-                    (lateRule['customAmount'] as num?)?.toDouble() ?? 0.0;
-                final unitLower =
-                    (lateRule['customAmountUnit']?.toString() ?? 'perHour')
-                        .toLowerCase();
-                if (unitLower == 'perminute') {
-                  fineFormula =
-                      '${customAmount.toStringAsFixed(2)} × ${fineResult.lateMinutes}';
-                  fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount perMinute × lateMinutes';
-                } else if (unitLower == 'perhour') {
-                  fineFormula =
-                      '${customAmount.toStringAsFixed(2)} × (${fineResult.lateMinutes} / 60)';
-                  fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount perHour × (lateMinutes/60)';
+              final hasRules = _hasFineRules();
+              final shiftHoursForFormula = calculateShiftHours(
+                shiftStartStr,
+                shiftEndForFine,
+              );
+              final lateRule = _matchFineRuleForAction('lateArrival');
+              double lateFineAmount = fineResult.fineAmount;
+              if (hasRules) {
+                if (lateRule == null) {
+                  lateFineAmount = 0.0;
+                } else {
+                  lateFineAmount = _computeFineFromRule(
+                    rule: lateRule,
+                    minutes: fineResult.lateMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: shiftHoursForFormula,
+                  );
+                }
+              }
+              if (kDebugMode) {
+                final fineLog = _resolveFineLogForAction('lateArrival');
+                debugPrint(
+                  '[Fine TEST][Attendance][LateIn] start=$shiftStartStr '
+                  'graceMin=$gracePeriod lateMin=${fineResult.lateMinutes} '
+                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fine=${lateFineAmount.toStringAsFixed(2)} '
+                  'allowLate=$allowLateEntry',
+                );
+                String fineFormula;
+                String fineFormulaWords;
+                final ruleTypeLower = (lateRule?['type']?.toString() ?? '')
+                    .toLowerCase();
+                if (hasRules && lateRule != null && ruleTypeLower == 'custom') {
+                  final customAmount =
+                      (lateRule['customAmount'] as num?)?.toDouble() ?? 0.0;
+                  final unitLower =
+                      (lateRule['customAmountUnit']?.toString() ?? 'perHour')
+                          .toLowerCase();
+                  if (unitLower == 'perminute') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × ${fineResult.lateMinutes}';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perMinute × lateMinutes';
+                  } else if (unitLower == 'perhour') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × (${fineResult.lateMinutes} / 60)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perHour × (lateMinutes/60)';
+                  } else {
+                    fineFormula = '${customAmount.toStringAsFixed(2)} (fixed)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount fixed';
+                  }
                 } else {
                   fineFormula =
-                      '${customAmount.toStringAsFixed(2)} (fixed)';
+                      '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                      '* (${fineResult.lateMinutes} / 60)';
                   fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount fixed';
+                      'perDaySalary/shiftHours × (lateMinutes/60)';
                 }
-              } else {
-                fineFormula =
-                    '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
-                    '* (${fineResult.lateMinutes} / 60)';
-                fineFormulaWords =
-                    'perDaySalary/shiftHours × (lateMinutes/60)';
+                debugPrint(
+                  '[Fine FORMULA][Attendance][LateIn] '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fineFormula=$fineFormula '
+                  '= fineAmount:${lateFineAmount.toStringAsFixed(2)} '
+                  'fineFormulaWords=$fineFormulaWords',
+                );
               }
-              debugPrint(
-                '[Fine FORMULA][Attendance][LateIn] '
-                'fineType=${fineLog['fineType']} '
-                'ruleType=${fineLog['ruleType']} '
-                'ruleApplyTo=${fineLog['ruleApplyTo']} '
-                'fineFormula=$fineFormula '
-                '= fineAmount:${lateFineAmount.toStringAsFixed(2)} '
-                'fineFormulaWords=$fineFormulaWords',
+              final baseMessage = allowLateEntry == false
+                  ? 'Late entry is not allowed for your shift.'
+                  : 'You are checking in late.';
+              alertMessage = _buildLateAlertMessage(
+                baseMessage: baseMessage,
+                lateMinutes: fineResult.lateMinutes,
+                fineAmount: lateFineAmount,
               );
+              shouldBlock = allowLateEntry == false;
             }
-            final baseMessage = allowLateEntry == false
-                ? 'Late entry is not allowed for your shift.'
-                : 'You are checking in late.';
-            alertMessage = _buildLateAlertMessage(
-              baseMessage: baseMessage,
-              lateMinutes: fineResult.lateMinutes,
-              fineAmount: lateFineAmount,
-            );
-            shouldBlock = allowLateEntry == false;
-          }
-        } catch (_) {}
-      }
+          } catch (_) {}
+        }
       }
     }
     if (isCheckedIn && alertMessage == null) {
@@ -5675,22 +5767,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         final punchInRaw = _attendanceData?['punchIn'];
         if (punchInRaw != null) {
           try {
-            final punchIn =
-                DateTime.parse(punchInRaw.toString()).toLocal();
+            final punchIn = DateTime.parse(punchInRaw.toString()).toLocal();
             final reqH = _openShiftRequiredHours();
             final requiredMin = (reqH * 60).round();
             final workedMin = now.difference(punchIn).inMinutes;
-            final earlyMinutes =
-                workedMin >= requiredMin ? 0 : (requiredMin - workedMin);
+            final earlyMinutes = workedMin >= requiredMin
+                ? 0
+                : (requiredMin - workedMin);
             if (earlyMinutes > 0) {
               double estimatedFine = 0;
-              if (netPerDaySalary != null &&
-                  netPerDaySalary > 0 &&
-                  reqH > 0) {
+              if (netPerDaySalary != null && netPerDaySalary > 0 && reqH > 0) {
                 estimatedFine =
                     ((netPerDaySalary / reqH) * (earlyMinutes / 60) * 100)
-                            .round() /
-                        100;
+                        .round() /
+                    100;
               }
               final hasRules = _hasFineRules();
               final shiftHoursForFormula = reqH;
@@ -5727,126 +5817,133 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           } catch (_) {}
         }
       } else {
-      final sessionTimings = _getWorkingSessionTimings();
-      final shiftEndStr =
-          sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb();
-      if (shiftEndStr == null && allowEarlyExit == false) {
-        alertMessage = 'Shift end time not set. Contact HR.';
-        shouldBlock = true;
-      } else if (shiftEndStr != null) {
-        try {
-          final parts = shiftEndStr.split(':').map(int.parse).toList();
-          final shiftEnd = DateTime(
-            now.year,
-            now.month,
-            now.day,
-            parts[0],
-            parts[1],
-          );
-          if (now.isBefore(shiftEnd)) {
-            final shiftStartForFine =
-                sessionTimings?['startTime'] ?? _getShiftStartTime();
-            final earlyMinutes = shiftEnd.difference(now).inMinutes;
-            double estimatedFine = 0;
-            if (netPerDaySalary != null &&
-                netPerDaySalary > 0 &&
-                earlyMinutes > 0) {
-              final shiftHours = calculateShiftHours(
+        final sessionTimings = _getWorkingSessionTimings();
+        final shiftEndStr =
+            sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb();
+        if (shiftEndStr == null && allowEarlyExit == false) {
+          alertMessage = 'Shift end time not set. Contact HR.';
+          shouldBlock = true;
+        } else if (shiftEndStr != null) {
+          try {
+            final parts = shiftEndStr.split(':').map(int.parse).toList();
+            final shiftEnd = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              parts[0],
+              parts[1],
+            );
+            if (now.isBefore(shiftEnd)) {
+              final shiftStartForFine =
+                  sessionTimings?['startTime'] ?? _getShiftStartTime();
+              final earlyMinutes = shiftEnd.difference(now).inMinutes;
+              double estimatedFine = 0;
+              if (netPerDaySalary != null &&
+                  netPerDaySalary > 0 &&
+                  earlyMinutes > 0) {
+                final shiftHours = calculateShiftHours(
+                  shiftStartForFine,
+                  shiftEndStr,
+                );
+                if (shiftHours > 0) {
+                  estimatedFine =
+                      ((netPerDaySalary / shiftHours) *
+                              (earlyMinutes / 60) *
+                              100)
+                          .round() /
+                      100;
+                }
+              }
+              final hasRules = _hasFineRules();
+              final shiftHoursForFormula = calculateShiftHours(
                 shiftStartForFine,
                 shiftEndStr,
               );
-              if (shiftHours > 0) {
-                estimatedFine =
-                    ((netPerDaySalary / shiftHours) * (earlyMinutes / 60) * 100)
-                            .round() /
-                        100;
+              final earlyRule = _matchFineRuleForAction('earlyExit');
+              double earlyFineAmount = estimatedFine;
+              if (hasRules) {
+                if (earlyRule == null) {
+                  earlyFineAmount = 0.0;
+                } else {
+                  earlyFineAmount = _computeFineFromRule(
+                    rule: earlyRule,
+                    minutes: earlyMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: shiftHoursForFormula,
+                  );
+                }
               }
-            }
-            final hasRules = _hasFineRules();
-            final shiftHoursForFormula =
-                calculateShiftHours(shiftStartForFine, shiftEndStr);
-            final earlyRule = _matchFineRuleForAction('earlyExit');
-            double earlyFineAmount = estimatedFine;
-            if (hasRules) {
-              if (earlyRule == null) {
-                earlyFineAmount = 0.0;
-              } else {
-                earlyFineAmount = _computeFineFromRule(
-                  rule: earlyRule,
-                  minutes: earlyMinutes,
-                  netPerDaySalary: netPerDaySalary ?? 0.0,
-                  shiftHours: shiftHoursForFormula,
+              if (kDebugMode) {
+                final fineLog = _resolveFineLogForAction('earlyExit');
+                debugPrint(
+                  '[Fine TEST][Attendance][EarlyOut] start=$shiftStartForFine '
+                  'end=$shiftEndStr earlyMin=$earlyMinutes '
+                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fine=${earlyFineAmount.toStringAsFixed(2)} '
+                  'allowEarly=$allowEarlyExit',
+                );
+                String fineFormula;
+                String fineFormulaWords;
+                final ruleTypeLower = (earlyRule?['type']?.toString() ?? '')
+                    .toLowerCase();
+                if (hasRules &&
+                    earlyRule != null &&
+                    ruleTypeLower == 'custom') {
+                  final customAmount =
+                      (earlyRule['customAmount'] as num?)?.toDouble() ?? 0.0;
+                  final unitLower =
+                      (earlyRule['customAmountUnit']?.toString() ?? 'perHour')
+                          .toLowerCase();
+                  if (unitLower == 'perminute') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × $earlyMinutes';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perMinute × earlyMinutes';
+                  } else if (unitLower == 'perhour') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × ($earlyMinutes / 60)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perHour × (earlyMinutes/60)';
+                  } else {
+                    fineFormula = '${customAmount.toStringAsFixed(2)} (fixed)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount fixed';
+                  }
+                } else {
+                  fineFormula =
+                      '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                      '* ($earlyMinutes / 60)';
+                  fineFormulaWords =
+                      'perDaySalary/shiftHours × (earlyMinutes/60)';
+                }
+                debugPrint(
+                  '[Fine FORMULA][Attendance][EarlyOut] '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fineFormula=$fineFormula '
+                  '= fineAmount:${earlyFineAmount.toStringAsFixed(2)} '
+                  'fineFormulaWords=$fineFormulaWords',
                 );
               }
-            }
-            if (kDebugMode) {
-              final fineLog = _resolveFineLogForAction('earlyExit');
-              debugPrint(
-                '[Fine TEST][Attendance][EarlyOut] start=$shiftStartForFine '
-                'end=$shiftEndStr earlyMin=$earlyMinutes '
-                'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
-                'fineType=${fineLog['fineType']} '
-                'ruleType=${fineLog['ruleType']} '
-                'ruleApplyTo=${fineLog['ruleApplyTo']} '
-                'fine=${earlyFineAmount.toStringAsFixed(2)} '
-                'allowEarly=$allowEarlyExit',
+              final baseMessage = allowEarlyExit == false
+                  ? 'Early check-out is not allowed before shift end.'
+                  : 'You are checking out early.';
+              alertMessage = _buildEarlyAlertMessage(
+                baseMessage: baseMessage,
+                earlyMinutes: earlyMinutes,
+                fineAmount: earlyFineAmount,
               );
-              String fineFormula;
-              String fineFormulaWords;
-              final ruleTypeLower =
-                  (earlyRule?['type']?.toString() ?? '').toLowerCase();
-              if (hasRules && earlyRule != null && ruleTypeLower == 'custom') {
-                final customAmount =
-                    (earlyRule['customAmount'] as num?)?.toDouble() ?? 0.0;
-                final unitLower =
-                    (earlyRule['customAmountUnit']?.toString() ?? 'perHour')
-                        .toLowerCase();
-                if (unitLower == 'perminute') {
-                  fineFormula = '${customAmount.toStringAsFixed(2)} × $earlyMinutes';
-                  fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount perMinute × earlyMinutes';
-                } else if (unitLower == 'perhour') {
-                  fineFormula =
-                      '${customAmount.toStringAsFixed(2)} × ($earlyMinutes / 60)';
-                  fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount perHour × (earlyMinutes/60)';
-                } else {
-                  fineFormula = '${customAmount.toStringAsFixed(2)} (fixed)';
-                  fineFormulaWords =
-                      'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
-                      'customAmount fixed';
-                }
-              } else {
-                fineFormula =
-                    '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
-                    '* ($earlyMinutes / 60)';
-                fineFormulaWords =
-                    'perDaySalary/shiftHours × (earlyMinutes/60)';
-              }
-              debugPrint(
-                '[Fine FORMULA][Attendance][EarlyOut] '
-                'fineType=${fineLog['fineType']} '
-                'ruleType=${fineLog['ruleType']} '
-                'ruleApplyTo=${fineLog['ruleApplyTo']} '
-                'fineFormula=$fineFormula '
-                '= fineAmount:${earlyFineAmount.toStringAsFixed(2)} '
-                'fineFormulaWords=$fineFormulaWords',
-              );
+              shouldBlock = allowEarlyExit == false;
             }
-            final baseMessage = allowEarlyExit == false
-                ? 'Early check-out is not allowed before shift end.'
-                : 'You are checking out early.';
-            alertMessage = _buildEarlyAlertMessage(
-              baseMessage: baseMessage,
-              earlyMinutes: earlyMinutes,
-              fineAmount: earlyFineAmount,
-            );
-            shouldBlock = allowEarlyExit == false;
-          }
-        } catch (_) {}
-      }
+          } catch (_) {}
+        }
       }
     }
     if (alertMessage != null) {
@@ -5862,7 +5959,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (!mounted) return;
 
     final requireSelfie = _attendanceTemplate?['requireSelfie'] ?? true;
-    final requireGeolocation = _attendanceTemplate?['requireGeolocation'] ?? true;
+    final requireGeolocation =
+        _attendanceTemplate?['requireGeolocation'] ?? true;
     if (kDebugMode) {
       debugPrint(
         '[Attendance][TemplateFlags][open-mark] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${_attendanceTemplate?['name'] ?? _attendanceTemplate?['title'] ?? 'unknown'}',
@@ -5896,10 +5994,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
     final locationStr = requireGeolocation
         ? (address.isNotEmpty
-            ? address
-            : (area != null
-                ? '$area, ${city ?? ''}${pincode != null ? ' $pincode' : ''}'
-                : null))
+              ? address
+              : (area != null
+                    ? '$area, ${city ?? ''}${pincode != null ? ' $pincode' : ''}'
+                    : null))
         : 'Location not required';
 
     if (!requireSelfie) {
@@ -5923,8 +6021,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               return loc.address.isNotEmpty
                   ? loc.address
                   : (loc.area != null
-                      ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
-                      : null);
+                        ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
+                        : null);
             }
           : null,
     );
@@ -6176,9 +6274,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: const Padding(
           padding: EdgeInsets.all(32.0),
-          child: Center(
-            child: AppTabLoader(),
-          ),
+          child: Center(child: AppTabLoader()),
         ),
       );
     }
@@ -6621,10 +6717,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   Widget _buildRecentActivityList() {
     if (_recentActivityList.isEmpty && _isLoadingMonthData) {
       return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24.0),
-          child: AppTabLoader(),
-        ),
+        child: Padding(padding: EdgeInsets.all(24.0), child: AppTabLoader()),
       );
     }
     return _buildHistoryList(limit: 6, forceDisplayList: _recentActivityList);
@@ -6652,10 +6745,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (useMonthData && _monthData == null) {
       if (_isLoadingMonthData || _isLoadingHistory) {
         return const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24.0),
-            child: AppTabLoader(),
-          ),
+          child: Padding(padding: EdgeInsets.all(24.0), child: AppTabLoader()),
         );
       }
       // Month fetch failed or not started: show empty
@@ -6663,10 +6753,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
     if (!useMonthData && _isLoadingHistory && _historyList.isEmpty) {
       return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24.0),
-          child: AppTabLoader(),
-        ),
+        child: Padding(padding: EdgeInsets.all(24.0), child: AppTabLoader()),
       );
     }
 
