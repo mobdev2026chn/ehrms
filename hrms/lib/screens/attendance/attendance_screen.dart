@@ -1733,6 +1733,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     String? punchInSelfieUrl,
     String? punchOutSelfieUrl,
   }) {
+    DateTime? parseLogEventTime(dynamic value) {
+      if (value == null) return null;
+      try {
+        return DateTime.parse(value.toString()).toLocal();
+      } catch (_) {
+        return null;
+      }
+    }
+
+    int logSortMsFrom(dynamic value) {
+      return parseLogEventTime(value)?.millisecondsSinceEpoch ?? -1;
+    }
+
     final items = <Map<String, dynamic>>[];
     if (logs.isNotEmpty) {
       for (final log in logs) {
@@ -1768,6 +1781,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             ),
             'imageUrl': null,
             'tileIcon': action == 'REJECTED' ? 'rejection' : 'approval',
+            'sortMs': logSortMsFrom(when),
           });
           continue;
         }
@@ -1797,6 +1811,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 ),
                 'imageUrl': null,
                 'tileIcon': 'fine',
+                'sortMs': logSortMsFrom(when),
               });
             }
           }
@@ -1853,6 +1868,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           ),
           'imageUrl': log['selfieUrl']?.toString(),
           'tileIcon': null,
+          'sortMs': logSortMsFrom(when),
         });
       }
     } else {
@@ -1868,6 +1884,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'subtitle': _formatLogByline(null, punchOut),
           'imageUrl': punchOutSelfieUrl,
           'tileIcon': null,
+          'sortMs': logSortMsFrom(punchOut),
         });
       }
       if (punchIn != null) {
@@ -1882,11 +1899,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'subtitle': _formatLogByline(null, punchIn),
           'imageUrl': punchInSelfieUrl,
           'tileIcon': null,
+          'sortMs': logSortMsFrom(punchIn),
         });
       }
     }
 
-    return items.reversed
+    items.sort((a, b) {
+      final aMs = (a['sortMs'] as num?)?.toInt() ?? -1;
+      final bMs = (b['sortMs'] as num?)?.toInt() ?? -1;
+      return bMs.compareTo(aMs);
+    });
+
+    return items
         .map(
           (item) => Padding(
             padding: const EdgeInsets.only(bottom: 12),

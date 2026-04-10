@@ -5,7 +5,16 @@ const { getLeaves, createLeave, getLeaveTypes, getLeaveTypesForApply, getLeaveBa
 const { getReimbursements, createReimbursement } = require('../controllers/reimbursementController');
 
 const { getLoans, createLoan } = require('../controllers/loanController');
-const { requestPayslip, getPayslipRequests, viewPayslipRequest, downloadPayslipRequest } = require('../controllers/requestController');
+const {
+  requestPayslip,
+  getPayslipRequests,
+  viewPayslipRequest,
+  downloadPayslipRequest,
+  createPermissionRequest,
+  getPermissionRequests,
+  cancelPermissionRequest,
+  getPermissionBalance
+} = require('../controllers/requestController');
 
 // Leave Routes
 router.get('/leave', protect, getLeaves);
@@ -31,5 +40,11 @@ router.get('/payslip', protect, getPayslipRequests);
 router.post('/payslip', protect, requestPayslip);
 router.get('/payslip/:id/view', protect, viewPayslipRequest);
 router.get('/payslip/:id/download', protect, downloadPayslipRequest);
+
+// Permission Routes
+router.get('/permission', protect, getPermissionRequests);
+router.get('/permission/balance', protect, getPermissionBalance);
+router.post('/permission', protect, createPermissionRequest);
+router.patch('/permission/:id/cancel', protect, cancelPermissionRequest);
 
 module.exports = router;

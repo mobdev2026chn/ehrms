@@ -42,6 +42,11 @@ const attendanceLogSchema = new mongoose.Schema(
     breakEndAddress: String,
     breakStartLocation: mongoose.Schema.Types.Mixed,
     breakEndLocation: mongoose.Schema.Types.Mixed,
+    break: {
+      BreakMin: { type: Number, default: 0 },
+      breakFineMins: { type: Number, default: 0 },
+      breakFineAmount: { type: Number, default: 0 }
+    },
     timestamp: {
       type: Date,
       default: Date.now

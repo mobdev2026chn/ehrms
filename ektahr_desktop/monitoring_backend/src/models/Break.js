@@ -16,6 +16,10 @@ const breakSchema = new mongoose.Schema({
     startTime: { type: Date, required: true },
     endTime: { type: Date, default: null },
     totalSeconds: { type: Number, default: null },
+    breakMin: { type: Number, default: 0 },
+    breakCount: { type: Number, default: 0 },
+    breakFineMins: { type: Number, default: 0 },
+    breakFineAmount: { type: Number, default: 0 },
     source: { type: String, default: '' },  // "software" | "web" | "app"
     breakStartSelfie: { type: String, default: '' },
     breakEndSelfie: { type: String, default: '' },

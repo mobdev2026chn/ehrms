@@ -1,5 +1,6 @@
 const Attendance = require('../models/Attendance');
 const AttendanceLog = require('../models/AttendanceLog');
+const PermissionRequest = require('../models/PermissionRequest');
 const Staff = require('../models/Staff');
 const User = require('../models/User'); // Import if needed
 require('../models/AttendanceTemplate'); // ensure model registered for populate/lean paths via utils
@@ -134,6 +135,13 @@ function staffShiftAssignmentKey(staff) {
 
 function isLikelyMongoObjectIdHex(v) {
     return /^[a-fA-F0-9]{24}$/i.test(String(v).trim());
+}
+
+function getAppliedShiftIdFromShiftTiming(shiftTiming) {
+    const raw = shiftTiming?.effectiveShiftId;
+    if (raw == null) return null;
+    const shiftId = String(raw).trim();
+    return isLikelyMongoObjectIdHex(shiftId) ? shiftId : null;
 }
 
 // True when company has no shifts config (use template) or staff has a matching shift assigned.
@@ -346,9 +354,162 @@ function calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, dailySal
     return { earlyMinutes, fineAmount };
 }
 
+function getMonthBoundsForDate(date) {
+    const d = new Date(date);
+    const start = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+    const end = new Date(d.getFullYear(), d.getMonth() + 1, 1, 0, 0, 0, 0);
+    return { start, end };
+}
+
+async function getApprovedPermissionForDate(employeeId, businessId, attendanceDate) {
+    if (!employeeId || !attendanceDate) return null;
+    const start = new Date(attendanceDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    const query = {
+        employeeId,
+        date: { $gte: start, $lt: end },
+        status: 'Approved'
+    };
+    if (businessId) query.businessId = businessId;
+    return PermissionRequest.find(query)
+        .select('type requestedMinutes')
+        .lean();
+}
+
+async function getConsumedPermissionMinutesForMonth({
+    employeeId,
+    attendanceDate,
+    excludeAttendanceId = null
+}) {
+    if (!employeeId || !attendanceDate) return 0;
+    const monthBounds = getMonthBoundsForDate(attendanceDate);
+    const query = {
+        employeeId,
+        date: { $gte: monthBounds.start, $lt: monthBounds.end }
+    };
+    if (excludeAttendanceId) {
+        query._id = { $ne: excludeAttendanceId };
+    }
+    const agg = await Attendance.aggregate([
+        { $match: query },
+        {
+            $group: {
+                _id: null,
+                total: { $sum: { $ifNull: ['$permissionConsumedMinutes', 0] } }
+            }
+        }
+    ]);
+    return Math.max(0, Number(agg?.[0]?.total || 0));
+}
+
+async function applyPermissionQuotaAdjustment({
+    employeeId,
+    businessId,
+    attendanceDate,
+    attendanceId = null,
+    isOpenShiftDay,
+    shiftPermissionPolicy,
+    lateMinutes,
+    earlyMinutes
+}) {
+    const zero = {
+        adjustedLateMinutes: Math.max(0, Number(lateMinutes) || 0),
+        adjustedEarlyMinutes: Math.max(0, Number(earlyMinutes) || 0),
+        permissionApprovedMinutes: 0,
+        permissionConsumedMinutes: 0,
+        permissionRemainingMinutes: 0,
+        permissionLateMinutes: 0,
+        permissionEarlyMinutes: 0
+    };
+    const policy = shiftPermissionPolicy || {};
+    const enabled = policy.enabled === true;
+    const monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
+    const applyTo = ['lateArrival', 'earlyExit', 'both'].includes(String(policy.applyTo || 'both'))
+        ? String(policy.applyTo || 'both')
+        : 'both';
+    if (!enabled || monthlyQuotaMinutes <= 0) return zero;
+
+    const approvedPermissions = await getApprovedPermissionForDate(employeeId, businessId, attendanceDate);
+    if (!Array.isArray(approvedPermissions) || approvedPermissions.length === 0) {
+        return {
+            ...zero,
+            permissionRemainingMinutes: monthlyQuotaMinutes
+        };
+    }
+
+    let approvedLate = 0;
+    let approvedEarly = 0;
+    for (const req of approvedPermissions) {
+        const mins = Math.max(0, Math.floor(Number(req?.requestedMinutes) || 0));
+        if (mins <= 0) continue;
+        const t = String(req?.type || 'both').trim();
+        if (t === 'lateArrival') approvedLate += mins;
+        else if (t === 'earlyExit') approvedEarly += mins;
+        else {
+            approvedLate += mins;
+            approvedEarly += mins;
+        }
+    }
+
+    // Shift-level policy gate.
+    if (applyTo === 'lateArrival') approvedEarly = 0;
+    else if (applyTo === 'earlyExit') approvedLate = 0;
+    // Open shift never consumes late side.
+    if (isOpenShiftDay) approvedLate = 0;
+
+    const actualLate = Math.max(0, Number(lateMinutes) || 0);
+    const actualEarly = Math.max(0, Number(earlyMinutes) || 0);
+    const eligibleLate = Math.min(actualLate, approvedLate);
+    const eligibleEarly = Math.min(actualEarly, approvedEarly);
+    const approvedEligibleForDay = eligibleLate + eligibleEarly;
+    if (approvedEligibleForDay <= 0) {
+        const consumedSoFarNoCurrent = await getConsumedPermissionMinutesForMonth({
+            employeeId,
+            attendanceDate,
+            excludeAttendanceId: attendanceId
+        });
+        return {
+            ...zero,
+            permissionRemainingMinutes: Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent)
+        };
+    }
+
+    const consumedSoFarNoCurrent = await getConsumedPermissionMinutesForMonth({
+        employeeId,
+        attendanceDate,
+        excludeAttendanceId: attendanceId
+    });
+    let remainingBefore = Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent);
+    if (remainingBefore <= 0) {
+        return {
+            ...zero,
+            permissionApprovedMinutes: approvedEligibleForDay
+        };
+    }
+
+    // Consume from monthly remaining: late first, then early (deterministic).
+    const consumeLate = Math.min(eligibleLate, remainingBefore);
+    remainingBefore -= consumeLate;
+    const consumeEarly = Math.min(eligibleEarly, remainingBefore);
+    const consumed = consumeLate + consumeEarly;
+    const remainingAfter = Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent - consumed);
+
+    return {
+        adjustedLateMinutes: Math.max(0, actualLate - consumeLate),
+        adjustedEarlyMinutes: Math.max(0, actualEarly - consumeEarly),
+        permissionApprovedMinutes: approvedEligibleForDay,
+        permissionConsumedMinutes: consumed,
+        permissionRemainingMinutes: remainingAfter,
+        permissionLateMinutes: consumeLate,
+        permissionEarlyMinutes: consumeEarly
+    };
+}
+
 // Helper function to calculate combined fine (late + early)
 // @param {Object} leave - Optional approved leave (for Half Day session-aware calculation)
-async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, template, staff, company, leave = null, perDayOverride = null) {
+async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, template, staff, company, leave = null, perDayOverride = null, context = null) {
     try {
         const checkInStr = punchInTime ? punchInTime.toISOString() : null;
         const checkOutStr = punchOutTime ? punchOutTime.toISOString() : null;
@@ -506,6 +667,60 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             }
         }
 
+        let permissionLateUsed = 0;
+        let permissionEarlyUsed = 0;
+        let permissionApprovedMinutes = 0;
+        let permissionConsumedMinutes = 0;
+        let permissionRemainingMinutes = 0;
+        try {
+            const permissionAdj = await applyPermissionQuotaAdjustment({
+                employeeId: staff?._id,
+                businessId: staff?.businessId,
+                attendanceDate,
+                attendanceId: context?.attendanceId || null,
+                isOpenShiftDay,
+                shiftPermissionPolicy: dbShiftTimings?.permissionPolicy || null,
+                lateMinutes: lateFine.lateMinutes,
+                earlyMinutes: earlyFine.earlyMinutes
+            });
+            if (permissionAdj) {
+                lateFine.lateMinutes = permissionAdj.adjustedLateMinutes;
+                earlyFine.earlyMinutes = permissionAdj.adjustedEarlyMinutes;
+                permissionLateUsed = permissionAdj.permissionLateMinutes;
+                permissionEarlyUsed = permissionAdj.permissionEarlyMinutes;
+                permissionApprovedMinutes = permissionAdj.permissionApprovedMinutes;
+                permissionConsumedMinutes = permissionAdj.permissionConsumedMinutes;
+                permissionRemainingMinutes = permissionAdj.permissionRemainingMinutes;
+
+                // Recalculate fine amounts after permission reduction.
+                if (fineConfig && fineConfig.enabled === false) {
+                    lateFine.fineAmount = 0;
+                    earlyFine.fineAmount = 0;
+                } else {
+                    lateFine.fineAmount = (lateFine.lateMinutes > 0 && effectiveDailyNet > 0)
+                        ? calculateFineAmount(lateFine.lateMinutes, 'lateArrival', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross)
+                        : 0;
+                    earlyFine.fineAmount = (earlyFine.earlyMinutes > 0 && effectiveDailyNet > 0)
+                        ? calculateFineAmount(earlyFine.earlyMinutes, 'earlyExit', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross)
+                        : 0;
+                }
+
+                console.log('[Permission][Fine Adjust]', {
+                    isOpenShiftDay,
+                    policy: dbShiftTimings?.permissionPolicy || null,
+                    permissionApprovedMinutes,
+                    permissionConsumedMinutes,
+                    permissionRemainingMinutes,
+                    lateUsed: permissionLateUsed,
+                    earlyUsed: permissionEarlyUsed,
+                    remainingLate: lateFine.lateMinutes,
+                    remainingEarly: earlyFine.earlyMinutes
+                });
+            }
+        } catch (permissionErr) {
+            console.error('[Permission][Fine Adjust] Failed:', permissionErr?.message);
+        }
+
         // Apply fine amounts from payroll.fineCalculation when enabled (allowLateEntry/allowEarlyExit only control blocking punch, not whether fine is charged)
         const lateFineAmount = (fineConfig && fineConfig.enabled) ? (lateFine.fineAmount || 0) : 0;
         const earlyFineAmount = (fineConfig && fineConfig.enabled) ? (earlyFine.fineAmount || 0) : 0;
@@ -568,7 +783,12 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             fineHours: fineHours,
             fineAmount: fineAmount,
             lateFineAmount,
-            earlyFineAmount
+            earlyFineAmount,
+            permissionLateMinutes: permissionLateUsed,
+            permissionEarlyMinutes: permissionEarlyUsed,
+            permissionApprovedMinutes,
+            permissionConsumedMinutes,
+            permissionRemainingMinutes
         };
         console.log('[Fine] Result:', JSON.stringify(out));
         // Formula summary with check-in/check-out times for debugging why lateMinutes might be 0
@@ -974,6 +1194,7 @@ const checkIn = async (req, res) => {
 
         // 4. Check Late Entry - Always allow, but add warning if not allowed in settings
         const shiftTiming = company ? shiftForCheckIn : null;
+        const appliedShiftId = getAppliedShiftIdFromShiftTiming(shiftTiming);
         let shiftStartStr = null;
         let shiftEndStr = null;
         let lateMinutes = 0;
@@ -1102,7 +1323,8 @@ const checkIn = async (req, res) => {
                 {
                     appPerDayNetSalary: req.body?.appPerDayNetSalary,
                     appPerdayGrossSalary: req.body?.appPerdayGrossSalary
-                }
+                },
+                { attendanceId: existing._id }
             );
             existing.punchIn = now;
 
@@ -1133,12 +1355,24 @@ const checkIn = async (req, res) => {
                 existing.businessId = staff.businessId;
                 console.log('[Attendance checkIn] (half-day update) storing businessId in attendances:', staff.businessId?.toString());
             }
+            if (appliedShiftId) {
+                existing.appliedShiftId = appliedShiftId;
+            }
             existing.lateMinutes = fineResult.lateMinutes ?? 0;
             existing.earlyMinutes = fineResult.earlyMinutes ?? 0;
             existing.fineHours = fineResult.fineHours ?? ((Number(existing.lateMinutes) || 0) + (Number(existing.earlyMinutes) || 0));
             existing.fineAmount = fineResult.fineAmount ?? 0;
+            existing.permissionLateMinutes = fineResult.permissionLateMinutes ?? 0;
+            existing.permissionEarlyMinutes = fineResult.permissionEarlyMinutes ?? 0;
+            existing.permissionApprovedMinutes = fineResult.permissionApprovedMinutes ?? 0;
+            existing.permissionConsumedMinutes = fineResult.permissionConsumedMinutes ?? 0;
+            existing.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
             // For app punches, prefer app-calculated values so DB matches app formula/logs.
-            if (source === 'app' && forceAppFine === true) {
+            if (
+                source === 'app' &&
+                forceAppFine === true &&
+                (Number(fineResult.permissionConsumedMinutes) || 0) <= 0
+            ) {
                 // If it's an open shift day, explicitly set lateMinutes and fineAmount to 0
                 // regardless of app-provided values.
                 const shiftTypeLower = (fineTemplate.shiftType || 'standard').toString().toLowerCase();
@@ -1254,7 +1488,9 @@ const checkIn = async (req, res) => {
             fineTemplate,
             staff,
             company,
-            activeLeave
+            activeLeave,
+            null,
+            null
         );
         // Create initial attendance record. Store businessId from staff (staffs collection).
         const businessIdToStore = staff.businessId;
@@ -1263,6 +1499,7 @@ const checkIn = async (req, res) => {
             employeeId: staffId,
             user: staffId,
             businessId: businessIdToStore,
+            ...(appliedShiftId && { appliedShiftId }),
             date: startOfDay,
             punchIn: now,
             status: (isHoliday || isWeeklyOff) ? 'Present' : 'Pending',
@@ -1277,10 +1514,19 @@ const checkIn = async (req, res) => {
             fineHours: fineResult.fineHours ?? 0,
             lateMinutes: fineResult.lateMinutes ?? 0,
             earlyMinutes: fineResult.earlyMinutes ?? 0,
-            fineAmount: fineResult.fineAmount ?? 0
+            fineAmount: fineResult.fineAmount ?? 0,
+            permissionLateMinutes: fineResult.permissionLateMinutes ?? 0,
+            permissionEarlyMinutes: fineResult.permissionEarlyMinutes ?? 0,
+            permissionApprovedMinutes: fineResult.permissionApprovedMinutes ?? 0,
+            permissionConsumedMinutes: fineResult.permissionConsumedMinutes ?? 0,
+            permissionRemainingMinutes: fineResult.permissionRemainingMinutes ?? 0
         });
         // For app punches, prefer app-calculated values so DB matches app formula/logs.
-        if (source === 'app' && forceAppFine === true) {
+        if (
+            source === 'app' &&
+            forceAppFine === true &&
+            (Number(fineResult.permissionConsumedMinutes) || 0) <= 0
+        ) {
             // If it's an open shift day, explicitly set lateMinutes and fineAmount to 0
             // regardless of app-provided values.
             const shiftTypeLower = (fineTemplate.shiftType || 'standard').toString().toLowerCase();
@@ -1554,6 +1800,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
 
     // Check Early Exit - use session end time for half-day (first/second half), else full shift end
     const shiftTiming = shiftResolved;
+    const appliedShiftId = getAppliedShiftIdFromShiftTiming(shiftTiming);
     let dbShiftStart = shiftTiming?.startTime || template.shiftStartTime || '09:30';
     let dbShiftEnd = shiftTiming?.endTime || template.shiftEndTime || '18:30';
 
@@ -1686,6 +1933,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     // Update Fields
     attendance.punchOut = now;
     attendance.punchOutIpAddress = req.ip || req.connection.remoteAddress;
+    if (appliedShiftId) attendance.appliedShiftId = appliedShiftId;
     if (source) attendance.source = source;
 
     if (latitude && longitude) {
@@ -1801,7 +2049,8 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         {
             appPerDayNetSalary: data?.appPerDayNetSalary,
             appPerdayGrossSalary: data?.appPerdayGrossSalary
-        }
+        },
+        { attendanceId: attendance._id }
     );
     const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
     const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
@@ -1813,8 +2062,17 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         fineResult.fineHours ??
         ((Number(attendance.lateMinutes) || 0) + (Number(attendance.earlyMinutes) || 0));
     attendance.fineAmount = totalFineAmount;
+    attendance.permissionLateMinutes = fineResult.permissionLateMinutes ?? 0;
+    attendance.permissionEarlyMinutes = fineResult.permissionEarlyMinutes ?? 0;
+    attendance.permissionApprovedMinutes = fineResult.permissionApprovedMinutes ?? 0;
+    attendance.permissionConsumedMinutes = fineResult.permissionConsumedMinutes ?? 0;
+    attendance.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
     // For app punches, prefer app-calculated values so DB matches app formula/logs.
-    if (source === 'app' && forceAppFine === true) {
+    if (
+        source === 'app' &&
+        forceAppFine === true &&
+        (Number(fineResult.permissionConsumedMinutes) || 0) <= 0
+    ) {
         if (hasExplicitAppFineNumeric(bodyLateMinutes)) {
             attendance.lateMinutes = Math.max(0, Math.round(Number(bodyLateMinutes)));
         }
@@ -2933,6 +3191,11 @@ const getMonthAttendance = async (req, res) => {
             .map(a => a._id)
             .filter(id => id != null);
         if (attendanceIds.length > 0) {
+            const attendanceIdSet = new Set(
+                attendanceIds
+                    .map(id => id?.toString?.() ?? String(id))
+                    .filter(Boolean)
+            );
             const logs = await AttendanceLog.find({
                 attendanceId: { $in: attendanceIds },
                 timestamp: { $gte: startOfMonth, $lte: endOfMonth }
@@ -2944,6 +3207,46 @@ const getMonthAttendance = async (req, res) => {
                 if (!aid) return;
                 if (!logsByAttendanceId[aid]) logsByAttendanceId[aid] = [];
                 logsByAttendanceId[aid].push(log);
+            });
+
+            // Backward-compatible fallback:
+            // Old break logs were written with break _id in attendanceId.
+            // Attach those logs by business-calendar date so they appear in app history.
+            const attendanceIdByDate = {};
+            attendance.forEach(a => {
+                const aid = a._id?.toString?.() ?? String(a._id);
+                if (!aid) return;
+                const dKey = formatAttendanceCalendarDay(a.date);
+                if (dKey && !attendanceIdByDate[dKey]) {
+                    attendanceIdByDate[dKey] = aid;
+                }
+            });
+
+            const staffIdAsString = String(req.staff._id);
+            const orphanBreakLogs = await AttendanceLog.find({
+                action: { $in: ['BREAK_START', 'BREAK_END'] },
+                timestamp: { $gte: startOfMonth, $lte: endOfMonth },
+                $or: [
+                    { performedBy: req.staff._id },
+                    { 'newValue.employeeID': req.staff._id },
+                    { 'newValue.employeeID': staffIdAsString }
+                ]
+            }).sort({ timestamp: 1 }).lean();
+
+            orphanBreakLogs.forEach(log => {
+                const existingAid = log.attendanceId?.toString?.() ?? String(log.attendanceId || '');
+                if (existingAid && attendanceIdSet.has(existingAid)) {
+                    return;
+                }
+                const when = log.breakEndDateTime || log.breakStartDateTime || log.timestamp;
+                if (!when) return;
+                const dKey = formatAttendanceCalendarDay(when);
+                const mappedAttendanceId = dKey ? attendanceIdByDate[dKey] : null;
+                if (!mappedAttendanceId) return;
+                if (!logsByAttendanceId[mappedAttendanceId]) {
+                    logsByAttendanceId[mappedAttendanceId] = [];
+                }
+                logsByAttendanceId[mappedAttendanceId].push(log);
             });
 
             attendance.forEach(a => {

@@ -26,10 +26,16 @@ const String kFcmNotificationChannelId = 'hrms_fcm_channel';
 /// so it will not be stored. Backend must send data-only with title/body inside the "data" payload.
 @pragma('vm:entry-point')
 Future<void> firebaseBackgroundMessageHandler(RemoteMessage message) async {
-  debugPrint('[FCM] backgroundHandler: ENTERED (app closed/background – this runs only for DATA-ONLY messages)');
-  debugPrint('[FCM] backgroundHandler: messageId=${message.messageId} hasNotification=${message.notification != null} dataKeys=${message.data.keys.toList()}');
+  debugPrint(
+    '[FCM] backgroundHandler: ENTERED (app closed/background – this runs only for DATA-ONLY messages)',
+  );
+  debugPrint(
+    '[FCM] backgroundHandler: messageId=${message.messageId} hasNotification=${message.notification != null} dataKeys=${message.data.keys.toList()}',
+  );
   if (message.notification != null) {
-    debugPrint('[FCM] backgroundHandler: WARNING message has notification payload – on Android this handler may not have been invoked; backend should send data-only');
+    debugPrint(
+      '[FCM] backgroundHandler: WARNING message has notification payload – on Android this handler may not have been invoked; backend should send data-only',
+    );
   }
   try {
     await Firebase.initializeApp();
@@ -52,7 +58,9 @@ Future<void> firebaseBackgroundMessageHandler(RemoteMessage message) async {
   );
   try {
     await FcmService.storeNotification(title: title, body: body, data: data);
-    debugPrint('[FCM] backgroundHandler: storeNotification completed – notification should appear in app list');
+    debugPrint(
+      '[FCM] backgroundHandler: storeNotification completed – notification should appear in app list',
+    );
   } catch (e, st) {
     debugPrint('[FCM] backgroundHandler: storeNotification FAILED $e');
     debugPrint('[FCM] backgroundHandler: stack $st');
@@ -61,7 +69,9 @@ Future<void> firebaseBackgroundMessageHandler(RemoteMessage message) async {
     await _showBackgroundNotification(title: title, body: body, data: data);
     debugPrint('[FCM] backgroundHandler: local notification shown in tray');
   } catch (e) {
-    debugPrint('[FCM] backgroundHandler: _showBackgroundNotification FAILED $e');
+    debugPrint(
+      '[FCM] backgroundHandler: _showBackgroundNotification FAILED $e',
+    );
   }
   debugPrint('[FCM] backgroundHandler: DONE');
 }
@@ -76,7 +86,9 @@ Future<void> _showBackgroundNotification({
 }) async {
   final id = FcmService.notificationIdFromData(data);
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidSettings = AndroidInitializationSettings('@drawable/ic_notification');
+  const androidSettings = AndroidInitializationSettings(
+    '@drawable/ic_notification',
+  );
   const iosSettings = DarwinInitializationSettings(
     requestAlertPermission: false,
     requestBadgePermission: false,
@@ -85,16 +97,19 @@ Future<void> _showBackgroundNotification({
     const InitializationSettings(android: androidSettings, iOS: iosSettings),
   );
   if (Platform.isAndroid) {
-    await plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(
-      AndroidNotificationChannel(
-        kFcmNotificationChannelId,
-        'HRMS Notifications',
-        description: 'Notifications for leave, attendance, requests, etc.',
-        importance: Importance.high,
-        playSound: true,
-      ),
-    );
+    await plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(
+          AndroidNotificationChannel(
+            kFcmNotificationChannelId,
+            'HRMS Notifications',
+            description: 'Notifications for leave, attendance, requests, etc.',
+            importance: Importance.high,
+            playSound: true,
+          ),
+        );
   }
   final tag = FcmService.dedupeKeyFromData(data);
   final androidDetails = AndroidNotificationDetails(
@@ -150,7 +165,15 @@ class FcmService {
   static String dedupeKeyFromData(Map<String, dynamic> data) {
     final type = data['type']?.toString() ?? '';
     final module = data['module']?.toString() ?? '';
-    final id = data['leaveId'] ?? data['loanId'] ?? data['expenseId'] ?? data['payslipId'] ?? data['attendanceId'] ?? data['reviewId'] ?? data['messageId'] ?? '';
+    final id =
+        data['leaveId'] ??
+        data['loanId'] ??
+        data['expenseId'] ??
+        data['payslipId'] ??
+        data['attendanceId'] ??
+        data['reviewId'] ??
+        data['messageId'] ??
+        '';
     if (type.isEmpty && module.isEmpty && id.toString().isEmpty) return '';
     return '${module}_${type}_$id';
   }
@@ -160,7 +183,8 @@ class FcmService {
       FlutterLocalNotificationsPlugin();
 
   /// Exposed for AlarmService (scheduled alarms).
-  static FlutterLocalNotificationsPlugin get localNotifications => _localNotifications;
+  static FlutterLocalNotificationsPlugin get localNotifications =>
+      _localNotifications;
 
   static FirebaseMessaging get _messaging => FirebaseMessaging.instance;
 
@@ -240,7 +264,9 @@ class FcmService {
 
     final initialMessage = await _messaging.getInitialMessage();
     if (initialMessage != null) {
-      _logAlways('getInitialMessage: app opened from terminated via notification tap – storing and navigating');
+      _logAlways(
+        'getInitialMessage: app opened from terminated via notification tap – storing and navigating',
+      );
       final data = Map<String, dynamic>.from(initialMessage.data);
       final title =
           initialMessage.notification?.title ??
@@ -365,13 +391,17 @@ class FcmService {
     final sent = await sendTokenToBackend();
     if (sent) return;
     // Token may not be ready yet (e.g. first launch). Retry once after delay.
-    _logAlways('sendTokenToBackendAfterLogin: first attempt skipped/failed, retrying in 2s');
+    _logAlways(
+      'sendTokenToBackendAfterLogin: first attempt skipped/failed, retrying in 2s',
+    );
     await Future<void>.delayed(const Duration(seconds: 2));
     await sendTokenToBackend();
   }
 
   static Future<void> _onForegroundMessage(RemoteMessage message) async {
-    _logAlways('[FCM] FOREGROUND message received – storing (app was in foreground)');
+    _logAlways(
+      '[FCM] FOREGROUND message received – storing (app was in foreground)',
+    );
     final data = Map<String, dynamic>.from(message.data);
     final title =
         message.notification?.title ??
@@ -414,6 +444,7 @@ class FcmService {
           entry?.remove();
           entry = null;
         }
+
         entry = OverlayEntry(
           builder: (ctx) => Positioned(
             top: MediaQuery.of(context).padding.top + 12,
@@ -422,7 +453,10 @@ class FcmService {
             child: Material(
               color: Colors.transparent,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
@@ -475,12 +509,19 @@ class FcmService {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close, size: 20, color: Colors.white),
+                      icon: const Icon(
+                        Icons.close,
+                        size: 20,
+                        color: Colors.white,
+                      ),
                       onPressed: () {
                         remove();
                       },
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
                       style: IconButton.styleFrom(
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
@@ -505,13 +546,14 @@ class FcmService {
     required String body,
     required Map<String, dynamic> data,
   }) async {
-    final reaction = _getNotificationReaction(title: title, body: body, data: data);
+    final reaction = _getNotificationReaction(
+      title: title,
+      body: body,
+      data: data,
+    );
     if (reaction == null) return;
 
-    await NotificationReactionOverlay.show(
-      context,
-      emoji: reaction.emoji,
-    );
+    await NotificationReactionOverlay.show(context, emoji: reaction.emoji);
   }
 
   static _NotificationReaction? _getNotificationReaction({
@@ -527,12 +569,9 @@ class FcmService {
         module == 'announcement' ||
         module == 'announcements' ||
         combinedText.contains('announcement');
-    final isBirthday =
-        type == 'birthday' ||
-        combinedText.contains('birthday');
+    final isBirthday = type == 'birthday' || combinedText.contains('birthday');
     final isAnniversary =
-        type == 'anniversary' ||
-        combinedText.contains('anniversary');
+        type == 'anniversary' || combinedText.contains('anniversary');
 
     final isApproval =
         type.endsWith('_approved') ||
@@ -547,34 +586,24 @@ class FcmService {
         combinedText.contains('request rejected');
 
     if (isAnnouncement) {
-      return _NotificationReaction(
-        emoji: '📢',
-      );
+      return _NotificationReaction(emoji: '📢');
     }
 
     if (isBirthday) {
-      return _NotificationReaction(
-        emoji: '🎂',
-      );
+      return _NotificationReaction(emoji: '🎂');
     }
 
     if (isAnniversary) {
-      return _NotificationReaction(
-        emoji: '🥳',
-      );
+      return _NotificationReaction(emoji: '🥳');
     }
 
     if (!isApproval && !isRejection) return null;
 
     if (isApproval) {
-      return _NotificationReaction(
-        emoji: '🤩',
-      );
+      return _NotificationReaction(emoji: '🤩');
     }
 
-    return _NotificationReaction(
-      emoji: '😔',
-    );
+    return _NotificationReaction(emoji: '😔');
   }
 
   static Future<void> _showForegroundSystemNotification({
@@ -627,7 +656,9 @@ class FcmService {
     required String body,
     required Map<String, dynamic> data,
   }) async {
-    debugPrint('$_logTag storeNotification: called title="$title" bodyLength=${body.length}');
+    debugPrint(
+      '$_logTag storeNotification: called title="$title" bodyLength=${body.length}',
+    );
     try {
       final now = DateTime.now();
       final cutoff = now.subtract(_kFcmNotificationRetention);
@@ -638,7 +669,9 @@ class FcmService {
         final dt = DateTime.tryParse(receivedAt);
         return dt != null && dt.isAfter(cutoff);
       }).toList();
-      debugPrint('$_logTag storeNotification: current list size=${pruned.length} (after 24h prune)');
+      debugPrint(
+        '$_logTag storeNotification: current list size=${pruned.length} (after 24h prune)',
+      );
       final incomingKey = dedupeKeyFromData(data);
       debugPrint('$_logTag storeNotification: dedupeKey="$incomingKey"');
       if (incomingKey.isNotEmpty) {
@@ -650,10 +683,13 @@ class FcmService {
           if (dt == null || dt.isBefore(dedupeCutoff)) return false;
           final existingData = e['data'];
           if (existingData is! Map) return false;
-          return dedupeKeyFromData(Map<String, dynamic>.from(existingData)) == incomingKey;
+          return dedupeKeyFromData(Map<String, dynamic>.from(existingData)) ==
+              incomingKey;
         });
         if (isDuplicate) {
-          debugPrint('$_logTag storeNotification: SKIP duplicate (same key within 2min) key=$incomingKey');
+          debugPrint(
+            '$_logTag storeNotification: SKIP duplicate (same key within 2min) key=$incomingKey',
+          );
           return;
         }
       }
@@ -664,7 +700,9 @@ class FcmService {
         'receivedAt': now.toUtc().toIso8601String(),
       });
       await _saveRawListToFile(pruned);
-      debugPrint('$_logTag storeNotification: STORED OK – list size now ${pruned.length}');
+      debugPrint(
+        '$_logTag storeNotification: STORED OK – list size now ${pruned.length}',
+      );
     } catch (e, st) {
       debugPrint('$_logTag storeNotification ERROR: $e');
       debugPrint('$_logTag storeNotification stack: $st');
@@ -705,7 +743,9 @@ class FcmService {
       final path = await _getNotificationsFilePath();
       await File(path).writeAsString(jsonEncode(list));
       await prefs.remove(_kFcmNotificationsKey);
-      debugPrint('$_logTag migrated ${list.length} notifications from SharedPreferences to file');
+      debugPrint(
+        '$_logTag migrated ${list.length} notifications from SharedPreferences to file',
+      );
       return list;
     } catch (_) {
       return [];
@@ -739,12 +779,16 @@ class FcmService {
     if (pruned.length != list.length) {
       await _saveRawListToFile(pruned);
     }
-    debugPrint('$_logTag getStoredNotifications: returning ${pruned.length} item(s)');
+    debugPrint(
+      '$_logTag getStoredNotifications: returning ${pruned.length} item(s)',
+    );
     return pruned;
   }
 
   static Future<void> _onNotificationOpened(RemoteMessage message) async {
-    _logAlways('onMessageOpenedApp: notification tap (app was background) – storing and navigating');
+    _logAlways(
+      'onMessageOpenedApp: notification tap (app was background) – storing and navigating',
+    );
     _log('notification opened (background/terminated): data=${message.data}');
     final data = Map<String, dynamic>.from(message.data);
     final title =
@@ -844,12 +888,26 @@ class FcmService {
       );
       return;
     }
-    // Payslip: My Requests, tab 3
+    // Payslip: My Requests, tab 4
     if (module == 'payslip' ||
         type == 'payslip_approved' ||
         type == 'payslip_rejected') {
       _log(
-        'handleNotificationData: navigating to MyRequestsScreen tab 3 (payslip)',
+        'handleNotificationData: navigating to MyRequestsScreen tab 4 (payslip)',
+      );
+      navigatorKey?.currentState?.push(
+        MaterialPageRoute<void>(
+          builder: (_) => MyRequestsScreen(initialTabIndex: 4),
+        ),
+      );
+      return;
+    }
+    // Permission: My Requests, tab 3
+    if (module == 'permission' ||
+        type == 'permission_approved' ||
+        type == 'permission_rejected') {
+      _log(
+        'handleNotificationData: navigating to MyRequestsScreen tab 3 (permission)',
       );
       navigatorKey?.currentState?.push(
         MaterialPageRoute<void>(
@@ -901,7 +959,5 @@ class FcmService {
 class _NotificationReaction {
   final String emoji;
 
-  const _NotificationReaction({
-    required this.emoji,
-  });
+  const _NotificationReaction({required this.emoji});
 }

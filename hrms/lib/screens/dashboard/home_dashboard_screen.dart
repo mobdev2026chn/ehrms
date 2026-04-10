@@ -42,6 +42,7 @@ class HomeDashboardScreen extends StatefulWidget {
 
   /// When this notifier fires (e.g. after attendance submit), refresh dashboard data.
   final ValueListenable<int>? refreshTrigger;
+
   /// Optional parent callback to recompute bottom-nav punch visibility after refresh.
   final Future<void> Function()? onDashboardDataRefreshed;
 
@@ -281,7 +282,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       // Load local user data (name, company) from SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       if (kDebugMode) {
-        debugPrint('[DashboardLoad] prefs loaded in ${sw.elapsedMilliseconds}ms');
+        debugPrint(
+          '[DashboardLoad] prefs loaded in ${sw.elapsedMilliseconds}ms',
+        );
       }
       final userString = prefs.getString('user');
       if (userString != null) {
@@ -377,7 +380,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               businessFromSettings = Map<String, dynamic>.from(b);
             }
           }
-          if (profileSettled['success'] == true && profileSettled['data'] is Map) {
+          if (profileSettled['success'] == true &&
+              profileSettled['data'] is Map) {
             _applyShiftContextFromProfile(
               Map<String, dynamic>.from(profileSettled['data'] as Map),
               businessFromSettingsApi: businessFromSettings,
@@ -1187,10 +1191,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       // 8. Prorated salary: same divisor + numerator as Salary Overview (payable rule + web-style MTD)
       final fallbackWd =
           workingDaysInfo.workingDaysFullMonth ?? workingDaysInfo.workingDays;
-      final thisMonthWorkingDaysForProration =
-          salaryPayableBaseDays(fallbackWd);
-      final ruleLower =
-          (payableRuleFromStats ?? 'present_plus_paid_leave').toLowerCase();
+      final thisMonthWorkingDaysForProration = salaryPayableBaseDays(
+        fallbackWd,
+      );
+      final ruleLower = (payableRuleFromStats ?? 'present_plus_paid_leave')
+          .toLowerCase();
       final payableNumerator = ruleLower == 'present_only'
           ? presentDays
           : presentDays + paidLeaveDays;
@@ -1210,14 +1215,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           totalFineAmount,
         );
       }
-      final previewFineRates =
-          perDayRatesFromPayrollPreviewForFine(payrollPreview);
-      final statsFullMonthWd = (backendStats != null &&
-              backendStats['attendance'] is Map)
-          ? ((backendStats['attendance'] as Map)['workingDaysFullMonth'] as num?)
-                  ?.toInt()
+      final previewFineRates = perDayRatesFromPayrollPreviewForFine(
+        payrollPreview,
+      );
+      final statsFullMonthWd =
+          (backendStats != null && backendStats['attendance'] is Map)
+          ? ((backendStats['attendance'] as Map)['workingDaysFullMonth']
+                    as num?)
+                ?.toInt()
           : null;
-      final fullWdForPayrollPerDay = statsFullMonthWd ??
+      final fullWdForPayrollPerDay =
+          statsFullMonthWd ??
           workingDaysInfo.workingDaysFullMonth ??
           workingDaysInfo.workingDays;
       final payrollFineRates = previewFineRates == null
@@ -1227,29 +1235,32 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             )
           : null;
 
-      final perDaySalaryForApp = previewFineRates?['net'] ??
+      final perDaySalaryForApp =
+          previewFineRates?['net'] ??
           payrollFineRates?['net'] ??
           (thisMonthWorkingDaysForProration > 0
               ? ((calculatedSalary.monthly.netMonthlySalary /
-                            thisMonthWorkingDaysForProration) *
-                        100)
-                    .round() /
-                100
+                                thisMonthWorkingDaysForProration) *
+                            100)
+                        .round() /
+                    100
               : 0.0);
-      final perDayGrossSalaryForApp = previewFineRates?['gross'] ??
+      final perDayGrossSalaryForApp =
+          previewFineRates?['gross'] ??
           payrollFineRates?['gross'] ??
           (thisMonthWorkingDaysForProration > 0
               ? ((calculatedSalary.monthly.grossSalary /
-                            thisMonthWorkingDaysForProration) *
-                        100)
-                    .round() /
-                100
+                                thisMonthWorkingDaysForProration) *
+                            100)
+                        .round() /
+                    100
               : 0.0);
       if (kDebugMode) {
         int? previewFullWd;
         if (payrollPreview != null && payrollPreview['attendance'] is Map) {
           final a = payrollPreview['attendance'] as Map;
-          previewFullWd = (a['fullMonthWorkingDays'] as num?)?.toInt() ??
+          previewFullWd =
+              (a['fullMonthWorkingDays'] as num?)?.toInt() ??
               (a['workingDays'] as num?)?.toInt();
         }
         debugPrint(
@@ -1275,7 +1286,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           'netMonthly=${calculatedSalary.monthly.netMonthlySalary.toStringAsFixed(2)} '
           'wdForProration=$thisMonthWorkingDaysForProration',
         );
-        final dailyNet = previewFineRates?['net'] ??
+        final dailyNet =
+            previewFineRates?['net'] ??
             payrollFineRates?['net'] ??
             storedDailyNet ??
             calculatedSalary.monthly.netMonthlySalary /
@@ -2109,10 +2121,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           onTap: () => onNavigate(1, subTabIndex: 2),
         ),
         _buildQuickActionButton(
+          icon: Icons.fact_check_outlined,
+          label: 'Request Permission',
+          color: accent,
+          onTap: () => onNavigate(1, subTabIndex: 3),
+        ),
+        _buildQuickActionButton(
           icon: Icons.attach_money,
           label: 'Request Payslip',
           color: accent,
-          onTap: () => onNavigate(1, subTabIndex: 3),
+          onTap: () => onNavigate(1, subTabIndex: 4),
         ),
       ]);
     }

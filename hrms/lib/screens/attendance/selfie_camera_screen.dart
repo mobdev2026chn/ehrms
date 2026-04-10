@@ -164,6 +164,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen> {
                 sensor: Sensor.position(SensorPosition.front),
                 aspectRatio: CameraAspectRatios.ratio_4_3,
               ),
+              // Fill available area to avoid letterbox black bars in live preview.
               previewFit: CameraPreviewFit.cover,
               availableFilters: const [],
               onMediaCaptureEvent: (MediaCapture event) {
@@ -202,12 +203,12 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen> {
         children: [
           Expanded(
             child: Center(
-              child: InteractiveViewer(
+                child: InteractiveViewer(
                 minScale: 0.5,
                 maxScale: 4,
                 child: Image.file(
                   File(path),
-                  fit: BoxFit.contain,
+                  fit: BoxFit.cover,
                 ),
               ),
             ),

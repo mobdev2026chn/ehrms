@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_colors.dart';
+import '../services/attendance_service.dart';
 import '../services/break_service.dart';
 import '../screens/dashboard/dashboard_screen.dart';
 import '../utils/absent_alert_helper.dart';
@@ -76,6 +77,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   bool _isCandidate = false;
   bool _isPunchedIn = false;
   bool _isPunchCompletedToday = false;
+  bool _isPunchStateResolved = false;
+  final AttendanceService _attendanceService = AttendanceService();
   final BreakService _breakService = BreakService();
   DateTime? _fetchedBreakStartTime;
 
@@ -101,10 +104,11 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   @override
   void didUpdateWidget(AppBottomNavigationBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Refresh cached today punch state whenever nav context changes so label/visibility
-    // tracks check-in/check-out updates and day rollover.
-    if (oldWidget.isPunchedInToday != widget.isPunchedInToday ||
-        oldWidget.currentIndex != widget.currentIndex) {
+    // Only refresh prefs-backed punch state on nav changes when external dashboard
+    // state is not provided. This avoids show/hide flicker during tab switches.
+    final usesInternalPunchState =
+        widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
+    if (usesInternalPunchState && oldWidget.currentIndex != widget.currentIndex) {
       _checkPunchState();
     }
   }
@@ -152,6 +156,12 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   }
 
   Future<void> _checkPunchState() async {
+    final wasResolved = _isPunchStateResolved;
+    if (mounted && !wasResolved) {
+      setState(() {
+        _isPunchStateResolved = false;
+      });
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       // Read cached today's attendance punch state (same logic as dashboard today card)
@@ -170,31 +180,59 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
           );
       final isPunchCompletedTodayFromPrefs =
           cacheDay == todayKey && hasPunchInToday && hasPunchOutToday;
+      bool resolvedPunchedIn = isPunchedInFromPrefs;
+      bool resolvedPunchCompleted = isPunchCompletedTodayFromPrefs;
+
+      // Prefer live today attendance (same source used by Dashboard) so all screens
+      // keep the same Punch CTA visibility. Fall back to prefs on errors/offline.
+      try {
+        final todayRes = await _attendanceService.getTodayAttendance(
+          forceRefresh: true,
+        );
+        final data = todayRes['data'];
+        if (todayRes['success'] == true && data is Map<String, dynamic>) {
+          final attendance = flattenTodayAttendancePayload(data) ?? data;
+          final hasIn =
+              attendance['hasPunchIn'] == true ||
+              hasParsablePunchDateTime(attendance['punchIn']);
+          final hasOut =
+              attendance['hasPunchOut'] == true ||
+              hasParsablePunchDateTime(attendance['punchOut']);
+          resolvedPunchedIn = isAwaitingPunchOutFromTodayAttendance(attendance);
+          resolvedPunchCompleted = hasIn && hasOut;
+        }
+      } catch (_) {}
 
       if (kDebugMode) {
-        final label = isPunchedInFromPrefs ? 'Punch Out' : 'Punch In';
+        final label = resolvedPunchedIn ? 'Punch Out' : 'Punch In';
         debugPrint(
           '[AppBottomNav] _checkPunchState: todayKey=$todayKey cacheDay=$cacheDay '
           'punchIn=${punchIn != null ? "set" : "null"} punchOut=${punchOut != null ? "set" : "null"} '
           'hasPunchInToday=$hasPunchInToday hasPunchOutToday=$hasPunchOutToday '
-          'awaitingPunchOut=$isPunchedInFromPrefs completedToday=$isPunchCompletedTodayFromPrefs',
+          'awaitingPunchOut=$resolvedPunchedIn completedToday=$resolvedPunchCompleted',
         );
         debugPrint(
           '[PunchButton][BottomNav][today-from-prefs] '
           'todayKey=$todayKey cacheDay=$cacheDay '
           'punchIn="${punchIn ?? ""}" punchOut="${punchOut ?? ""}" '
-          'awaitingPunchOut=$isPunchedInFromPrefs => label="$label"',
+          'awaitingPunchOut=$resolvedPunchedIn => label="$label"',
         );
       }
 
       if (mounted) {
         setState(() {
-          _isPunchedIn = isPunchedInFromPrefs;
-          _isPunchCompletedToday = isPunchCompletedTodayFromPrefs;
+          _isPunchedIn = resolvedPunchedIn;
+          _isPunchCompletedToday = resolvedPunchCompleted;
+          _isPunchStateResolved = true;
         });
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[AppBottomNav] _checkPunchState error: $e');
+      if (mounted) {
+        setState(() {
+          _isPunchStateResolved = true;
+        });
+      }
     }
   }
 
@@ -367,6 +405,9 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   @override
   Widget build(BuildContext context) {
     final navItems = widget.items ?? _buildItems();
+    final usesInternalPunchState =
+        widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
+    final canRenderPunchButton = !usesInternalPunchState || _isPunchStateResolved;
     // Tea break: same rule as Punch button — only after punch-in today (dashboard passes
     // [isPunchedInToday]; otherwise prefs from [_checkPunchState]).
     final isPunchedInForBreak = widget.isPunchedInToday ?? _isPunchedIn;
@@ -463,7 +504,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
                     ),
                   ),
                   // Punch CTA: ~3/8 of bar — larger pill (reference ~30–35% width).
-                  if (!(widget.isPunchCompletedToday ?? _isPunchCompletedToday))
+                  if (canRenderPunchButton &&
+                      !(widget.isPunchCompletedToday ?? _isPunchCompletedToday))
                     Expanded(
                       flex: 3,
                       child: Padding(

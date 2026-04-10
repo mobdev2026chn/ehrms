@@ -2,8 +2,12 @@ const path = require('path');
 const Break = require(path.join(__dirname, '../../../ektahr_desktop/monitoring_backend/src/models/Break'));
 const Device = require(path.join(__dirname, '../../../ektahr_desktop/monitoring_backend/src/models/Device'));
 const Staff = require('../models/Staff');
+const Company = require('../models/Company');
+const Attendance = require('../models/Attendance');
 const AttendanceLog = require('../models/AttendanceLog');
 const digitalOceanService = require('../services/digitalOceanService');
+const { getEffectiveFineConfig, calculateFineAmount } = require('../utils/fineCalculationHelper');
+const { getShiftTimings, calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
 
 function buildBreakLocation(payload = {}) {
     const latitude = payload.latitude ?? payload.lat ?? null;
@@ -31,6 +35,10 @@ function serializeBreak(doc) {
         startTime,
         endTime,
         totalSeconds: doc.totalSeconds ?? null,
+        breakMin: doc.breakMin ?? 0,
+        breakCount: doc.breakCount ?? 0,
+        breakFineMins: doc.breakFineMins ?? 0,
+        breakFineAmount: doc.breakFineAmount ?? 0,
         durationSeconds: !endTime && startTime ? Math.max(0, Math.floor((Date.now() - startTime.getTime()) / 1000)) : (doc.totalSeconds ?? 0),
         breakStartSelfie: doc.breakStartSelfie || '',
         breakEndSelfie: doc.breakEndSelfie || '',
@@ -47,6 +55,7 @@ function buildAddressString(address, area, city, pincode) {
 }
 
 async function createBreakLog({
+    attendanceId,
     breakDoc,
     action,
     performedBy,
@@ -59,11 +68,13 @@ async function createBreakLog({
     startLocation,
     endLocation,
     totalSeconds,
+    breakSummary,
     payload
 }) {
     if (!breakDoc?._id || !performedBy) return;
     const logPayload = {
-        attendanceId: breakDoc._id,
+        // Use the day's attendance _id so attendance detail can fetch break logs.
+        attendanceId: attendanceId || breakDoc._id,
         action,
         performedBy,
         performedByName: performedByName || undefined,
@@ -86,10 +97,92 @@ async function createBreakLog({
         logPayload.breakEndAddress = endAddress || undefined;
         logPayload.breakStartLocation = startLocation || undefined;
         logPayload.breakEndLocation = endLocation || undefined;
+        if (breakSummary) {
+            logPayload.break = breakSummary;
+        }
     }
 
     await AttendanceLog.create(logPayload)
         .catch(err => console.warn(`[AttendanceLog] ${action} create failed:`, err?.message));
+}
+
+async function getAttendanceIdForDate(employeeId, eventDate) {
+    if (!employeeId || !eventDate) return null;
+    const dt = new Date(eventDate);
+    if (Number.isNaN(dt.getTime())) return null;
+    const dayStart = new Date(Date.UTC(
+        dt.getUTCFullYear(),
+        dt.getUTCMonth(),
+        dt.getUTCDate()
+    ));
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+    const attendanceDoc = await Attendance.findOne({
+        employeeId,
+        date: { $gte: dayStart, $lt: dayEnd }
+    }).select('_id').lean();
+    return attendanceDoc?._id || null;
+}
+
+function calculateSalaryStructure(salary = {}) {
+    const grossSalary =
+        (salary.basicSalary || 0)
+        + (salary.dearnessAllowance || 0)
+        + (salary.houseRentAllowance || 0)
+        + (salary.specialAllowance || 0);
+    const employeePF = grossSalary * ((salary.employeePFRate || 0) / 100);
+    const employeeESI = grossSalary * ((salary.employeeESIRate || 0) / 100);
+    const netMonthlySalary = grossSalary - employeePF - employeeESI;
+    return { monthly: { grossSalary, netMonthlySalary } };
+}
+
+function resolveBreakDurationMinutes(breakDoc) {
+    if (Number.isFinite(Number(breakDoc?.totalSeconds)) && Number(breakDoc.totalSeconds) >= 0) {
+        return Math.max(0, Math.round(Number(breakDoc.totalSeconds) / 60));
+    }
+    const start = breakDoc?.startTime ? new Date(breakDoc.startTime).getTime() : null;
+    const end = breakDoc?.endTime ? new Date(breakDoc.endTime).getTime() : null;
+    if (!start || !end || end < start) return 0;
+    return Math.max(0, Math.round((end - start) / (1000 * 60)));
+}
+
+async function getBreakFineContext(staff, dayDate) {
+    const allowedBreakMin = 5; // TEMP for testing; set back to 60 after verification
+
+    const company = await Company.findById(staff.businessId)
+        .select('settings.payroll.fineCalculation settings.attendance.shifts settings.business.timezone settings.attendance.timezone timezone')
+        .lean();
+    const fineConfig = getEffectiveFineConfig(company || {});
+
+    let dailyNet = Number(staff?.appPerDayNetSalary) || 0;
+    let dailyGross = Number(staff?.appPerdayGrossSalary) || 0;
+    if ((dailyNet <= 0 || dailyGross <= 0) && staff?.salary) {
+        const salaryStructure = calculateSalaryStructure(staff.salary);
+        const monthlyNet = Number(salaryStructure?.monthly?.netMonthlySalary) || 0;
+        const monthlyGross = Number(salaryStructure?.monthly?.grossSalary) || 0;
+        if (dailyNet <= 0 && monthlyNet > 0) dailyNet = monthlyNet / 30;
+        if (dailyGross <= 0 && monthlyGross > 0) dailyGross = monthlyGross / 30;
+    }
+    if (dailyGross <= 0) dailyGross = dailyNet;
+
+    const shiftTiming = getShiftTimings(company || {}, staff, dayDate, staff?.joiningDate || null, null);
+    let shiftHours = 9;
+    const shiftType = (shiftTiming?.shiftType || '').toString().toLowerCase();
+    if (shiftType === 'open' || shiftType === 'open shift') {
+        const openHours = Number(shiftTiming?.openWorkHours || shiftTiming?.workHours);
+        if (Number.isFinite(openHours) && openHours > 0) shiftHours = openHours;
+    } else {
+        const fixedHours = calculateWorkHoursFromShift(shiftTiming?.startTime || '09:30', shiftTiming?.endTime || '18:30');
+        if (Number.isFinite(fixedHours) && fixedHours > 0) shiftHours = fixedHours;
+    }
+
+    return {
+        allowedBreakMin,
+        fineConfig,
+        dailyNet,
+        dailyGross,
+        shiftHours
+    };
 }
 
 async function uploadBreakSelfie(base64String, req, companyId, employeeName, type) {
@@ -164,7 +257,7 @@ exports.startBreak = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Break start selfie is required' });
         }
 
-        const staff = await Staff.findById(req.staff._id).select('_id businessId name email userId');
+        const staff = await Staff.findById(req.staff._id).select('_id businessId name email userId appPerDayNetSalary appPerdayGrossSalary salary joiningDate shiftId shiftName');
         if (!staff?.businessId) {
             return res.status(404).json({ success: false, message: 'Staff business not found' });
         }
@@ -202,7 +295,9 @@ exports.startBreak = async (req, res) => {
             doc.breakStartLocation?.city,
             doc.breakStartLocation?.pincode
         );
+        const attendanceId = await getAttendanceIdForDate(staff._id, doc.startTime);
         await createBreakLog({
+            attendanceId,
             breakDoc: doc,
             action: 'BREAK_START',
             performedBy: req.user?._id || staff.userId || staff._id,
@@ -254,7 +349,7 @@ exports.endBreak = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Break end selfie is required' });
         }
 
-        const staff = await Staff.findById(req.staff._id).select('_id businessId name email userId');
+        const staff = await Staff.findById(req.staff._id).select('_id businessId name email userId appPerDayNetSalary appPerdayGrossSalary salary joiningDate shiftId shiftName');
         if (!staff?.businessId) {
             return res.status(404).json({ success: false, message: 'Staff business not found' });
         }
@@ -290,6 +385,97 @@ exports.endBreak = async (req, res) => {
         doc.breakEndLocation = buildBreakLocation(req.body);
         await doc.save();
 
+        const dayStart = new Date(Date.UTC(
+            resolvedEndTime.getUTCFullYear(),
+            resolvedEndTime.getUTCMonth(),
+            resolvedEndTime.getUTCDate()
+        ));
+        const dayEnd = new Date(dayStart);
+        dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+        const attendanceDoc = await Attendance.findOne({
+            employeeId: staff._id,
+            date: { $gte: dayStart, $lt: dayEnd }
+        }).select('break').lean();
+
+        const previousTotalBreakMin = Number(attendanceDoc?.break?.totalBreakMin) || 0;
+        const previousTotalFineAmount =
+            Number(attendanceDoc?.break?.totalBreakFineAmount)
+            || Number(attendanceDoc?.break?.breakFineAmount)
+            || 0;
+        const previousTotalFineMins =
+            Number(attendanceDoc?.break?.totalBreakFineMins)
+            || Number(attendanceDoc?.break?.breakFineMins)
+            || 0;
+        const previousTotalBreakCount = Number(attendanceDoc?.break?.totalBreakCount) || 0;
+        const currentBreakMin = resolveBreakDurationMinutes(doc);
+
+        const fineCtx = await getBreakFineContext(staff, resolvedEndTime);
+        const totalBreakAfterCurrent = previousTotalBreakMin + currentBreakMin;
+        const totalFineMinsAfterCurrent = Math.max(0, totalBreakAfterCurrent - fineCtx.allowedBreakMin);
+        const currentBreakFineMins = Math.max(0, totalFineMinsAfterCurrent - Math.max(0, previousTotalFineMins));
+        const currentBreakFineAmount = currentBreakFineMins > 0
+            ? calculateFineAmount(
+                currentBreakFineMins,
+                'earlyExit',
+                fineCtx.fineConfig,
+                fineCtx.dailyNet,
+                fineCtx.shiftHours,
+                fineCtx.dailyGross
+            )
+            : 0;
+        const totalFineAmountAfterCurrent = previousTotalFineAmount + currentBreakFineAmount;
+        const breakTestTag = '[BreakFine][formula][test]';
+        console.log(
+            breakTestTag,
+            'incremental | prevTotalBreakMin=',
+            previousTotalBreakMin,
+            '| currentBreakMin=',
+            currentBreakMin,
+            '| allowedBreakMin=',
+            fineCtx.allowedBreakMin,
+            '| currentBreakFineMins=',
+            currentBreakFineMins,
+            '| prevTotalFineAmount=',
+            previousTotalFineAmount,
+            '| currentBreakFineAmount=',
+            currentBreakFineAmount,
+            '| totalFineAmountAfterCurrent=',
+            totalFineAmountAfterCurrent
+        );
+
+        doc.breakMin = currentBreakMin;
+        doc.breakCount = previousTotalBreakCount + 1;
+        doc.breakFineMins = currentBreakFineMins;
+        doc.breakFineAmount = currentBreakFineAmount;
+        await doc.save();
+        await Attendance.updateOne(
+            {
+                employeeId: staff._id,
+                date: { $gte: dayStart, $lt: dayEnd }
+            },
+            {
+                $set: {
+                    break: {
+                        totalBreakMin: totalBreakAfterCurrent,
+                        totalBreakCount: previousTotalBreakCount + 1,
+                        totalBreakFineMins: totalFineMinsAfterCurrent,
+                        totalBreakFineAmount: totalFineAmountAfterCurrent,
+                        breaks: [
+                            ...((attendanceDoc?.break?.breaks && Array.isArray(attendanceDoc.break.breaks)) ? attendanceDoc.break.breaks : []),
+                            {
+                                startTime: doc.startTime || null,
+                                endTime: doc.endTime || null,
+                                duration: currentBreakMin,
+                                BreakCount: previousTotalBreakCount + 1,
+                                breakFineMins: currentBreakFineMins,
+                                breakFineAmount: currentBreakFineAmount
+                            }
+                        ]
+                    }
+                }
+            }
+        );
+
         const breakEndAddress = buildAddressString(
             doc.breakEndLocation?.address,
             doc.breakEndLocation?.area,
@@ -302,7 +488,9 @@ exports.endBreak = async (req, res) => {
             doc.breakStartLocation?.city,
             doc.breakStartLocation?.pincode
         );
+        const attendanceId = await getAttendanceIdForDate(staff._id, doc.endTime || resolvedEndTime);
         await createBreakLog({
+            attendanceId,
             breakDoc: doc,
             action: 'BREAK_END',
             performedBy: req.user?._id || staff.userId || staff._id,
@@ -315,6 +503,11 @@ exports.endBreak = async (req, res) => {
             startLocation: doc.breakStartLocation || {},
             endLocation: doc.breakEndLocation || {},
             totalSeconds,
+            breakSummary: {
+                BreakMin: currentBreakMin,
+                breakFineMins: currentBreakFineMins,
+                breakFineAmount: currentBreakFineAmount
+            },
             payload: {
                 breakId: doc._id,
                 employeeID: doc.employeeID,
@@ -327,7 +520,18 @@ exports.endBreak = async (req, res) => {
                 breakStartSelfie: doc.breakStartSelfie || '',
                 breakEndSelfie: doc.breakEndSelfie || '',
                 breakStartLocation: doc.breakStartLocation || {},
-                breakEndLocation: doc.breakEndLocation || {}
+                breakEndLocation: doc.breakEndLocation || {},
+                breakSummary: {
+                    BreakMin: currentBreakMin,
+                    breakFineMins: currentBreakFineMins,
+                    breakFineAmount: currentBreakFineAmount
+                },
+                attendanceBreakTotals: {
+                    totalBreakMin: totalBreakAfterCurrent,
+                    totalBreakCount: previousTotalBreakCount + 1,
+                    totalBreakFineMins: totalFineMinsAfterCurrent,
+                    totalBreakFineAmount: totalFineAmountAfterCurrent
+                }
             }
         });
 

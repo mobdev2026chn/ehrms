@@ -2,13 +2,16 @@ const Leave = require('../models/Leave');
 const Loan = require('../models/Loan');
 const Expense = require('../models/Expense');
 const PayslipRequest = require('../models/PayslipRequest');
+const PermissionRequest = require('../models/PermissionRequest');
 const Payroll = require('../models/Payroll');
 const Staff = require('../models/Staff');
 const User = require('../models/User');
 const Company = require('../models/Company');
+const Attendance = require('../models/Attendance');
 const payslipGeneratorService = require('../services/payslipGeneratorService');
 const { calculateAttendanceStats } = require('./payrollController');
 const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays } = require('../utils/payableDaysRule');
+const { getShiftTimings } = require('../utils/leaveAttendanceHelper');
 
 const _idLog = (v) => {
     if (v == null) return 'n/a';
@@ -18,6 +21,15 @@ const _idLog = (v) => {
 
 // Normalize ref to raw ObjectId (handles both ObjectId and populated { _id, name } so lookup works)
 const toId = (v) => (v != null && typeof v === 'object' && v._id != null ? v._id : v) || null;
+
+const toMonthRange = (year, monthOneBased) => {
+    const monthIdx = Math.max(1, Math.min(12, Number(monthOneBased) || 1)) - 1;
+    const start = new Date(year, monthIdx, 1);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(year, monthIdx + 1, 0);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+};
 
 // Helper function to generate payroll dynamically for payslip requests
 // ALWAYS recalculates from scratch - does not use existing payroll records
@@ -1086,6 +1098,210 @@ const downloadPayslipRequest = async (req, res) => {
     }
 };
 
+// @desc    Create Permission Request
+// @route   POST /api/requests/permission
+// @access  Private
+const createPermissionRequest = async (req, res) => {
+    try {
+        const { date, type = 'both', requestedMinutes, reason } = req.body || {};
+
+        if (!date || Number.isNaN(new Date(date).getTime())) {
+            return res.status(400).json({ success: false, error: { message: 'Valid date is required' } });
+        }
+        const minutes = Number(requestedMinutes);
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+            return res.status(400).json({ success: false, error: { message: 'requestedMinutes must be greater than 0' } });
+        }
+        if (!reason || !String(reason).trim()) {
+            return res.status(400).json({ success: false, error: { message: 'Reason is required' } });
+        }
+        if (!['lateArrival', 'earlyExit', 'both'].includes(String(type))) {
+            return res.status(400).json({ success: false, error: { message: 'Invalid permission type' } });
+        }
+
+        const employeeId = req.staff?._id || req.user?._id;
+        const businessId = req.staff?.businessId || req.user?.businessId || req.companyId;
+
+        if (!employeeId) {
+            return res.status(400).json({ success: false, error: { message: 'Employee context required' } });
+        }
+        if (!businessId) {
+            return res.status(400).json({ success: false, error: { message: 'Business context required' } });
+        }
+
+        const attendanceDate = new Date(date);
+        attendanceDate.setHours(0, 0, 0, 0);
+
+        const created = await PermissionRequest.create({
+            employeeId,
+            businessId,
+            date: attendanceDate,
+            type,
+            requestedMinutes: Math.floor(minutes),
+            reason: String(reason).trim(),
+            status: 'Pending'
+        });
+
+        return res.status(201).json({ success: true, data: { permission: created } });
+    } catch (error) {
+        console.error('Create Permission Request Error:', error);
+        return res.status(500).json({ success: false, error: { message: error.message || 'Failed to create permission request' } });
+    }
+};
+
+// @desc    Get My Permission Requests
+// @route   GET /api/requests/permission
+// @access  Private
+const getPermissionRequests = async (req, res) => {
+    try {
+        const { status, month, year } = req.query;
+        const employeeId = req.staff?._id || req.user?._id;
+
+        if (!employeeId) {
+            return res.status(400).json({ success: false, error: { message: 'Employee context required' } });
+        }
+
+        const query = { employeeId };
+        if (status && status !== 'all' && status !== 'All Status') {
+            query.status = status;
+        }
+
+        if (month || year) {
+            const d = new Date();
+            const y = Number(year) || d.getFullYear();
+            const m = Number(month) || d.getMonth() + 1;
+            const { start, end } = toMonthRange(y, m);
+            query.date = { $gte: start, $lte: end };
+        }
+
+        const permissions = await PermissionRequest.find(query)
+            .populate('approvedBy', 'name email role')
+            .populate('rejectedBy', 'name email role')
+            .sort({ date: -1, createdAt: -1 })
+            .lean();
+
+        return res.json({ success: true, data: { permissions } });
+    } catch (error) {
+        console.error('Get Permission Requests Error:', error);
+        return res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch permission requests' } });
+    }
+};
+
+// @desc    Cancel permission request
+// @route   PATCH /api/requests/permission/:id/cancel
+// @access  Private
+const cancelPermissionRequest = async (req, res) => {
+    try {
+        const employeeId = req.staff?._id || req.user?._id;
+        if (!employeeId) {
+            return res.status(400).json({ success: false, error: { message: 'Employee context required' } });
+        }
+
+        const permission = await PermissionRequest.findById(req.params.id);
+        if (!permission) {
+            return res.status(404).json({ success: false, error: { message: 'Permission request not found' } });
+        }
+        if (permission.employeeId.toString() !== employeeId.toString()) {
+            return res.status(403).json({ success: false, error: { message: 'You can only cancel your own requests' } });
+        }
+        if (permission.status !== 'Pending') {
+            return res.status(400).json({ success: false, error: { message: 'Only pending requests can be cancelled' } });
+        }
+
+        permission.status = 'Cancelled';
+        await permission.save();
+        return res.json({ success: true, data: { permission } });
+    } catch (error) {
+        console.error('Cancel Permission Request Error:', error);
+        return res.status(500).json({ success: false, error: { message: error.message || 'Failed to cancel permission request' } });
+    }
+};
+
+// @desc    Get permission balance for current month
+// @route   GET /api/requests/permission/balance
+// @access  Private
+const getPermissionBalance = async (req, res) => {
+    try {
+        const employeeId = req.staff?._id || req.user?._id;
+        const businessId = req.staff?.businessId || req.user?.businessId || req.companyId;
+        if (!employeeId) {
+            return res.status(400).json({ success: false, error: { message: 'Employee context required' } });
+        }
+
+        const d = new Date();
+        const y = Number(req.query?.year) || d.getFullYear();
+        const m = Number(req.query?.month) || d.getMonth() + 1;
+        const { start, end } = toMonthRange(y, m);
+
+        // Keep parity with web backend: resolve employee's effective shift and its permissionPolicy.
+        let monthlyQuotaMinutes = 0;
+        const staff = await Staff.findById(employeeId).select('shiftId shiftName joiningDate');
+        if (businessId) {
+            const company = await Company.findById(businessId).select('settings.attendance');
+            const anchorDay = new Date(y, m - 1, 1);
+            const shiftTiming = getShiftTimings(company, staff, anchorDay, staff?.joiningDate);
+            const policy = shiftTiming?.permissionPolicy || {};
+            monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
+
+            // Fallback for legacy data where staff-shift resolution fails:
+            // use maximum configured permission quota among business shifts.
+            if (monthlyQuotaMinutes <= 0) {
+                const shifts = company?.settings?.attendance?.shifts || [];
+                for (const shift of shifts) {
+                    const value = Math.max(0, Number(shift?.permissionPolicy?.monthlyQuotaMinutes || 0));
+                    if (value > monthlyQuotaMinutes) monthlyQuotaMinutes = value;
+                }
+            }
+        }
+
+        const consumedAgg = await Attendance.aggregate([
+            {
+                $match: {
+                    employeeId,
+                    date: { $gte: start, $lte: end }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: { $ifNull: ['$permissionConsumedMinutes', 0] } }
+                }
+            }
+        ]);
+
+        let consumedMinutes = Number(consumedAgg?.[0]?.total || 0);
+        if (consumedMinutes <= 0) {
+            // Fallback for app backend where attendance permission counters might be missing:
+            // use approved permission requests in the same month.
+            const approvedAgg = await PermissionRequest.aggregate([
+                {
+                    $match: {
+                        employeeId,
+                        status: 'Approved',
+                        date: { $gte: start, $lte: end }
+                    }
+                },
+                {
+                    $group: {
+                        _id: null,
+                        total: { $sum: { $ifNull: ['$requestedMinutes', 0] } }
+                    }
+                }
+            ]);
+            consumedMinutes = Number(approvedAgg?.[0]?.total || 0);
+        }
+        const remainingMinutes = Math.max(0, monthlyQuotaMinutes - consumedMinutes);
+
+        return res.json({
+            success: true,
+            data: { month: m, year: y, monthlyQuotaMinutes, consumedMinutes, remainingMinutes }
+        });
+    } catch (error) {
+        console.error('Get Permission Balance Error:', error);
+        return res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch permission balance' } });
+    }
+};
+
 module.exports = {
     applyLeave,
     getLeaveRequests,
@@ -1096,5 +1312,9 @@ module.exports = {
     requestPayslip,
     getPayslipRequests,
     viewPayslipRequest,
-    downloadPayslipRequest
+    downloadPayslipRequest,
+    createPermissionRequest,
+    getPermissionRequests,
+    cancelPermissionRequest,
+    getPermissionBalance
 };

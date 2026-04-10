@@ -1031,6 +1031,7 @@ const getShiftTimings = (
     let otBufferMinutes = 0;
     /** For open shifts: duplicate of openWorkHours for controllers expecting workHours. */
     let workHours = null;
+    let permissionPolicy = null;
     /** Embedded company row used for timings after rotational resolution (for logs / UI). */
     let effectiveShiftName = null;
     /** Mongo ObjectId string of the resolved embedded shift row (same calendar day as timings). */
@@ -1150,6 +1151,15 @@ const getShiftTimings = (
                     secondHalfStrictLogin: shift.halfDaySettings.secondHalfStrictLogin === true
                 };
             }
+            if (shift.permissionPolicy && typeof shift.permissionPolicy === 'object') {
+                permissionPolicy = {
+                    enabled: shift.permissionPolicy.enabled === true,
+                    monthlyQuotaMinutes: Math.max(0, Number(shift.permissionPolicy.monthlyQuotaMinutes || 0)),
+                    applyTo: ['lateArrival', 'earlyExit', 'both'].includes(String(shift.permissionPolicy.applyTo || 'both'))
+                        ? String(shift.permissionPolicy.applyTo || 'both')
+                        : 'both'
+                };
+            }
 
             const missingStandardWindow =
                 shiftType !== 'open' &&
@@ -1193,6 +1203,7 @@ const getShiftTimings = (
         openWorkHours,
         otBufferMinutes,
         workHours,
+        permissionPolicy,
         effectiveShiftName,
         effectiveShiftId
     };
