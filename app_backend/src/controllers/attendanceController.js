@@ -361,21 +361,69 @@ function getMonthBoundsForDate(date) {
     return { start, end };
 }
 
-async function getApprovedPermissionForDate(employeeId, businessId, attendanceDate) {
+function toDateKeyInTimezone(date, timeZone) {
+    if (!date) return '';
+    const d = new Date(date);
+    if (Number.isNaN(d.getTime())) return '';
+    try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: timeZone || 'UTC',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        }).formatToParts(d);
+        const year = parts.find((p) => p.type === 'year')?.value;
+        const month = parts.find((p) => p.type === 'month')?.value;
+        const day = parts.find((p) => p.type === 'day')?.value;
+        if (year && month && day) return `${year}-${month}-${day}`;
+        return d.toISOString().slice(0, 10);
+    } catch (_) {
+        // Fallback to UTC key when timezone formatter is unavailable.
+        return d.toISOString().slice(0, 10);
+    }
+}
+
+async function getApprovedPermissionForDate(employeeId, businessId, attendanceDate, businessTimezone = 'UTC') {
     if (!employeeId || !attendanceDate) return null;
-    const start = new Date(attendanceDate);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    const dayStartUtc = new Date(attendanceDate);
+    dayStartUtc.setUTCHours(0, 0, 0, 0);
+    const rangeStart = new Date(dayStartUtc.getTime() - (24 * 60 * 60 * 1000));
+    const rangeEnd = new Date(dayStartUtc.getTime() + (2 * 24 * 60 * 60 * 1000));
     const query = {
         employeeId,
-        date: { $gte: start, $lt: end },
+        date: { $gte: rangeStart, $lt: rangeEnd },
         status: 'Approved'
     };
     if (businessId) query.businessId = businessId;
-    return PermissionRequest.find(query)
-        .select('type requestedMinutes')
+    let rows = await PermissionRequest.find(query)
+        .select('date type requestedMinutes')
         .lean();
+    // Backward compatibility: some old rows may have inconsistent business linkage.
+    if ((!rows || rows.length === 0) && businessId) {
+        const relaxedQuery = {
+            employeeId,
+            date: { $gte: rangeStart, $lt: rangeEnd },
+            status: 'Approved'
+        };
+        rows = await PermissionRequest.find(relaxedQuery)
+            .select('date type requestedMinutes businessId')
+            .lean();
+    }
+    const attendanceKey = toDateKeyInTimezone(attendanceDate, businessTimezone);
+    const matched = (Array.isArray(rows) ? rows : []).filter((row) => {
+        const rowKey = toDateKeyInTimezone(row?.date, businessTimezone);
+        return rowKey === attendanceKey;
+    });
+    console.log('[Permission][Lookup]', {
+        employeeId: employeeId?.toString?.() || String(employeeId || ''),
+        businessId: businessId?.toString?.() || String(businessId || ''),
+        attendanceDate: new Date(attendanceDate).toISOString(),
+        businessTimezone,
+        attendanceKey,
+        fetchedRows: Array.isArray(rows) ? rows.length : 0,
+        matchedRows: matched.length
+    });
+    return matched;
 }
 
 async function getConsumedPermissionMinutesForMonth({
@@ -409,7 +457,9 @@ async function applyPermissionQuotaAdjustment({
     businessId,
     attendanceDate,
     attendanceId = null,
+    businessTimezone = 'UTC',
     isOpenShiftDay,
+    isCheckout = false,
     shiftPermissionPolicy,
     lateMinutes,
     earlyMinutes
@@ -424,45 +474,130 @@ async function applyPermissionQuotaAdjustment({
         permissionEarlyMinutes: 0
     };
     const policy = shiftPermissionPolicy || {};
-    const enabled = policy.enabled === true;
-    const monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
+    let enabled = policy.enabled === true;
+    let monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
     const applyTo = ['lateArrival', 'earlyExit', 'both'].includes(String(policy.applyTo || 'both'))
         ? String(policy.applyTo || 'both')
         : 'both';
-    if (!enabled || monthlyQuotaMinutes <= 0) return zero;
-
-    const approvedPermissions = await getApprovedPermissionForDate(employeeId, businessId, attendanceDate);
+    const approvedPermissions = await getApprovedPermissionForDate(
+        employeeId,
+        businessId,
+        attendanceDate,
+        businessTimezone
+    );
     if (!Array.isArray(approvedPermissions) || approvedPermissions.length === 0) {
+        console.log('[Permission][Skip]', {
+            reason: 'no_approved_requests_for_day',
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            businessId: businessId?.toString?.() || String(businessId || ''),
+            attendanceDate: new Date(attendanceDate).toISOString(),
+            monthlyQuotaMinutes
+        });
         return {
             ...zero,
             permissionRemainingMinutes: monthlyQuotaMinutes
         };
     }
 
-    let approvedLate = 0;
-    let approvedEarly = 0;
+    let approvedLateOnly = 0;
+    let approvedEarlyOnly = 0;
+    let approvedBothShared = 0;
     for (const req of approvedPermissions) {
         const mins = Math.max(0, Math.floor(Number(req?.requestedMinutes) || 0));
         if (mins <= 0) continue;
         const t = String(req?.type || 'both').trim();
-        if (t === 'lateArrival') approvedLate += mins;
-        else if (t === 'earlyExit') approvedEarly += mins;
-        else {
-            approvedLate += mins;
-            approvedEarly += mins;
-        }
+        if (t === 'lateArrival') approvedLateOnly += mins;
+        else if (t === 'earlyExit') approvedEarlyOnly += mins;
+        else approvedBothShared += mins;
+    }
+    const approvedMinutesForDay = Math.max(
+        0,
+        approvedLateOnly + approvedEarlyOnly + approvedBothShared
+    );
+    if ((!enabled || monthlyQuotaMinutes <= 0) && approvedMinutesForDay > 0) {
+        // Fallback path for records where policy settings are missing/zero but
+        // approved permission exists for the day. Keeps permission usage fields
+        // consistent with approved request minutes.
+        enabled = true;
+        monthlyQuotaMinutes = approvedMinutesForDay;
+        console.log('[Permission][Fallback]', {
+            reason: !policy.enabled ? 'policy_disabled' : 'monthly_quota_zero',
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            businessId: businessId?.toString?.() || String(businessId || ''),
+            attendanceDate: new Date(attendanceDate).toISOString(),
+            approvedMinutesForDay,
+            effectiveMonthlyQuotaMinutes: monthlyQuotaMinutes
+        });
+    }
+    if (!enabled || monthlyQuotaMinutes <= 0) {
+        console.log('[Permission][Skip]', {
+            reason: !enabled ? 'policy_disabled' : 'monthly_quota_zero',
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            businessId: businessId?.toString?.() || String(businessId || ''),
+            attendanceDate: new Date(attendanceDate).toISOString(),
+            policy
+        });
+        return {
+            ...zero,
+            permissionApprovedMinutes: approvedMinutesForDay,
+            permissionRemainingMinutes: monthlyQuotaMinutes
+        };
     }
 
     // Shift-level policy gate.
-    if (applyTo === 'lateArrival') approvedEarly = 0;
-    else if (applyTo === 'earlyExit') approvedLate = 0;
-    // Open shift never consumes late side.
-    if (isOpenShiftDay) approvedLate = 0;
-
+    // IMPORTANT:
+    // - `both` permission request remains a shared pool.
+    // - policy decides which side can draw from this pool.
+    let allowLateByPolicy = true;
+    let allowEarlyByPolicy = true;
+    if (applyTo === 'lateArrival') {
+        allowEarlyByPolicy = false;
+        approvedEarlyOnly = 0;
+    } else if (applyTo === 'earlyExit') {
+        allowLateByPolicy = false;
+        approvedLateOnly = 0;
+    }
+    const approvedLateBeforeOpenRule = approvedLateOnly + approvedBothShared;
+    const approvedEarlyBeforeOpenRule = approvedEarlyOnly + approvedBothShared;
+    // Open shift: permission applies only at checkout and only to early-exit side.
+    if (isOpenShiftDay && !isCheckout) {
+        const consumedSoFarNoCurrent = await getConsumedPermissionMinutesForMonth({
+            employeeId,
+            attendanceDate,
+            excludeAttendanceId: attendanceId
+        });
+        return {
+            ...zero,
+            // Visibility only on check-in; no consume until checkout.
+            // Do not double-count shared `both` pool on visibility.
+            permissionApprovedMinutes: Math.max(
+                0,
+                approvedLateOnly + approvedEarlyOnly + approvedBothShared
+            ),
+            permissionRemainingMinutes: Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent)
+        };
+    }
+    if (isOpenShiftDay) {
+        allowLateByPolicy = false;
+        allowEarlyByPolicy = true;
+        approvedLateOnly = 0;
+    }
     const actualLate = Math.max(0, Number(lateMinutes) || 0);
     const actualEarly = Math.max(0, Number(earlyMinutes) || 0);
-    const eligibleLate = Math.min(actualLate, approvedLate);
-    const eligibleEarly = Math.min(actualEarly, approvedEarly);
+    // Daily allowance logic:
+    // - lateArrival bucket is only for late
+    // - earlyExit bucket is only for early
+    // - both bucket is shared across late+early (late first, then early)
+    const eligibleLateOnly = allowLateByPolicy ? Math.min(actualLate, approvedLateOnly) : 0;
+    const lateNeedFromBoth = allowLateByPolicy ? Math.max(0, actualLate - eligibleLateOnly) : 0;
+    const eligibleLateFromBoth = Math.min(lateNeedFromBoth, approvedBothShared);
+    const remainingBothAfterLate = Math.max(0, approvedBothShared - eligibleLateFromBoth);
+    const eligibleLate = eligibleLateOnly + eligibleLateFromBoth;
+    const eligibleEarlyOnly = allowEarlyByPolicy ? Math.min(actualEarly, approvedEarlyOnly) : 0;
+    const eligibleEarlyFromBoth = allowEarlyByPolicy
+        ? Math.min(Math.max(0, actualEarly - eligibleEarlyOnly), remainingBothAfterLate)
+        : 0;
+    const eligibleEarly = eligibleEarlyOnly + eligibleEarlyFromBoth;
     const approvedEligibleForDay = eligibleLate + eligibleEarly;
     if (approvedEligibleForDay <= 0) {
         const consumedSoFarNoCurrent = await getConsumedPermissionMinutesForMonth({
@@ -472,6 +607,7 @@ async function applyPermissionQuotaAdjustment({
         });
         return {
             ...zero,
+            permissionApprovedMinutes: approvedMinutesForDay,
             permissionRemainingMinutes: Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent)
         };
     }
@@ -485,7 +621,7 @@ async function applyPermissionQuotaAdjustment({
     if (remainingBefore <= 0) {
         return {
             ...zero,
-            permissionApprovedMinutes: approvedEligibleForDay
+            permissionApprovedMinutes: approvedMinutesForDay
         };
     }
 
@@ -499,7 +635,7 @@ async function applyPermissionQuotaAdjustment({
     return {
         adjustedLateMinutes: Math.max(0, actualLate - consumeLate),
         adjustedEarlyMinutes: Math.max(0, actualEarly - consumeEarly),
-        permissionApprovedMinutes: approvedEligibleForDay,
+        permissionApprovedMinutes: approvedMinutesForDay,
         permissionConsumedMinutes: consumed,
         permissionRemainingMinutes: remainingAfter,
         permissionLateMinutes: consumeLate,
@@ -645,15 +781,12 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         if (punchOutTime) {
             if (isOpenShiftDay && punchInTime) {
                 const requiredMin = Math.round(shiftHours * 60);
-                let effectivePunchIn = punchInTime;
-                if (shiftStartTime) {
-                    const { getShiftBoundaryAsUTCDate } = require('../utils/leaveAttendanceHelper');
-                    const shiftStartUTC = getShiftBoundaryAsUTCDate(attendanceDate, shiftStartTime, businessTimezone);
-                    if (punchInTime > shiftStartUTC) {
-                        effectivePunchIn = shiftStartUTC;
-                    }
-                }
-                const workedMin = Math.max(0, Math.round((punchOutTime.getTime() - effectivePunchIn.getTime()) / (1000 * 60)));
+                // Open shift shortfall must be based on actual worked minutes
+                // between punch-in and punch-out, not fixed shift start.
+                const workedMin = Math.max(
+                    0,
+                    Math.round((punchOutTime.getTime() - punchInTime.getTime()) / (1000 * 60))
+                );
                 const shortBy = Math.max(0, requiredMin - workedMin);
                 earlyFine.earlyMinutes = shortBy;
                 if (fineConfig && fineConfig.enabled && shortBy > 0 && effectiveDailyNet > 0) {
@@ -679,9 +812,11 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 attendanceDate,
                 attendanceId: context?.attendanceId || null,
                 isOpenShiftDay,
+                isCheckout: !!punchOutTime,
                 shiftPermissionPolicy: dbShiftTimings?.permissionPolicy || null,
                 lateMinutes: lateFine.lateMinutes,
-                earlyMinutes: earlyFine.earlyMinutes
+                earlyMinutes: earlyFine.earlyMinutes,
+                businessTimezone
             });
             if (permissionAdj) {
                 lateFine.lateMinutes = permissionAdj.adjustedLateMinutes;

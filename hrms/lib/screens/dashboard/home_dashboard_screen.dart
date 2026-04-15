@@ -14,6 +14,7 @@ import '../alarm/alarm_set_sheet.dart';
 import '../notifications/notifications_screen.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/menu_icon_button.dart';
+import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/geo/live_tracking_service.dart';
 import '../geo/live_tracking_screen.dart';
 import '../../services/request_service.dart';
@@ -621,18 +622,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   /// Web-style status chip (top-right of calendar day).
   Widget _dashboardCalendarStatusChip(String label, Color bg, Color fg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(8),
-      ),
+    // Keep status style text-only (no badge background/border).
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
       child: Text(
         label,
         maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+        overflow: TextOverflow.fade,
+        softWrap: false,
         style: TextStyle(
-          fontSize: 6,
+          fontSize: 7,
           height: 1.0,
           fontWeight: FontWeight.w700,
           color: fg,
@@ -812,37 +811,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 ],
               ),
             ),
-            if (snap.cycleLength != null &&
-                snap.cycleDayIndex1Based != null &&
-                snap.cycleLength! > 0) ...[
-              const SizedBox(height: 8),
-              Text(
-                (snap.rotationalMode ?? '') == 'weekly'
-                    ? 'Cycle day ${snap.cycleDayIndex1Based} of ${snap.cycleLength} '
-                          '($refFmt). Weekly rotation: slot follows the calendar '
-                          'weekday (UTC, Sun=0…Sat=6), same rule as web and server.'
-                    : 'Cycle day ${snap.cycleDayIndex1Based} of ${snap.cycleLength} '
-                          '($refFmt). Custom/daily rotation: counted from your '
-                          'joining date on the calendar — same rule as web and '
-                          'server for late, half-day, and overtime.',
-                style: TextStyle(
-                  fontSize: 11,
-                  height: 1.35,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-            const SizedBox(height: 6),
-            Text(
-              'Calendar shows the effective shift for each date. Rotational: '
-              'weekly uses weekday; custom/daily uses joining date + cycle length '
-              'with shiftIdsInCycle / shiftNamesInCycle.',
-              style: TextStyle(
-                fontSize: 10,
-                height: 1.3,
-                color: colorScheme.onSurfaceVariant.withOpacity(0.9),
-              ),
-            ),
           ],
         ),
       ),
@@ -994,6 +962,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         final statsResult = await _salaryService.getSalaryStats(
           month: monthIndex,
           year: year,
+          statsRequestTag: 'Dashboard',
         );
         if (statsResult['stats'] != null) {
           backendStats = statsResult['stats'] as Map<String, dynamic>;
@@ -1386,29 +1355,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   _buildWelcomeCard(),
                   const SizedBox(height: 32),
 
-                  // 2. Summary Cards (white cards - Pending Leaves donut, This Month Net) — same height
-                  IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          child: _buildPendingLeavesSummaryCard(pendingLeaves),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildThisMonthNetSummaryCard(
-                            mtdDisplay,
-                            monthlyDisplay,
-                            presentDays,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 28),
-
-                  // 3. Quick Actions
+                  // 2. Quick Actions
                   Text(
                     'Quick Actions',
                     style: const TextStyle(
@@ -1445,47 +1392,67 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
                   const SizedBox(height: 32),
 
-                  // Announcements and today's celebrations only.
+                  // 3. Recent Leaves
+                  _buildRecentLeavesCard(),
+                  const SizedBox(height: 24),
+
+                  // 4. Celebration and Announcement cards
                   if (_todayAnnouncements.isNotEmpty ||
                       _todayCelebrations.isNotEmpty) ...[
-                    IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (_todayAnnouncements.isNotEmpty)
-                            Expanded(child: _buildTodayAnnouncementsCard()),
-                          if (_todayAnnouncements.isNotEmpty &&
-                              _todayCelebrations.isNotEmpty)
-                            const SizedBox(width: 16),
-                          if (_todayCelebrations.isNotEmpty)
-                            Expanded(child: _buildCelebrationsCard()),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 32),
+                    isWide
+                        ? IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (_todayCelebrations.isNotEmpty)
+                                  Expanded(child: _buildCelebrationsCard()),
+                                if (_todayCelebrations.isNotEmpty &&
+                                    _todayAnnouncements.isNotEmpty)
+                                  const SizedBox(width: 16),
+                                if (_todayAnnouncements.isNotEmpty)
+                                  Expanded(child: _buildTodayAnnouncementsCard()),
+                              ],
+                            ),
+                          )
+                        : Column(
+                            children: [
+                              if (_todayCelebrations.isNotEmpty)
+                                _buildCelebrationsCard(),
+                              if (_todayCelebrations.isNotEmpty &&
+                                  _todayAnnouncements.isNotEmpty)
+                                const SizedBox(height: 16),
+                              if (_todayAnnouncements.isNotEmpty)
+                                _buildTodayAnnouncementsCard(),
+                            ],
+                          ),
+                    const SizedBox(height: 24),
                   ],
 
-                  // 4. Recent Leaves & Attendance
-                  isWide
-                      ? Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: _buildRecentLeavesCard()),
-                            if (!_isCandidate) ...[
-                              const SizedBox(width: 24),
-                              Expanded(child: _buildMonthAttendanceCard()),
-                            ],
-                          ],
-                        )
-                      : Column(
-                          children: [
-                            _buildRecentLeavesCard(),
-                            if (!_isCandidate) ...[
-                              const SizedBox(height: 24),
-                              _buildMonthAttendanceCard(),
-                            ],
-                          ],
+                  // 5. Today attendance card
+                  if (!_isCandidate) ...[
+                    _buildMonthAttendanceCard(dashboardCompact: true),
+                    const SizedBox(height: 24),
+                  ],
+
+                  // 6. Leave Request and This Month cards
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: _buildPendingLeavesSummaryCard(pendingLeaves),
                         ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildThisMonthNetSummaryCard(
+                            mtdDisplay,
+                            monthlyDisplay,
+                            presentDays,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1757,6 +1724,42 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  void _openDashboardCalendarDetailsScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.white,
+          appBar: AppBar(
+            leading: const MenuIconButton(),
+            title: const Text('Attendance Calendar'),
+            centerTitle: true,
+            backgroundColor: Colors.white,
+            foregroundColor: AppColors.primary,
+            elevation: 0,
+          ),
+          drawer: widget.onNavigateToIndex != null
+              ? AppDrawer(
+                  currentIndex: widget.dashboardTabIndex ?? 0,
+                  onNavigateToIndex: widget.onNavigateToIndex,
+                )
+              : const AppDrawer(),
+          body: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: _buildMonthAttendanceCard(
+                showHeaderIcon: false,
+                dashboardCompact: false,
+              ),
+            ),
+          ),
+          bottomNavigationBar: AppBottomNavigationBar(
+            currentIndex: -1,
+          ),
+        ),
       ),
     );
   }
@@ -2857,7 +2860,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return byDate.values.toList();
   }
 
-  Widget _buildMonthAttendanceCard() {
+  Widget _buildMonthAttendanceCard({
+    bool showHeaderIcon = true,
+    bool dashboardCompact = false,
+  }) {
     final monthName = DateFormat('MMMM yyyy').format(_selectedMonth);
     // Day counters must match Salary Overview (web-style reducer + explicit month sets).
     // Do NOT use dashboard `attendanceSummary` for these counts: it can diverge and shows wrong
@@ -2994,24 +3000,56 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.calendar_month, size: 22, color: AppColors.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Attendance ($monthName)',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+          if (dashboardCompact && showHeaderIcon) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: InkWell(
+                onTap: _openDashboardCalendarDetailsScreen,
+                borderRadius: BorderRadius.circular(18),
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(
+                    Icons.calendar_month,
+                    size: 22,
+                    color: AppColors.primary,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 24),
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (!dashboardCompact)
+            Row(
+              children: [
+                if (showHeaderIcon) ...[
+                  InkWell(
+                    onTap: _openDashboardCalendarDetailsScreen,
+                    borderRadius: BorderRadius.circular(18),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.calendar_month,
+                        size: 22,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Text(
+                    'Attendance ($monthName)',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          if (!dashboardCompact) const SizedBox(height: 24),
           // Today punch in/out and status above the cloud
           _buildTodayAttendanceSubCard(),
           const SizedBox(height: 20),
@@ -3033,43 +3071,45 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 );
               },
             ),
-          _buildMonthStatsRow(
-            workingDays: (stats['workingDays'] ?? 0).toString(),
-            thisMonthWorkingDays: stats['thisMonthWorkingDays']?.toString(),
-            holidays: (stats['holidaysCount'] ?? 0).toString(),
-            weekOffs: (stats['weekOffs'] ?? 0).toString(),
-            presentDays: (stats['presentDays'] ?? '0').toString(),
-            absentDays: (stats['absentDays'] ?? '0').toString(),
-            halfDayPaidLeaveCount: stats['halfDayPaidLeaveCount']?.toString(),
-            leaveDays: stats['leaveDays']?.toString(),
-          ),
-          const SizedBox(height: 24),
-          _buildSimpleCalendar(),
-          const SizedBox(height: 24),
-          _buildStatusLegend(),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                final fn = widget.onNavigate;
-                if (fn != null) fn(4, subTabIndex: 1);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: const Color(0xFF1E293B),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          if (!dashboardCompact) ...[
+            _buildMonthStatsRow(
+              workingDays: (stats['workingDays'] ?? 0).toString(),
+              thisMonthWorkingDays: stats['thisMonthWorkingDays']?.toString(),
+              holidays: (stats['holidaysCount'] ?? 0).toString(),
+              weekOffs: (stats['weekOffs'] ?? 0).toString(),
+              presentDays: (stats['presentDays'] ?? '0').toString(),
+              absentDays: (stats['absentDays'] ?? '0').toString(),
+              halfDayPaidLeaveCount: stats['halfDayPaidLeaveCount']?.toString(),
+              leaveDays: stats['leaveDays']?.toString(),
+            ),
+            const SizedBox(height: 24),
+            _buildSimpleCalendar(),
+            const SizedBox(height: 24),
+            _buildStatusLegend(),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  final fn = widget.onNavigate;
+                  if (fn != null) fn(4, subTabIndex: 1);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: const Color(0xFF1E293B),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
                 ),
-                elevation: 0,
-              ),
-              child: const Text(
-                'View Full Attendance',
-                style: TextStyle(fontWeight: FontWeight.w600),
+                child: const Text(
+                  'View Full Attendance',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -3531,7 +3571,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       }
     }
 
-    const calCrossSpacing = 8.0;
+    const calCrossSpacing = 0.0;
     const calColCount = 7;
     const calAspect = 0.48;
     final screenW = MediaQuery.sizeOf(context).width;
@@ -3978,11 +4018,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                 isWeekOff &&
                                 !alternateWorkDatesInMonthSet.contains(dateStr);
                             if (pureWeekOff) {
-                              webBadgeLabel = 'Week Off';
+                              webBadgeLabel = 'WF';
                               webBadgeBg = const Color(0xFFE5E7EB);
                               webBadgeFg = const Color(0xFF374151);
+                            } else if (alternateWorkDatesInMonthSet.contains(
+                              dateStr,
+                            )) {
+                              webBadgeLabel = 'WA';
+                              webBadgeBg = const Color(0xFFE8D5C4);
+                              webBadgeFg = const Color(0xFF78350F);
                             } else if (isHoliday) {
-                              webBadgeLabel = 'Holiday';
+                              webBadgeLabel = 'HA';
                               webBadgeBg = const Color(0xFFFEF3C7);
                               webBadgeFg = const Color(0xFF92400E);
                             } else if (isAbsentStatusForAbbr ||
@@ -4003,11 +4049,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                 (leaveDateSet.contains(dateStr) &&
                                     !isPresentStatusForAbbr &&
                                     !isHalfDayStatusForAbbr)) {
-                              webBadgeLabel = 'On Leave';
+                              webBadgeLabel = 'Leave';
                               webBadgeBg = const Color(0xFFEDE9FE);
                               webBadgeFg = const Color(0xFF5B21B6);
                             } else if (isHalfDayStatusForAbbr) {
-                              webBadgeLabel = 'Half Day';
+                              webBadgeLabel = 'Leave';
                               webBadgeBg = const Color(0xFFFEF9C3);
                               webBadgeFg = const Color(0xFFA16207);
                             } else if (absentDateSet.contains(dateStr) &&
@@ -4019,12 +4065,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             }
 
                             calendarCellIsWeekOff = isWeekOff;
+                            // Calendar background status colors are intentionally disabled for now.
+                            bgColor = Colors.transparent;
                           }
 
                           if (!isCurrentMonth) {
                             return Container(
                               decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.zero,
+                                border: Border.all(
+                                  color: colorScheme.outline.withOpacity(0.6),
+                                  width: 1,
+                                ),
                               ),
                               child: Align(
                                 alignment: Alignment.topLeft,
@@ -4053,13 +4105,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             clipBehavior: Clip.antiAlias,
                             decoration: BoxDecoration(
                               color: bgColor,
-                              borderRadius: BorderRadius.circular(8),
-                              border: isToday
-                                  ? Border.all(
-                                      color: AppColors.primary,
-                                      width: 2,
-                                    )
-                                  : null,
+                              borderRadius: BorderRadius.zero,
+                              border: Border.all(
+                                color: isToday
+                                    ? AppColors.primary
+                                    : colorScheme.outline.withOpacity(0.6),
+                                width: isToday ? 2 : 1,
+                              ),
                             ),
                             child: Stack(
                               children: [
@@ -4219,66 +4271,57 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   Widget _buildStatusLegend() {
-    final colorScheme = Theme.of(context).colorScheme;
     return Wrap(
       spacing: 16,
       runSpacing: 12,
       children: [
-        _buildLegendItem(const Color(0xFFDCFCE7), 'Present'),
-        // Use light red to match calendar cell background for Absent
-        _buildLegendItem(const Color(0xFFFEE2E2), 'Absent'),
-        // Use same soft yellow as calendar Holiday cell background
-        _buildLegendItem(const Color(0xFFFEF3C7), 'Holiday'),
-        _buildLegendItem(const Color(0xFFE8D5C4), 'Working Day'),
-        _buildLegendItem(const Color(0xFFE9D5FF), 'Weekend'),
-        _buildLegendItem(const Color(0xFFBFDBFE), 'On Leave'),
-        // Low Work Hours with red dot
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: const Color(0xFFDCFCE7), // Present background
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: Container(
-                  width: 5,
-                  height: 5,
-                  decoration: const BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Low Work Hours',
-              style: TextStyle(fontSize: 11, color: colorScheme.onSurface),
-            ),
-          ],
+        _buildLegendItem(
+          'WA',
+          'Working Alternate Day',
+          textColor: const Color(0xFF78350F),
         ),
+        _buildLegendItem('WF', 'Week Off', textColor: const Color(0xFF374151)),
+        _buildLegendItem('HA', 'Holiday', textColor: const Color(0xFF92400E)),
+        _buildLegendItem('LEAVE', 'On Leave', textColor: const Color(0xFF5B21B6)),
+        _buildLegendItem('PRESENT', 'Present', textColor: const Color(0xFF166534)),
+        _buildLegendItem('ABSENT', 'Absent', textColor: const Color(0xFFB91C1C)),
+        _buildLegendItem('PENDING', 'Pending', textColor: const Color(0xFF475569)),
       ],
     );
   }
 
-  Widget _buildLegendItem(Color color, String label) {
+  Widget _buildLegendItem(
+    String shortCode,
+    String fullForm, {
+    Color? textColor,
+  }) {
     final colorScheme = Theme.of(context).colorScheme;
+    final resolvedTextColor = textColor ?? colorScheme.onSurface;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            // Legend colors are intentionally disabled for now.
+            // color: color,
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: colorScheme.outline.withOpacity(0.6)),
+          ),
+          child: Text(
+            shortCode,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: resolvedTextColor,
+            ),
+          ),
         ),
         const SizedBox(width: 8),
         Text(
-          label,
-          style: TextStyle(fontSize: 11, color: colorScheme.onSurface),
+          fullForm,
+          style: TextStyle(fontSize: 11, color: resolvedTextColor),
         ),
       ],
     );

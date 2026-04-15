@@ -8,6 +8,7 @@ import 'package:dio/dio.dart';
 import '../config/constants.dart';
 import '../utils/error_message_utils.dart';
 import 'api_client.dart';
+import 'web_hrms_api_dio.dart';
 import 'fcm_service.dart';
 import 'attendance_template_store.dart';
 import 'geo/live_tracking_service.dart';
@@ -431,7 +432,7 @@ class AuthService {
     }
   }
 
-  Future<Map<String, dynamic>> getProfile() async {
+  Future<Map<String, dynamic>> getProfile({bool useWebHrmsApi = false}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
@@ -444,9 +445,13 @@ class AuthService {
       if (token == null) {
         return {'success': false, 'message': 'Not authenticated'};
       }
-      _api.setAuthToken(token);
+      if (!useWebHrmsApi) {
+        _api.setAuthToken(token);
+      }
       try {
-        final response = await _api.dio.get<Map<String, dynamic>>(
+        final response = useWebHrmsApi
+            ? await webHrmsApiDio().get<Map<String, dynamic>>('/auth/profile')
+            : await _api.dio.get<Map<String, dynamic>>(
           '/auth/profile',
         );
         final body = response.data ?? {};

@@ -4,10 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/constants.dart';
-import '../core/network/dio_client.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
-import 'interaction_service.dart';
+import 'web_hrms_api_dio.dart';
 
 final AuthService _salaryAuthServiceForAppPerDay = AuthService();
 
@@ -18,7 +17,7 @@ const kAppLegacyPerDaySalaryPrefsKey = 'app_per_day_salary';
 
 // Salary debug logs toggle.
 // Set true when you need these verbose salary traces again.
-const bool _kEnableSalaryVerboseLogs = false;
+const bool _kEnableSalaryVerboseLogs = true;
 
 void _salaryLog(String message) {
   if (_kEnableSalaryVerboseLogs) {
@@ -118,39 +117,210 @@ class SalaryService {
   final ApiClient _api = ApiClient();
   static const Duration _salaryRequestTimeout = Duration(seconds: 25);
 
-  Future<Map<String, dynamic>> getSalaryStats({int? month, int? year}) async {
+  static bool get _mainAndWebHostsAreSame {
+    final main = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
+    return main == web;
+  }
+
+  /// Some hosts return payroll stats flat on `data` or nested as `data.data`; normalize to `{ stats: Map }`.
+  static Map<String, dynamic> _unwrapPayrollStatsPayload(dynamic result) {
+    if (result is! Map) return <String, dynamic>{};
+    var m = Map<String, dynamic>.from(Map<dynamic, dynamic>.from(result));
+    final inner = m['data'];
+    if (inner is Map && m['stats'] == null) {
+      final im = Map<String, dynamic>.from(inner);
+      if (im['stats'] != null ||
+          im['thisMonthGross'] != null ||
+          im['thisMonthNet'] != null ||
+          im['grossSalary'] != null) {
+        m = im;
+      }
+    }
+    if (m['stats'] is Map) return m;
+    const statKeys = <String>[
+      'thisMonthGross',
+      'thisMonthNet',
+      'grossSalary',
+      'netSalary',
+      'deductions',
+      'earnings',
+      'deductionComponents',
+      'attendance',
+    ];
+    final sm = <String, dynamic>{};
+    for (final k in statKeys) {
+      if (m.containsKey(k)) sm[k] = m[k];
+    }
+    if (sm.isNotEmpty) {
+      return Map<String, dynamic>.from(m)..['stats'] = sm;
+    }
+    return m;
+  }
+
+  /// Web HRMS often returns `{ stats: null }` when the JWT staff is not linked there;
+  /// geo [AppConstants.baseUrl] still has payroll stats for the same employee.
+  static bool _payrollStatsEnvelopeHasUsableStats(Map<String, dynamic> envelope) {
+    final st = envelope['stats'];
+    if (st is! Map) return false;
+    final sm = Map<String, dynamic>.from(st);
+    if (sm['thisMonthNet'] is num || sm['thisMonthGross'] is num) return true;
+    if (sm['grossSalary'] is num || sm['netSalary'] is num) return true;
+    final er = sm['earnings'];
+    if (er is List && er.isNotEmpty) return true;
+    final dr = sm['deductionComponents'];
+    if (dr is List && dr.isNotEmpty) return true;
+    final att = sm['attendance'];
+    if (att is Map) {
+      final a = Map<String, dynamic>.from(att);
+      if (a['workingDays'] is num || a['workingDaysFullMonth'] is num) {
+        return true;
+      }
+      // Web variants may only expose day counts without WD until web UI parity work.
+      if (a['presentDays'] is num || a['paidLeaveDays'] is num) return true;
+    }
+    return false;
+  }
+
+  Future<Map<String, dynamic>> _fetchPayrollStatsFromDio(
+    Dio dio, {
+    int? month,
+    int? year,
+  }) async {
+    final response = await dio.get<Map<String, dynamic>>(
+      '/payroll/stats',
+      queryParameters: {
+        if (month != null) 'month': month,
+        if (year != null) 'year': year,
+      },
+      options: Options(
+        sendTimeout: _salaryRequestTimeout,
+        receiveTimeout: _salaryRequestTimeout,
+        extra: const {'disable_429_retry': true},
+      ),
+    );
+    final data = response.data;
+    if (data != null && data['success'] == true) {
+      final result = data['data'];
+      if (result is Map) {
+        return _unwrapPayrollStatsPayload(result);
+      }
+    }
+    return _getEmptySalaryData();
+  }
+
+  Future<Map<String, dynamic>> getSalaryStats({
+    int? month,
+    int? year,
+    /// When false, only [AppConstants.webBaseUrl] is tried for `/payroll/stats` (no geo fallback).
+    bool allowGeoStatsFallback = true,
+    /// For logs only — e.g. `SalaryOverviewTab` vs `Dashboard` (same [SalaryService] method).
+    String statsRequestTag = 'PayrollStats',
+  }) async {
     final token = await _authService.getToken();
     if (token == null) return _getEmptySalaryData();
-    try {
+
+    void tagLog(String msg) =>
+        _salaryLog('[$statsRequestTag] geoFallback=$allowGeoStatsFallback $msg');
+
+    Future<Map<String, dynamic>> tryWeb() async {
+      tagLog(
+        'GET ${AppConstants.webBaseUrl}/payroll/stats month=$month year=$year',
+      );
+      return _fetchPayrollStatsFromDio(
+        webHrmsApiDio(),
+        month: month,
+        year: year,
+      );
+    }
+
+    Future<Map<String, dynamic>> tryMain() async {
+      if (_mainAndWebHostsAreSame) return _getEmptySalaryData();
+      tagLog(
+        'GET ${AppConstants.baseUrl}/payroll/stats (fallback) month=$month year=$year',
+      );
       _api.setAuthToken(token);
-      _salaryLog(
-        '[SalaryOverview] GET /payroll/stats month=$month year=$year',
+      return _fetchPayrollStatsFromDio(
+        _api.dio,
+        month: month,
+        year: year,
       );
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/payroll/stats',
-        queryParameters: {
-          if (month != null) 'month': month,
-          if (year != null) 'year': year,
-        },
-        options: Options(
-          sendTimeout: _salaryRequestTimeout,
-          receiveTimeout: _salaryRequestTimeout,
-          extra: const {'disable_429_retry': true},
-        ),
-      );
-      final data = response.data;
-      if (data != null && data['success'] == true) {
-        final result = data['data'];
-        if (result is Map) {
-          final m = Map<String, dynamic>.from(result);
-          _logPayrollStatsForTest(data: m, month: month, year: year);
-          return m;
+    }
+
+    try {
+      Map<String, dynamic> envelope =
+          _unwrapPayrollStatsPayload(await tryWeb());
+      if (_payrollStatsEnvelopeHasUsableStats(envelope)) {
+        tagLog(
+          'payroll/stats source=${AppConstants.webBaseUrl} usable=true '
+          'keys=${envelope.keys.join(",")}',
+        );
+        _logPayrollStatsForTest(data: envelope, month: month, year: year);
+        return envelope;
+      }
+      if (!allowGeoStatsFallback) {
+        if (kDebugMode) {
+          tagLog(
+            'payroll/stats web-only: no usable stats after unwrap — '
+            'envelopeKeys=${envelope.keys.join(",")} statsType=${envelope["stats"].runtimeType}',
+          );
+          final st = envelope['stats'];
+          if (st is Map) {
+            final sm = Map<String, dynamic>.from(st);
+            tagLog(
+              'payroll/stats inner keys: ${sm.keys.join(", ")} '
+              '(web returned 200 but no MTD/month/earnings/WD fields the app reads — '
+              'Salary cards still use payroll row + proration)',
+            );
+          }
         }
+        _logPayrollStatsForTest(data: envelope, month: month, year: year);
+        return envelope;
+      }
+      if (kDebugMode) {
+        tagLog(
+          'payroll/stats web payload has no usable stats — trying main API (${AppConstants.baseUrl})',
+        );
+      }
+      envelope = _unwrapPayrollStatsPayload(await tryMain());
+      if (_payrollStatsEnvelopeHasUsableStats(envelope)) {
+        tagLog(
+          'payroll/stats source=${AppConstants.baseUrl} (fallback) usable=true',
+        );
+        _logPayrollStatsForTest(data: envelope, month: month, year: year);
+        return envelope;
+      }
+      _logPayrollStatsForTest(data: envelope, month: month, year: year);
+      return envelope;
+    } on DioException catch (e) {
+      if (!allowGeoStatsFallback) {
+        if (kDebugMode) {
+          tagLog(
+            'payroll/stats web-only DioException ${e.response?.statusCode} '
+            '${e.message} — no geo fallback',
+          );
+        }
+        if (e.response?.statusCode == 404) return _getEmptySalaryData();
         return _getEmptySalaryData();
       }
-      return _getEmptySalaryData();
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 404) return _getEmptySalaryData();
+      if (kDebugMode) {
+        tagLog(
+          'payroll/stats web DioException ${e.response?.statusCode} — trying main API',
+        );
+      }
+      try {
+        final envelope = _unwrapPayrollStatsPayload(await tryMain());
+        tagLog(
+          'payroll/stats source=${AppConstants.baseUrl} (after web error) '
+          'usable=${_payrollStatsEnvelopeHasUsableStats(envelope)}',
+        );
+        _logPayrollStatsForTest(data: envelope, month: month, year: year);
+        return envelope;
+      } catch (_) {
+        if (e.response?.statusCode == 404) return _getEmptySalaryData();
+        return _getEmptySalaryData();
+      }
+    } catch (_) {
       return _getEmptySalaryData();
     }
   }
@@ -177,7 +347,6 @@ class SalaryService {
     final token = await _authService.getToken();
     if (token == null) throw Exception('No token found');
     try {
-      _api.setAuthToken(token);
       final q = <String, dynamic>{
         'page': page ?? 1,
         'limit': limit ?? 10,
@@ -185,9 +354,9 @@ class SalaryService {
       if (month != null) q['month'] = month;
       if (year != null) q['year'] = year;
       _salaryLog(
-        '[SalaryOverview] GET /payroll query=$q',
+        '[SalaryOverview] GET ${AppConstants.webBaseUrl}/payroll query=$q',
       );
-      final response = await _api.dio.get<Map<String, dynamic>>(
+      final response = await webHrmsApiDio().get<Map<String, dynamic>>(
         '/payroll',
         queryParameters: q,
         options: Options(
@@ -238,12 +407,13 @@ class SalaryService {
     final token = await _authService.getToken();
     if (token == null) return null;
     try {
-      _api.setAuthToken(token);
       final path = download
           ? '/payroll/$payrollId/payslip/download'
           : '/payroll/$payrollId/payslip/view';
-      _salaryLog('[SalaryOverview] GET $path');
-      final response = await _api.dio.get<dynamic>(
+      _salaryLog(
+        '[SalaryOverview] GET ${AppConstants.webBaseUrl}$path',
+      );
+      final response = await webHrmsApiDio().get<dynamic>(
         path,
         options: Options(responseType: ResponseType.bytes),
       );
@@ -257,62 +427,9 @@ class SalaryService {
     }
   }
 
-  /// True when the geo app uses a different API host than [AppConstants.webBaseUrl].
-  /// Then [previewPayroll] calls the TypeScript HRMS API (same as web) so the payload
-  /// includes `salaryBasis`, `mockPayroll`, and template-linked `attendance`.
-  static bool get _previewShouldUseWebHrmsHost {
-    final main = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
-    final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
-    return main != web;
-  }
-
-  static Dio _webHrmsPreviewDio() {
-    var base = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
-    if (base.endsWith('/')) base = base.substring(0, base.length - 1);
-    final dio = Dio(
-      BaseOptions(
-        baseUrl: base,
-        connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 45),
-        sendTimeout: const Duration(seconds: 45),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ),
-    );
-    dio.interceptors.add(FormDataContentTypeInterceptor());
-    dio.interceptors.add(RetryOnRateLimitInterceptor(dio));
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) async {
-          final prefs = await SharedPreferences.getInstance();
-          var t = InteractionService.normalizeAccessToken(
-            prefs.getString(AppConstants.interactionAccessTokenPrefsKey),
-          );
-          t ??= InteractionService.normalizeAccessToken(prefs.getString('token'));
-          if (t == null) {
-            final auth = ApiClient().dio.options.headers['Authorization'];
-            if (auth is String) {
-              t = InteractionService.normalizeAccessToken(
-                auth.startsWith('Bearer ') ? auth.substring(7) : auth,
-              );
-            }
-          }
-          if (t != null) {
-            options.headers['Authorization'] = 'Bearer $t';
-          }
-          handler.next(options);
-        },
-      ),
-    );
-    return dio;
-  }
-
   /// Web RTK `previewPayroll` / EmployeeSalaryOverview: tier 2 MTD (after processed payroll).
-  /// When [baseUrl] ≠ [webBaseUrl], calls `POST` on the TS backend (`hrms.askeva.net`-style)
-  /// so the response matches web (`salaryBasis`, per-day rates, `fullMonthWorkingDays`, etc.).
-  /// Otherwise uses the current app API (e.g. app_backend).
+  /// Always calls [AppConstants.webBaseUrl] so the payload matches the web HRMS
+  /// (`salaryBasis`, per-day rates, `fullMonthWorkingDays`, etc.).
   Future<Map<String, dynamic>> previewPayroll({
     required String employeeId,
     required int month,
@@ -330,60 +447,12 @@ class SalaryService {
       return {'success': false, 'data': null};
     }
 
-    if (_previewShouldUseWebHrmsHost) {
-      try {
-        if (kDebugMode) {
-          _salaryLog(
-            '[SalaryOverview] POST ${AppConstants.webBaseUrl}/payroll/preview '
-            'month=$month year=$year employeeId=$employeeId (web HRMS)',
-          );
-        }
-        final r = await _webHrmsPreviewDio().post<Map<String, dynamic>>(
-          '/payroll/preview',
-          data: body,
-          options: Options(
-            sendTimeout: _salaryRequestTimeout,
-            receiveTimeout: _salaryRequestTimeout,
-            extra: const {'disable_429_retry': true},
-          ),
-        );
-        final out = parseResponse(r);
-        _logPreviewSalaryNetGrossForTest(
-          response: out,
-          source: 'webHrms',
-          employeeId: employeeId,
-          month: month,
-          year: year,
-        );
-        unawaited(
-          syncPerDaySalaryPrefsFromPayrollPreview(
-            out,
-            month: month,
-            year: year,
-          ),
-        );
-        return out;
-      } on DioException catch (e) {
-        if (kDebugMode) {
-          _salaryLog(
-            '[SalaryOverview] previewPayroll web HRMS error: ${e.message} — retry main API',
-          );
-        }
-      }
-    }
-
-    final token = await _authService.getToken();
-    if (token == null) {
-      return {'success': false, 'data': null};
-    }
     try {
-      _api.setAuthToken(token);
-      if (kDebugMode) {
-        _salaryLog(
-          '[SalaryOverview] POST /payroll/preview month=$month year=$year employeeId=$employeeId',
-        );
-      }
-      final response = await _api.dio.post<Map<String, dynamic>>(
+      _salaryLog(
+        '[SalaryOverview] POST ${AppConstants.webBaseUrl}/payroll/preview '
+        'month=$month year=$year employeeId=$employeeId',
+      );
+      final r = await webHrmsApiDio().post<Map<String, dynamic>>(
         '/payroll/preview',
         data: body,
         options: Options(
@@ -392,10 +461,10 @@ class SalaryService {
           extra: const {'disable_429_retry': true},
         ),
       );
-      final out = parseResponse(response);
+      final out = parseResponse(r);
       _logPreviewSalaryNetGrossForTest(
         response: out,
-        source: 'mainApi',
+        source: 'webHrms',
         employeeId: employeeId,
         month: month,
         year: year,
@@ -409,7 +478,7 @@ class SalaryService {
       );
       return out;
     } on DioException catch (e) {
-      _salaryLog('[SalaryOverview] previewPayroll error: ${e.message}');
+      _salaryLog('[SalaryOverview] previewPayroll web error: ${e.message}');
       return {'success': false, 'data': null};
     }
   }

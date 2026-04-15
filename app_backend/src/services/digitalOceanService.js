@@ -63,19 +63,101 @@ if (DIGITAL_OCEAN_ACCESS_KEY && DIGITAL_OCEAN_SECRET_KEY) {
 }
 
 /**
- * Determine the base folder based on the request origin/hostname
- * - hrms.askeva.net or localhost -> "ekta-dev"
- * - app.ektahr.com, my.ektahr.com -> "ekta-production" (API hosts for production app / web)
+ * Determine Spaces base folder.
+ * Priority:
+ * 1) Explicit env override (DIGITAL_OCEAN_BASE_FOLDER)
+ * 2) Explicit client header (x-storage-environment)
+ * 3) Hostname inference from forwarded/origin/referer/host headers
+ * 4) Safe default -> ekta-dev
  */
-const PRODUCTION_SPACES_HOSTNAMES = new Set(['app.ektahr.com', 'my.ektahr.com']);
+const PRODUCTION_SPACES_HOSTNAMES = new Set([
+  'app.ektahr.com',
+  'my.ektahr.com',
+  'ektahr.com',
+  'www.ektahr.com',
+]);
+const DEVELOPMENT_SPACES_HOSTNAMES = new Set([
+  'ehrms.askeva.net',
+  'hrms.askeva.net',
+  'localhost',
+  '127.0.0.1',
+]);
+
+function normalizeHeaderValue(value) {
+  if (Array.isArray(value)) return String(value[0] || '').trim();
+  return String(value || '').trim();
+}
+
+function hostnameFromHeaderValue(value) {
+  if (!value) return '';
+  const first = String(value).split(',')[0].trim();
+  if (!first) return '';
+  try {
+    if (/^https?:\/\//i.test(first)) {
+      return new URL(first).hostname.toLowerCase();
+    }
+  } catch (_) {
+    // fall through to raw host parsing
+  }
+  return first.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].toLowerCase();
+}
+
+function resolveBaseFolderFromEnvironment(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (['ekta-production', 'production', 'prod'].includes(normalized)) return 'ekta-production';
+  if (['ekta-dev', 'development', 'dev'].includes(normalized)) return 'ekta-dev';
+  return null;
+}
+
+function resolveBaseFolderFromHostname(hostname) {
+  if (!hostname) return null;
+  if (PRODUCTION_SPACES_HOSTNAMES.has(hostname)) return 'ekta-production';
+  if (DEVELOPMENT_SPACES_HOSTNAMES.has(hostname)) return 'ekta-dev';
+  return null;
+}
+
+function resolveDeploymentDefaultBaseFolder() {
+  const explicitDefault = resolveBaseFolderFromEnvironment(process.env.DIGITAL_OCEAN_DEFAULT_ENV);
+  if (explicitDefault) return explicitDefault;
+
+  const frontendUrlHost = hostnameFromHeaderValue(process.env.FRONTEND_URL || '');
+  const frontendResolved = resolveBaseFolderFromHostname(frontendUrlHost);
+  if (frontendResolved) return frontendResolved;
+
+  const nodeEnv = String(process.env.NODE_ENV || '').trim().toLowerCase();
+  if (nodeEnv === 'production') return 'ekta-production';
+  if (nodeEnv === 'development') return 'ekta-dev';
+
+  return 'ekta-dev';
+}
+
+const DEPLOYMENT_DEFAULT_BASE_FOLDER = resolveDeploymentDefaultBaseFolder();
 
 function getBaseFolder(req) {
-  if (!req) return 'ekta-dev';
-  const origin = req.headers.origin || req.headers.host || '';
-  const hostname = origin.replace(/^https?:\/\//, '').split(':')[0].toLowerCase();
-  if (PRODUCTION_SPACES_HOSTNAMES.has(hostname)) return 'ekta-production';
-  if (hostname === 'hrms.askeva.net' || hostname === 'localhost' || hostname === '127.0.0.1') return 'ekta-dev';
-  return 'ekta-dev';
+  const envOverride = resolveBaseFolderFromEnvironment(process.env.DIGITAL_OCEAN_BASE_FOLDER);
+  if (envOverride) return envOverride;
+  if (!req) return DEPLOYMENT_DEFAULT_BASE_FOLDER;
+
+  const headerOverride = resolveBaseFolderFromEnvironment(
+    normalizeHeaderValue(req.headers['x-storage-environment'])
+  );
+  if (headerOverride) return headerOverride;
+
+  const candidateHeaders = [
+    normalizeHeaderValue(req.headers['x-forwarded-host']),
+    normalizeHeaderValue(req.headers.origin),
+    normalizeHeaderValue(req.headers.referer),
+    normalizeHeaderValue(req.headers.host),
+  ];
+
+  for (const raw of candidateHeaders) {
+    const hostname = hostnameFromHeaderValue(raw);
+    const resolved = resolveBaseFolderFromHostname(hostname);
+    if (resolved) return resolved;
+  }
+
+  return DEPLOYMENT_DEFAULT_BASE_FOLDER;
 }
 
 function sanitizeName(name) {

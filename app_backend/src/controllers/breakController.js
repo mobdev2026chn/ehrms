@@ -1,6 +1,5 @@
-const path = require('path');
-const Break = require(path.join(__dirname, '../../../ektahr_desktop/monitoring_backend/src/models/Break'));
-const Device = require(path.join(__dirname, '../../../ektahr_desktop/monitoring_backend/src/models/Device'));
+const Break = require('../models/Break');
+const Device = require('../models/Device');
 const Staff = require('../models/Staff');
 const Company = require('../models/Company');
 const Attendance = require('../models/Attendance');

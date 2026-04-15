@@ -1317,7 +1317,7 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
             reason = `Not Counted (status="${status}", leaveType="${attLeaveType}")`;
         }
         
-        console.log(`[calculateAttendanceStats] ${date}: ${reason} = ${dayValue} day(s)`);
+        // console.log(`[calculateAttendanceStats] ${date}: ${reason} = ${dayValue} day(s)`);
         return sum + dayValue;
     }, 0);
     console.log(`[calculateAttendanceStats] ==========================================`);

@@ -1,9 +1,9 @@
 // hrms/lib/config/constants.dart
 class AppConstants {
   /// General app API (attendance, geo, profile, …).
- // static const String baseUrl = 'http://192.168.1.35:9001/api';
- static const String baseUrl = 'https://ehrms.askeva.net/api';
-
+ // static const String baseUrl = 'http://192.168.1.33:9001/api';
+// static const String baseUrl = 'https://app.ektahr.com/api';
+static const String baseUrl = 'https://ehrms.askeva.net/api';
   /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
   static const String webBaseUrl = 'https://hrms.askeva.net/api';
 
@@ -48,6 +48,14 @@ class AppConstants {
     final u = baseUrl;
     if (u.endsWith('/api')) return u.substring(0, u.length - 4);
     return u.replaceAll(RegExp(r'/+$'), '');
+  }
+
+  /// Explicit environment hint sent to backend for storage routing.
+  /// This avoids relying only on proxy/origin headers for Spaces folder selection.
+  static String get storageEnvironment {
+    final host = Uri.tryParse(baseUrl)?.host.toLowerCase() ?? '';
+    const productionHosts = {'app.ektahr.com', 'my.ektahr.com', 'ektahr.com'};
+    return productionHosts.contains(host) ? 'production' : 'development';
   }
 
   /// Origin for Socket.IO (same server as REST; no trailing slash).

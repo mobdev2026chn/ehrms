@@ -93,6 +93,7 @@ class DioClient {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
+          'X-Storage-Environment': AppConstants.storageEnvironment,
         },
       ),
     );

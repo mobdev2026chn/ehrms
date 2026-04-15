@@ -154,8 +154,8 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
           isScrollable: true,
           tabAlignment: TabAlignment.start,
           padding: EdgeInsets.zero,
-          labelColor: colorScheme.onPrimaryContainer,
-          unselectedLabelColor: colorScheme.onSurfaceVariant,
+          labelColor: Colors.black,
+          unselectedLabelColor: Colors.black,
           labelStyle: const TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w600,

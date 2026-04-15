@@ -622,18 +622,47 @@ class RequestService {
     try {
       await _setToken();
       final now = DateTime.now();
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/requests/permission/balance',
-        queryParameters: {
-          'month': month ?? now.month,
-          'year': year ?? now.year,
-        },
-      );
-      final body = response.data;
-      if (body != null && body['success'] == true) {
-        return {'success': true, 'data': body['data'] ?? body};
+      final q = {
+        'month': month ?? now.month,
+        'year': year ?? now.year,
+      };
+
+      Map<String, dynamic>? balanceBody;
+      try {
+        // Web parity: primary endpoint.
+        final res = await _api.dio.get<Map<String, dynamic>>(
+          '/permissions/balance',
+          queryParameters: q,
+        );
+        balanceBody = res.data;
+      } on DioException {
+        // Fallback for older backend route.
+        final res = await _api.dio.get<Map<String, dynamic>>(
+          '/requests/permission/balance',
+          queryParameters: q,
+        );
+        balanceBody = res.data;
       }
-      return {'success': false, 'message': 'Failed to load permission balance'};
+
+      if (balanceBody == null || balanceBody['success'] != true) {
+        return {'success': false, 'message': 'Failed to load permission balance'};
+      }
+
+      final dataMap = balanceBody['data'] is Map
+          ? Map<String, dynamic>.from(balanceBody['data'] as Map)
+          : <String, dynamic>{};
+
+      num quota = (dataMap['monthlyQuotaMinutes'] as num?) ?? 0;
+      num consumed = (dataMap['consumedMinutes'] as num?) ?? 0;
+      num remaining = (dataMap['remainingMinutes'] as num?) ?? 0;
+
+      if (remaining <= 0 && quota > 0) remaining = (quota - consumed).clamp(0, quota);
+
+      dataMap['monthlyQuotaMinutes'] = quota;
+      dataMap['consumedMinutes'] = consumed;
+      dataMap['remainingMinutes'] = remaining;
+
+      return {'success': true, 'data': dataMap};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
