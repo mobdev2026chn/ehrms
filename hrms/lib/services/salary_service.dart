@@ -123,41 +123,6 @@ class SalaryService {
     return main == web;
   }
 
-  /// Some hosts return payroll stats flat on `data` or nested as `data.data`; normalize to `{ stats: Map }`.
-  static Map<String, dynamic> _unwrapPayrollStatsPayload(dynamic result) {
-    if (result is! Map) return <String, dynamic>{};
-    var m = Map<String, dynamic>.from(Map<dynamic, dynamic>.from(result));
-    final inner = m['data'];
-    if (inner is Map && m['stats'] == null) {
-      final im = Map<String, dynamic>.from(inner);
-      if (im['stats'] != null ||
-          im['thisMonthGross'] != null ||
-          im['thisMonthNet'] != null ||
-          im['grossSalary'] != null) {
-        m = im;
-      }
-    }
-    if (m['stats'] is Map) return m;
-    const statKeys = <String>[
-      'thisMonthGross',
-      'thisMonthNet',
-      'grossSalary',
-      'netSalary',
-      'deductions',
-      'earnings',
-      'deductionComponents',
-      'attendance',
-    ];
-    final sm = <String, dynamic>{};
-    for (final k in statKeys) {
-      if (m.containsKey(k)) sm[k] = m[k];
-    }
-    if (sm.isNotEmpty) {
-      return Map<String, dynamic>.from(m)..['stats'] = sm;
-    }
-    return m;
-  }
-
   /// Web HRMS often returns `{ stats: null }` when the JWT staff is not linked there;
   /// geo [AppConstants.baseUrl] still has payroll stats for the same employee.
   static bool _payrollStatsEnvelopeHasUsableStats(Map<String, dynamic> envelope) {
@@ -176,8 +141,6 @@ class SalaryService {
       if (a['workingDays'] is num || a['workingDaysFullMonth'] is num) {
         return true;
       }
-      // Web variants may only expose day counts without WD until web UI parity work.
-      if (a['presentDays'] is num || a['paidLeaveDays'] is num) return true;
     }
     return false;
   }
@@ -203,29 +166,19 @@ class SalaryService {
     if (data != null && data['success'] == true) {
       final result = data['data'];
       if (result is Map) {
-        return _unwrapPayrollStatsPayload(result);
+        return Map<String, dynamic>.from(result);
       }
     }
     return _getEmptySalaryData();
   }
 
-  Future<Map<String, dynamic>> getSalaryStats({
-    int? month,
-    int? year,
-    /// When false, only [AppConstants.webBaseUrl] is tried for `/payroll/stats` (no geo fallback).
-    bool allowGeoStatsFallback = true,
-    /// For logs only — e.g. `SalaryOverviewTab` vs `Dashboard` (same [SalaryService] method).
-    String statsRequestTag = 'PayrollStats',
-  }) async {
+  Future<Map<String, dynamic>> getSalaryStats({int? month, int? year}) async {
     final token = await _authService.getToken();
     if (token == null) return _getEmptySalaryData();
 
-    void tagLog(String msg) =>
-        _salaryLog('[$statsRequestTag] geoFallback=$allowGeoStatsFallback $msg');
-
     Future<Map<String, dynamic>> tryWeb() async {
-      tagLog(
-        'GET ${AppConstants.webBaseUrl}/payroll/stats month=$month year=$year',
+      _salaryLog(
+        '[SalaryOverview] GET ${AppConstants.webBaseUrl}/payroll/stats month=$month year=$year',
       );
       return _fetchPayrollStatsFromDio(
         webHrmsApiDio(),
@@ -236,8 +189,8 @@ class SalaryService {
 
     Future<Map<String, dynamic>> tryMain() async {
       if (_mainAndWebHostsAreSame) return _getEmptySalaryData();
-      tagLog(
-        'GET ${AppConstants.baseUrl}/payroll/stats (fallback) month=$month year=$year',
+      _salaryLog(
+        '[SalaryOverview] GET ${AppConstants.baseUrl}/payroll/stats (fallback) month=$month year=$year',
       );
       _api.setAuthToken(token);
       return _fetchPayrollStatsFromDio(
@@ -248,72 +201,31 @@ class SalaryService {
     }
 
     try {
-      Map<String, dynamic> envelope =
-          _unwrapPayrollStatsPayload(await tryWeb());
+      Map<String, dynamic> envelope = await tryWeb();
       if (_payrollStatsEnvelopeHasUsableStats(envelope)) {
-        tagLog(
-          'payroll/stats source=${AppConstants.webBaseUrl} usable=true '
-          'keys=${envelope.keys.join(",")}',
-        );
-        _logPayrollStatsForTest(data: envelope, month: month, year: year);
-        return envelope;
-      }
-      if (!allowGeoStatsFallback) {
-        if (kDebugMode) {
-          tagLog(
-            'payroll/stats web-only: no usable stats after unwrap — '
-            'envelopeKeys=${envelope.keys.join(",")} statsType=${envelope["stats"].runtimeType}',
-          );
-          final st = envelope['stats'];
-          if (st is Map) {
-            final sm = Map<String, dynamic>.from(st);
-            tagLog(
-              'payroll/stats inner keys: ${sm.keys.join(", ")} '
-              '(web returned 200 but no MTD/month/earnings/WD fields the app reads — '
-              'Salary cards still use payroll row + proration)',
-            );
-          }
-        }
         _logPayrollStatsForTest(data: envelope, month: month, year: year);
         return envelope;
       }
       if (kDebugMode) {
-        tagLog(
-          'payroll/stats web payload has no usable stats — trying main API (${AppConstants.baseUrl})',
+        _salaryLog(
+          '[SalaryOverview] payroll/stats web payload has no usable stats — trying main API',
         );
       }
-      envelope = _unwrapPayrollStatsPayload(await tryMain());
+      envelope = await tryMain();
       if (_payrollStatsEnvelopeHasUsableStats(envelope)) {
-        tagLog(
-          'payroll/stats source=${AppConstants.baseUrl} (fallback) usable=true',
-        );
         _logPayrollStatsForTest(data: envelope, month: month, year: year);
         return envelope;
       }
       _logPayrollStatsForTest(data: envelope, month: month, year: year);
       return envelope;
     } on DioException catch (e) {
-      if (!allowGeoStatsFallback) {
-        if (kDebugMode) {
-          tagLog(
-            'payroll/stats web-only DioException ${e.response?.statusCode} '
-            '${e.message} — no geo fallback',
-          );
-        }
-        if (e.response?.statusCode == 404) return _getEmptySalaryData();
-        return _getEmptySalaryData();
-      }
       if (kDebugMode) {
-        tagLog(
-          'payroll/stats web DioException ${e.response?.statusCode} — trying main API',
+        _salaryLog(
+          '[SalaryOverview] payroll/stats web DioException ${e.response?.statusCode} — trying main API',
         );
       }
       try {
-        final envelope = _unwrapPayrollStatsPayload(await tryMain());
-        tagLog(
-          'payroll/stats source=${AppConstants.baseUrl} (after web error) '
-          'usable=${_payrollStatsEnvelopeHasUsableStats(envelope)}',
-        );
+        final envelope = await tryMain();
         _logPayrollStatsForTest(data: envelope, month: month, year: year);
         return envelope;
       } catch (_) {

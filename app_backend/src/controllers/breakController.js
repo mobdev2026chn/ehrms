@@ -146,12 +146,10 @@ function resolveBreakDurationMinutes(breakDoc) {
 }
 
 async function getBreakFineContext(staff, dayDate) {
-    const allowedBreakMin = 5; // TEMP for testing; set back to 60 after verification
-
     const company = await Company.findById(staff.businessId)
         .select('settings.payroll.fineCalculation settings.attendance.shifts settings.business.timezone settings.attendance.timezone timezone')
         .lean();
-    const fineConfig = getEffectiveFineConfig(company || {});
+    const payrollFineConfig = getEffectiveFineConfig(company || {});
 
     let dailyNet = Number(staff?.appPerDayNetSalary) || 0;
     let dailyGross = Number(staff?.appPerdayGrossSalary) || 0;
@@ -165,6 +163,41 @@ async function getBreakFineContext(staff, dayDate) {
     if (dailyGross <= 0) dailyGross = dailyNet;
 
     const shiftTiming = getShiftTimings(company || {}, staff, dayDate, staff?.joiningDate || null, null);
+    const shiftBreakPolicy = shiftTiming?.breakPolicy || {};
+    const policyEnabled = shiftBreakPolicy?.enabled === true;
+    const configuredAllowedBreakMin = Math.max(0, Number(shiftBreakPolicy?.allowedMinutes || 0));
+    // Business rule:
+    // - breakPolicy.enabled=false -> unrestricted break, no fine.
+    // - breakPolicy.allowedMinutes=0 -> unrestricted break, no fine.
+    const isUnlimitedBreak = !policyEnabled || configuredAllowedBreakMin === 0;
+    const breakFineEnabled =
+        policyEnabled &&
+        !isUnlimitedBreak &&
+        shiftBreakPolicy?.fineEnabled === true;
+    const allowedBreakMin = isUnlimitedBreak ? Number.POSITIVE_INFINITY : configuredAllowedBreakMin;
+
+    let fineConfig = payrollFineConfig;
+    if (breakFineEnabled) {
+        const fineType = String(shiftBreakPolicy?.fineType || '1xSalary');
+        if (fineType === 'custom') {
+            fineConfig = {
+                enabled: true,
+                calculationType: 'fixedPerHour',
+                finePerHour: Math.max(0, Number(shiftBreakPolicy?.customFinePerHour || 0)),
+                fineRules: []
+            };
+        } else {
+            fineConfig = {
+                enabled: true,
+                calculationType: 'shiftBased',
+                finePerHour: 0,
+                fineRules: [{ type: fineType, applyTo: 'earlyExit' }]
+            };
+        }
+    } else {
+        fineConfig = { ...payrollFineConfig, enabled: false };
+    }
+
     let shiftHours = 9;
     const shiftType = (shiftTiming?.shiftType || '').toString().toLowerCase();
     if (shiftType === 'open' || shiftType === 'open shift') {
@@ -178,6 +211,14 @@ async function getBreakFineContext(staff, dayDate) {
     return {
         allowedBreakMin,
         fineConfig,
+        breakPolicy: {
+            enabled: policyEnabled,
+            isUnlimitedBreak,
+            allowedMinutes: configuredAllowedBreakMin,
+            fineEnabled: breakFineEnabled,
+            fineType: String(shiftBreakPolicy?.fineType || '1xSalary'),
+            customFinePerHour: Math.max(0, Number(shiftBreakPolicy?.customFinePerHour || 0))
+        },
         dailyNet,
         dailyGross,
         shiftHours

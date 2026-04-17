@@ -39,32 +39,17 @@ void debugPrint(String? message, {int? wrapWidth}) {
   }
 }
 
-/// Always-on (debug build) one-line traces for which host Salary Overview uses.
-void _logSalaryHost(String message) {
-  if (kDebugMode) {
-    // ignore: avoid_print
-    print('[SalaryOverview][host=${AppConstants.webBaseUrl}] $message');
-  }
-}
-
-String? _staffIdFromMap(Map<String, dynamic> s) =>
-    (s['_id'] ?? s['id'])?.toString();
-
 // -----------------------------------------------------------------------------
-// MTD salary: same blended “sources of truth” as web EmployeeSalaryOverview.tsx
+// Summary cards: parity with web `frontend/src/pages/employeePages/EmployeeSalaryOverview.tsx`
 // -----------------------------------------------------------------------------
-// "This Month" cards: MTD till date — preview → client prorated → /payroll/stats.
-// When payroll is Processed/Paid, web uses GET /payroll/stats `thisMonthGross`/`thisMonthNet`
-// (not the payroll list row full-month gross/net). Card copy uses physical present ÷ till-date WD.
-// Headline **present days** follow web `EmployeeSalaryOverview`: record reducer in
-// [_computeWebAttendanceBreakdown] (`_webPresentDays`). `/payroll/stats` presentDays is not
-// used for headline (it often disagrees with rows). Optional: `/attendance/month`
-// stats only when within 0.01 of the reducer. Proration numerator uses `_webPresentDays`.
-//
-// **MTD “This Month” gross/net:** If payroll row is **Processed/Paid**, prefer `/payroll/stats`
-// `thisMonthGross`/`thisMonthNet`, else payroll row, else preview/prorated. Pending: preview → prorated.
-// **Processed card % / “Present” headline:** physical `_webPresentDays` ÷ till-date working days
-// (same as web salary cards); payable-days proration stays in breakdown/proratedSalary path.
+// Monthly Gross/Net: `calculatedSalary.monthly` from staff structure (client calc).
+// This Month Gross/Net: if payroll status is Processed/Paid → `currentPayroll.grossSalary` /
+// `netPay`; else `preview.grossSalary` / `preview.netPay`, then client prorated (no pending
+// payroll document fallback). Present/working days for card copy: preview attendance when
+// present, else local (`previewSalary?.attendance?.presentDays ?? presentDays` on web).
+// `/payroll/stats` remains for breakdown / payable rule / earnings rows where used elsewhere.
+// `POST` [webBaseUrl]/payroll/preview is always attempted after the payroll list call so `_payrollPreview`
+// can populate even when a payroll row exists (server may return 400 — then UI keeps document + proration).
 // -----------------------------------------------------------------------------
 
 /// Earnings rows already covered by [MonthlySalaryStructure] — merge API extras only (e.g. expense claims).
@@ -153,17 +138,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     }
   }
   void _logApiEndpoints({required int month, required int year}) {
-    final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
-    final geo = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
-    _logSalaryHost(
-      'Salary tab: payroll/attendance/stats on web; optional $geo/auth/profile merge for staff id + HR flags. month=$month year=$year',
-    );
     if (!kDebugMode) return;
+    final base = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
     // ignore: avoid_print
     print(
-      '[SalaryOverview][API] month=$month year=$year webBaseUrl=$web '
-      'geo=$geo (profile merge only if web staff incomplete) '
-      'profileWeb=$web/auth/profile profileGeoMerge=$geo/auth/profile '
+      '[SalaryOverview][API] month=$month year=$year '
+      'geoBaseUrl=$base profile+accessFlags=$base/auth/profile '
+      'webBaseUrl=$web '
       'payrollStats=$web/payroll/stats?month=$month&year=$year '
       'payrollList=$web/payroll?month=$month&year=$year&page=1&limit=1 '
       'payrollPreview=$web/payroll/preview '
@@ -335,6 +317,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
   /// When set, use this for "This Month Gross" (from backend) for consistency.
   double? _backendThisMonthGross;
+
   List<Map<String, dynamic>> _backendEarnings = [];
   List<Map<String, dynamic>> _backendDeductionComponents = [];
   double _backendDeductionsTotal = 0.0;
@@ -409,79 +392,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     }
   }
 
-  /// Web HRMS may return `staff` instead of `staffData`; shape still under [data].
-  Map<String, dynamic>? _staffPayloadFromProfileMap(Map<String, dynamic> profile) {
-    final sd = profile['staffData'];
-    if (sd is Map) return Map<String, dynamic>.from(sd);
-    final st = profile['staff'];
-    if (st is Map) return Map<String, dynamic>.from(st);
-    return null;
-  }
-
-  /// Web profile often omits `salaryDetailsAccessEnabled` / `_id` while geo [AppConstants.baseUrl] has them.
-  /// Payroll/attendance stay on web; this merge only fixes staff id + HR flags + salary embed for the same employee.
-  Future<Map<String, dynamic>?> _mergeGeoStaffForSalaryOverview(
-    Map<String, dynamic>? webStaff,
-  ) async {
-    final missingId =
-        webStaff == null || _staffIdFromMap(webStaff) == null || _staffIdFromMap(webStaff)!.isEmpty;
-    final missingAccess =
-        webStaff == null || webStaff['salaryDetailsAccessEnabled'] != true;
-    final missingSalary = webStaff == null ||
-        webStaff['salary'] == null ||
-        webStaff['salary'] is! Map;
-    if (!missingId && !missingAccess && !missingSalary) return webStaff;
-
-    _logSalaryHost(
-      'merge geo ${AppConstants.baseUrl}/auth/profile — '
-      'missingId=$missingId missingAccess=$missingAccess missingSalary=$missingSalary',
-    );
-    try {
-      final geoRes = await _authService
-          .getProfile(useWebHrmsApi: false)
-          .timeout(_profileTimeout);
-      if (geoRes['success'] != true || geoRes['data'] is! Map) {
-        _logSalaryHost('geo merge skipped: geo profile success=false');
-        return webStaff;
-      }
-      final geoData = Map<String, dynamic>.from(geoRes['data'] as Map);
-      final geoStaff = _staffPayloadFromProfileMap(geoData);
-      if (geoStaff == null) {
-        _logSalaryHost('geo merge skipped: no staff on geo profile');
-        return webStaff;
-      }
-
-      if (webStaff == null) {
-        _logSalaryHost('geo merge: using geo staff only (web had no staff payload)');
-        return Map<String, dynamic>.from(geoStaff);
-      }
-
-      final out = Map<String, dynamic>.from(webStaff);
-      if (_staffIdFromMap(out) == null || _staffIdFromMap(out)!.isEmpty) {
-        final gid = _staffIdFromMap(geoStaff);
-        if (gid != null && gid.isNotEmpty) out['_id'] = gid;
-      }
-      if (geoStaff['salaryDetailsAccessEnabled'] == true) {
-        out['salaryDetailsAccessEnabled'] = true;
-      }
-      if (geoStaff['allowCurrentCycleSalaryAccess'] == true) {
-        out['allowCurrentCycleSalaryAccess'] = true;
-      }
-      if (missingSalary && geoStaff['salary'] is Map) {
-        out['salary'] = Map<String, dynamic>.from(geoStaff['salary'] as Map);
-      }
-      _logSalaryHost(
-        'geo merge done staffId=${_staffIdFromMap(out)} '
-        'salaryAccess=${out['salaryDetailsAccessEnabled']} allowCycle=${out['allowCurrentCycleSalaryAccess']} '
-        'hasSalary=${out['salary'] is Map}',
-      );
-      return out;
-    } catch (e) {
-      _logSalaryHost('geo merge error: $e');
-      return webStaff;
-    }
-  }
-
   /// Web `visiblePayrolls`: current calendar month row only if allowed; other months only with payslipUrl.
   List<Map<String, dynamic>> get _visiblePayrollHistory {
     final now = DateTime.now();
@@ -511,15 +421,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     }
     if (mounted) setState(() => _payrollHistoryLoading = true);
     try {
-      _logSalaryHost(
-        'GET …/payroll?page=$_payrollHistoryPage&limit=$_payrollHistoryPageSize (web)',
-      );
       final payrollData = await _salaryService
           .getPayrolls(page: _payrollHistoryPage, limit: _payrollHistoryPageSize)
           .timeout(_networkTimeout);
-      _logSalaryHost(
-        'payroll history success=${payrollData['success'] == true}',
-      );
       var rows = <Map<String, dynamic>>[];
       Map<String, dynamic>? pag;
       if (payrollData['success'] == true && payrollData['data'] is Map) {
@@ -607,18 +511,15 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   }
 
   /// Web `GET /payroll?month=&year=&page=1&limit=1` — same as employee salary when a row exists.
-  /// Call before preview so we never hit `POST /payroll/preview` when payroll is already processed.
+  /// Preview (`POST /payroll/preview` on [AppConstants.webBaseUrl]) is still requested afterward
+  /// so components / `salaryBasis` / attendance match the web API whenever the server allows it.
   Future<bool> _fetchPayrollDocumentIfAny(int monthIndex, int year) async {
     if (_staffId == null || _staffId!.isEmpty) return false;
     try {
-      _logSalaryHost(
-        'GET …/payroll?month=$monthIndex&year=$year&page=1&limit=1 (web, current doc)',
-      );
       final payrollData = await _salaryService
           .getPayrolls(month: monthIndex, year: year, page: 1, limit: 1)
           .timeout(_networkTimeout);
       if (payrollData['success'] != true || payrollData['data'] == null) {
-        _logSalaryHost('payroll month doc: no row or success=false');
         return false;
       }
       final payrolls = payrollData['data']['payrolls'] as List?;
@@ -633,7 +534,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       if (!_isCurrentMonth(monthIndex, year)) {
         _pastMonthPayroll = _currentPayroll;
       }
-      _payrollPreview = null;
       debugPrint(
         '[SalaryOverview] payroll document (web parity) month=$monthIndex year=$year '
         'id=${_currentPayroll?['_id']} status=${_currentPayroll?['status']}',
@@ -652,13 +552,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     return null;
   }
 
-  /// Web `usePreviewPayrollMutation`: only when no payroll document exists for [monthIndex]/[year].
+  /// Web `POST /payroll/preview` on web HRMS — called every load so salary overview can show full
+  /// web payload (`components`, `salaryBasis`, attendance) when the API returns success; if the
+  /// server rejects (e.g. payroll already exists), we keep payroll document / client proration only.
   Future<void> _tryFetchPayrollPreview(int monthIndex, int year) async {
     if (_staffId == null || _staffId!.isEmpty) return;
     try {
-      _logSalaryHost(
-        'POST …/payroll/preview month=$monthIndex year=$year (web)',
-      );
       final previewRes = await _salaryService
           .previewPayroll(employeeId: _staffId!, month: monthIndex, year: year)
           .timeout(_networkTimeout);
@@ -816,17 +715,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       });
     }
     _perfLog('start month=$_selectedMonth year=$_selectedYear');
-    _logSalaryHost('fetch start month=$_selectedMonth year=$_selectedYear');
 
     // Fetch company payslip setting (company.settings.payroll.payslip.isPayslipAutoGenerated)
     try {
-      _logSalaryHost('GET …/attendance/fine-calculation (useWebHrmsApi=true)');
       final fcResult = await _attendanceService
           .getFineCalculation(useWebHrmsApi: true)
           .timeout(_networkTimeout);
-      _logSalaryHost(
-        'fine-calculation success=${fcResult['success'] == true}',
-      );
       if (fcResult['success'] == true && mounted) {
         final payslip = fcResult['payslip'];
         setState(() {
@@ -843,35 +737,28 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       Map<String, dynamic>? profileData;
       Map<String, dynamic>? staffData;
       try {
-        // Same host as web app: staff + salary structure + access flags from [webBaseUrl].
-        _logSalaryHost('GET …/auth/profile (useWebHrmsApi=true)');
+        // Profile + access flags must come from the app login API ([AppConstants.baseUrl]).
+        // Web HRMS `/auth/profile` often omits or differs on `salaryDetailsAccessEnabled`, which
+        // incorrectly shows "access disabled" while payroll/attendance still use [webBaseUrl].
         final profileResult = await _authService
-            .getProfile(useWebHrmsApi: true)
+            .getProfile()
             .timeout(_profileTimeout);
-        _logSalaryHost(
-          'profile success=${profileResult['success'] == true}',
-        );
         if (profileResult['success'] == true && profileResult['data'] is Map) {
           profileData = Map<String, dynamic>.from(profileResult['data'] as Map);
-          staffData = _staffPayloadFromProfileMap(profileData);
-          if (kDebugMode && profileData.isNotEmpty) {
-            _logSalaryHost(
-              'web profile top-level keys: ${profileData.keys.join(", ")} '
-              'webStaffParsed=${staffData != null}',
-            );
+          final dynamic rawStaffData = profileData['staffData'];
+          if (rawStaffData is Map) {
+            staffData = Map<String, dynamic>.from(rawStaffData);
           }
-          staffData = await _mergeGeoStaffForSalaryOverview(staffData);
 
           _clampSelectedFiltersToAllowed();
           if (staffData != null) {
-            _staffId = _staffIdFromMap(staffData);
+            _staffId = staffData['_id']?.toString();
             _salaryDetailsAccessEnabled =
                 staffData['salaryDetailsAccessEnabled'] == true;
             _allowCurrentCycleSalaryAccess =
                 staffData['allowCurrentCycleSalaryAccess'] == true;
             debugPrint(
-              '[SalaryOverview] profile (web+geo merge) staffId=$_staffId '
-              'salaryDetailsAccess=$_salaryDetailsAccessEnabled '
+              '[SalaryOverview] profile staffId=$_staffId salaryDetailsAccess=$_salaryDetailsAccessEnabled '
               'allowCurrentCycle=$_allowCurrentCycleSalaryAccess',
             );
           }
@@ -880,14 +767,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         final cached = await _loadCachedProfileData();
         if (cached != null) {
           profileData = cached;
-          staffData = _staffPayloadFromProfileMap(profileData);
-          staffData = await _mergeGeoStaffForSalaryOverview(staffData);
-          if (staffData != null) {
-            _staffId = _staffIdFromMap(staffData);
-            _salaryDetailsAccessEnabled =
-                staffData['salaryDetailsAccessEnabled'] == true;
-            _allowCurrentCycleSalaryAccess =
-                staffData['allowCurrentCycleSalaryAccess'] == true;
+          final dynamic rawStaffData = profileData['staffData'];
+          if (rawStaffData is Map) {
+            staffData = Map<String, dynamic>.from(rawStaffData);
           }
           _perfLog('profile cache-fallback ${sw.elapsedMilliseconds}ms');
         }
@@ -958,17 +840,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           'totalLateMinutes': 0,
         };
         _unpaidLeaveDeduction = 0;
-        final hadPayrollDoc = await _fetchPayrollDocumentIfAny(monthIndex, year);
-        if (!hadPayrollDoc) {
-          await _tryFetchPayrollPreview(monthIndex, year);
-        }
+        _payrollPreview = null;
+        await _fetchPayrollDocumentIfAny(monthIndex, year);
         unawaited(_loadPayrollHistory());
       } else {
         _pastMonthPayroll = null;
         _currentPayroll = null;
         _payrollPreview = null;
-        // Current month: same as web — load `GET /payroll?month&year&limit=1` before preview
-        // so processed payroll never calls `POST /payroll/preview`.
+        // Current month: load payroll row from web, then always attempt web preview for full API details.
         await _fetchPayrollDocumentIfAny(monthIndex, year);
       }
 
@@ -1089,13 +968,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         // Web: `useGetBusinessQuery` — prefer live `GET /settings/business`, else nested staff company doc.
         Map<String, dynamic>? companyDoc = businessSettings;
         try {
-          _logSalaryHost('GET …/settings/business (useWebHrmsApi=true)');
           final gb = await _settingsService
               .getBusiness(useWebHrmsApi: true)
               .timeout(_networkTimeout);
-          _logSalaryHost(
-            'settings/business success=${gb['success'] == true}',
-          );
           if (gb['success'] == true && gb['data'] is Map<String, dynamic>) {
             final data = gb['data'] as Map<String, dynamic>;
             final b = data['business'];
@@ -1137,17 +1012,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       }
 
       // 2. Kick off network calls in parallel (reduces Salary tab load time).
-      // Salary Overview: `/payroll/stats` must use [AppConstants.webBaseUrl] only — no geo API fallback.
-      _logSalaryHost(
-        'parallel: GET payroll/stats (web ONLY), attendance/month, attendance/employee',
-      );
       final statsFuture = _salaryService
-          .getSalaryStats(
-            month: monthIndex,
-            year: year,
-            allowGeoStatsFallback: false,
-            statsRequestTag: 'SalaryOverviewTab',
-          )
+          .getSalaryStats(month: monthIndex, year: year)
           .timeout(_networkTimeout);
 
       final monthAttendanceFuture = _attendanceService
@@ -1185,7 +1051,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         final stats = statsResult['stats'] as Map<String, dynamic>?;
         if (stats != null) {
           backendStats = stats;
-          // Use backend's thisMonthNet/thisMonthGross when available so display matches payslip
+          // Web GET /payroll/stats — used for breakdown / payable rule (see EmployeeSalaryOverview).
           final net = stats['thisMonthNet'];
           _backendThisMonthNet = (net is num) ? net.toDouble() : null;
           final gross = stats['thisMonthGross'];
@@ -1238,11 +1104,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         _backendDeductionsTotal = 0.0;
         _payableDaysBase = null;
         _payableRule = null;
-        _logSalaryHost('payroll/stats consume error — cleared backend MTD fields');
       }
-      _logSalaryHost(
-        'payroll/stats done hasStatsMap=${backendStats != null}',
-      );
       _perfLog('stats done ${sw.elapsedMilliseconds}ms');
 
       // 3. Fetch attendance for the month
@@ -1260,18 +1122,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             '[SalaryOverview] GET attendance/employee '
             'success=${employeeResult['success']}',
           );
-          if (employeeResult['success'] != true) {
-            _logSalaryHost(
-              'attendance/employee web failed or empty success=${employeeResult['success']}',
-            );
-          }
           if (employeeResult['success'] == true &&
               employeeResult['data'] is Map) {
             final empData = employeeResult['data'] as Map<String, dynamic>;
             final empList = empData['attendance'];
-            _logSalaryHost(
-              'attendance/employee web success rows=${empList is List ? empList.length : 0}',
-            );
             if (empList is List && empList.isNotEmpty) {
               final list = List<dynamic>.from(empList);
               final deduped = _dedupeAttendanceRecordsByCalendarDay(list);
@@ -1298,11 +1152,23 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         debugPrint('[SalaryOverview] month attendance fetch error: $e');
       }
       if (attendanceResult['success'] != true) {
-        _logSalaryHost(
-          'attendance/month web failed or empty — no geo fallback (web-only salary tab)',
-        );
-      } else {
-        _logSalaryHost('attendance/month web success=true');
+        try {
+          final fb = await _attendanceService.getMonthAttendance(
+            year,
+            monthIndex,
+            useWebHrmsApi: false,
+          );
+          if (fb['success'] == true) {
+            attendanceResult = fb;
+            if (kDebugMode) {
+              debugPrint(
+                '[SalaryOverview] attendance/month used geo fallback after web failed',
+              );
+            }
+          }
+        } catch (e) {
+          debugPrint('[SalaryOverview] month attendance geo fallback error: $e');
+        }
       }
       _perfLog('monthAttendance done ${sw.elapsedMilliseconds}ms');
       debugPrint(
@@ -1347,9 +1213,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         // Fallback: if month attendance payload has no holidays, try employee holidays endpoint.
         try {
           if (_holidays.isEmpty) {
-            _logSalaryHost(
-              'GET …/holidays/employee?year=$year&month=$monthIndex (useWebHrmsApi=true)',
-            );
             final holidaysResult = await _holidayService
                 .getHolidays(
                   year: year,
@@ -1357,9 +1220,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   useWebHrmsApi: true,
                 )
                 .timeout(_networkTimeout);
-            _logSalaryHost(
-              'holidays/employee success=${holidaysResult['success'] == true}',
-            );
             if (holidaysResult['success'] == true &&
                 holidaysResult['data'] is List) {
               final list = holidaysResult['data'] as List;
@@ -1592,7 +1452,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       if (shiftTiming == null) {
         Map<String, dynamic>? attendanceTemplate;
         try {
-          _logSalaryHost('GET …/attendance/today (web) for shift template fallback');
           final todayAttendance = await _attendanceService
               .getTodayAttendance(useWebHrmsApi: true)
               .timeout(_networkTimeout);
@@ -1652,7 +1511,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         );
       } else {
         try {
-          _logSalaryHost('GET …/attendance/today (web) for shift hours');
           final todayAttendance = await _attendanceService
               .getTodayAttendance(useWebHrmsApi: true)
               .timeout(_networkTimeout);
@@ -1736,10 +1594,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       }
       _perfLog('payroll list done ${sw.elapsedMilliseconds}ms');
 
-      if (_currentPayroll == null) {
-        await _tryFetchPayrollPreview(monthIndex, year);
-        _perfLog('payroll preview done ${sw.elapsedMilliseconds}ms');
-      }
+      // Always call web `POST /payroll/preview` (webBaseUrl) for rich salary payload when server allows.
+      await _tryFetchPayrollPreview(monthIndex, year);
+      _perfLog('payroll preview done ${sw.elapsedMilliseconds}ms');
       if (kDebugMode && _payrollPreview != null) {
         final a = _payrollPreview!['attendance'];
         if (a is Map) {
@@ -2808,9 +2665,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         (selectedPayroll?['status'] ?? '').toString().toLowerCase();
     final payrollLocked =
         payrollStatus == 'processed' || payrollStatus == 'paid';
-    // Once payroll row exists for the selected month, prefer payroll-backed values/components
-    // over preview/prorated-only estimates (web salary overview parity).
-    final canUseSelectedPayrollMtd = selectedPayroll != null;
+    final canUseSelectedPayrollMtd =
+        !_isSelectedCurrentMonth || _payrollRowIsFinalForMtd(selectedPayroll);
 
     // Web: MTD earnings/deductions = salary ladder on Basic/DA/HRA/Special × (payableDays ÷ template/base days).
     final wdm = _workingDaysInfo == null
@@ -3537,40 +3393,40 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
     final isPastMonth = !_isSelectedCurrentMonth;
     if (isPastMonth) {
-      // Past month: match web-style by showing selected month payroll values when available.
+      // Past month: web `EmployeeSalaryOverview` — monthly from structure; MTD from payroll if Processed/Paid else preview → prorated.
       final currencyFormat = NumberFormat.currency(
         locale: 'en_IN',
         symbol: '₹',
       );
-      final sb = _previewSalaryBasis;
-      final gross = (sb?['monthlyGrossSalary'] as num?)?.toDouble() ??
-          _calculatedSalary?.monthly.grossSalary ??
-          0.0;
-      final net = (sb?['monthlyNetSalary'] as num?)?.toDouble() ??
-          _calculatedSalary?.monthly.netMonthlySalary ??
-          0.0;
+      final gross = _calculatedSalary?.monthly.grossSalary ?? 0.0;
+      final net = _calculatedSalary?.monthly.netMonthlySalary ?? 0.0;
       final selectedPayroll = _pastMonthPayroll ?? _currentPayroll;
+      final payrollProcessed =
+          _payrollRowIsFinalForMtd(selectedPayroll);
       final payrollGross = (selectedPayroll?['grossSalary'] as num?)?.toDouble();
       final payrollNet = (selectedPayroll?['netPay'] as num?)?.toDouble();
       final previewGross =
           (_payrollPreview?['grossSalary'] as num?)?.toDouble();
       final previewNet = (_payrollPreview?['netPay'] as num?)?.toDouble();
-      final selectedMonthGross = payrollGross ?? previewGross ?? 0.0;
-      final selectedMonthNet = payrollNet ?? previewNet ?? 0.0;
-      final hasSelectedPayroll = selectedPayroll != null;
+      final selectedMonthGross = payrollProcessed
+          ? (payrollGross ?? 0.0)
+          : (previewGross ??
+              _proratedSalary?.proratedGrossSalary ??
+              0.0);
+      final selectedMonthNet = payrollProcessed
+          ? (payrollNet ?? 0.0)
+          : (previewNet ??
+              _proratedSalary?.proratedNetSalary ??
+              0.0);
       final hasPreview =
           _payrollPreview != null &&
           (previewGross != null || previewNet != null);
-      final mtdSubtitle = hasSelectedPayroll
-          ? 'From selected month payroll'
+      final mtdSubtitle = payrollProcessed
+          ? 'From processed payroll'
           : hasPreview
               ? 'From payroll preview (estimated)'
               : 'Payroll not available';
-      final subtitle = sb != null
-          ? 'From payroll preview (contract month)'
-          : _calculatedSalary != null
-              ? 'From salary structure'
-              : 'Salary structure not available';
+      const subtitle = 'From salary structure';
 
       return LayoutBuilder(
         builder: (context, constraints) {
@@ -3641,44 +3497,21 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         (_payrollPreview?['deductions'] as num?)?.toDouble();
     final salaryCardCounts = _computeSalaryCardDayCountsFromAttendance();
 
-    // Use generated payroll values once finalized; otherwise live preview; fallback to local prorated.
+    // Web `EmployeeSalaryOverview`: Processed/Paid → payroll doc; else preview → prorated (no pending-doc MTD).
     final payrollFinal = _payrollRowIsFinalForMtd(_currentPayroll);
-    final hasPayrollDoc = _currentPayroll != null;
-    // Web employee salary (processed month): MTD gross/net come from GET /payroll/stats
-    // (`thisMonthGross` / `thisMonthNet`), not the payroll list row (full-month snapshot).
-    final backendMtdGross = _backendThisMonthGross;
-    final backendMtdNet = _backendThisMonthNet;
-    final thisMonthGrossDisplay = hasPayrollDoc
-        ? (backendMtdGross ??
-            payrollMtdGross ??
-            previewGross ??
-            _proratedSalary?.proratedGrossSalary ??
-            0.0)
+    final thisMonthGrossDisplay = payrollFinal
+        ? (payrollMtdGross ?? 0.0)
         : (previewGross ??
             _proratedSalary?.proratedGrossSalary ??
-            payrollMtdGross ??
             0.0);
-    final thisMonthDeductionsDisplay = hasPayrollDoc
-        ? (backendMtdGross != null && backendMtdNet != null
-                ? (backendMtdGross - backendMtdNet)
-                : (payrollMtdDeductions ??
+    final thisMonthDeductionsDisplay = payrollFinal
+        ? (payrollMtdDeductions ??
             ((payrollMtdGross != null && payrollMtdNet != null)
-                ? (payrollMtdGross - payrollMtdNet)
+                ? (payrollMtdGross! - payrollMtdNet!)
                 : null) ??
             previewDeductions ??
             ((previewGross != null && previewNet != null)
-                ? (previewGross - previewNet)
-                : null) ??
-            _proratedSalary?.totalDeductions ??
-            (( _proratedSalary?.proratedGrossSalary != null &&
-                    _proratedSalary?.proratedNetSalary != null)
-                ? (_proratedSalary!.proratedGrossSalary -
-                    _proratedSalary!.proratedNetSalary)
-                : null) ??
-            0.0))
-        : (previewDeductions ??
-            ((previewGross != null && previewNet != null)
-                ? (previewGross - previewNet)
+                ? (previewGross! - previewNet!)
                 : null) ??
             _proratedSalary?.totalDeductions ??
             ((_proratedSalary?.proratedGrossSalary != null &&
@@ -3686,22 +3519,23 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 ? (_proratedSalary!.proratedGrossSalary -
                     _proratedSalary!.proratedNetSalary)
                 : null) ??
-            payrollMtdDeductions ??
-            ((payrollMtdGross != null && payrollMtdNet != null)
-                ? (payrollMtdGross - payrollMtdNet)
+            0.0)
+        : (previewDeductions ??
+            ((previewGross != null && previewNet != null)
+                ? (previewGross! - previewNet!)
+                : null) ??
+            _proratedSalary?.totalDeductions ??
+            ((_proratedSalary?.proratedGrossSalary != null &&
+                    _proratedSalary?.proratedNetSalary != null)
+                ? (_proratedSalary!.proratedGrossSalary -
+                    _proratedSalary!.proratedNetSalary)
                 : null) ??
             0.0);
-    // Prefer backend computed net (already includes precise deduction math),
-    // then fall back to Gross - Deductions when net is unavailable.
-    final rawThisMonthNet = hasPayrollDoc
-        ? (backendMtdNet ??
-            payrollMtdNet ??
-            previewNet ??
-            (thisMonthGrossDisplay - thisMonthDeductionsDisplay))
+    final rawThisMonthNet = payrollFinal
+        ? (payrollMtdNet ?? 0.0)
         : (previewNet ??
             _proratedSalary?.proratedNetSalary ??
-            payrollMtdNet ??
-            (thisMonthGrossDisplay - thisMonthDeductionsDisplay));
+            0.0);
 
     final previewAttRaw = _payrollPreview?['attendance'];
     final previewAttMap = previewAttRaw is Map
@@ -3709,13 +3543,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         : null;
     final previewPresentForCards =
         (previewAttMap?['presentDays'] as num?)?.toDouble();
-    // Web processed payroll: salary cards use physical present ÷ till-date WD (e.g. 2/12),
-    // not payable-days (present + paid leave) used for live proration.
-    final salaryCardPresentDays = hasPayrollDoc
-        ? _webPresentDays
-        : ((!hasPayrollDoc && previewPresentForCards != null)
-            ? previewPresentForCards
-            : (salaryCardCounts['presentDays'] ?? _presentDays));
+    // Web: `previewSalary?.attendance?.presentDays ?? presentDays` (always prefers preview when set).
+    final salaryCardPresentDays =
+        previewPresentForCards ??
+        (salaryCardCounts['presentDays'] ?? _presentDays);
     final salaryCardWorkingTill =
         salaryCardCounts['workingDays']?.toInt() ?? (_workingDaysInfo?.workingDays ?? 0);
     // Web salary card label/percentage uses till-date working days (preview attendance.workingDaysTillCurrentDate),
@@ -3736,7 +3567,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     var attendancePercentForCards = denomForSalaryCards > 0
         ? (salaryCardPresentDays / denomForSalaryCards) * 100
         : 0.0;
-    if (!hasPayrollDoc && _payrollPreview != null) {
+    if (_payrollPreview != null) {
       final pa = _payrollPreview!['attendance'];
       if (pa is Map) {
         final p = Map<String, dynamic>.from(pa);
@@ -3777,16 +3608,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         (_fineInfo['totalFineAmount'] as num?)?.toDouble() ?? 0.0;
     final netCardExtra = StringBuffer();
     if (payrollFinal) {
-      if (denomForSalaryCards > 0) {
-        netCardExtra.write(
-          'Based on ${_formatDayChip(salaryCardPresentDays)} days out of $denomForSalaryCards',
-        );
-        if (fineAmt > 0) {
-          netCardExtra.write(' (Fine: ${currencyFormat.format(fineAmt)})');
-        }
-      } else {
-        netCardExtra.write('From generated payroll');
-      }
+      netCardExtra.write('From processed payroll');
     } else if (_workingDaysInfo != null || _attendanceRecords.isNotEmpty) {
       netCardExtra.write(
         'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards working days till date',
@@ -3804,7 +3626,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
     debugPrint(
       '[SalaryOverview] summary cards payrollFinal=$payrollFinal '
-      'backendMtdGross=$backendMtdGross backendMtdNet=$backendMtdNet '
       'payrollGross=$payrollMtdGross payrollDed=$payrollMtdDeductions payrollNet=$payrollMtdNet '
       'previewGross=$previewGross previewDed=$previewDeductions previewNet=$previewNet '
       'proratedGross=${_proratedSalary?.proratedGrossSalary} proratedNet=${_proratedSalary?.proratedNetSalary} '
@@ -3818,16 +3639,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         // Use Grid or Row based on width
         bool isWide = constraints.maxWidth > 600;
 
-        final basis = _previewSalaryBasis;
-        final monthGrossCard = (basis?['monthlyGrossSalary'] as num?)?.toDouble() ??
-            _calculatedSalary?.monthly.grossSalary ??
-            0.0;
-        final monthNetCard = (basis?['monthlyNetSalary'] as num?)?.toDouble() ??
-            _calculatedSalary?.monthly.netMonthlySalary ??
-            0.0;
-        final monthCardSubtitle = basis != null
-            ? 'From payroll preview (contract month)'
-            : 'From salary structure';
+        // Web: monthly cards always use `calculatedSalary.monthly` (staff structure).
+        final monthGrossCard =
+            _calculatedSalary?.monthly.grossSalary ?? 0.0;
+        final monthNetCard =
+            _calculatedSalary?.monthly.netMonthlySalary ?? 0.0;
+        const monthCardSubtitle = 'From salary structure';
 
         // Row 1: Monthly Gross, Monthly Net | Row 2: This Month Gross, This Month Net
         final List<Widget> cards = [
@@ -3850,11 +3667,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           _buildStatCard(
             'This Month Gross',
             currencyFormat.format(thisMonthGrossDisplay),
-            payrollFinal && denomForSalaryCards > 0
+            _proratedSalary != null &&
+                    (_workingDaysInfo != null || _payrollPreview != null)
                 ? '${attendancePercentForCards.toStringAsFixed(1)}% attendance'
-                : (_workingDaysInfo != null || _payrollPreview != null)
-                    ? 'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards working days till date\n${attendancePercentForCards.toStringAsFixed(1)}% attendance'
-                    : 'Pro-rated',
+                : 'Pro-rated',
             Colors.black,
             textColor: Colors.white,
           ),
@@ -3987,21 +3803,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final currencyFormat = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
     final payrollNet = (_currentPayroll?['netPay'] as num?)?.toDouble();
     final previewNet = (_payrollPreview?['netPay'] as num?)?.toDouble();
-    final payrollFinalNet = _payrollRowIsFinalForMtd(_currentPayroll);
-    final backendNet = _backendThisMonthNet;
-    final rawThisMonthNet = payrollFinalNet
-        ? (backendNet ??
-            payrollNet ??
-            previewNet ??
-            _proratedSalary!.proratedNetSalary)
-        : (previewNet ?? _proratedSalary!.proratedNetSalary);
+    // Web `EmployeeSalaryOverview` salaryCardNetPay.
+    final rawThisMonthNet = _payrollRowIsFinalForMtd(_currentPayroll)
+        ? (payrollNet ?? 0.0)
+        : (previewNet ?? _proratedSalary!.proratedNetSalary ?? 0.0);
     final displayThisMonthNet = rawThisMonthNet < 0 ? 0.0 : rawThisMonthNet;
     final workingTillToday = _workingDaysInfo?.workingDays ?? 0;
-    final presentForChips =
-        payrollFinalNet ? _webPresentDays : _presentDays;
-    final absentForChips = payrollFinalNet
-        ? (workingTillToday - _webPresentDays).clamp(0.0, double.infinity)
-        : (workingTillToday - _presentDays).clamp(0.0, double.infinity);
+    final absentForChips =
+        (workingTillToday - _presentDays).clamp(0.0, double.infinity);
     int pendingDaysCount = 0;
     for (final record in _attendanceRecords) {
       final status = (record['status'] as String? ?? '').trim().toLowerCase();
@@ -4010,7 +3819,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
     debugPrint(
       '[SalaryOverviewNetCard] thisMonthNet=${displayThisMonthNet.toStringAsFixed(2)} '
-      'presentForCard=${presentForChips.toStringAsFixed(2)} workingTillToday=$workingTillToday '
+      'presentForCard=${_presentDays.toStringAsFixed(2)} workingTillToday=$workingTillToday '
       'payableRule=${_payableRule ?? "n/a"} pending=$pendingDaysCount',
     );
 
@@ -4055,7 +3864,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             runSpacing: 8,
             children: [
               _buildOverviewStatChip(
-                'Present: ${_formatDayChip(presentForChips)}',
+                'Present: ${_formatDayChip(_presentDays)}',
                 Colors.green,
               ),
               if (_paidLeaveDays > 0)
@@ -4201,10 +4010,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
   /// Web `salaryCardAttendancePct`: preview % else (salaryCardPresentDays / salaryCardWorkingDays) * 100.
   double _monthGrossCardAttendancePercent() {
-    if (_payrollRowIsFinalForMtd(_currentPayroll)) {
-      final w = _workingDaysInfo?.workingDays ?? 0;
-      if (w > 0) return (_webPresentDays / w) * 100;
-    }
     final previewAtt = _payrollPreview?['attendance'] as Map<String, dynamic>?;
     final previewPct = (previewAtt?['attendancePercentage'] as num?)?.toDouble();
     final previewDays = (previewAtt?['presentDays'] as num?)?.toDouble();
@@ -4260,13 +4065,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final salaryCardCounts = _computeSalaryCardDayCountsFromAttendance();
     final working =
         salaryCardCounts['workingDays']?.toInt() ?? _workingDaysInfo!.workingDays;
-    final payrollFinalSummary = _payrollRowIsFinalForMtd(_currentPayroll);
-    final present = payrollFinalSummary
-        ? _webPresentDays
-        : (salaryCardCounts['presentDays'] ?? _presentDays);
-    final absent = payrollFinalSummary
-        ? (working - _webPresentDays).clamp(0.0, double.infinity)
-        : (working - present).clamp(0.0, double.infinity);
+    final present = salaryCardCounts['presentDays'] ?? _presentDays;
+    final absent = (working - present).clamp(0.0, double.infinity);
     final absentStr = absent == absent.roundToDouble()
         ? '${absent.toInt()}'
         : absent.toStringAsFixed(1);

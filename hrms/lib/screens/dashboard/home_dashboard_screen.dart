@@ -681,9 +681,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       joiningDate: _profileJoiningDate,
       attendanceTodayTemplate: _todayAttendanceTemplateMap(),
     );
-    if (snap == null) return const SizedBox.shrink();
+    final appliedId = _todayAppliedShiftIdForHeader();
+    final appliedRes = appliedId != null
+        ? appliedShiftPastResolvedFromCompany(
+            companyDoc: _dashboardCompanyDocForAppliedShiftLookup(),
+            appliedShiftId: appliedId,
+          )
+        : null;
+    final appliedHeaderLine = appliedRes != null
+        ? _appliedShiftCompactLineFromResult(appliedRes)
+        : null;
+    if (snap == null && appliedHeaderLine == null) {
+      return const SizedBox.shrink();
+    }
 
-    if (kDebugMode) {
+    if (kDebugMode && snap != null) {
       final reqMin = snap.requiredWorkMinutes();
       String reqHStr;
       if (reqMin == null) {
@@ -729,7 +741,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
 
     final refFmt = DateFormat('EEE, MMM d, yyyy').format(now);
-    final rotName = snap.rotationTemplateName;
+    final rotName = snap?.rotationTemplateName;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -800,7 +812,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    snap.compactLine(),
+                    appliedHeaderLine ?? snap?.compactLine() ?? '',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -962,7 +974,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         final statsResult = await _salaryService.getSalaryStats(
           month: monthIndex,
           year: year,
-          statsRequestTag: 'Dashboard',
         );
         if (statsResult['stats'] != null) {
           backendStats = statsResult['stats'] as Map<String, dynamic>;
@@ -3375,6 +3386,122 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return d.round();
   }
 
+  /// Full embedded shifts from month payload (preferred) or profile company for [appliedShiftId] lookup.
+  Map<String, dynamic>? _dashboardCompanyDocForAppliedShiftLookup() {
+    final md = _monthData;
+    if (md != null) {
+      final bs = md['businessShifts'];
+      if (bs is List && bs.isNotEmpty) {
+        return {
+          'settings': {
+            'attendance': {'shifts': List<dynamic>.from(bs)},
+          },
+        };
+      }
+    }
+    return _profileCompanyDoc;
+  }
+
+  ({
+    String shiftName,
+    bool isOpen,
+    String? startTime,
+    String? endTime,
+    double? openWorkHours,
+  })? _dashboardAppliedShiftResult(Map<String, dynamic>? record) {
+    if (record == null || record['appliedShiftId'] == null) return null;
+    return appliedShiftPastResolvedFromCompany(
+      companyDoc: _dashboardCompanyDocForAppliedShiftLookup(),
+      appliedShiftId: record['appliedShiftId'],
+    );
+  }
+
+  String _appliedShiftCompactLineFromResult(
+    ({
+      String shiftName,
+      bool isOpen,
+      String? startTime,
+      String? endTime,
+      double? openWorkHours,
+    }) r,
+  ) {
+    if (r.isOpen) {
+      final h = r.openWorkHours;
+      if (h == null || h <= 0) {
+        return '${r.shiftName} · Open';
+      }
+      final label =
+          h == h.roundToDouble() ? '${h.toInt()}h' : h.toStringAsFixed(1);
+      return '${r.shiftName} · Open · $label required';
+    }
+    final a = r.startTime ?? '';
+    final b = r.endTime ?? '';
+    if (a.isEmpty || b.isEmpty) {
+      return r.shiftName;
+    }
+    return '${r.shiftName} · $a-$b';
+  }
+
+  int? _calendarShiftWindowMinutes(String start, String end) {
+    try {
+      (int, int) parts(String s) {
+        final seg = s.split(':');
+        final h = int.parse(seg[0].trim());
+        final m = seg.length > 1 ? int.parse(seg[1].trim()) : 0;
+        return (h, m);
+      }
+
+      final sp = parts(start);
+      final ep = parts(end);
+      var sm = sp.$1 * 60 + sp.$2;
+      var em = ep.$1 * 60 + ep.$2;
+      var diff = em - sm;
+      if (diff < 0) diff += 24 * 60;
+      return diff;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  int? _appliedShiftRequiredMinutesFromResult(
+    ({
+      String shiftName,
+      bool isOpen,
+      String? startTime,
+      String? endTime,
+      double? openWorkHours,
+    }) r,
+  ) {
+    if (r.isOpen) {
+      final h = r.openWorkHours;
+      if (h == null || h <= 0) return 540;
+      return (h * 60).round();
+    }
+    final a = r.startTime;
+    final b = r.endTime;
+    if (a == null || b == null || a.isEmpty || b.isEmpty) return null;
+    return _calendarShiftWindowMinutes(a, b);
+  }
+
+  dynamic _todayAppliedShiftIdForHeader() {
+    final n = DateTime.now();
+    final dateStr = DateFormat('yyyy-MM-dd').format(
+      DateTime(n.year, n.month, n.day),
+    );
+    final att = _monthData?['attendance'];
+    if (att is List) {
+      for (final e in _deduplicateAttendanceByDate(att)) {
+        if (e is! Map) continue;
+        if (_attendanceDateKey(e) == dateStr) {
+          final id = e['appliedShiftId'];
+          if (id != null) return id;
+          break;
+        }
+      }
+    }
+    return _todayAttendance?['appliedShiftId'];
+  }
+
   Widget _buildSimpleCalendar() {
     final colorScheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
@@ -3709,6 +3836,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           Color? webBadgeBg;
                           Color? webBadgeFg;
                           bool calendarCellIsWeekOff = false;
+                          ({
+                            String shiftName,
+                            bool isOpen,
+                            String? startTime,
+                            String? endTime,
+                            double? openWorkHours,
+                          })?
+                          appliedShiftResolvedForCell;
+                          String? appliedShiftCompactForCell;
 
                           if (isCurrentMonth) {
                             effShiftForCell = effectiveShiftForCalendarDay(
@@ -3914,6 +4050,51 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                               );
                             }
 
+                            Map<String, dynamic>? entryForApplied = dayEntry;
+                            if (isToday && _todayAttendance != null) {
+                              final live = Map<String, dynamic>.from(
+                                _todayAttendance!,
+                              );
+                              final id =
+                                  live['appliedShiftId'] ??
+                                  dayEntry?['appliedShiftId'];
+                              if (id != null) {
+                                entryForApplied = {
+                                  ...?dayEntry,
+                                  ...live,
+                                  'appliedShiftId': id,
+                                };
+                              }
+                            } else if (isToday &&
+                                dayEntry == null &&
+                                _todayAttendance?['appliedShiftId'] != null) {
+                              entryForApplied = Map<String, dynamic>.from(
+                                _todayAttendance!,
+                              );
+                            }
+
+                            final cellWall = DateTime(
+                              dayDate.year,
+                              dayDate.month,
+                              dayDate.day,
+                            );
+                            final todayWall = DateTime(
+                              now.year,
+                              now.month,
+                              now.day,
+                            );
+                            if (!cellWall.isAfter(todayWall)) {
+                              final resolvedApplied =
+                                  _dashboardAppliedShiftResult(entryForApplied);
+                              appliedShiftResolvedForCell = resolvedApplied;
+                              if (resolvedApplied != null) {
+                                appliedShiftCompactForCell =
+                                    _appliedShiftCompactLineFromResult(
+                                      resolvedApplied,
+                                    );
+                              }
+                            }
+
                             // Status flags for chips, low-hours, leave interactions
                             final statusForDay = dayStatusByDate[dateStr] ?? '';
                             final statusLower = statusForDay
@@ -3992,8 +4173,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             final workHoursMins = _workHoursToMinutes(
                               workHours,
                             );
-                            final requiredWorkMins =
+                            var requiredWorkMins =
                                 effShiftForCell?.requiredWorkMinutes() ?? 540;
+                            final resolvedForReq =
+                                appliedShiftResolvedForCell;
+                            final appliedReq = resolvedForReq != null
+                                ? _appliedShiftRequiredMinutesFromResult(
+                                    resolvedForReq,
+                                  )
+                                : null;
+                            if (appliedReq != null) {
+                              requiredWorkMins = appliedReq;
+                            }
                             isLowHours =
                                 workHoursMins != null &&
                                 workHoursMins < requiredWorkMins;
@@ -4184,14 +4375,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                                     textColor,
                                                   ),
                                                 if (!calendarCellIsWeekOff &&
-                                                    effShiftForCell !=
-                                                        null) ...[
+                                                    (appliedShiftCompactForCell !=
+                                                            null ||
+                                                        effShiftForCell !=
+                                                            null)) ...[
                                                   if (punchInFmt != null ||
                                                       punchOutFmt != null)
                                                     const SizedBox(height: 3),
                                                   Text(
-                                                    effShiftForCell
-                                                        .compactLine(),
+                                                    appliedShiftCompactForCell ??
+                                                        effShiftForCell
+                                                            ?.compactLine() ??
+                                                        '',
                                                     maxLines: 2,
                                                     overflow:
                                                         TextOverflow.ellipsis,
@@ -4204,16 +4399,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                                       color: Color(0xFF6B7280),
                                                     ),
                                                   ),
-                                                  if (effShiftForCell
-                                                          .rotationCalendarFooter() !=
-                                                      null)
+                                                  if (appliedShiftCompactForCell ==
+                                                          null &&
+                                                      effShiftForCell
+                                                              ?.rotationCalendarFooter() !=
+                                                          null)
                                                     Padding(
                                                       padding:
                                                           const EdgeInsets.only(
                                                             top: 2,
                                                           ),
                                                       child: Text(
-                                                        effShiftForCell
+                                                        effShiftForCell!
                                                             .rotationCalendarFooter()!,
                                                         maxLines: 1,
                                                         overflow: TextOverflow

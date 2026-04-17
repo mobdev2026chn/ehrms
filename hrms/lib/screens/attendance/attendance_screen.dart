@@ -28,6 +28,7 @@ import '../../utils/error_message_utils.dart';
 import '../../utils/absent_alert_helper.dart';
 import '../../utils/fine_calculation_util.dart';
 import '../../services/salary_service.dart';
+import '../../services/settings_service.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/attendance_success_overlay.dart';
@@ -63,6 +64,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   DateTime? _attendanceDataFetchedFor;
   final AttendanceService _attendanceService = AttendanceService();
   final AuthService _authService = AuthService();
+  final SettingsService _settingsService = SettingsService();
+
+  /// Full business from `GET /settings/business` (fallback when API omits embedded list).
+  Map<String, dynamic>? _businessDocForShifts;
+
+  /// From `GET /attendance/today` or month payload [businessShifts] — full company shift rows for [appliedShiftId].
+  List<dynamic>? _embeddedBusinessShiftsFromApi;
 
   // History State
   List<dynamic> _historyList = [];
@@ -98,6 +106,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   final Set<String> _leaveDateSet = {};
   final Set<String> _pendingWithCheckInDateSet =
       {}; // Pending + has punchIn → WA
+
+  /// Days (today or past) with [appliedShiftId]: compact shift window for calendar cell (from company shifts).
+  final Map<String, String> _dayShiftTimingCompactByDate = {};
 
   String _activeFilter = 'All'; // Filter for history list
   bool _showHistoryView =
@@ -347,6 +358,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               _weeklyOffPattern = responseBody['weeklyOffPattern'];
               _checkedInFromApi = responseBody['checkedIn'] as bool?;
               _attendanceStatusFetched = true;
+              _embeddedBusinessShiftsFromApi = null;
+              final bs = responseBody['businessShifts'];
+              if (bs is List && bs.isNotEmpty) {
+                _embeddedBusinessShiftsFromApi = List<dynamic>.from(bs);
+              }
             });
             _reconcileShiftKeyWithAttendanceTemplate();
           }
@@ -423,6 +439,118 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         debugPrint('[Attendance] Stack trace: $st');
       }
       if (mounted) setState(() => _attendanceStatusFetched = true);
+    }
+    if (mounted) await _loadBusinessForAppliedShiftLookup();
+  }
+
+  /// Prefer [businessShifts] from attendance APIs, then settings/business, then merged today template.
+  Map<String, dynamic>? _companyDocForAppliedShiftResolution() {
+    final embedded = _embeddedBusinessShiftsFromApi;
+    if (embedded != null && embedded.isNotEmpty) {
+      return {
+        'settings': {
+          'attendance': {'shifts': embedded},
+        },
+      };
+    }
+    return companyDocForShiftResolution(
+      profilePopulatedCompany: _shiftResolutionCompanyDocFromTemplate(),
+      businessFromSettingsBusinessApi: _businessDocForShifts,
+    );
+  }
+
+  Future<void> _loadBusinessForAppliedShiftLookup() async {
+    try {
+      final res = await _settingsService.getBusiness();
+      if (!mounted) return;
+      if (res['success'] == true && res['data'] is Map) {
+        final data = Map<String, dynamic>.from(res['data'] as Map);
+        final b = data['business'];
+        if (b is Map) {
+          setState(() {
+            _businessDocForShifts = Map<String, dynamic>.from(b as Map);
+            _repopulateDayShiftTimingCompactForMonth(
+              _focusedDay.year,
+              _focusedDay.month,
+            );
+          });
+          return;
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _businessDocForShifts = null;
+          _repopulateDayShiftTimingCompactForMonth(
+            _focusedDay.year,
+            _focusedDay.month,
+          );
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _businessDocForShifts = null;
+          _repopulateDayShiftTimingCompactForMonth(
+            _focusedDay.year,
+            _focusedDay.month,
+          );
+        });
+      }
+    }
+  }
+
+  void _repopulateDayShiftTimingCompactForMonth(int year, int month) {
+    final prefix =
+        '$year-${month.toString().padLeft(2, '0')}-';
+    for (final k in List<String>.from(_dayShiftTimingCompactByDate.keys)) {
+      if (k.startsWith(prefix)) {
+        _dayShiftTimingCompactByDate.remove(k);
+      }
+    }
+    final md = _monthData;
+    if (md == null || md['attendance'] is! List) return;
+    final companyDoc = _companyDocForAppliedShiftResolution();
+    final attendanceList = _deduplicateAttendanceByDate(
+      md['attendance'] as List,
+    );
+    final n = DateTime.now();
+    final todayWall = DateTime(n.year, n.month, n.day);
+    for (final entry in attendanceList) {
+      try {
+        final dateStr = _attendanceCalendarDate(entry['date']);
+        if (dateStr.isEmpty || !dateStr.startsWith(prefix)) continue;
+        final parts = dateStr.split('-');
+        if (parts.length != 3) continue;
+        final dayYear = int.tryParse(parts[0]) ?? 0;
+        final dayMonth = int.tryParse(parts[1]) ?? 0;
+        final entryDay = int.tryParse(parts[2]) ?? 0;
+        if (dayYear != year || dayMonth != month || entryDay <= 0) {
+          continue;
+        }
+        final entryDateOnly = DateTime(dayYear, dayMonth, entryDay);
+        if (entryDateOnly.isAfter(todayWall)) continue;
+        if (entry['appliedShiftId'] == null) continue;
+        final resolved = appliedShiftPastResolvedFromCompany(
+          companyDoc: companyDoc,
+          appliedShiftId: entry['appliedShiftId'],
+        );
+        if (resolved == null) continue;
+        if (resolved.isOpen) {
+          final h = resolved.openWorkHours;
+          if (h != null && h > 0) {
+            final label = h == h.roundToDouble()
+                ? '${h.toInt()}h'
+                : '${h.toStringAsFixed(1)}h';
+            _dayShiftTimingCompactByDate[dateStr] = 'Open $label';
+          }
+        } else {
+          final a = resolved.startTime ?? '';
+          final b = resolved.endTime ?? '';
+          if (a.isNotEmpty && b.isNotEmpty) {
+            _dayShiftTimingCompactByDate[dateStr] = '$a-$b';
+          }
+        }
+      } catch (_) {}
     }
   }
 
@@ -522,6 +650,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     if (!mounted) return;
     await _fetchFineCalculation();
+    if (!mounted) return;
+    await _loadBusinessForAppliedShiftLookup();
   }
 
   Future<void> _fetchMonthData(
@@ -544,6 +674,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _absentDateSet.clear();
         _leaveDateSet.clear();
         _pendingWithCheckInDateSet.clear();
+        _dayShiftTimingCompactByDate.clear();
       });
     }
     try {
@@ -560,6 +691,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         }
 
         _monthData = result['data'];
+        _embeddedBusinessShiftsFromApi = null;
+        final mdRoot = _monthData;
+        if (mdRoot != null) {
+          final bs = mdRoot['businessShifts'];
+          if (bs is List && bs.isNotEmpty) {
+            _embeddedBusinessShiftsFromApi = List<dynamic>.from(bs);
+          }
+        }
 
         // Rebuild lookup maps/sets so History calendar matches dashboard calendar.
         _dayStatusByDate.clear();
@@ -574,6 +713,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _absentDateSet.clear();
         _leaveDateSet.clear();
         _pendingWithCheckInDateSet.clear();
+        _dayShiftTimingCompactByDate.clear();
 
         if (_monthData != null) {
           // Attendance-based maps: one record per date (use attendance collection date; deduplicate)
@@ -645,6 +785,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 continue;
               }
             }
+            _repopulateDayShiftTimingCompactForMonth(year, month);
           }
 
           // Holiday dates
@@ -845,6 +986,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               _isPaidLeaveToday = responseBody['isPaidLeaveToday'] ?? false;
               _holidayInfo = responseBody['holidayInfo'];
               _checkedInFromApi = responseBody['checkedIn'] as bool?;
+              _embeddedBusinessShiftsFromApi = null;
+              final bs = responseBody['businessShifts'];
+              if (bs is List && bs.isNotEmpty) {
+                _embeddedBusinessShiftsFromApi = List<dynamic>.from(bs);
+              }
             });
           } else {
             data = responseBody;
@@ -1379,41 +1525,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildAttendanceSummaryCard(
-                        shiftLabel:
-                            (record['shiftName'] ??
-                                    _attendanceTemplate?['name'] ??
-                                    'Shift')
-                                .toString()
-                                .trim()
-                                .isNotEmpty
-                            ? (record['shiftName'] ??
-                                      _attendanceTemplate?['name'] ??
-                                      'Shift')
-                                  .toString()
-                                  .trim()
-                            : 'Shift',
-                        shiftTime: () {
-                          if (_isOpenShiftTemplate()) {
-                            final h = _openShiftRequiredHours();
-                            final label = h == h.roundToDouble()
-                                ? '${h.toInt()}'
-                                : h.toStringAsFixed(1);
-                            return 'Open shift · $label hrs required';
-                          }
-                          final halfDayTimings =
-                              _getWorkingSessionTimingsForRecord(record);
-                          final start = halfDayTimings != null
-                              ? halfDayTimings['startTime'] ?? 'N/A'
-                              : _attendanceTemplate?['shiftStartTime']
-                                        ?.toString() ??
-                                    'N/A';
-                          final end = halfDayTimings != null
-                              ? halfDayTimings['endTime'] ?? 'N/A'
-                              : _attendanceTemplate?['shiftEndTime']
-                                        ?.toString() ??
-                                    'N/A';
-                          return '$start - $end';
-                        }(),
+                        shiftLabel: _shiftLabelForAttendanceDetail(record),
+                        shiftTime: _shiftTimeLineForAttendanceDetail(record),
                         status: summaryStatus,
                         statusColor: statusColor,
                         punchIn: _formatTime(punchIn),
@@ -1432,9 +1545,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                           record['overtime'],
                         ),
                         openShiftBufferDisplay:
-                            _formatOpenShiftBufferForDisplay(
-                              record['bufferTime'],
-                            ),
+                            _isOpenShiftForRecordEvaluation(record)
+                            ? _formatOpenShiftBufferForDisplay(
+                                record['bufferTime'],
+                              )
+                            : null,
                       ),
                       if (hasFineInfo) ...[
                         const SizedBox(height: 20),
@@ -2239,10 +2354,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     bool isLate = false,
     bool isEarly = false,
   }) async {
-    final fullMessage =
-        await AttendanceTemplateStore.appendRequireSelfieGeolocationToMessage(
-          message,
-        );
+    final fullMessage = (isLate || isEarly)
+        ? message
+        : await AttendanceTemplateStore.appendRequireSelfieGeolocationToMessage(
+            message,
+          );
     if (!mounted) return;
     return showDialog<void>(
       context: context,
@@ -2259,7 +2375,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             ? Icons.schedule_rounded
             : Icons.info_outline_rounded;
         final Color iconColor = AppColors.primary;
-        final String? lateTimingLine = isLate
+        final String? shiftTimingLine = (isLate || isEarly)
             ? _shiftTimingSummaryForWarningDialog()
             : null;
 
@@ -2319,62 +2435,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                           color: Colors.white.withOpacity(0.9),
                         ),
                       ),
-                      if (isLate) ...[
+                      if ((isLate || isEarly) &&
+                          shiftTimingLine != null &&
+                          shiftTimingLine.isNotEmpty) ...[
                         const SizedBox(height: 14),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.14),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'SHIFT',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0.6,
-                                  color: Colors.white.withOpacity(0.55),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _shiftDisplayNameForWarningDialog(),
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white.withOpacity(0.95),
-                                ),
-                              ),
-                              if (lateTimingLine != null &&
-                                  lateTimingLine.isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                Text(
-                                  'TIMINGS',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 0.6,
-                                    color: Colors.white.withOpacity(0.55),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  lateTimingLine,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    height: 1.35,
-                                    color: Colors.white.withOpacity(0.88),
-                                  ),
-                                ),
-                              ],
-                            ],
+                        Text(
+                          'shift $shiftTimingLine',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            height: 1.35,
+                            color: Colors.white.withOpacity(0.88),
                           ),
                         ),
                       ],
@@ -2466,13 +2537,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required int lateMinutes,
     required double fineAmount,
   }) {
-    final fineLog = _resolveFineLogForAction('lateArrival');
     final formattedFine = NumberFormat('#,##0.00').format(fineAmount);
     return '$baseMessage\n'
-        'lateMinutes: $lateMinutes\n'
-        'fine: ₹$formattedFine\n'
-        'fineType: ${fineLog['fineType']}\n'
-        'rule: ${fineLog['ruleType']} (${fineLog['ruleApplyTo']})';
+        'LateMinutes: $lateMinutes\n'
+        'Fine: ₹$formattedFine';
   }
 
   String _buildEarlyAlertMessage({
@@ -2480,13 +2548,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required int earlyMinutes,
     required double fineAmount,
   }) {
-    final fineLog = _resolveFineLogForAction('earlyExit');
     final formattedFine = NumberFormat('#,##0.00').format(fineAmount);
     return '$baseMessage\n'
-        'earlyMinutes: $earlyMinutes\n'
-        'fine: ₹$formattedFine\n'
-        'fineType: ${fineLog['fineType']}\n'
-        'rule: ${fineLog['ruleType']} (${fineLog['ruleApplyTo']})';
+        'EarlyMinutes: $earlyMinutes\n'
+        'Fine: ₹$formattedFine';
   }
 
   Map<String, String> _resolveFineLogForAction(String actionApplyToType) {
@@ -3047,6 +3112,139 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     );
   }
 
+  /// Full merged `/attendance/today` template for [shiftsListFromCompany] (nested `settings` or root `attendance.shifts`).
+  Map<String, dynamic>? _shiftResolutionCompanyDocFromTemplate() {
+    final t = _attendanceTemplate;
+    if (t == null || t.isEmpty) return null;
+    return Map<String, dynamic>.from(t);
+  }
+
+  /// Standard shift window from [appliedShiftId] + business embedded shifts (when set on the record).
+  Map<String, String>? _appliedShiftSessionTimesForRecord(
+    Map<String, dynamic>? record,
+  ) {
+    if (record == null) return null;
+    if (record['appliedShiftId'] == null) return null;
+    final resolved = appliedShiftPastResolvedFromCompany(
+      companyDoc: _companyDocForAppliedShiftResolution(),
+      appliedShiftId: record['appliedShiftId'],
+    );
+    if (resolved == null ||
+        resolved.isOpen ||
+        resolved.startTime == null ||
+        resolved.endTime == null) {
+      return null;
+    }
+    final a = resolved.startTime!.trim();
+    final b = resolved.endTime!.trim();
+    if (a.isEmpty || b.isEmpty) return null;
+    return {'startTime': a, 'endTime': b};
+  }
+
+  bool _isOpenShiftForRecordEvaluation(Map<String, dynamic>? record) {
+    if (record != null && record['appliedShiftId'] != null) {
+      final r = appliedShiftPastResolvedFromCompany(
+        companyDoc: _companyDocForAppliedShiftResolution(),
+        appliedShiftId: record['appliedShiftId'],
+      );
+      if (r != null) return r.isOpen;
+    }
+    return _isOpenShiftTemplate();
+  }
+
+  double _openShiftRequiredHoursForRecord(Map<String, dynamic>? record) {
+    if (record != null && record['appliedShiftId'] != null) {
+      final r = appliedShiftPastResolvedFromCompany(
+        companyDoc: _companyDocForAppliedShiftResolution(),
+        appliedShiftId: record['appliedShiftId'],
+      );
+      if (r != null && r.isOpen) {
+        final h = r.openWorkHours;
+        if (h != null && h > 0) return h;
+      }
+    }
+    return _openShiftRequiredHours();
+  }
+
+  int _shiftSpanMinutesForPresentRecord(Map<String, dynamic> record) {
+    if (record['appliedShiftId'] != null) {
+      final r = appliedShiftPastResolvedFromCompany(
+        companyDoc: _companyDocForAppliedShiftResolution(),
+        appliedShiftId: record['appliedShiftId'],
+      );
+      if (r != null) {
+        if (r.isOpen) {
+          final h = r.openWorkHours;
+          if (h != null && h > 0) return (h * 60).round();
+        } else if (r.startTime != null &&
+            r.endTime != null &&
+            r.startTime!.isNotEmpty &&
+            r.endTime!.isNotEmpty) {
+          return (calculateShiftHours(r.startTime!, r.endTime!) * 60).round();
+        }
+      }
+    }
+    return _getShiftHoursMinutes();
+  }
+
+  int _halfDayMinutesThresholdForRecord(Map<String, dynamic> record) {
+    final full = _shiftSpanMinutesForPresentRecord(record);
+    return full ~/ 2;
+  }
+
+  String _shiftLabelForAttendanceDetail(Map<String, dynamic> record) {
+    if (record['appliedShiftId'] != null) {
+      final r = appliedShiftPastResolvedFromCompany(
+        companyDoc: _companyDocForAppliedShiftResolution(),
+        appliedShiftId: record['appliedShiftId'],
+      );
+      if (r != null && r.shiftName.isNotEmpty) return r.shiftName;
+    }
+    final fromRecord = (record['shiftName'] ?? '').toString().trim();
+    if (fromRecord.isNotEmpty) {
+      return fromRecord;
+    }
+    final tName = (_attendanceTemplate?['name'] ?? _attendanceTemplate?['shiftName'])
+        ?.toString()
+        .trim();
+    if (tName != null && tName.isNotEmpty) return tName;
+    return 'Shift';
+  }
+
+  String _shiftTimeLineForAttendanceDetail(Map<String, dynamic> record) {
+    if (record['appliedShiftId'] != null) {
+      final r = appliedShiftPastResolvedFromCompany(
+        companyDoc: _companyDocForAppliedShiftResolution(),
+        appliedShiftId: record['appliedShiftId'],
+      );
+      if (r != null) {
+        if (r.isOpen) {
+          final h = r.openWorkHours ?? 8.0;
+          final label = h == h.roundToDouble()
+              ? '${h.toInt()}'
+              : h.toStringAsFixed(1);
+          return 'Open shift · $label hrs required';
+        }
+        final a = r.startTime ?? 'N/A';
+        final b = r.endTime ?? 'N/A';
+        return '$a - $b';
+      }
+    }
+    if (_isOpenShiftTemplate()) {
+      final h = _openShiftRequiredHours();
+      final label = h == h.roundToDouble() ? '${h.toInt()}' : h.toStringAsFixed(1);
+      return 'Open shift · $label hrs required';
+    }
+    final halfDayTimings = _getWorkingSessionTimingsForRecord(record);
+    final start = halfDayTimings != null
+        ? halfDayTimings['startTime'] ?? 'N/A'
+        : _attendanceTemplate?['shiftStartTime']?.toString() ?? 'N/A';
+    final end = halfDayTimings != null
+        ? halfDayTimings['endTime'] ?? 'N/A'
+        : _attendanceTemplate?['shiftEndTime']?.toString() ?? 'N/A';
+    return '$start - $end';
+  }
+
   /// Grace period in minutes from DB (template). Prefers [gracePeriodMinutes],
   /// then [settings.attendance.shifts[0].graceTime]. Defaults to 15 only when absent.
   int _getGracePeriodMinutes() {
@@ -3114,20 +3312,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final ampm = h < 12 ? 'AM' : 'PM';
     if (m == 0) return '$hour:00 $ampm';
     return '$hour:${m.toString().padLeft(2, '0')} $ampm';
-  }
-
-  /// Shift label for late-login dialog (today record → template shiftName → template name).
-  String _shiftDisplayNameForWarningDialog() {
-    final fromAttendance = _attendanceData?['shiftName']?.toString().trim();
-    if (fromAttendance != null && fromAttendance.isNotEmpty) {
-      return fromAttendance;
-    }
-    final t = _attendanceTemplate;
-    final sn = t?['shiftName']?.toString().trim();
-    if (sn != null && sn.isNotEmpty) return sn;
-    final n = t?['name']?.toString().trim();
-    if (n != null && n.isNotEmpty) return n;
-    return 'Shift';
   }
 
   /// One-line friendly shift window (half-day working session when applicable).
@@ -3378,14 +3562,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   // Helper to determine if late. Pass [record] when evaluating a specific record (e.g. history) so half-day uses that record's session.
   bool _isLateCheckIn(String? punchInTime, {Map<String, dynamic>? record}) {
     if (punchInTime == null) return false;
-    if (_isOpenShiftTemplate()) return false;
+    final openEval = record != null
+        ? _isOpenShiftForRecordEvaluation(record)
+        : _isOpenShiftTemplate();
+    if (openEval) return false;
     try {
       final punchIn = DateTime.parse(punchInTime).toLocal();
 
-      // For Half Day: use working session start from record or current context
-      final sessionTimings = record != null
+      // Half-day working session wins; else [appliedShiftId] window when set; else template.
+      Map<String, String>? sessionTimings = record != null
           ? _getWorkingSessionTimingsForRecord(record)
           : _getWorkingSessionTimings();
+      if (sessionTimings == null && record != null) {
+        sessionTimings = _appliedShiftSessionTimesForRecord(record);
+      }
       final shiftStartStr =
           sessionTimings?['startTime'] ?? _getShiftStartTime();
       final parts = shiftStartStr.split(':').map(int.parse).toList();
@@ -3409,13 +3599,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   bool _isLateCheckOut(String? punchOutTime, {Map<String, dynamic>? record}) {
     if (punchOutTime == null) return false;
-    if (_isOpenShiftTemplate()) return false;
+    final openEval = record != null
+        ? _isOpenShiftForRecordEvaluation(record)
+        : _isOpenShiftTemplate();
+    if (openEval) return false;
     try {
       final punchOut = DateTime.parse(punchOutTime).toLocal();
 
-      final sessionTimings = record != null
+      Map<String, String>? sessionTimings = record != null
           ? _getWorkingSessionTimingsForRecord(record)
           : _getWorkingSessionTimings();
+      if (sessionTimings == null && record != null) {
+        sessionTimings = _appliedShiftSessionTimesForRecord(record);
+      }
       final shiftEndStr = sessionTimings?['endTime'] ?? _getShiftEndTime();
       final parts = shiftEndStr.split(':').map(int.parse).toList();
 
@@ -3438,18 +3634,27 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     try {
       final punchOut = DateTime.parse(punchOutTime).toLocal();
 
-      if (_isOpenShiftTemplate()) {
+      final openEval = record != null
+          ? _isOpenShiftForRecordEvaluation(record)
+          : _isOpenShiftTemplate();
+      if (openEval) {
         final punchInRaw = record?['punchIn'];
         if (punchInRaw == null) return false;
         final punchIn = DateTime.parse(punchInRaw.toString()).toLocal();
         final worked = punchOut.difference(punchIn).inMinutes;
-        final required = (_openShiftRequiredHours() * 60).round();
+        final requiredH = record != null
+            ? _openShiftRequiredHoursForRecord(record)
+            : _openShiftRequiredHours();
+        final required = (requiredH * 60).round();
         return worked < required;
       }
 
-      final sessionTimings = record != null
+      Map<String, String>? sessionTimings = record != null
           ? _getWorkingSessionTimingsForRecord(record)
           : _getWorkingSessionTimings();
+      if (sessionTimings == null && record != null) {
+        sessionTimings = _appliedShiftSessionTimesForRecord(record);
+      }
       final shiftEndStr = sessionTimings?['endTime'] ?? _getShiftEndTime();
       final parts = shiftEndStr.split(':').map(int.parse).toList();
 
@@ -3581,10 +3786,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final mins = _workHoursToMinutes(workHours);
     if (mins == null || mins <= 0) return false;
 
+    final recMap = Map<String, dynamic>.from(record as Map);
     if (isHalfDay) {
-      return mins < _getHalfDayHoursMinutes();
+      return mins < _halfDayMinutesThresholdForRecord(recMap);
     }
-    return mins < _getShiftHoursMinutes();
+    return mins < _shiftSpanMinutesForPresentRecord(recMap);
   }
 
   /// Formats work hours with unit "min" / "mins". Value from API is in minutes.
@@ -3863,6 +4069,35 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                     : const Color(0xFF1E293B))
                                 .withOpacity(0.9),
                       ),
+                    ),
+                  ],
+                  if (isCurrentMonth) ...[
+                    Builder(
+                      builder: (context) {
+                        final shiftSub = _dayShiftTimingCompactByDate[dateStr];
+                        if (shiftSub == null || shiftSub.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: Text(
+                            shiftSub,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 7,
+                              fontWeight: FontWeight.w600,
+                              height: 1.05,
+                              color:
+                                  (bgColor != Colors.transparent
+                                          ? textColor
+                                          : const Color(0xFF1E293B))
+                                      .withOpacity(0.85),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ],
@@ -5971,8 +6206,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
     }
     if (alertMessage != null) {
-      final isLate = alertMessage.contains('late');
-      final isEarly = alertMessage.contains('early');
+      final lower = alertMessage.toLowerCase();
+      final isLate = lower.contains('late');
+      final isEarly = lower.contains('early');
       await _showWarningAlert(alertMessage, isLate: isLate, isEarly: isEarly);
       if (!mounted) return;
       if (shouldBlock) {

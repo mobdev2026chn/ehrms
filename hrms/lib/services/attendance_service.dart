@@ -178,6 +178,7 @@ class AttendanceService {
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
       final prefs = await SharedPreferences.getInstance();
+      final businessId = prefs.getString('businessId');
       final appPerDayNetSalary = prefs.getDouble('app_net_per_day_salary');
       final appPerdayGrossSalary = prefs.getDouble('app_gross_per_day_salary');
       final body = {
@@ -194,6 +195,7 @@ class AttendanceService {
         'lateMinutes': lateMinutes,
         'earlyMinutes': earlyMinutes,
         'fineAmount': fineAmount,
+        if (businessId != null && businessId.isNotEmpty) 'businessId': businessId,
         if (appPerDayNetSalary != null && appPerDayNetSalary > 0)
           'appPerDayNetSalary': appPerDayNetSalary,
         if (appPerdayGrossSalary != null && appPerdayGrossSalary > 0)

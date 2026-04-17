@@ -241,6 +241,57 @@ double? resolveOpenShiftWorkHoursFromCompany(
   return null;
 }
 
+/// Resolves [appliedShiftId] to the embedded company shift row (check-in stores effective shift id).
+/// Use whenever the attendance document includes [appliedShiftId] (today or earlier).
+({String shiftName, bool isOpen, String? startTime, String? endTime, double? openWorkHours})?
+    appliedShiftPastResolvedFromCompany({
+  required Map<String, dynamic>? companyDoc,
+  required dynamic appliedShiftId,
+}) {
+  final idHex = objectIdHexLoose(appliedShiftId);
+  if (idHex == null) return null;
+  final shifts = shiftsListFromCompany(companyDoc);
+  if (shifts == null) return null;
+  Map<String, dynamic>? row;
+  for (final raw in shifts) {
+    if (raw is! Map) continue;
+    final s = Map<String, dynamic>.from(raw);
+    final sid = objectIdHexLoose(s['_id']);
+    if (sid != null && sid == idHex) {
+      row = s;
+      break;
+    }
+  }
+  if (row == null) return null;
+  final name = row['name']?.toString().trim();
+  final shiftName = (name != null && name.isNotEmpty) ? name : 'Shift';
+  final st = (row['shiftType'] ?? '').toString().toLowerCase().trim();
+  final nm = shiftName.toLowerCase();
+  final isOpen = st == 'open' ||
+      st == 'open shift' ||
+      nm == 'open' ||
+      nm == 'open shift';
+  if (isOpen) {
+    final openH = resolveOpenShiftWorkHoursFromCompany(companyDoc, row) ??
+        readOpenWorkHoursFromShiftMap(row);
+    return (
+      shiftName: shiftName,
+      isOpen: true,
+      startTime: null,
+      endTime: null,
+      openWorkHours: openH,
+    );
+  }
+  final win = resolveStandardShiftWindowFromCompany(companyDoc, row);
+  return (
+    shiftName: shiftName,
+    isOpen: false,
+    startTime: win.start,
+    endTime: win.end,
+    openWorkHours: null,
+  );
+}
+
 int? readOtBufferMinutesFromMap(Map<String, dynamic>? m) {
   if (m == null || m.isEmpty) return null;
   final raw = m['otBufferMinutes'];
@@ -533,12 +584,20 @@ class EffectiveShiftDay {
 List<dynamic>? shiftsListFromCompany(Map<String, dynamic>? companyDoc) {
   if (companyDoc == null) return null;
   final settings = companyDoc['settings'];
-  if (settings is! Map) return null;
-  final att = settings['attendance'];
-  if (att is! Map) return null;
-  final shifts = att['shifts'];
-  if (shifts is! List || shifts.isEmpty) return null;
-  return shifts;
+  if (settings is Map) {
+    final att = settings['attendance'];
+    if (att is Map) {
+      final shifts = att['shifts'];
+      if (shifts is List && shifts.isNotEmpty) return shifts;
+    }
+  }
+  // GET /attendance/today [normalizeTemplate] spreads `settings` onto the root, so shifts often live here.
+  final rootAtt = companyDoc['attendance'];
+  if (rootAtt is Map) {
+    final shifts = rootAtt['shifts'];
+    if (shifts is List && shifts.isNotEmpty) return shifts;
+  }
+  return null;
 }
 
 /// Web parity with `useGetBusinessQuery` / `GET /settings/business`: full shift rows

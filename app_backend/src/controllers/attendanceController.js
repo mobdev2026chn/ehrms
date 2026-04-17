@@ -2788,6 +2788,15 @@ const getTodayAttendance = async (req, res) => {
         const hasPunchOut = !!(attendance && attendance.punchOut);
         const checkedIn = hasPunchIn && !hasPunchOut;
 
+        /** Full embedded shift rows for the app to resolve [appliedShiftId] (template payload may omit or truncate). */
+        const businessShifts =
+            company &&
+            company.settings &&
+            company.settings.attendance &&
+            Array.isArray(company.settings.attendance.shifts)
+                ? JSON.parse(JSON.stringify(company.settings.attendance.shifts))
+                : null;
+
         console.log('[API][GET /api/attendance/today] template.shiftTimings', {
             staffId: req.staff._id?.toString(),
             queryDate: req.query.date || 'today',
@@ -2803,6 +2812,7 @@ const getTodayAttendance = async (req, res) => {
             data: attendance,
             branch: branchInfo,
             template: finalTemplate,
+            businessShifts,
             shiftAssigned,
             isOnLeave: isOnLeave,
             leaveMessage: finalLeaveMessage,
@@ -3397,9 +3407,18 @@ const getMonthAttendance = async (req, res) => {
             return aObj;
         });
 
+        const businessShifts =
+            companyForFine &&
+            companyForFine.settings &&
+            companyForFine.settings.attendance &&
+            Array.isArray(companyForFine.settings.attendance.shifts)
+                ? companyForFine.settings.attendance.shifts
+                : null;
+
         res.json({
             data: {
                 attendance: attendanceForResponse,
+                businessShifts,
                 holidays,
                 weekOffDates: weekOffDates,
                 alternateWorkDatesInMonth,

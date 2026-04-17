@@ -8,7 +8,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/walking_turtle_emoji.dart';
 import '../../config/constants.dart';
@@ -496,14 +495,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     String? applyTo,
   }) async {
     try {
-      if (kDebugMode) {
-        debugPrint(
-          '[Permission TEST][Dashboard] input '
-          'day=${DateFormat('yyyy-MM-dd').format(day)} '
-          'late=$lateMinutes early=$earlyMinutes '
-          'isOpenShift=$isOpenShift isCheckout=$isCheckout applyTo=${applyTo ?? 'both'}',
-        );
-      }
       final reqRes = await _requestService.getPermissionRequests(
         status: 'Approved',
         month: day.month,
@@ -516,14 +507,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       final remainingFromApi =
           ((balRes['data']?['remainingMinutes'] as num?)?.toInt() ?? 0)
               .clamp(0, 1000000);
-      if (kDebugMode) {
-        debugPrint(
-          '[Permission TEST][Dashboard] api '
-          'requestsSuccess=${reqRes['success']} '
-          'balanceSuccess=${balRes['success']} '
-          'remainingFromApi=$remainingFromApi',
-        );
-      }
       final data = reqRes['data'];
       final listRaw = (data is Map) ? data['permissions'] : data;
       int approvedLate = 0;
@@ -577,23 +560,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       final totalConsume = totalEligible.clamp(0, remainingFromApi);
       var consumeLate = eligibleLate.clamp(0, totalConsume);
       final consumeEarly = (totalConsume - consumeLate).clamp(0, eligibleEarly);
-      if (kDebugMode) {
-        debugPrint(
-          '[Permission TEST][Dashboard] computed '
-          'approvedLate=$approvedLate approvedEarly=$approvedEarly '
-          'eligibleLate=$eligibleLate eligibleEarly=$eligibleEarly '
-          'totalEligible=$totalEligible totalConsume=$totalConsume '
-          'consumeLate=$consumeLate consumeEarly=$consumeEarly',
-        );
-      }
       return {
         'consumeLate': consumeLate,
         'consumeEarly': consumeEarly,
       };
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[Permission TEST][Dashboard] error: $e');
-      }
+    } catch (_) {
       return {
         'consumeLate': 0,
         'consumeEarly': 0,
@@ -795,9 +766,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         (tmpl['permissionPolicy'] is Map<String, dynamic>)
             ? (tmpl['permissionPolicy']['applyTo']?.toString())
             : null;
+    // At checkout, do not pass stored [lateMinutes] into permission splitting: that
+    // value was already settled at check-in and would steal the whole permission
+    // balance as "eligible late", zeroing early exit minutes and checkout fine.
     final permissionAdjustment = await _getPermissionAdjustment(
       day: DateTime(now.year, now.month, now.day),
-      lateMinutes: lateMinutes,
+      lateMinutes: isCheckedIn ? 0 : lateMinutes,
       earlyMinutes: earlyMinutes,
       isOpenShift: isOpenShift,
       isCheckout: isCheckedIn,
@@ -807,14 +781,6 @@ class _DashboardScreenState extends State<DashboardScreen>
         (lateMinutes - (permissionAdjustment['consumeLate'] ?? 0)).clamp(0, 1000000);
     earlyMinutes =
         (earlyMinutes - (permissionAdjustment['consumeEarly'] ?? 0)).clamp(0, 1000000);
-    if (kDebugMode) {
-      debugPrint(
-        '[Permission TEST][Dashboard][PayloadAdjust] '
-        'afterAdjust late=$lateMinutes early=$earlyMinutes '
-        'consumeLate=${permissionAdjustment['consumeLate'] ?? 0} '
-        'consumeEarly=${permissionAdjustment['consumeEarly'] ?? 0}',
-      );
-    }
 
     if (shiftHoursForFinalFine <= 0) {
       if (isOpenShift) {
@@ -1476,7 +1442,11 @@ class _DashboardScreenState extends State<DashboardScreen>
     bool isEarly = false,
     String? shiftTimingLine,
   }) async {
-    final fullMessage = message;
+    final fullMessage = (isLate || isEarly)
+        ? message
+        : await AttendanceTemplateStore.appendRequireSelfieGeolocationToMessage(
+            message,
+          );
     if (!mounted) return false;
     final result = await showDialog<bool>(
       context: context,
@@ -1494,22 +1464,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             : Icons.info_outline_rounded;
         final Color iconColor = AppColors.primary;
         final colorScheme = Theme.of(context).colorScheme;
-        final String? resolvedShiftTiming =
-            (shiftTimingLine != null && shiftTimingLine.trim().isNotEmpty)
-            ? shiftTimingLine.trim()
-            : null;
-        final String renderedMessage = (isLate || isEarly)
-            ? fullMessage
-                  .split('\n')
-                  .map((line) => line.trim())
-                  .where((line) => line.isNotEmpty)
-                  .where(
-                    (line) =>
-                        !line.toLowerCase().startsWith('you are checking in late') &&
-                        !line.toLowerCase().startsWith('you are checking out'),
-                  )
-                  .join('\n')
-            : fullMessage;
         return Dialog(
           backgroundColor: Colors.transparent,
           insetPadding: const EdgeInsets.symmetric(horizontal: 24),
@@ -1565,21 +1519,23 @@ class _DashboardScreenState extends State<DashboardScreen>
                           color: Colors.white.withOpacity(0.9),
                         ),
                       ),
-                      if ((isLate || isEarly) && resolvedShiftTiming != null) ...[
+                      if ((isLate || isEarly) &&
+                          shiftTimingLine != null &&
+                          shiftTimingLine.isNotEmpty) ...[
                         const SizedBox(height: 14),
                         Text(
-                          'Shift $resolvedShiftTiming',
+                          'shift $shiftTimingLine',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 14,
-                            height: 1.4,
-                            color: Colors.white.withOpacity(0.8),
+                            height: 1.35,
+                            color: Colors.white.withOpacity(0.88),
                           ),
                         ),
                       ],
                       const SizedBox(height: 12),
                       Text(
-                        renderedMessage,
+                        fullMessage,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 14,
@@ -1754,21 +1710,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     } catch (_) {
       return null;
     }
-  }
-
-  static String _shiftDisplayNameForWarningDialog(
-    Map<String, dynamic>? attendanceData,
-    Map<String, dynamic>? template,
-  ) {
-    final fromAttendance = attendanceData?['shiftName']?.toString().trim();
-    if (fromAttendance != null && fromAttendance.isNotEmpty) {
-      return fromAttendance;
-    }
-    final sn = template?['shiftName']?.toString().trim();
-    if (sn != null && sn.isNotEmpty) return sn;
-    final n = template?['name']?.toString().trim();
-    if (n != null && n.isNotEmpty) return n;
-    return 'Shift';
   }
 
   static String? _shiftTimingSummaryForWarningDialog(
@@ -2309,7 +2250,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                   sessionTimings?['startTime'] ??
                   _getShiftStartTimeFromDb(tmpl) ??
                   '09:30';
-              final earlyMinutes = shiftEnd.difference(now).inMinutes;
+              final rawEarlyMinutes = shiftEnd.difference(now).inMinutes;
+              final earlyMinutes = rawEarlyMinutes;
               double estimatedFine = 0;
               if (netPerDaySalary != null &&
                   netPerDaySalary > 0 &&
@@ -2374,6 +2316,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 debugPrint(
                   '[Fine TEST][Dashboard Punch][EarlyOut] start=$shiftStartForFine '
                   'end=$shiftEndStr earlyMin=$adjustedEarlyMinutes '
+                  'rawEarlyMin=$rawEarlyMinutes '
+                  'consumeEarly=${permissionAdjustment['consumeEarly'] ?? 0} '
+                  'now=${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} '
                   'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
                   'fineType=${fineLog['fineType']} '
                   'ruleType=${fineLog['ruleType']} '
@@ -2395,13 +2340,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                           .toLowerCase();
                   if (unitLower == 'perminute') {
                     fineFormula =
-                        '${customAmount.toStringAsFixed(2)} × $earlyMinutes';
+                        '${customAmount.toStringAsFixed(2)} × $adjustedEarlyMinutes';
                     fineFormulaWords =
                         'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
                         'customAmount perMinute × earlyMinutes';
                   } else if (unitLower == 'perhour') {
                     fineFormula =
-                        '${customAmount.toStringAsFixed(2)} × ($earlyMinutes / 60)';
+                        '${customAmount.toStringAsFixed(2)} × ($adjustedEarlyMinutes / 60)';
                     fineFormulaWords =
                         'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
                         'customAmount perHour × (earlyMinutes/60)';
@@ -2414,7 +2359,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 } else {
                   fineFormula =
                       '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
-                      '* ($earlyMinutes / 60)';
+                      '* ($adjustedEarlyMinutes / 60)';
                   fineFormulaWords =
                       'perDaySalary/shiftHours × (earlyMinutes/60)';
                 }
@@ -2443,11 +2388,12 @@ class _DashboardScreenState extends State<DashboardScreen>
       }
     }
     if (alertMessage != null) {
-      final isLate = alertMessage.contains('late');
-      final isEarly = alertMessage.contains('early');
-      String? alertShiftTiming;
+      final lower = alertMessage.toLowerCase();
+      final isLate = lower.contains('late');
+      final isEarly = lower.contains('early');
+      String? punchWarningShiftTiming;
       if (isLate || isEarly) {
-        alertShiftTiming = _shiftTimingSummaryForWarningDialog(
+        punchWarningShiftTiming = _shiftTimingSummaryForWarningDialog(
           attendanceData,
           halfDayLeave,
           tmpl,
@@ -2457,7 +2403,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         alertMessage,
         isLate: isLate,
         isEarly: isEarly,
-        shiftTimingLine: alertShiftTiming,
+        shiftTimingLine: punchWarningShiftTiming,
       );
       if (!mounted) return false;
       if (!proceedAfterWarning) return false;

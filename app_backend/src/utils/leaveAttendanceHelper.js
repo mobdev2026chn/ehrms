@@ -1032,6 +1032,7 @@ const getShiftTimings = (
     /** For open shifts: duplicate of openWorkHours for controllers expecting workHours. */
     let workHours = null;
     let permissionPolicy = null;
+    let breakPolicy = null;
     /** Embedded company row used for timings after rotational resolution (for logs / UI). */
     let effectiveShiftName = null;
     /** Mongo ObjectId string of the resolved embedded shift row (same calendar day as timings). */
@@ -1160,6 +1161,18 @@ const getShiftTimings = (
                         : 'both'
                 };
             }
+            if (shift.breakPolicy && typeof shift.breakPolicy === 'object') {
+                const fineTypeRaw = String(shift.breakPolicy.fineType || '1xSalary');
+                breakPolicy = {
+                    enabled: shift.breakPolicy.enabled === true,
+                    allowedMinutes: Math.max(0, Number(shift.breakPolicy.allowedMinutes || 0)),
+                    fineEnabled: shift.breakPolicy.fineEnabled === true,
+                    fineType: ['1xSalary', '2xSalary', '3xSalary', 'custom'].includes(fineTypeRaw)
+                        ? fineTypeRaw
+                        : '1xSalary',
+                    customFinePerHour: Math.max(0, Number(shift.breakPolicy.customFinePerHour || 0))
+                };
+            }
 
             const missingStandardWindow =
                 shiftType !== 'open' &&
@@ -1204,6 +1217,7 @@ const getShiftTimings = (
         otBufferMinutes,
         workHours,
         permissionPolicy,
+        breakPolicy,
         effectiveShiftName,
         effectiveShiftId
     };
