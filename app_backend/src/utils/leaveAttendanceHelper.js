@@ -479,10 +479,11 @@ const rotationalConfigRichnessScore = (cfg) => {
     if (!cfg || typeof cfg !== 'object') return 0;
     const ids = normalizedCycleIdList(cfg).length;
     const wd = Array.isArray(cfg.shiftIdsByWeekday) ? cfg.shiftIdsByWeekday.filter(Boolean).length : 0;
+    const wc = Array.isArray(cfg.weeklyDateAssignments) ? cfg.weeklyDateAssignments.filter(Boolean).length : 0;
     const names = Array.isArray(cfg.shiftNamesInCycle) ? cfg.shiftNamesInCycle.filter(Boolean).length : 0;
     const cld = Number(cfg.cycleLengthDays);
     const hasLen = Number.isFinite(cld) && cld > 0 ? 1 : 0;
-    return ids * 1000 + wd * 100 + names * 50 + hasLen * 10;
+    return ids * 1000 + wd * 100 + wc * 100 + names * 50 + hasLen * 10;
 };
 
 const shiftMatchQualityScore = (s) => {
@@ -536,7 +537,8 @@ const enrichWrapperRotationalFromDuplicateRows = (shifts, wrapper) => {
     const hasCycle =
         normalizedCycleIdList(bestRc).length > 0 ||
         (Array.isArray(bestRc.shiftNamesInCycle) && bestRc.shiftNamesInCycle.filter(Boolean).length > 0) ||
-        (Array.isArray(bestRc.shiftIdsByWeekday) && bestRc.shiftIdsByWeekday.filter(Boolean).length > 0);
+        (Array.isArray(bestRc.shiftIdsByWeekday) && bestRc.shiftIdsByWeekday.filter(Boolean).length > 0) ||
+        (Array.isArray(bestRc.weeklyDateAssignments) && bestRc.weeklyDateAssignments.filter(Boolean).length > 0);
     if (!st && hasCycle) out.shiftType = 'rotational';
     return out;
 };
@@ -547,7 +549,30 @@ const shiftRowHasRotationalCycle = (wrapper) => {
     const ids = normalizedCycleIdList(cfg);
     const names = Array.isArray(cfg.shiftNamesInCycle) ? cfg.shiftNamesInCycle.filter(Boolean) : [];
     const byWd = Array.isArray(cfg.shiftIdsByWeekday) ? cfg.shiftIdsByWeekday.filter(Boolean) : [];
-    return ids.length > 0 || names.length > 0 || byWd.length > 0;
+    const byWc = Array.isArray(cfg.weeklyDateAssignments) ? cfg.weeklyDateAssignments.filter(Boolean) : [];
+    return ids.length > 0 || names.length > 0 || byWd.length > 0 || byWc.length > 0;
+};
+
+const parseBoolLoose = (v) => {
+    if (v === true || v === false) return v;
+    if (typeof v === 'number') return v !== 0;
+    if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        if (s === 'true' || s === '1' || s === 'yes') return true;
+        if (s === 'false' || s === '0' || s === 'no') return false;
+    }
+    return false;
+};
+
+const normalizeAssignmentDateYmd = (raw) => {
+    if (raw == null) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+    if (m) return m[1];
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return null;
+    return formatDateUtcYmd(d);
 };
 
 /** True when [rotationalConfig] has a cycle OR [shiftType] is rotational (cycle first — matches Flutter). */
@@ -702,6 +727,29 @@ const resolveEffectiveShiftRaw = (shifts, wrapper, attendanceDate, rotationAncho
         const jsDow = new Date(Date.UTC(y, mo, d)).getUTCDay();
         const row = entries.find((e) => e && Number(e.day) === jsDow);
         if (!row || row.shiftId == null) return wrapper;
+        const needle = normalizeShiftObjectIdStr(row.shiftId);
+        const effective = shifts.find((s) => {
+            if (!isLeafShiftRow(s) || s._id == null) return false;
+            return needle && normalizeShiftObjectIdStr(s._id) === needle;
+        });
+        return effective || wrapper;
+    }
+
+    if (rotationType === 'byweekcalendar' || rotationType === 'by_week_calendar') {
+        const rows = Array.isArray(cfg.weeklyDateAssignments) ? cfg.weeklyDateAssignments.filter(Boolean) : [];
+        if (rows.length === 0) return wrapper;
+        const targetDate = formatDateUtcYmd(attendanceDate || new Date());
+        const row = rows.find((e) => e && normalizeAssignmentDateYmd(e.date) === targetDate);
+        if (!row) return wrapper;
+        if (parseBoolLoose(row.isWeekOff)) {
+            return {
+                ...wrapper,
+                __rotationWeekOff: true,
+                __rotationDate: targetDate,
+                __rotationType: rotationType
+            };
+        }
+        if (row.shiftId == null) return wrapper;
         const needle = normalizeShiftObjectIdStr(row.shiftId);
         const effective = shifts.find((s) => {
             if (!isLeafShiftRow(s) || s._id == null) return false;

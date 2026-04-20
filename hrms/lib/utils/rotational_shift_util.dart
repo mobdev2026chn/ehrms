@@ -7,6 +7,9 @@ import 'package:flutter/foundation.dart';
 String _calendarDateLog(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
+String _calendarDateYmd(DateTime d) =>
+    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
 /// Set to `true` only when debugging shift calendar resolution (very chatty per day).
 const _kLogShiftCalendarRows = false;
 
@@ -30,6 +33,28 @@ double _shiftSpanHours(String startTime, String endTime) {
   var diff = endTotal - startTotal;
   if (diff < 0) diff += 24 * 60;
   return diff / 60;
+}
+
+bool _parseBoolLoose(dynamic v) {
+  if (v is bool) return v;
+  if (v is num) return v != 0;
+  if (v is String) {
+    final s = v.trim().toLowerCase();
+    if (s == 'true' || s == '1' || s == 'yes') return true;
+    if (s == 'false' || s == '0' || s == 'no') return false;
+  }
+  return false;
+}
+
+String? _normalizeAssignmentDateYmd(dynamic raw) {
+  if (raw == null) return null;
+  final s = raw.toString().trim();
+  if (s.isEmpty) return null;
+  final m = RegExp(r'^(\d{4}-\d{2}-\d{2})').firstMatch(s);
+  if (m != null) return m.group(1);
+  final parsed = DateTime.tryParse(s);
+  if (parsed == null) return null;
+  return _calendarDateYmd(parsed);
 }
 
 int utcCalendarDayDiff(DateTime a, DateTime b) {
@@ -59,13 +84,16 @@ int utcCalendarWeekdayJsStyle(DateTime attendanceDay) {
   DateTime attendanceDay,
   DateTime anchorDay,
 ) {
-  var rotType = (cfg['rotationType'] ?? 'custom').toString().toLowerCase().trim();
+  var rotType = (cfg['rotationType'] ?? 'custom')
+      .toString()
+      .toLowerCase()
+      .trim();
   if (rotType.isEmpty) rotType = 'custom';
 
   if (rotType == 'byweekday' || rotType == 'by_weekday') {
     final byWd =
         (cfg['shiftIdsByWeekday'] as List?)?.where((e) => e != null).toList() ??
-            [];
+        [];
     if (byWd.isEmpty) {
       return (idx: 0, cycleLen: 0, rotationType: rotType);
     }
@@ -73,9 +101,31 @@ int utcCalendarWeekdayJsStyle(DateTime attendanceDay) {
     return (idx: jsDow, cycleLen: 7, rotationType: rotType);
   }
 
+  if (rotType == 'byweekcalendar' || rotType == 'by_week_calendar') {
+    final rows =
+        (cfg['weeklyDateAssignments'] as List?)
+            ?.where((e) => e != null)
+            .toList() ??
+        [];
+    if (rows.isEmpty) {
+      return (idx: 0, cycleLen: 0, rotationType: rotType);
+    }
+    final target = _calendarDateYmd(attendanceDay);
+    for (var i = 0; i < rows.length; i++) {
+      final row = rows[i];
+      if (row is! Map) continue;
+      final rm = Map<String, dynamic>.from(row);
+      if (_normalizeAssignmentDateYmd(rm['date']) == target) {
+        return (idx: i, cycleLen: rows.length, rotationType: rotType);
+      }
+    }
+    return (idx: 0, cycleLen: rows.length, rotationType: rotType);
+  }
+
   final ids =
       (cfg['shiftIdsInCycle'] as List?)?.where((e) => e != null).toList() ?? [];
-  final names = (cfg['shiftNamesInCycle'] as List?)
+  final names =
+      (cfg['shiftNamesInCycle'] as List?)
           ?.where((e) => e != null)
           .map((e) => e.toString())
           .toList() ??
@@ -176,10 +226,7 @@ bool _shiftRowMatchesStaffKey(Map<String, dynamic> s, String keyRaw) {
   }
   final sid = mongoIdToHexString(s['_id']);
   final kidHex = mongoIdToHexString(k);
-  if (kidHex != null &&
-      kidHex.length == 24 &&
-      sid != null &&
-      sid == kidHex) {
+  if (kidHex != null && kidHex.length == 24 && sid != null && sid == kidHex) {
     return true;
   }
   final name = s['name']?.toString().trim();
@@ -232,8 +279,7 @@ double? resolveOpenShiftWorkHoursFromCompany(
     final mid = mongoIdToHexString(m['_id']);
     final nm = m['name']?.toString().trim().toLowerCase() ?? '';
     final idMatch = sid != null && mid != null && sid == mid;
-    final nameMatch =
-        sname != null && sname.isNotEmpty && nm == sname;
+    final nameMatch = sname != null && sname.isNotEmpty && nm == sname;
     if (!idMatch && !nameMatch) continue;
     final h = readOpenWorkHoursFromShiftMap(m);
     if (h != null && h > 0) return h;
@@ -243,8 +289,14 @@ double? resolveOpenShiftWorkHoursFromCompany(
 
 /// Resolves [appliedShiftId] to the embedded company shift row (check-in stores effective shift id).
 /// Use whenever the attendance document includes [appliedShiftId] (today or earlier).
-({String shiftName, bool isOpen, String? startTime, String? endTime, double? openWorkHours})?
-    appliedShiftPastResolvedFromCompany({
+({
+  String shiftName,
+  bool isOpen,
+  String? startTime,
+  String? endTime,
+  double? openWorkHours,
+})?
+appliedShiftPastResolvedFromCompany({
   required Map<String, dynamic>? companyDoc,
   required dynamic appliedShiftId,
 }) {
@@ -267,12 +319,11 @@ double? resolveOpenShiftWorkHoursFromCompany(
   final shiftName = (name != null && name.isNotEmpty) ? name : 'Shift';
   final st = (row['shiftType'] ?? '').toString().toLowerCase().trim();
   final nm = shiftName.toLowerCase();
-  final isOpen = st == 'open' ||
-      st == 'open shift' ||
-      nm == 'open' ||
-      nm == 'open shift';
+  final isOpen =
+      st == 'open' || st == 'open shift' || nm == 'open' || nm == 'open shift';
   if (isOpen) {
-    final openH = resolveOpenShiftWorkHoursFromCompany(companyDoc, row) ??
+    final openH =
+        resolveOpenShiftWorkHoursFromCompany(companyDoc, row) ??
         readOpenWorkHoursFromShiftMap(row);
     return (
       shiftName: shiftName,
@@ -415,7 +466,8 @@ String? staffShiftKeyFromProfileMap(
   Map<String, dynamic> staffData, {
   String? attendanceTemplateName,
 }) {
-  final sid = objectIdHexLoose(staffData['shiftId']) ??
+  final sid =
+      objectIdHexLoose(staffData['shiftId']) ??
       mongoIdToHexString(staffData['shiftId']);
   if (sid != null && sid.isNotEmpty) return sid;
   final sn = staffData['shiftName']?.toString().trim();
@@ -471,14 +523,13 @@ bool shiftRowHasRotationalCycle(Map<String, dynamic> wrapper) {
   if (cfgRaw is! Map) return false;
   final cfg = Map<String, dynamic>.from(cfgRaw);
   final ids =
-      (cfg['shiftIdsInCycle'] as List?)?.where((e) => e != null).toList() ??
-          [];
+      (cfg['shiftIdsInCycle'] as List?)?.where((e) => e != null).toList() ?? [];
   final names =
       (cfg['shiftNamesInCycle'] as List?)?.where((e) => e != null).toList() ??
-          [];
+      [];
   final byWd =
       (cfg['shiftIdsByWeekday'] as List?)?.where((e) => e != null).toList() ??
-          [];
+      [];
   return ids.isNotEmpty || names.isNotEmpty || byWd.isNotEmpty;
 }
 
@@ -513,12 +564,15 @@ Map<String, dynamic> resolveEffectiveShiftForDate(
   final cfgRaw = wResolved['rotationalConfig'];
   if (cfgRaw is! Map) return wResolved;
   final cfg = Map<String, dynamic>.from(cfgRaw);
-  final rotType = (cfg['rotationType'] ?? 'custom').toString().toLowerCase().trim();
+  final rotType = (cfg['rotationType'] ?? 'custom')
+      .toString()
+      .toLowerCase()
+      .trim();
 
   if (rotType == 'byweekday' || rotType == 'by_weekday') {
     final entries =
         (cfg['shiftIdsByWeekday'] as List?)?.where((e) => e != null).toList() ??
-            [];
+        [];
     if (entries.isEmpty) return wResolved;
     final jsDow = utcCalendarWeekdayJsStyle(attendanceDay);
     for (final e in entries) {
@@ -539,10 +593,46 @@ Map<String, dynamic> resolveEffectiveShiftForDate(
     return wResolved;
   }
 
+  if (rotType == 'byweekcalendar' || rotType == 'by_week_calendar') {
+    final rows =
+        (cfg['weeklyDateAssignments'] as List?)
+            ?.where((e) => e != null)
+            .toList() ??
+        [];
+    if (rows.isEmpty) return wResolved;
+    final targetDate = _calendarDateYmd(attendanceDay);
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final rm = Map<String, dynamic>.from(row);
+      if (_normalizeAssignmentDateYmd(rm['date']) != targetDate) continue;
+
+      if (_parseBoolLoose(rm['isWeekOff'])) {
+        return {
+          ...wResolved,
+          '__rotationWeekOff': true,
+          '__rotationDate': targetDate,
+          '__rotationType': rotType,
+        };
+      }
+
+      final effectiveIdRaw = rm['shiftId'] ?? rm['shift_id'];
+      for (final raw in shifts) {
+        if (raw is! Map) continue;
+        final s = Map<String, dynamic>.from(raw);
+        if (!isLeafShiftRow(s)) continue;
+        if (_sameObjectId(effectiveIdRaw, s['_id'])) {
+          return s;
+        }
+      }
+      return wResolved;
+    }
+    return wResolved;
+  }
+
   final ids =
-      (cfg['shiftIdsInCycle'] as List?)?.where((e) => e != null).toList() ??
-          [];
-  final names = (cfg['shiftNamesInCycle'] as List?)
+      (cfg['shiftIdsInCycle'] as List?)?.where((e) => e != null).toList() ?? [];
+  final names =
+      (cfg['shiftNamesInCycle'] as List?)
           ?.where((e) => e != null)
           .map((e) => e.toString())
           .toList() ??
@@ -551,10 +641,10 @@ Map<String, dynamic> resolveEffectiveShiftForDate(
   if (cycle.cycleLen <= 0) return wResolved;
   final idx = cycle.idx;
   final effectiveIdRaw = ids.isNotEmpty ? ids[idx % ids.length] : null;
-  final effectiveName =
-      names.isNotEmpty ? names[idx % names.length] : null;
-  final nameLower =
-      effectiveName != null ? effectiveName.trim().toLowerCase() : '';
+  final effectiveName = names.isNotEmpty ? names[idx % names.length] : null;
+  final nameLower = effectiveName != null
+      ? effectiveName.trim().toLowerCase()
+      : '';
 
   Map<String, dynamic>? byId;
   if (effectiveIdRaw != null) {
@@ -604,6 +694,7 @@ class EffectiveShiftDay {
     this.cycleLength,
     this.cycleDayIndex1Based,
     this.rotationalMode,
+    required this.isWeekOff,
   });
 
   final String displayName;
@@ -611,13 +702,16 @@ class EffectiveShiftDay {
   final String? endTime;
   final String shiftTypeLower;
   final double? openWorkHours;
+
   /// Standard / open shift OT buffer after shift end (company row).
   final int? otBufferMinutes;
   final String? rotationTemplateName;
   final int? cycleLength;
   final int? cycleDayIndex1Based;
+
   /// [rotationalConfig.rotationType]: `custom`, `daily`, or `weekly` when staff shift is rotational.
   final String? rotationalMode;
+  final bool isWeekOff;
 
   /// Web calendar second line, e.g. `Rotation: ROTATION 1`.
   String? rotationCalendarFooter() {
@@ -626,8 +720,7 @@ class EffectiveShiftDay {
     return 'Rotation: $r';
   }
 
-  bool get isOpen =>
-      shiftTypeLower == 'open' || shiftTypeLower == 'open shift';
+  bool get isOpen => shiftTypeLower == 'open' || shiftTypeLower == 'open shift';
 
   /// Required work duration in minutes (standard: shift span; open: workHours * 60).
   int? requiredWorkMinutes() {
@@ -648,6 +741,7 @@ class EffectiveShiftDay {
 
   /// Web-style: standard `Name - 10:00-19:00`; open `OPEN (Open • 9h • OT buffer 60m)`.
   String compactLine() {
+    if (isWeekOff) return 'Week Off';
     if (isOpen) {
       final h = openWorkHours;
       if (h != null && h > 0) {
@@ -715,8 +809,8 @@ String? trimmedTimeField(dynamic v) {
 ({String? start, String? end}) readStandardShiftWindowFromMap(
   Map<String, dynamic> m,
 ) {
-  final a = trimmedTimeField(m['startTime']) ??
-      trimmedTimeField(m['shiftStartTime']);
+  final a =
+      trimmedTimeField(m['startTime']) ?? trimmedTimeField(m['shiftStartTime']);
   final b =
       trimmedTimeField(m['endTime']) ?? trimmedTimeField(m['shiftEndTime']);
   return (start: a, end: b);
@@ -746,8 +840,7 @@ String? trimmedTimeField(dynamic v) {
     final mid = mongoIdToHexString(sm['_id']);
     final nm = sm['name']?.toString().trim().toLowerCase() ?? '';
     final idMatch = sid != null && mid != null && sid == mid;
-    final nameMatch =
-        sname != null && sname.isNotEmpty && nm == sname;
+    final nameMatch = sname != null && sname.isNotEmpty && nm == sname;
     if (!idMatch && !nameMatch) continue;
     win = readStandardShiftWindowFromMap(sm);
     if (win.start != null && win.end != null) return win;
@@ -790,7 +883,8 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
       return null;
     }
   } else {
-    wrapper = findShiftByStaffKey(shifts, key) ??
+    wrapper =
+        findShiftByStaffKey(shifts, key) ??
         (shifts.first is Map
             ? Map<String, dynamic>.from(shifts.first as Map)
             : null);
@@ -804,8 +898,13 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
   }
 
   final anchor = joiningDate ?? dayLocal;
-  final matched =
-      resolveEffectiveShiftForDate(shifts, wrapper, dayLocal, anchor);
+  final matched = resolveEffectiveShiftForDate(
+    shifts,
+    wrapper,
+    dayLocal,
+    anchor,
+  );
+  final rotationalWeekOff = _parseBoolLoose(matched['__rotationWeekOff']);
 
   final wrapperIsRotational = isRotationalShiftWrapper(wrapper);
   final rotationName = wrapperIsRotational
@@ -827,6 +926,31 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
     }
   }
 
+  if (rotationalWeekOff) {
+    _debugLogShiftCalendarRow(
+      dayLocal: dayLocal,
+      message:
+          'effectiveShift="Week Off" type=weekoff '
+                  '${rotationName.isNotEmpty ? 'rotation="$rotationName" ' : ''}'
+                  '${rotationalModeOut != null ? 'mode=$rotationalModeOut ' : ''}'
+                  '${cycleDay1 != null && cycleLen != null ? 'cycleDay=$cycleDay1/$cycleLen' : ''}'
+              .trim(),
+    );
+    return EffectiveShiftDay(
+      displayName: 'Week Off',
+      startTime: null,
+      endTime: null,
+      shiftTypeLower: 'weekoff',
+      openWorkHours: null,
+      otBufferMinutes: null,
+      rotationTemplateName: rotationName.isNotEmpty ? rotationName : null,
+      cycleLength: cycleLen,
+      cycleDayIndex1Based: cycleDay1,
+      rotationalMode: wrapperIsRotational ? rotationalModeOut : null,
+      isWeekOff: true,
+    );
+  }
+
   var mType = (matched['shiftType'] ?? 'standard').toString().toLowerCase();
   final nameLower = (matched['name'] ?? '').toString().toLowerCase().trim();
   if (nameLower == 'open' || nameLower == 'open shift') {
@@ -843,9 +967,9 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
       for (final raw in shifts) {
         if (raw is! Map) continue;
         final sm = Map<String, dynamic>.from(raw);
-        final sameId =
-            mid != null && mongoIdToHexString(sm['_id']) == mid;
-        final sameName = mname != null &&
+        final sameId = mid != null && mongoIdToHexString(sm['_id']) == mid;
+        final sameName =
+            mname != null &&
             mname.isNotEmpty &&
             (sm['name']?.toString().trim() ?? '') == mname;
         if (sameId || sameName) {
@@ -873,8 +997,9 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
       }
     }
     if (openH == null || openH <= 0) {
-      final fromToday =
-          readOpenHoursFromAttendanceTodayTemplate(attendanceTodayTemplate);
+      final fromToday = readOpenHoursFromAttendanceTodayTemplate(
+        attendanceTodayTemplate,
+      );
       if (fromToday != null && fromToday > 0) openH = fromToday;
     }
     if (openH == null || openH <= 0) openH = 8;
@@ -889,9 +1014,9 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
       dayLocal: dayLocal,
       message:
           'effectiveShift="$openName" type=open requiredHours=${openH}h '
-          '${rotationName.isNotEmpty ? 'rotation="$rotationName" ' : ''}'
-          '${rotationalModeOut != null ? 'mode=$rotationalModeOut ' : ''}'
-          '${cycleDay1 != null && cycleLen != null ? 'cycleDay=$cycleDay1/$cycleLen' : ''}'
+                  '${rotationName.isNotEmpty ? 'rotation="$rotationName" ' : ''}'
+                  '${rotationalModeOut != null ? 'mode=$rotationalModeOut ' : ''}'
+                  '${cycleDay1 != null && cycleLen != null ? 'cycleDay=$cycleDay1/$cycleLen' : ''}'
               .trim(),
     );
     return EffectiveShiftDay(
@@ -905,6 +1030,7 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
       cycleLength: cycleLen,
       cycleDayIndex1Based: cycleDay1,
       rotationalMode: wrapperIsRotational ? rotationalModeOut : null,
+      isWeekOff: false,
     );
   }
 
@@ -929,9 +1055,9 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
     dayLocal: dayLocal,
     message:
         'effectiveShift="$stdName" type=$mType shiftWindow=$windowLog '
-        '${rotationName.isNotEmpty ? 'rotation="$rotationName" ' : ''}'
-        '${rotationalModeOut != null ? 'mode=$rotationalModeOut ' : ''}'
-        '${cycleDay1 != null && cycleLen != null ? 'cycleDay=$cycleDay1/$cycleLen' : ''}'
+                '${rotationName.isNotEmpty ? 'rotation="$rotationName" ' : ''}'
+                '${rotationalModeOut != null ? 'mode=$rotationalModeOut ' : ''}'
+                '${cycleDay1 != null && cycleLen != null ? 'cycleDay=$cycleDay1/$cycleLen' : ''}'
             .trim(),
   );
   return EffectiveShiftDay(
@@ -945,5 +1071,6 @@ EffectiveShiftDay? effectiveShiftForCalendarDay({
     cycleLength: cycleLen,
     cycleDayIndex1Based: cycleDay1,
     rotationalMode: wrapperIsRotational ? rotationalModeOut : null,
+    isWeekOff: false,
   );
 }

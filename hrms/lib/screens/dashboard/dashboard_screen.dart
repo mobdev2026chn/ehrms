@@ -260,7 +260,13 @@ class _DashboardScreenState extends State<DashboardScreen>
       final isPunchedIn = _isAttendancePunchedIn(attendance);
       final hasIn = _hasPunchValue(attendance['punchIn']);
       final hasOut = _hasPunchValue(attendance['punchOut']);
-      var showBreakNav = _showBreakNavForShiftPolicy;
+      // Always start from visible; only hide when current shift explicitly disables breaks.
+      // This avoids stale false state when appliedShiftId is temporarily unavailable.
+      var showBreakNav = true;
+      var breakPolicyLogSource = 'default-visible';
+      final appliedId = attendance['appliedShiftId'];
+      String? resolvedShiftName;
+      bool? resolvedShiftBreakEnabled;
       try {
         // Full shift rows (incl. breakPolicy) live on today API root [businessShifts], not in SharedPrefs template.
         Map<String, dynamic>? companyDoc =
@@ -274,14 +280,39 @@ class _DashboardScreenState extends State<DashboardScreen>
             companyDoc = Map<String, dynamic>.from(rawT);
           }
         }
-        final appliedId = attendance['appliedShiftId'];
         if (companyDoc != null &&
             companyDoc.isNotEmpty &&
             appliedId != null) {
+          final shiftRow = shiftRowForAppliedShiftId(
+            companyDoc: companyDoc,
+            appliedShiftId: appliedId,
+          );
+          resolvedShiftName = shiftRow?['name']?.toString();
+          resolvedShiftBreakEnabled = breakPolicyEnabledForShiftRow(shiftRow);
           showBreakNav = shouldShowBreakNavForAppliedShift(
             companyDoc: companyDoc,
             appliedShiftId: appliedId,
           );
+          breakPolicyLogSource = 'appliedShiftId';
+        } else {
+          // Before first punch-in there may be no attendance row / appliedShiftId.
+          // Fallback to resolved template breakPolicy from today payload.
+          final templateBreakEnabled = readBreakPolicyEnabledFromMap(
+            data['template'] is Map
+                ? (data['template'] as Map)['breakPolicy']
+                : null,
+          );
+          if (templateBreakEnabled != null) {
+            showBreakNav = templateBreakEnabled;
+            final t = data['template'];
+            if (t is Map) {
+              resolvedShiftName = t['name']?.toString();
+            }
+            resolvedShiftBreakEnabled = templateBreakEnabled;
+            breakPolicyLogSource = 'today.template.breakPolicy';
+          } else {
+            breakPolicyLogSource = 'no-appliedShiftId-no-templateBreakPolicy';
+          }
         }
       } catch (_) {}
       if (kDebugMode) {
@@ -300,6 +331,11 @@ class _DashboardScreenState extends State<DashboardScreen>
           '[PunchButton][Dashboard][today-from-api] '
           'checkedIn=$checkedIn hasPunchIn=$hasInFlag hasPunchOut=$hasOutFlag '
           'punchIn="$rawIn" punchOut="$rawOut" awaitingPunchOut=$awaiting => label="$label"',
+        );
+        debugPrint(
+          '[BreakPolicy][Dashboard] appliedShiftId=${appliedId?.toString() ?? 'null'} '
+          'shift="${resolvedShiftName ?? 'unknown'}" breakEnabled=${resolvedShiftBreakEnabled?.toString() ?? 'unknown'} '
+          'source=$breakPolicyLogSource showBreakNav=$showBreakNav',
         );
       }
       setState(() {

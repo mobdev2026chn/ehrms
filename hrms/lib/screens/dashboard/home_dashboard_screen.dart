@@ -1250,8 +1250,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final double? statsThisMonthNet = statsNetRaw is num
           ? statsNetRaw.toDouble()
           : (statsNetRaw is String
-              ? double.tryParse(statsNetRaw.trim())
-              : null);
+                ? double.tryParse(statsNetRaw.trim())
+                : null);
       final rawThisMonthNet = currentPayroll != null
           ? (payrollMtdNet ?? previewNet ?? proratedNetForMtd)
           : (statsThisMonthNet ?? previewNet ?? proratedNetForMtd);
@@ -1263,8 +1263,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           _calculatedMonthSalary = displayThisMonthNet;
           _overallMonthlyNetSalary =
               calculatedSalary.monthly.netMonthlySalary < 0
-                  ? 0.0
-                  : calculatedSalary.monthly.netMonthlySalary;
+              ? 0.0
+              : calculatedSalary.monthly.netMonthlySalary;
           _workingDaysForSalary = workingDaysUsed;
           if (_companyName.isEmpty &&
               companyName != null &&
@@ -1307,9 +1307,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         child: Stack(
           children: [
-            Positioned.fill(
-              child: Image.asset('assets/images/d_bg.png', fit: BoxFit.cover),
-            ),
             Padding(
               padding: const EdgeInsets.all(24.0),
               child: Column(
@@ -1701,9 +1698,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ),
             ),
           ),
-          bottomNavigationBar: AppBottomNavigationBar(
-            currentIndex: -1,
-          ),
+          bottomNavigationBar: AppBottomNavigationBar(currentIndex: -1),
         ),
       ),
     );
@@ -2044,6 +2039,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           label: 'Attendance',
           color: accent,
           onTap: () => onNavigate(4, subTabIndex: 0),
+        ),
+      );
+      buttons.add(
+        _buildQuickActionButton(
+          icon: Icons.account_balance_wallet_outlined,
+          label: 'Salary Overview',
+          color: accent,
+          onTap: () => onNavigate(2),
         ),
       );
     }
@@ -3112,7 +3115,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     String? startTime,
     String? endTime,
     double? openWorkHours,
-  })? _dashboardAppliedShiftResult(Map<String, dynamic>? record) {
+  })?
+  _dashboardAppliedShiftResult(Map<String, dynamic>? record) {
     if (record == null || record['appliedShiftId'] == null) return null;
     return appliedShiftPastResolvedFromCompany(
       companyDoc: _dashboardCompanyDocForAppliedShiftLookup(),
@@ -3127,15 +3131,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       String? startTime,
       String? endTime,
       double? openWorkHours,
-    }) r,
+    })
+    r,
   ) {
     if (r.isOpen) {
       final h = r.openWorkHours;
       if (h == null || h <= 0) {
         return '${r.shiftName} · Open';
       }
-      final label =
-          h == h.roundToDouble() ? '${h.toInt()}h' : h.toStringAsFixed(1);
+      final label = h == h.roundToDouble()
+          ? '${h.toInt()}h'
+          : h.toStringAsFixed(1);
       return '${r.shiftName} · Open · $label required';
     }
     final a = r.startTime ?? '';
@@ -3174,7 +3180,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       String? startTime,
       String? endTime,
       double? openWorkHours,
-    }) r,
+    })
+    r,
   ) {
     if (r.isOpen) {
       final h = r.openWorkHours;
@@ -3189,9 +3196,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   dynamic _todayAppliedShiftIdForHeader() {
     final n = DateTime.now();
-    final dateStr = DateFormat('yyyy-MM-dd').format(
-      DateTime(n.year, n.month, n.day),
-    );
+    final dateStr = DateFormat(
+      'yyyy-MM-dd',
+    ).format(DateTime(n.year, n.month, n.day));
     final att = _monthData?['attendance'];
     if (att is List) {
       for (final e in _deduplicateAttendanceByDate(att)) {
@@ -3594,6 +3601,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                 )) {
                               isWeekOff = true;
                             }
+                            // Rotational byWeekCalendar can explicitly mark a date as week off.
+                            if (effShiftForCell?.isWeekOff == true) {
+                              isWeekOff = true;
+                            }
 
                             // Check if present from backend presentDates array
                             final bool isPresentFromBackend = presentDateSet
@@ -3862,8 +3873,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             );
                             var requiredWorkMins =
                                 effShiftForCell?.requiredWorkMinutes() ?? 540;
-                            final resolvedForReq =
-                                appliedShiftResolvedForCell;
+                            final resolvedForReq = appliedShiftResolvedForCell;
                             final appliedReq = resolvedForReq != null
                                 ? _appliedShiftRequiredMinutesFromResult(
                                     resolvedForReq,
@@ -4151,10 +4161,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         ),
         _buildLegendItem('WF', 'Week Off', textColor: const Color(0xFF374151)),
         _buildLegendItem('HA', 'Holiday', textColor: const Color(0xFF92400E)),
-        _buildLegendItem('LEAVE', 'On Leave', textColor: const Color(0xFF5B21B6)),
-        _buildLegendItem('PRESENT', 'Present', textColor: const Color(0xFF166534)),
-        _buildLegendItem('ABSENT', 'Absent', textColor: const Color(0xFFB91C1C)),
-        _buildLegendItem('PENDING', 'Pending', textColor: const Color(0xFF475569)),
+        _buildLegendItem(
+          'LEAVE',
+          'On Leave',
+          textColor: const Color(0xFF5B21B6),
+        ),
+        _buildLegendItem(
+          'PRESENT',
+          'Present',
+          textColor: const Color(0xFF166534),
+        ),
+        _buildLegendItem(
+          'ABSENT',
+          'Absent',
+          textColor: const Color(0xFFB91C1C),
+        ),
+        _buildLegendItem(
+          'PENDING',
+          'Pending',
+          textColor: const Color(0xFF475569),
+        ),
       ],
     );
   }

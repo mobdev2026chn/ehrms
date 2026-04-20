@@ -3,6 +3,7 @@ import 'package:activity_recognition_flutter/activity_recognition_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart' as gl;
 import 'package:hrms/config/constants.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class _LocationSample {
   final double lat;
@@ -109,6 +110,11 @@ class MovementClassificationService {
     }
 
     try {
+      final hasPermission = await _ensureActivityPermission();
+      if (!hasPermission) {
+        _activityAvailable = false;
+        return;
+      }
       final available = await ActivityRecognition().isAvailable();
       if (available) {
         _activityAvailable = true;
@@ -120,6 +126,17 @@ class MovementClassificationService {
     } catch (_) {
       _activityAvailable = false;
     }
+  }
+
+  Future<bool> _ensureActivityPermission() async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      final status = await Permission.activityRecognition.status;
+      if (status.isGranted) return true;
+      final requested = await Permission.activityRecognition.request();
+      return requested.isGranted;
+    }
+    // iOS handles motion permission through CoreMotion usage description.
+    return true;
   }
 
   void _onActivityEvent(ActivityEvent event) {
@@ -408,6 +425,7 @@ class MovementClassificationService {
       distanceM: distanceM,
       elapsedSeconds: elapsedSeconds,
       lastMovementType: _currentMovementType,
+      activitySuggestedMovement: _activitySuggestedMovement,
     );
     if (pairCandidate == kMovementDrive) {
       return pairCandidate;
@@ -419,6 +437,7 @@ class MovementClassificationService {
         distanceM: windowStats.distanceM,
         elapsedSeconds: windowStats.elapsedSeconds,
         lastMovementType: _currentMovementType,
+        activitySuggestedMovement: _activitySuggestedMovement,
       );
     }
 
@@ -473,12 +492,16 @@ class MovementClassificationService {
     required double elapsedSeconds,
     required String lastMovementType,
     double? sensorSpeedKmh,
+    String? activitySuggestedMovement,
   }) {
     final calculatedSpeedKmh = speedKmhFromDistance(
       distanceM: distanceM,
       elapsedSeconds: elapsedSeconds,
     );
     final sanitizedSensorSpeedKmh = _sanitizeSensorSpeedKmh(sensorSpeedKmh);
+    final activitySuggestion =
+        activitySuggestedMovement ??
+        MovementClassificationService()._activitySuggestedMovement;
 
     final driveSupportedByCalculated =
         calculatedSpeedKmh >= kSpeedDriveEnterKmh &&
@@ -497,6 +520,11 @@ class MovementClassificationService {
                         kMinCalculatedSupportForSensorDriveKmh))) ||
         driveSupportedByCalculated ||
         driveSupportedBySensor) {
+      return kMovementDrive;
+    }
+    if (activitySuggestion == kMovementDrive &&
+        distanceM >= (kMinDriveDistanceM / 2) &&
+        calculatedSpeedKmh >= kMinCalculatedSupportForSensorDriveKmh) {
       return kMovementDrive;
     }
 
@@ -518,6 +546,15 @@ class MovementClassificationService {
             walkSupportedByCalculated ||
             walkSupportedBySensor)) {
       return kMovementWalk;
+    }
+    if (activitySuggestion == kMovementWalk &&
+        hasWalkDistance &&
+        calculatedSpeedKmh >= kMinCalculatedSupportForSensorWalkKmh) {
+      return kMovementWalk;
+    }
+    if (activitySuggestion == kMovementStop &&
+        calculatedSpeedKmh < kSpeedWalkEnterKmh) {
+      return kMovementStop;
     }
 
     return kMovementStop;

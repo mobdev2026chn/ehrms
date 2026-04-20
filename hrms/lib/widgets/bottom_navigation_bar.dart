@@ -411,14 +411,20 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     final usesInternalPunchState =
         widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
     final canRenderPunchButton = !usesInternalPunchState || _isPunchStateResolved;
-    // Tea break: same rule as Punch button — only after punch-in today (dashboard passes
-    // [isPunchedInToday]; otherwise prefs from [_checkPunchState]).
+    // Break icon visibility is controlled by shift break policy from dashboard.
+    // Keep punch-state value for other UX pieces (e.g. BreakStatusCard).
     final isPunchedInForBreak = widget.isPunchedInToday ?? _isPunchedIn;
 
     // Nav bar background: black
     final barBg = Colors.black;
     final unselectedColor = const Color(0xFF94A3B8);
     final selectedColor = AppColors.primary;
+    if (kDebugMode) {
+      debugPrint(
+        '[BreakPolicy][BottomNav] showBreakNavButton=${widget.showBreakNavButton} '
+        'isPunchedInForBreak=$isPunchedInForBreak activeBreak=${_effectiveBreakStartTime != null}',
+      );
+    }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -498,7 +504,9 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
                               ),
                             ),
                           ),
-                        if (isPunchedInForBreak && widget.showBreakNavButton)
+                        if (widget.currentIndex >= 0 &&
+                            isPunchedInForBreak &&
+                            widget.showBreakNavButton)
                           KeyedSubtree(
                             key: const ValueKey('bottom_nav_break'),
                             child: _buildBreakButton(context),

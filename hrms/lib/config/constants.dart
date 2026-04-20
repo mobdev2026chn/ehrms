@@ -1,7 +1,7 @@
 // hrms/lib/config/constants.dart
 class AppConstants {
   /// General app API (attendance, geo, profile, …).
-  //static const String baseUrl = 'http://10.233.148.36:9001/api';
+  //static const String baseUrl = 'http://192.168.1.33:9001/api';
 // static const String baseUrl = 'https://app.ektahr.com/api';
 static const String baseUrl = 'https://ehrms.askeva.net/api';
   /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.

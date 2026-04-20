@@ -106,7 +106,7 @@ const CompanySchema = new Schema(
           rotationalConfig: {
             rotationType: {
               type: String,
-              enum: ['weekly', 'daily', 'custom', 'byWeekday'],
+              enum: ['weekly', 'daily', 'custom', 'byWeekday', 'byWeekCalendar'],
               default: null
             },
             cycleLengthDays: { type: Number, default: null },
@@ -115,7 +115,13 @@ const CompanySchema = new Schema(
             shiftNamesInCycle: [{ type: String }],
             shiftIdsByWeekday: [{
               day: { type: Number },
-              shiftId: { type: Schema.Types.Mixed }
+              shiftId: { type: Schema.Types.Mixed },
+              isWeekOff: { type: Boolean, default: false }
+            }],
+            weeklyDateAssignments: [{
+              date: { type: String, required: true },
+              shiftId: { type: Schema.Types.Mixed },
+              isWeekOff: { type: Boolean, default: false }
             }]
           },
           graceTime: {
