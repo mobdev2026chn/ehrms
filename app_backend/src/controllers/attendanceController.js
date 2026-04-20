@@ -1929,7 +1929,12 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
                 return res.status(403).json({ message: checkOutResult.message || 'Half-day leave (Session 2). Check-out not allowed.' });
             }
         } else {
-            return res.status(403).json({ message: 'Your leave request is approved for today. Enjoy your leave.' });
+            // Full-day (or any non-half-day) approved leave: block check-out only when there is no open session.
+            // If punch-in exists (e.g. web check-in during paid leave), allow app to complete punch-out.
+            const hasOpenSession = Boolean(attendance.punchIn) && !attendance.punchOut;
+            if (!hasOpenSession) {
+                return res.status(403).json({ message: 'Your leave request is approved for today. Enjoy your leave.' });
+            }
         }
     }
 

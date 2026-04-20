@@ -4,6 +4,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../repository/attendance_repository.dart';
+import '../../utils/punch_flow_log.dart';
 
 part 'attendance_event.dart';
 part 'attendance_state.dart';
@@ -146,13 +147,14 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
         fineAmount: event.fineAmount,
       );
       if (result['success'] == true) {
+        punchFlowLog('[AttendanceBloc][checkOut] emit=AttendanceCheckOutSuccess');
         emit(AttendanceCheckOutSuccess());
       } else {
-        emit(
-          AttendanceFailure(
-            message: result['message'] as String? ?? 'Check-out failed',
-          ),
+        final failMsg = result['message'] as String? ?? 'Check-out failed';
+        punchFlowLog(
+          '[AttendanceBloc][checkOut] emit=AttendanceFailure message=$failMsg',
         );
+        emit(AttendanceFailure(message: failMsg));
       }
     } catch (_) {
       emit(

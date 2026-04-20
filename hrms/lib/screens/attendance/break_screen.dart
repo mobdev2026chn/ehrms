@@ -10,6 +10,7 @@ import '../../config/app_colors.dart';
 import '../../services/break_service.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
+import '../../utils/break_datetime_util.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../utils/snackbar_utils.dart';
@@ -223,9 +224,7 @@ class _BreakScreenState extends State<BreakScreen> {
   }
 
   DateTime? _breakStartTime() {
-    final raw = _activeBreak?['startTime']?.toString();
-    if (raw == null || raw.isEmpty) return null;
-    return DateTime.tryParse(raw)?.toLocal();
+    return parseApiDateTimeToLocal(_activeBreak?['startTime']);
   }
 
   Future<void> _submit() async {

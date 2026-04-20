@@ -2,6 +2,11 @@
 /// All calculations are done dynamically - NO values are stored except base inputs
 library;
 
+/// Statutory PF on basic when Basic+DA is under 15k — matches web
+/// `backend/src/utils/salaryStructureCalculation.util.ts` (`EMPLOYEE_PF_RATE`).
+/// Staff `employerPFRate` / `employeePFRate` in JSON are **not** used for this rupee amount.
+const double kWebStatutoryPfPercentOnBasic = 12.0;
+
 class SalaryStructureInputs {
   // Fixed Salary Components (Monthly)
   final double basicSalary;
@@ -99,7 +104,7 @@ class MonthlySalaryStructure {
   final double houseRentAllowance;
   final double specialAllowance;
   final double grossFixedSalary; // basicSalary + DA + HRA + specialAllowance
-  final double employerPF; // basicSalary × employerPFRate / 100
+  final double employerPF; // basic × [kWebStatutoryPfPercentOnBasic] when PF applies (web)
   final double employerESI; // (Basic+DA+HRA) × employerESIRate / 100
   final double pfStaticAmount; // ₹1800 in gross when Basic+DA ≥ 15000 (web)
   final double grossSalary; // grossFixedSalary + employerPF + employerESI + pfStaticAmount
@@ -174,7 +179,8 @@ class CalculatedSalaryStructure {
 /// 1. Fixed Gross = Basic + DA + HRA + Special Allowance
 /// 2. `baseGross` = Basic + DA + HRA (excludes special)
 /// 3. Gross Salary = Fixed Gross + Employer PF + Employer ESI + pfStaticAmount
-///    - Employer PF = % of Basic when Basic+DA < 15000
+///    - Employer PF & employee PF **amounts** = [kWebStatutoryPfPercentOnBasic]% of Basic when Basic+DA < 15000
+///      (web TS `EMPLOYEE_PF_RATE`; staff `employerPFRate` / `employeePFRate` are template labels only).
 ///    - Employer ESI = % of `baseGross` when Basic+DA+HRA < 21000
 /// 4. Employee PF / ESI on thresholds; ESI uses `baseGross`, not full gross
 /// 5. `totalMonthlyDeductions` = Employee PF + Employee ESI only
@@ -213,14 +219,15 @@ CalculatedSalaryStructure calculateSalaryStructure(
   final isESIApplicable = basicPlusDAPlusHRA < 21000;
   final baseGross = basicPlusDAPlusHRA;
 
-  final effectiveEmployerPFRate = isPFApplicable ? inputs.employerPFRate : 0.0;
   final effectiveEmployerESIRate = isESIApplicable ? inputs.employerESIRate : 0.0;
-  final effectiveEmployeePFRate = isPFApplicable ? inputs.employeePFRate : 0.0;
   final effectiveEmployeeESIRate = isESIApplicable ? inputs.employeeESIRate : 0.0;
 
-  // Employer PF = % of Basic Salary (when applicable)
-  final employerPF = effectiveEmployerPFRate > 0
-      ? (basicSalary * effectiveEmployerPFRate / 100)
+  final statutoryPfOnBasic =
+      isPFApplicable ? kWebStatutoryPfPercentOnBasic : 0.0;
+
+  // Employer PF (rupees): web hardcodes 12% of Basic (same as employee PF line).
+  final employerPF = statutoryPfOnBasic > 0
+      ? (basicSalary * statutoryPfOnBasic / 100)
       : 0;
 
   // Employer ESI = % of Basic+DA+HRA (web TS), not full fixed gross
@@ -237,9 +244,9 @@ CalculatedSalaryStructure calculateSalaryStructure(
   // ============================================
   // STEP 3: Employee Deductions (NOT part of CTC)
   // ============================================
-  // Employee PF = % of Basic when applicable; otherwise static PF amount
-  final employeePF = effectiveEmployeePFRate > 0
-      ? (basicSalary * effectiveEmployeePFRate / 100)
+  // Employee PF = same statutory % of Basic as web; otherwise static PF amount
+  final employeePF = isPFApplicable
+      ? (basicSalary * statutoryPfOnBasic / 100)
       : pfStaticAmount;
 
   // Employee ESI = % of baseGross (Basic+DA+HRA), same as employer ESI base (web TS)

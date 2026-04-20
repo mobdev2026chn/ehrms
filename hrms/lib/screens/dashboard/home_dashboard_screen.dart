@@ -22,6 +22,7 @@ import '../../services/attendance_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/salary_service.dart';
+import '../salary/staff_salary_structure_screen.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../utils/salary_fine_summary.dart';
 import '../../utils/attendance_display_util.dart';
@@ -73,7 +74,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   final SettingsService _settingsService = SettingsService();
   final SalaryService _salaryService = SalaryService();
 
-  List<dynamic> _recentLeaves = [];
   // ignore: unused_field - kept for when Active Loans card is shown again
   List<dynamic> _activeLoans = [];
   bool _isLoadingDashboard = false;
@@ -95,9 +95,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   /// True when staff's assigned shift row is rotational (today's template only applies to "today").
   bool _profileShiftIsRotational = false;
 
-  // Salary calculation data (same logic as Salary Overview "This Month Net")
-  double _calculatedMonthSalary = 0;
-  double _overallMonthlyNetSalary = 0;
   // ignore: unused_field - kept for when Present Days / salary breakdown is shown again
   int _workingDaysForSalary =
       0; // Full-month working days used for salary (same as Salary Overview)
@@ -113,13 +110,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   List<dynamic> _todayCelebrations = [];
   List<dynamic> _upcomingCelebrations = [];
   int _fcmNotificationCount = 0;
-
-  /// Keep MTD card parity with Salary Overview: only processed/paid payroll is final for MTD.
-  bool _payrollRowIsFinalForMtd(Map<String, dynamic>? payroll) {
-    if (payroll == null) return false;
-    final s = (payroll['status'] ?? '').toString().trim().toLowerCase();
-    return s == 'processed' || s == 'paid';
-  }
 
   Future<void> _persistPerDaySalary(double value, {double? grossValue}) async {
     try {
@@ -414,7 +404,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               : <dynamic>[];
           setState(() {
             _stats = stats;
-            _recentLeaves = data['recentLeaves'] ?? [];
             _activeLoans = loansList;
             _activeLoansCount = loansList.length;
             _todayAttendance = liveTodayAttendance ?? stats?['attendanceToday'];
@@ -456,7 +445,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           if (kDebugMode) {
             debugPrint(
               '[DashboardLoad] state updated in ${sw.elapsedMilliseconds}ms | '
-              'recentLeaves=${_recentLeaves.length} | '
               'todayAnnouncements=${_todayAnnouncements.length} | '
               'todayCelebrations=${_todayCelebrations.length}',
             );
@@ -609,17 +597,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return same ? tmpl : null;
   }
 
-  String? _formatCalendarPunchTime(dynamic raw) {
-    if (raw == null) return null;
-    final s = raw.toString().trim();
-    if (s.isEmpty) return null;
-    try {
-      return DateFormat('hh:mm a').format(DateTime.parse(s).toLocal());
-    } catch (_) {
-      return null;
-    }
-  }
-
   /// Web-style status chip (top-right of calendar day).
   Widget _dashboardCalendarStatusChip(String label, Color bg, Color fg) {
     // Keep status style text-only (no badge background/border).
@@ -636,36 +613,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           fontWeight: FontWeight.w700,
           color: fg,
         ),
-      ),
-    );
-  }
-
-  Widget _dashboardCalendarPunchRow(
-    Color dotColor,
-    String timeText,
-    Color textColor,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 1),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 5,
-            height: 5,
-            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            timeText,
-            style: TextStyle(
-              fontSize: 7,
-              height: 1.05,
-              fontWeight: FontWeight.w600,
-              color: textColor,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1287,26 +1234,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         'fine=$totalFineAmount mtdGross=${proratedSalary.proratedGrossSalary} mtdNet=$proratedNetForMtd',
       );
 
-      // 9. MTD source priority parity with Salary Overview:
-      // final payroll -> preview -> prorated, else preview -> prorated -> payroll.
-      // (payroll + preview already loaded in step 7b)
-
-      final payrollMtdNet = (currentPayroll?['netPay'] as num?)?.toDouble();
-      final previewNet = (payrollPreview?['netPay'] as num?)?.toDouble();
-      final payrollFinal = _payrollRowIsFinalForMtd(currentPayroll);
-      final rawThisMonthNet = payrollFinal
-          ? (payrollMtdNet ?? previewNet ?? proratedNetForMtd)
-          : (previewNet ?? proratedNetForMtd);
-      final displayThisMonthNet = rawThisMonthNet < 0 ? 0.0 : rawThisMonthNet;
-
       if (mounted) {
         final workingDaysUsed = workingDaysInfo.workingDays;
         setState(() {
-          _calculatedMonthSalary = displayThisMonthNet;
-          _overallMonthlyNetSalary =
-              calculatedSalary.monthly.netMonthlySalary < 0
-              ? 0.0
-              : calculatedSalary.monthly.netMonthlySalary;
           _workingDaysForSalary = workingDaysUsed;
           if (_companyName.isEmpty &&
               companyName != null &&
@@ -1324,29 +1254,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width > 800;
     final colorScheme = Theme.of(context).colorScheme;
-
-    // Stats extraction
-    final pendingLeaves = _stats?['pendingLeaves']?.toString() ?? '0';
-
-    // This Month Net (large) + total monthly net below (small, same style as "Pending" on leave card).
-    final formatter = NumberFormat('#,##0.00');
-    final mtdNet = _calculatedMonthSalary;
-    final monthlyNet = _overallMonthlyNetSalary;
-    final hasSalary = mtdNet > 0 || monthlyNet > 0;
-    final mtdDisplay = hasSalary ? '₹${formatter.format(mtdNet)}' : '--';
-    final monthlyDisplay = hasSalary
-        ? '₹${formatter.format(monthlyNet)}'
-        : null;
-    // Present days and paid leave for This Month Net subtitle (e.g. "3 days present + 1 PL")
-    final presentDaysVal =
-        _stats?['attendanceSummary']?['presentDays']?.toString() ?? '0';
-    final paidLeaveDaysVal =
-        _stats?['attendanceSummary']?['paidLeaveDays']?.toString() ?? '0';
-    final presentDaysInt = int.tryParse(presentDaysVal) ?? 0;
-    final paidLeaveInt = int.tryParse(paidLeaveDaysVal) ?? 0;
-    final presentDays = paidLeaveInt > 0
-        ? '$presentDaysInt days present + $paidLeaveInt PL'
-        : (presentDaysInt > 0 ? '$presentDaysInt days present' : '');
 
     final content = RefreshIndicator(
       onRefresh: _loadData,
@@ -1403,67 +1310,32 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
                   const SizedBox(height: 32),
 
-                  // 3. Recent Leaves
-                  _buildRecentLeavesCard(),
-                  const SizedBox(height: 24),
-
-                  // 4. Celebration and Announcement cards
-                  if (_todayAnnouncements.isNotEmpty ||
-                      _todayCelebrations.isNotEmpty) ...[
-                    isWide
-                        ? IntrinsicHeight(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (_todayCelebrations.isNotEmpty)
-                                  Expanded(child: _buildCelebrationsCard()),
-                                if (_todayCelebrations.isNotEmpty &&
-                                    _todayAnnouncements.isNotEmpty)
-                                  const SizedBox(width: 16),
-                                if (_todayAnnouncements.isNotEmpty)
-                                  Expanded(child: _buildTodayAnnouncementsCard()),
-                              ],
-                            ),
-                          )
-                        : Column(
+                  // 4. Celebration and Announcement cards (always visible)
+                  isWide
+                      ? IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              if (_todayCelebrations.isNotEmpty)
-                                _buildCelebrationsCard(),
-                              if (_todayCelebrations.isNotEmpty &&
-                                  _todayAnnouncements.isNotEmpty)
-                                const SizedBox(height: 16),
-                              if (_todayAnnouncements.isNotEmpty)
-                                _buildTodayAnnouncementsCard(),
+                              Expanded(child: _buildCelebrationsCard()),
+                              const SizedBox(width: 16),
+                              Expanded(child: _buildTodayAnnouncementsCard()),
                             ],
                           ),
-                    const SizedBox(height: 24),
-                  ],
+                        )
+                      : Column(
+                          children: [
+                            _buildCelebrationsCard(),
+                            const SizedBox(height: 16),
+                            _buildTodayAnnouncementsCard(),
+                          ],
+                        ),
+                  const SizedBox(height: 24),
 
                   // 5. Today attendance card
                   if (!_isCandidate) ...[
                     _buildMonthAttendanceCard(dashboardCompact: true),
                     const SizedBox(height: 24),
                   ],
-
-                  // 6. Leave Request and This Month cards
-                  IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          child: _buildPendingLeavesSummaryCard(pendingLeaves),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildThisMonthNetSummaryCard(
-                            mtdDisplay,
-                            monthlyDisplay,
-                            presentDays,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -2116,6 +1988,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
     if (onNavigate != null) {
       buttons.addAll([
+        if (!_isCandidate)
+          _buildQuickActionButton(
+            icon: Icons.account_balance_wallet_outlined,
+            label: 'Salary Structure',
+            color: accent,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const StaffSalaryStructureScreen(),
+                ),
+              );
+            },
+          ),
         _buildQuickActionButton(
           icon: Icons.calendar_today,
           label: 'Apply Leave',
@@ -2150,166 +2035,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
 
     return buttons;
-  }
-
-  /// White card with donut progress - Pending Leaves (image style)
-  Widget _buildPendingLeavesSummaryCard(String value) {
-    final count = int.tryParse(value) ?? 0;
-    final progress = count > 0 ? (count / 10.0).clamp(0.0, 1.0) : 0.0;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 48,
-            height: 48,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircularProgressIndicator(
-                  value: progress > 0 ? progress : 0.75,
-                  strokeWidth: 4,
-                  backgroundColor: AppColors.primary.withOpacity(0.2),
-                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Leave Requests',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
-                  ),
-                ),
-                Text(
-                  'Pending',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// White card with yellow circle + up arrow - This Month Net (image style)
-  Widget _buildThisMonthNetSummaryCard(
-    String mtdAmount,
-    String? monthlyAmount,
-    String presentDays,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.trending_up, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'This Month Net',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    mtdAmount,
-                    style: const TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
-                    ),
-                  ),
-                ),
-                if (monthlyAmount != null && monthlyAmount.isNotEmpty)
-                  Text(
-                    'Total monthly salary $monthlyAmount',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                if (presentDays.isNotEmpty)
-                  Text(
-                    presentDays,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   /// Celebration-style card: rounded corners, soft shadow. Optional [icon] or [imageAsset] for left graphic.
@@ -2619,192 +2344,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
-  Widget _buildRecentLeavesCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.primary, AppColors.primaryDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Recent Leaves',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          if (_isLoadingDashboard)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: AppTabLoader(),
-              ),
-            )
-          else if (_recentLeaves.isEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 20.0),
-                child: Text(
-                  'No recent leave requests',
-                  style: TextStyle(color: Colors.white.withOpacity(0.9)),
-                ),
-              ),
-            )
-          else ...[
-            ..._recentLeaves
-                .take(3)
-                .map((leave) => _buildRecentLeaveItem(leave)),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton(
-                onPressed: () {
-                  final fn = widget.onNavigate;
-                  if (fn != null) fn(1, subTabIndex: 0);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: AppColors.primary,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 10,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  elevation: 0,
-                ),
-                child: const Text(
-                  'View All',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecentLeaveItem(dynamic leave) {
-    final leaveType = leave['leaveType']?.toString() ?? 'Leave';
-    final status = leave['status']?.toString() ?? 'N/A';
-    String dateStr = '';
-    try {
-      final start = DateTime.parse(leave['startDate'].toString());
-      dateStr = DateFormat('dd-MM-yy').format(start);
-    } catch (_) {}
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.check_circle, color: Colors.white, size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              '$leaveType - $status${dateStr.isNotEmpty ? ' - $dateStr' : ''}',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withOpacity(0.95),
-                fontWeight: FontWeight.w500,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ignore: unused_element
-  Widget _buildLeaveItem(dynamic leave) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final startDateArgs = DateTime.parse(leave['startDate']);
-    final endDateArgs = DateTime.parse(leave['endDate']);
-    final dateRange =
-        '${DateFormat('MMM dd, yyyy').format(startDateArgs)} - ${DateFormat('MMM dd, yyyy').format(endDateArgs)}';
-
-    Color statusColor = colorScheme.onSurfaceVariant;
-    if (leave['status'] == 'Approved') {
-      statusColor = Colors.green;
-    } else if (leave['status'] == 'Rejected') {
-      statusColor = Colors.red;
-    } else {
-      statusColor = Colors.orange;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: colorScheme.outline),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  leave['leaveType'] ?? 'Leave',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  dateRange,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              leave['status'] ?? 'N/A',
-              style: TextStyle(
-                fontSize: 12,
-                color: statusColor,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// Calendar date (yyyy-MM-dd) from attendance collection. UTC/ISO date only (no local timezone shift).
   /// Handles: ISO string, date-only string, or DateTime (UTC components).
   String _attendanceCalendarDate(dynamic dateValue) {
@@ -2876,123 +2415,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     bool dashboardCompact = false,
   }) {
     final monthName = DateFormat('MMMM yyyy').format(_selectedMonth);
-    // Day counters must match Salary Overview (web-style reducer + explicit month sets).
-    // Do NOT use dashboard `attendanceSummary` for these counts: it can diverge and shows wrong
-    // Working/Month W.D/Absent totals (as seen in the dashboard screenshot).
-    final stats = (() {
-      final md = _monthData;
-      final rawAttendance = md != null ? (md['attendance'] as List?) ?? [] : [];
-      final attendance = _deduplicateAttendanceByDate(rawAttendance);
-
-      final year = _selectedMonth.year;
-      final month = _selectedMonth.month; // 1-12
-      final daysInMonth = DateTime(year, month + 1, 0).day;
-      final now = DateTime.now();
-      final isCurrentMonth = now.year == year && now.month == month;
-      final lastDayToCount = isCurrentMonth ? now.day : daysInMonth;
-
-      final holidayKeys = <String>{};
-      final weekOffKeys = <String>{};
-      try {
-        final hol = md != null ? (md['holidays'] as List?) : null;
-        if (hol != null) {
-          for (final h in hol) {
-            if (h is Map && h['date'] != null) {
-              final k = normalizeAttendanceDateKeyForSalary(h['date']);
-              if (k != null) holidayKeys.add(k);
-            }
-          }
-        }
-      } catch (_) {}
-      try {
-        final w = md != null ? (md['weekOffDates'] as List?) : null;
-        if (w != null) {
-          for (final d in w) {
-            final k = normalizeAttendanceDateKeyForSalary(d);
-            if (k != null) weekOffKeys.add(k);
-          }
-        }
-      } catch (_) {}
-
-      int workingDaysTill = 0;
-      int weekOffsTill = 0;
-      int holidaysTill = 0;
-      int workingDaysFull = 0;
-      // Full-month week-offs/holidays are not displayed in this card.
-
-      for (int day = 1; day <= daysInMonth; day++) {
-        final dt = DateTime(year, month, day);
-        final key = DateFormat('yyyy-MM-dd').format(dt);
-        final isHoliday = holidayKeys.contains(key);
-        final isWeekOff = weekOffKeys.contains(key);
-        // keep full-month counters only where needed (workingDaysFull).
-        if (!isHoliday && !isWeekOff) workingDaysFull++;
-
-        if (day <= lastDayToCount) {
-          if (isHoliday) holidaysTill++;
-          if (isWeekOff && !isHoliday) weekOffsTill++;
-          if (!isHoliday && !isWeekOff) workingDaysTill++;
-        }
-      }
-
-      // Web-style present reducer (same as Salary Overview `_computeWebAttendanceBreakdown`)
-      double presentDays = 0.0;
-      int halfDayPaidLeaveCount = 0;
-      for (final r in attendance) {
-        if (r is! Map) continue;
-        final dateKey = normalizeAttendanceDateKeyForSalary(r['date']);
-        if (dateKey == null) continue;
-        if (isCurrentMonth) {
-          final todayKey = DateFormat(
-            'yyyy-MM-dd',
-          ).format(DateTime(now.year, now.month, now.day));
-          if (dateKey.compareTo(todayKey) > 0) continue;
-        }
-
-        final status = (r['status'] as String? ?? '').trim().toLowerCase();
-        final leaveType = (r['leaveType'] as String? ?? 'Leave')
-            .trim()
-            .toLowerCase();
-        final hasHalfDaySession = r['halfDaySession'] != null;
-        final isHalfDayStatus = status == 'half day' || leaveType == 'half day';
-        final isHalfDay = isHalfDayStatus || hasHalfDaySession;
-
-        if (status == 'present' || status == 'approved') {
-          presentDays += hasHalfDaySession ? 0.5 : 1.0;
-        } else if (status == 'half day') {
-          presentDays += 0.5;
-        } else if (status == 'pending' && hasHalfDaySession) {
-          presentDays += 0.5;
-        }
-
-        if ((status == 'on leave' || status == 'half day') && isHalfDay) {
-          final compensationType = (r['compensationType'] as String?)
-              ?.trim()
-              .toLowerCase();
-          final isPaidLeave =
-              r['isPaidLeave'] == true ||
-              compensationType == 'paid' ||
-              (compensationType == null && r['isPaidLeave'] != false);
-          if (isPaidLeave) halfDayPaidLeaveCount += 1;
-        }
-      }
-
-      final absentDays = (workingDaysTill - presentDays).clamp(0.0, 9999.0);
-      String fmtNum(num v) =>
-          (v % 1 == 0) ? v.toInt().toString() : v.toStringAsFixed(1);
-
-      return <String, dynamic>{
-        'workingDays': workingDaysTill,
-        'thisMonthWorkingDays': workingDaysFull,
-        'presentDays': fmtNum(presentDays),
-        'absentDays': fmtNum(absentDays),
-        'halfDayPaidLeaveCount': halfDayPaidLeaveCount,
-        'holidaysCount': holidaysTill,
-        'weekOffs': weekOffsTill,
-        // Preserve existing fields when available (not part of the screenshot counters).
-        'leaveDays': md?['stats']?['leaveDays'],
-      };
-    })();
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -3011,24 +2433,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (dashboardCompact && showHeaderIcon) ...[
-            Align(
-              alignment: Alignment.centerLeft,
-              child: InkWell(
-                onTap: _openDashboardCalendarDetailsScreen,
-                borderRadius: BorderRadius.circular(18),
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Icon(
-                    Icons.calendar_month,
-                    size: 22,
-                    color: AppColors.primary,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
           if (!dashboardCompact)
             Row(
               children: [
@@ -3061,39 +2465,52 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ],
             ),
           if (!dashboardCompact) const SizedBox(height: 24),
-          // Today punch in/out and status above the cloud
-          _buildTodayAttendanceSubCard(),
-          const SizedBox(height: 20),
-          // Cloud: no card wrapper, more visible; no check-in/check-out button
-          if (_todayAttendance != null &&
-              _todayAttendance!['punchIn'] != null &&
-              _todayAttendance!['punchOut'] == null)
-            Builder(
-              builder: (context) {
-                DateTime punchInTime = DateTime.now();
-                try {
-                  punchInTime = DateTime.parse(
-                    _todayAttendance!['punchIn'].toString(),
-                  ).toLocal();
-                } catch (_) {}
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 20),
-                  child: CloudPunchCard(punchInTime: punchInTime),
-                );
-              },
+          // Today summary (icon + date + punches) and worked-time: two separate cards on dashboard.
+          if (dashboardCompact) ...[
+            _buildTodayAttendanceSubCard(
+              showCalendarIconInHeader: showHeaderIcon,
             ),
+            if (_todayAttendance != null &&
+                _todayAttendance!['punchIn'] != null &&
+                _todayAttendance!['punchIn'].toString().trim().isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Builder(
+                builder: (context) {
+                  DateTime punchInTime = DateTime.now();
+                  try {
+                    punchInTime = DateTime.parse(
+                      _todayAttendance!['punchIn'].toString(),
+                    ).toLocal();
+                  } catch (_) {}
+                  DateTime? punchOutTime;
+                  final po = _todayAttendance!['punchOut'];
+                  if (po != null && po.toString().trim().isNotEmpty) {
+                    try {
+                      punchOutTime = DateTime.parse(po.toString()).toLocal();
+                    } catch (_) {}
+                  }
+                  final whRaw = _todayAttendance!['workHours'];
+                  final whNum = whRaw is num
+                      ? whRaw
+                      : num.tryParse(whRaw?.toString() ?? '');
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: CloudPunchCard(
+                      key: ValueKey(
+                        'worked_${punchInTime.millisecondsSinceEpoch}_'
+                        '${punchOutTime?.millisecondsSinceEpoch ?? 0}_'
+                        '${whNum ?? ''}',
+                      ),
+                      punchInTime: punchInTime,
+                      punchOutTime: punchOutTime,
+                      workHoursFromAttendance: whNum,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ],
           if (!dashboardCompact) ...[
-            _buildMonthStatsRow(
-              workingDays: (stats['workingDays'] ?? 0).toString(),
-              thisMonthWorkingDays: stats['thisMonthWorkingDays']?.toString(),
-              holidays: (stats['holidaysCount'] ?? 0).toString(),
-              weekOffs: (stats['weekOffs'] ?? 0).toString(),
-              presentDays: (stats['presentDays'] ?? '0').toString(),
-              absentDays: (stats['absentDays'] ?? '0').toString(),
-              halfDayPaidLeaveCount: stats['halfDayPaidLeaveCount']?.toString(),
-              leaveDays: stats['leaveDays']?.toString(),
-            ),
-            const SizedBox(height: 24),
             _buildSimpleCalendar(),
             const SizedBox(height: 24),
             _buildStatusLegend(),
@@ -3126,7 +2543,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
-  Widget _buildTodayAttendanceSubCard() {
+  Widget _buildTodayAttendanceSubCard({
+    bool showCalendarIconInHeader = false,
+  }) {
     final colorScheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
     final todayLabel = "Today (${DateFormat('dd MMM').format(now)})";
@@ -3158,8 +2577,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              if (showCalendarIconInHeader) ...[
+                InkWell(
+                  onTap: _openDashboardCalendarDetailsScreen,
+                  borderRadius: BorderRadius.circular(18),
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Icon(
+                      Icons.calendar_month,
+                      size: 22,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+              ],
               Expanded(
                 child: Text(
                   todayLabel,
@@ -3288,88 +2721,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ],
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMonthStatsRow({
-    required String workingDays,
-    String? thisMonthWorkingDays,
-    required String holidays,
-    required String weekOffs,
-    required String presentDays,
-    required String absentDays,
-    String? halfDayPaidLeaveCount,
-    String? leaveDays,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outline),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            _buildStatItem(presentDays, 'Present'),
-            Container(width: 1, height: 30, color: colorScheme.outline),
-            _buildStatItem(absentDays, 'Absent'),
-            Container(width: 1, height: 30, color: colorScheme.outline),
-            _buildStatItem(workingDays, 'Working'),
-            Container(width: 1, height: 30, color: colorScheme.outline),
-            if (thisMonthWorkingDays != null) ...[
-              _buildStatItem(thisMonthWorkingDays, 'Month W.D.'),
-              Container(width: 1, height: 30, color: colorScheme.outline),
-            ],
-            if (halfDayPaidLeaveCount != null) ...[
-              _buildStatItem(halfDayPaidLeaveCount, 'Half day PL'),
-              Container(width: 1, height: 30, color: colorScheme.outline),
-            ],
-            if (leaveDays != null) ...[
-              _buildStatItem(leaveDays, 'Leave'),
-              Container(width: 1, height: 30, color: colorScheme.outline),
-            ],
-            _buildStatItem(holidays, 'Holidays'),
-            Container(width: 1, height: 30, color: colorScheme.outline),
-            _buildStatItem(weekOffs, 'Week Offs'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatItem(String value, String label) {
-    return Container(
-      width: 80,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            value,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1E40AF),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 11,
-              color: Colors.black,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
         ],
       ),
     );
@@ -3830,8 +3181,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           bool isLowHours = false;
                           bool isFuture = false;
                           EffectiveShiftDay? effShiftForCell;
-                          String? punchInFmt;
-                          String? punchOutFmt;
                           String? webBadgeLabel;
                           Color? webBadgeBg;
                           Color? webBadgeFg;
@@ -4035,21 +3384,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                 break;
                               }
                             }
-                            punchInFmt = _formatCalendarPunchTime(
-                              dayEntry?['punchIn'],
-                            );
-                            punchOutFmt = _formatCalendarPunchTime(
-                              dayEntry?['punchOut'],
-                            );
-                            if (isToday && _todayAttendance != null) {
-                              punchInFmt ??= _formatCalendarPunchTime(
-                                _todayAttendance!['punchIn'],
-                              );
-                              punchOutFmt ??= _formatCalendarPunchTime(
-                                _todayAttendance!['punchOut'],
-                              );
-                            }
-
                             Map<String, dynamic>? entryForApplied = dayEntry;
                             if (isToday && _todayAttendance != null) {
                               final live = Map<String, dynamic>.from(
@@ -4362,26 +3696,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                                   MainAxisAlignment.center,
                                               mainAxisSize: MainAxisSize.min,
                                               children: [
-                                                if (punchInFmt != null)
-                                                  _dashboardCalendarPunchRow(
-                                                    const Color(0xFF22C55E),
-                                                    punchInFmt,
-                                                    textColor,
-                                                  ),
-                                                if (punchOutFmt != null)
-                                                  _dashboardCalendarPunchRow(
-                                                    const Color(0xFFEF4444),
-                                                    punchOutFmt,
-                                                    textColor,
-                                                  ),
                                                 if (!calendarCellIsWeekOff &&
                                                     (appliedShiftCompactForCell !=
                                                             null ||
                                                         effShiftForCell !=
                                                             null)) ...[
-                                                  if (punchInFmt != null ||
-                                                      punchOutFmt != null)
-                                                    const SizedBox(height: 3),
                                                   Text(
                                                     appliedShiftCompactForCell ??
                                                         effShiftForCell

@@ -292,6 +292,96 @@ double? resolveOpenShiftWorkHoursFromCompany(
   );
 }
 
+/// Embedded shift row for [appliedShiftId] in [companyDoc] (`settings.attendance.shifts` or merged today template).
+Map<String, dynamic>? shiftRowForAppliedShiftId({
+  required Map<String, dynamic>? companyDoc,
+  required dynamic appliedShiftId,
+}) {
+  final idHex = objectIdHexLoose(appliedShiftId);
+  if (idHex == null) return null;
+  final shifts = shiftsListFromCompany(companyDoc);
+  if (shifts == null) return null;
+  for (final raw in shifts) {
+    if (raw is! Map) continue;
+    final s = Map<String, dynamic>.from(raw);
+    final sid = objectIdHexLoose(s['_id']);
+    if (sid != null && sid == idHex) return s;
+  }
+  return null;
+}
+
+/// Parses [breakPolicy.enabled] from API / Mongo (bool, int 0/1, string "true"/"false").
+bool? readBreakPolicyEnabledFromMap(dynamic breakPolicy) {
+  if (breakPolicy is! Map) return null;
+  final m = breakPolicy is Map<String, dynamic>
+      ? breakPolicy
+      : Map<String, dynamic>.from(breakPolicy);
+  final enabled = m['enabled'];
+  if (enabled is bool) return enabled;
+  if (enabled is num) return enabled != 0;
+  if (enabled is String) {
+    final s = enabled.trim().toLowerCase();
+    if (s == 'true' || s == '1' || s == 'yes') return true;
+    if (s == 'false' || s == '0' || s == 'no') return false;
+  }
+  return null;
+}
+
+/// Company [breakPolicy.enabled] for the shift applied on the attendance row.
+///
+/// Returns **null** when the row or policy cannot be read (caller may keep prior UX).
+/// Returns **false** when [breakPolicy.enabled] is explicitly false.
+/// Returns **true** when enabled or when [breakPolicy]/[enabled] is absent (legacy rows).
+bool? breakPolicyEnabledForShiftRow(Map<String, dynamic>? shiftRow) {
+  if (shiftRow == null || shiftRow.isEmpty) return null;
+  return readBreakPolicyEnabledFromMap(shiftRow['breakPolicy']);
+}
+
+/// Prefer [businessShifts] on GET `/attendance/today` (full rows including [breakPolicy]);
+/// else a merged [template] map if it already embeds [settings.attendance.shifts] / [attendance.shifts].
+Map<String, dynamic>? companyDocForBreakPolicyFromTodayApiRoot(
+  Map<String, dynamic>? todayResponseRoot,
+) {
+  if (todayResponseRoot == null || todayResponseRoot.isEmpty) return null;
+  final bs = todayResponseRoot['businessShifts'];
+  if (bs is List && bs.isNotEmpty) {
+    return {
+      'settings': {
+        'attendance': {'shifts': List<dynamic>.from(bs)},
+      },
+    };
+  }
+  final t = todayResponseRoot['template'];
+  Map<String, dynamic>? tm;
+  if (t is Map<String, dynamic>) {
+    tm = t;
+  } else if (t is Map) {
+    tm = Map<String, dynamic>.from(t);
+  }
+  if (tm != null) {
+    final shifts = shiftsListFromCompany(tm);
+    if (shifts != null && shifts.isNotEmpty) return tm;
+  }
+  return null;
+}
+
+/// Whether the break / tea-break affordance should be shown for [appliedShiftId].
+///
+/// When the shift row or [breakPolicy.enabled] cannot be resolved, returns **true**
+/// so existing behaviour is preserved.
+bool shouldShowBreakNavForAppliedShift({
+  required Map<String, dynamic>? companyDoc,
+  required dynamic appliedShiftId,
+}) {
+  final row = shiftRowForAppliedShiftId(
+    companyDoc: companyDoc,
+    appliedShiftId: appliedShiftId,
+  );
+  final explicit = breakPolicyEnabledForShiftRow(row);
+  if (explicit == null) return true;
+  return explicit;
+}
+
 int? readOtBufferMinutesFromMap(Map<String, dynamic>? m) {
   if (m == null || m.isEmpty) return null;
   final raw = m['otBufferMinutes'];

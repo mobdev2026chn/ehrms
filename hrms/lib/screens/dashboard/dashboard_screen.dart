@@ -13,6 +13,7 @@ import '../../widgets/walking_turtle_emoji.dart';
 import '../../config/constants.dart';
 import '../../utils/break_datetime_util.dart';
 import '../../utils/error_message_utils.dart';
+import '../../utils/punch_flow_log.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../widgets/attendance_success_overlay.dart';
 import '../../widgets/notification_reaction_overlay.dart';
@@ -32,6 +33,7 @@ import '../../utils/face_detection_helper.dart';
 import '../../utils/attendance_template_util.dart';
 import '../../utils/absent_alert_helper.dart';
 import '../../utils/fine_calculation_util.dart';
+import '../../utils/rotational_shift_util.dart';
 import 'home_dashboard_screen.dart';
 import '../attendance/attendance_screen.dart';
 import '../attendance/selfie_camera_screen.dart';
@@ -71,6 +73,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   /// Starts false so the bottom bar matches the today card (no stale prefs via null).
   bool _isPunchedInToday = false;
   bool _isPunchCompletedToday = false;
+  /// From company shift [breakPolicy.enabled] for today's [appliedShiftId] (tea-break icon).
+  bool _showBreakNavForShiftPolicy = true;
   Map<String, dynamic>? _activeBreak;
   bool _openBreakAfterBuild = false;
   Map<String, dynamic>? _fineCalculation;
@@ -256,6 +260,30 @@ class _DashboardScreenState extends State<DashboardScreen>
       final isPunchedIn = _isAttendancePunchedIn(attendance);
       final hasIn = _hasPunchValue(attendance['punchIn']);
       final hasOut = _hasPunchValue(attendance['punchOut']);
+      var showBreakNav = _showBreakNavForShiftPolicy;
+      try {
+        // Full shift rows (incl. breakPolicy) live on today API root [businessShifts], not in SharedPrefs template.
+        Map<String, dynamic>? companyDoc =
+            companyDocForBreakPolicyFromTodayApiRoot(data);
+        if (companyDoc == null) {
+          final stored = await AttendanceTemplateStore.loadTemplateDetails();
+          final rawT = stored?['template'];
+          if (rawT is Map<String, dynamic>) {
+            companyDoc = rawT;
+          } else if (rawT is Map) {
+            companyDoc = Map<String, dynamic>.from(rawT);
+          }
+        }
+        final appliedId = attendance['appliedShiftId'];
+        if (companyDoc != null &&
+            companyDoc.isNotEmpty &&
+            appliedId != null) {
+          showBreakNav = shouldShowBreakNavForAppliedShift(
+            companyDoc: companyDoc,
+            appliedShiftId: appliedId,
+          );
+        }
+      } catch (_) {}
       if (kDebugMode) {
         final rawIn = attendance['punchIn']?.toString();
         final rawOut = attendance['punchOut']?.toString();
@@ -277,6 +305,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       setState(() {
         _isPunchedInToday = isPunchedIn;
         _isPunchCompletedToday = hasIn && hasOut;
+        _showBreakNavForShiftPolicy = showBreakNav;
       });
       await _savePunchStateToPrefs(attendance);
       if (isPunchedIn) {
@@ -1280,12 +1309,10 @@ class _DashboardScreenState extends State<DashboardScreen>
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
       final templateId = staffData?['attendanceTemplateId'];
-      if (kDebugMode) {
-        debugPrint(
-          '[PunchFlow] validation data settled in ${sw.elapsedMilliseconds}ms | '
-          'profileSuccess=${profileResult['success']} | todaySuccess=${result['success']}',
-        );
-      }
+      punchFlowLog(
+        '[PunchFlow] validation data settled in ${sw.elapsedMilliseconds}ms | '
+        'profileSuccess=${profileResult['success']} | todaySuccess=${result['success']}',
+      );
       if (result['success'] != true || result['data'] == null) return null;
 
       final body = result['data'] as Map<String, dynamic>;
@@ -1331,11 +1358,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         'isCompensationWeekOff': body['isCompensationWeekOff'] ?? false,
         'isCompensationCompOff': body['isCompensationCompOff'] ?? false,
         'isPaidLeaveToday': body['isPaidLeaveToday'] ?? false,
+        'isOnLeave': body['isOnLeave'] ?? false,
       };
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[PunchFlow] validation fetch error: $e');
-      }
+      punchFlowLog('[PunchFlow] validation fetch error: $e');
       return null;
     }
   }
@@ -1778,7 +1804,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     final attendanceData = data['attendanceData'] as Map<String, dynamic>?;
     final halfDayLeave = data['halfDayLeave'] as Map<String, dynamic>?;
     final checkInAllowed = data['checkInAllowed'] as bool? ?? true;
-    final checkOutAllowed = data['checkOutAllowed'] as bool? ?? true;
     final leaveMessage = data['leaveMessage']?.toString();
     final isHoliday = data['isHoliday'] as bool? ?? false;
     final isWeeklyOff = data['isWeeklyOff'] as bool? ?? false;
@@ -1788,6 +1813,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     final isCompensationCompOff =
         data['isCompensationCompOff'] as bool? ?? false;
     final isPaidLeaveToday = data['isPaidLeaveToday'] as bool? ?? false;
+    final isPaidLeaveOnTodayRow = attendanceData?['isPaidLeave'] == true;
+    final isPaidLeaveContext = isPaidLeaveToday || isPaidLeaveOnTodayRow;
     final isCheckedIn = _isAttendancePunchedIn(attendanceData);
     final isCompleted = _isAttendanceCompleted(attendanceData);
     final status = attendanceData?['status'] ?? '';
@@ -1884,7 +1911,14 @@ class _DashboardScreenState extends State<DashboardScreen>
         (halfDayLeave['halfDayType'] == 'First Half Day' ||
             halfDayLeave['halfDaySession'] == 'First Half Day' ||
             halfDayLeave['session'] == '1');
-    final isOnLeave = halfDayLeave != null;
+    final isOnLeaveFromApi = data['isOnLeave'] as bool? ?? false;
+    final isOnLeave = isOnLeaveFromApi || halfDayLeave != null;
+    punchFlowLog(
+      '[PunchFlow][validate] isCheckedIn=$isCheckedIn isOnLeave=$isOnLeave '
+      '(api=$isOnLeaveFromApi halfDay=${halfDayLeave != null}) '
+      'checkInAllowed=$checkInAllowed isPaidLeaveContext=$isPaidLeaveContext '
+      'leaveMessage=${leaveMessage ?? "(null)"}',
+    );
     if (!isCheckedIn && isOnLeave && !checkInAllowed) {
       SnackBarUtils.showSnackBar(
         context,
@@ -1896,24 +1930,12 @@ class _DashboardScreenState extends State<DashboardScreen>
               : (leaveMessage ?? 'Check-in is not allowed at this time.'),
         ),
         isError: true,
+        debugSource: 'Dashboard._runFingerprintAttendanceValidations.blockCheckInOnLeave',
       );
       await NotificationReactionOverlay.show(context, emoji: '😊');
       return false;
     }
-    if (isCheckedIn && isOnLeave && !checkOutAllowed) {
-      SnackBarUtils.showSnackBar(
-        context,
-        ErrorMessageUtils.sanitizeForDisplay(
-          isSecondHalfLeave
-              ? 'Not allowed check-out. You are on leave on second half.'
-              : isFirstHalfLeave
-              ? 'Not allowed check-out. You are on leave on first half.'
-              : (leaveMessage ?? 'Check-out is not allowed at this time.'),
-        ),
-        isError: true,
-      );
-      return false;
-    }
+    // Do not block check-out client-side when already punched in (e.g. web + app selfie); server decides.
     if (isHoliday && tmpl['allowAttendanceOnHolidays'] == false) {
       SnackBarUtils.showSnackBar(context, 'Today is a holiday', isError: true);
       return false;
@@ -1930,7 +1952,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       SnackBarUtils.showSnackBar(context, 'Today is comp off', isError: true);
       return false;
     }
-    if (isPaidLeaveToday) {
+    if (isPaidLeaveContext && !isCheckedIn) {
       SnackBarUtils.showSnackBar(context, 'Today is paid leave', isError: true);
       return false;
     }
@@ -2462,11 +2484,9 @@ class _DashboardScreenState extends State<DashboardScreen>
         : null;
     final requireSelfie = template?['requireSelfie'] ?? true;
     final requireGeolocation = template?['requireGeolocation'] ?? true;
-    if (kDebugMode) {
-      debugPrint(
-        '[Dashboard][TemplateFlags][submit-from-file] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${template?['name'] ?? template?['title'] ?? 'unknown'}',
-      );
-    }
+    punchFlowLog(
+      '[Dashboard][TemplateFlags][submit-from-file] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${template?['name'] ?? template?['title'] ?? 'unknown'}',
+    );
     if (requireGeolocation && usePosition == null) {
       if (mounted) {
         _isSubmittingFromFingerprint = false;
@@ -2562,6 +2582,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       tmpl: effectiveTemplate,
     );
     if (isCheckedIn) {
+      punchFlowLog(
+        '[PunchFlow][submit] dispatch AttendanceCheckOutRequested '
+        'late=${finePayload['lateMinutes']} early=${finePayload['earlyMinutes']} '
+        'fine=${finePayload['fineAmount']}',
+      );
       context.read<AttendanceBloc>().add(
         AttendanceCheckOutRequested(
           lat: lat,
@@ -2577,6 +2602,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
       );
     } else {
+      punchFlowLog(
+        '[PunchFlow][submit] dispatch AttendanceCheckInRequested '
+        'late=${finePayload['lateMinutes']} early=${finePayload['earlyMinutes']}',
+      );
       context.read<AttendanceBloc>().add(
         AttendanceCheckInRequested(
           lat: lat,
@@ -2621,11 +2650,9 @@ class _DashboardScreenState extends State<DashboardScreen>
         : null;
     final requireSelfie = template?['requireSelfie'] ?? true;
     final requireGeolocation = template?['requireGeolocation'] ?? true;
-    if (kDebugMode) {
-      debugPrint(
-        '[Dashboard][TemplateFlags][submit-no-selfie] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${template?['name'] ?? template?['title'] ?? 'unknown'} precomputedPosition=${usePosition != null}',
-      );
-    }
+    punchFlowLog(
+      '[Dashboard][TemplateFlags][submit-no-selfie] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${template?['name'] ?? template?['title'] ?? 'unknown'} precomputedPosition=${usePosition != null}',
+    );
 
     if (requireGeolocation && usePosition == null && address == null) {
       final loc = await _getCurrentLocation();
@@ -2769,7 +2796,14 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     return BlocListener<AttendanceBloc, AttendanceState>(
       listener: (context, state) async {
+        punchFlowLog(
+          '[PunchFlow][BlocListener] state=${state.runtimeType} '
+          'fingerprintSubmit=$_isSubmittingFromFingerprint index=$_currentIndex',
+        );
         if (state is AttendanceCheckInSuccess) {
+          // Only bottom-nav punch uses this flag; Attendance tab / SelfieCheckIn show their own overlay.
+          final showNavPunchSuccessOverlay =
+              _isSubmittingFromFingerprint && _currentIndex != 4;
           // Dismiss loading immediately; presence + nav refresh run in background (they were blocking the dialog for several seconds).
           if (mounted) {
             if (_isSubmittingFromFingerprint) {
@@ -2803,7 +2837,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               }
             }
           }());
-          if (mounted) {
+          if (mounted && showNavPunchSuccessOverlay) {
             final userName = await _authService.getCurrentUserName();
             if (!mounted) return;
             await AttendanceSuccessOverlay.show(
@@ -2813,6 +2847,8 @@ class _DashboardScreenState extends State<DashboardScreen>
             );
           }
         } else if (state is AttendanceCheckOutSuccess) {
+          final showNavPunchSuccessOverlay =
+              _isSubmittingFromFingerprint && _currentIndex != 4;
           if (mounted) {
             if (_isSubmittingFromFingerprint) {
               _isSubmittingFromFingerprint = false;
@@ -2838,7 +2874,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               }
             }),
           );
-          if (mounted) {
+          if (mounted && showNavPunchSuccessOverlay) {
             final userName = await _authService.getCurrentUserName();
             if (!mounted) return;
             await AttendanceSuccessOverlay.show(
@@ -2848,6 +2884,9 @@ class _DashboardScreenState extends State<DashboardScreen>
             );
           }
         } else if (state is AttendanceFailure && _isSubmittingFromFingerprint) {
+          punchFlowLog(
+            '[PunchFlow][BlocListener] AttendanceFailure (nav punch) msg=${state.message}',
+          );
           _setPunchActionInProgress(false);
           _isSubmittingFromFingerprint = false;
           if (mounted) Navigator.of(context).pop();
@@ -2856,6 +2895,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               context,
               ErrorMessageUtils.sanitizeForDisplay(state.message),
               isError: true,
+              debugSource: 'Dashboard.BlocListener.AttendanceFailure.navPunch',
             );
           }
         }
@@ -2887,6 +2927,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             isBreakActionInProgress: _isBreakActionInProgress,
             activeBreakStartTime: _activeBreakStartTime(),
             onEndBreakTap: _endBreakFlow,
+            showBreakNavButton: _showBreakNavForShiftPolicy,
             onTap: (index) async {
               if (index == 6) {
                 if (_activeBreak != null) {
@@ -2903,18 +2944,14 @@ class _DashboardScreenState extends State<DashboardScreen>
               if (index == 5) {
                 if (_isPunchActionInProgress) return;
                 final punchFlowSw = Stopwatch()..start();
-                if (kDebugMode) {
-                  debugPrint('[PunchFlow] tap received');
-                }
+                punchFlowLog('[PunchFlow] tap received');
                 _setPunchActionInProgress(true);
                 // Same validations as attendance screen before check-in/check-out
                 final validationData = await _fetchAttendanceValidationData();
-                if (kDebugMode) {
-                  debugPrint(
-                    '[PunchFlow] validation finished in ${punchFlowSw.elapsedMilliseconds}ms | '
-                    'ok=${validationData != null}',
-                  );
-                }
+                punchFlowLog(
+                  '[PunchFlow] validation finished in ${punchFlowSw.elapsedMilliseconds}ms | '
+                  'ok=${validationData != null}',
+                );
                 if (!mounted) return;
                 if (validationData == null) {
                   _setPunchActionInProgress(false);
@@ -2928,12 +2965,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                 final canProceed = await _runFingerprintAttendanceValidations(
                   validationData,
                 );
-                if (kDebugMode) {
-                  debugPrint(
-                    '[PunchFlow] business validations finished in ${punchFlowSw.elapsedMilliseconds}ms | '
-                    'canProceed=$canProceed',
-                  );
-                }
+                punchFlowLog(
+                  '[PunchFlow] business validations finished in ${punchFlowSw.elapsedMilliseconds}ms | '
+                  'canProceed=$canProceed',
+                );
                 if (!mounted) return;
                 if (!canProceed) {
                   _setPunchActionInProgress(false);
@@ -2952,11 +2987,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 final requireSelfie = template?['requireSelfie'] ?? true;
                 final requireGeolocation =
                     template?['requireGeolocation'] ?? true;
-                if (kDebugMode) {
-                  debugPrint(
-                    '[Dashboard][TemplateFlags][punch] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${template?['name'] ?? template?['title'] ?? 'unknown'}',
-                  );
-                }
+                punchFlowLog(
+                  '[Dashboard][TemplateFlags][punch] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation templateName=${template?['name'] ?? template?['title'] ?? 'unknown'}',
+                );
 
                 Position? position;
                 String useAddress = '';
@@ -2984,12 +3017,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ),
                   );
                   final location = await _getCurrentLocation();
-                  if (kDebugMode) {
-                    debugPrint(
-                      '[PunchFlow] location resolved in ${punchFlowSw.elapsedMilliseconds}ms | '
-                      'hasPosition=${location.position != null}',
-                    );
-                  }
+                  punchFlowLog(
+                    '[PunchFlow] location resolved in ${punchFlowSw.elapsedMilliseconds}ms | '
+                    'hasPosition=${location.position != null}',
+                  );
                   if (!mounted) return;
                   Navigator.of(context).pop(); // Dismiss "Getting location..."
 
@@ -3035,12 +3066,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                         : null,
                   );
                   if (!mounted) return;
-                  if (kDebugMode) {
-                    debugPrint(
-                      '[PunchFlow] selfie capture finished in ${punchFlowSw.elapsedMilliseconds}ms | '
-                      'hasFile=${result is File}',
-                    );
-                  }
+                  punchFlowLog(
+                    '[PunchFlow] selfie capture finished in ${punchFlowSw.elapsedMilliseconds}ms | '
+                    'hasFile=${result is File}',
+                  );
 
                   if (result is File) {
                     file = result;
@@ -3106,11 +3135,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                     precomputedIsCheckedIn: precomputedIsCheckedIn,
                   );
                 }
-                if (kDebugMode) {
-                  debugPrint(
-                    '[PunchFlow] submit finished in ${punchFlowSw.elapsedMilliseconds}ms',
-                  );
-                }
+                punchFlowLog(
+                  '[PunchFlow] submit finished in ${punchFlowSw.elapsedMilliseconds}ms',
+                );
                 return;
               }
               if (index == 2 && !_hasSalaryOverviewAccess) return;

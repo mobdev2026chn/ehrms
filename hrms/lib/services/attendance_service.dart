@@ -1,10 +1,12 @@
-import 'dart:io';
 import 'dart:async';
+import 'dart:io';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
 import '../config/constants.dart';
 import '../utils/error_message_utils.dart';
+import '../utils/punch_flow_log.dart';
 import 'api_client.dart';
 import 'web_hrms_api_dio.dart';
 
@@ -211,6 +213,10 @@ class AttendanceService {
         ),
       );
       final data = response.data;
+      punchFlowLog(
+        '[AttendanceService][checkOut] httpOK status=${response.statusCode} '
+        'dataKeys=${data is Map ? (data as Map).keys.join(",") : data.runtimeType}',
+      );
       clearCachesForRefresh();
       return {'success': true, 'data': data};
     } on DioException catch (e) {
@@ -233,11 +239,16 @@ class AttendanceService {
           retryCount: 1,
         );
       }
-      return {
-        'success': false,
-        'message': _dioErrorMessage(e) ?? _handleException(e),
-      };
+      final errMsg = _dioErrorMessage(e) ?? _handleException(e);
+      punchFlowLog(
+        '[AttendanceService][checkOut] DioException status=${e.response?.statusCode} '
+        'message=$errMsg rawType=${e.response?.data.runtimeType}',
+      );
+      return {'success': false, 'message': errMsg};
     } catch (e) {
+      punchFlowLog(
+        '[AttendanceService][checkOut] catch message=${_handleException(e)}',
+      );
       return {'success': false, 'message': _handleException(e)};
     }
   }

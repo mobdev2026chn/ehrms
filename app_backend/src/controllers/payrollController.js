@@ -396,20 +396,21 @@ function computeMonthlySalaryFromStaffSalary(s) {
     const basicPlusDAPlusHRA = basicSalary + dearnessAllowance + houseRentAllowance;
     const isPFApplicable = basicPlusDA < 15000;
     const isESIApplicable = basicPlusDAPlusHRA < 21000;
-    const employerPFRate = isPFApplicable ? (s.employerPFRate || 0) : 0;
+    /** Same as Flutter `kWebStatutoryPfPercentOnBasic` / web template: rupee line uses 12% of Basic, not `employerPFRate` (often 13% label). */
+    const STATUTORY_PF_PERCENT_ON_BASIC = 12;
     const employerESIRate = isESIApplicable ? (s.employerESIRate || 0) : 0;
-    const employeePFRate = isPFApplicable ? (s.employeePFRate || 0) : 0;
     const employeeESIRate = isESIApplicable ? (s.employeeESIRate || 0) : 0;
     const pfStaticAmount = isPFApplicable ? 0 : 1800;
     const grossFixedSalary = basicSalary + dearnessAllowance + houseRentAllowance + specialAllowance;
-    const employerPF = employerPFRate / 100 * basicSalary;
-    const employerESI = employerESIRate / 100 * grossFixedSalary;
+    const baseGross = basicPlusDAPlusHRA;
+    const employerPF = isPFApplicable ? (STATUTORY_PF_PERCENT_ON_BASIC / 100 * basicSalary) : 0;
+    const employerESI = employerESIRate > 0 ? (employerESIRate / 100 * baseGross) : 0;
     const grossSalary = grossFixedSalary + employerPF + employerESI + pfStaticAmount;
-    const employeePF = employeePFRate > 0 ? (employeePFRate / 100 * basicSalary) : pfStaticAmount;
-    const employeeESI = employeeESIRate / 100 * grossSalary;
-    // Web salaryStructureCalculation.util.ts: net = gross - (emp+employer PF/ESI) = fixed + pfStatic - empPF - empESI
-    const totalMonthlyDeductions = employeePF + employeeESI + employerPF + employerESI;
-    const netSalary = grossSalary - totalMonthlyDeductions;
+    const employeePF = isPFApplicable ? (STATUTORY_PF_PERCENT_ON_BASIC / 100 * basicSalary) : pfStaticAmount;
+    const employeeESI = employeeESIRate > 0 ? (employeeESIRate / 100 * baseGross) : 0;
+    // Web / Flutter: payslip deductions = employee PF + employee ESI only; net take-home = Basic+DA+HRA − those.
+    const totalMonthlyDeductions = employeePF + employeeESI;
+    const netSalary = baseGross - employeePF - employeeESI;
     return {
         basicSalary,
         dearnessAllowance,
@@ -661,6 +662,9 @@ const getPayrollStats = async (req, res) => {
                     stats: {
                         grossSalary: payroll.grossSalary,
                         netSalary: payroll.netPay,
+                        // Full-month contract (web `salaryBasis` / preview parity); not the payroll row totals.
+                        monthlyContractGrossSalary: mStatsFull ? _round2(mStatsFull.grossSalary) : null,
+                        monthlyContractNetSalary: mStatsFull ? _round2(mStatsFull.netSalary) : null,
                         thisMonthGross: thisMonthGross,
                         thisMonthNet: thisMonthNet,
                         deductions: payroll.deductions,

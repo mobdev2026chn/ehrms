@@ -42,6 +42,8 @@ class AppBottomNavigationBar extends StatefulWidget {
   final bool isBreakActionInProgress;
   final DateTime? activeBreakStartTime;
   final VoidCallback? onEndBreakTap;
+  /// When false, hides the tea-break control for shifts with `breakPolicy.enabled == false`.
+  final bool showBreakNavButton;
 
   const AppBottomNavigationBar({
     super.key,
@@ -55,6 +57,7 @@ class AppBottomNavigationBar extends StatefulWidget {
     this.isBreakActionInProgress = false,
     this.activeBreakStartTime,
     this.onEndBreakTap,
+    this.showBreakNavButton = true,
   });
 
   static int getCurrentIndex(BuildContext context) {
@@ -495,7 +498,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
                               ),
                             ),
                           ),
-                        if (isPunchedInForBreak)
+                        if (isPunchedInForBreak && widget.showBreakNavButton)
                           KeyedSubtree(
                             key: const ValueKey('bottom_nav_break'),
                             child: _buildBreakButton(context),

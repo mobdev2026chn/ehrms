@@ -1,6 +1,9 @@
-import 'package:flutter/material.dart';
-import '../config/app_colors.dart';
 import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../config/app_colors.dart';
+import 'punch_flow_log.dart';
 
 class SnackBarUtils {
   static OverlayEntry? _currentEntry;
@@ -13,7 +16,23 @@ class SnackBarUtils {
     Color? backgroundColor,
     bool isError = false,
     Duration? duration,
+    /// When set, included in punch trace log (see [punchFlowLog]).
+    String? debugSource,
   }) {
+    final lower = message.toLowerCase();
+    final traceLeaveOrPunch =
+        lower.contains('leave') ||
+        lower.contains('checkout') ||
+        lower.contains('check-out') ||
+        lower.contains('check-in') ||
+        lower.contains('punch') ||
+        lower.contains('attendance');
+    if (traceLeaveOrPunch || (debugSource != null && debugSource.isNotEmpty)) {
+      final preview = message.length > 160 ? '${message.substring(0, 160)}…' : message;
+      punchFlowLog(
+        '[SnackBarUtils][trace] source=${debugSource ?? "(auto)"} isError=$isError msg=$preview',
+      );
+    }
     // Attempt to find the top-level overlay
     final overlay = Navigator.of(context, rootNavigator: true).overlay;
     if (overlay == null) return;

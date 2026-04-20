@@ -107,9 +107,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   final Set<String> _pendingWithCheckInDateSet =
       {}; // Pending + has punchIn → WA
 
-  /// Days (today or past) with [appliedShiftId]: compact shift window for calendar cell (from company shifts).
-  final Map<String, String> _dayShiftTimingCompactByDate = {};
-
   String _activeFilter = 'All'; // Filter for history list
   bool _showHistoryView =
       false; // true = History screen, false = Mark Attendance
@@ -200,6 +197,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final text = value?.toString().trim();
     return text != null && text.isNotEmpty && text.toLowerCase() != 'null';
   }
+
+  /// Calendar flag and/or today's attendance row (e.g. web check-in with `isPaidLeave: true`, status Present).
+  bool get _isPaidLeaveContext =>
+      _isPaidLeaveToday || _attendanceData?['isPaidLeave'] == true;
 
   @override
   void initState() {
@@ -469,10 +470,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         if (b is Map) {
           setState(() {
             _businessDocForShifts = Map<String, dynamic>.from(b as Map);
-            _repopulateDayShiftTimingCompactForMonth(
-              _focusedDay.year,
-              _focusedDay.month,
-            );
           });
           return;
         }
@@ -480,77 +477,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (mounted) {
         setState(() {
           _businessDocForShifts = null;
-          _repopulateDayShiftTimingCompactForMonth(
-            _focusedDay.year,
-            _focusedDay.month,
-          );
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _businessDocForShifts = null;
-          _repopulateDayShiftTimingCompactForMonth(
-            _focusedDay.year,
-            _focusedDay.month,
-          );
         });
       }
-    }
-  }
-
-  void _repopulateDayShiftTimingCompactForMonth(int year, int month) {
-    final prefix =
-        '$year-${month.toString().padLeft(2, '0')}-';
-    for (final k in List<String>.from(_dayShiftTimingCompactByDate.keys)) {
-      if (k.startsWith(prefix)) {
-        _dayShiftTimingCompactByDate.remove(k);
-      }
-    }
-    final md = _monthData;
-    if (md == null || md['attendance'] is! List) return;
-    final companyDoc = _companyDocForAppliedShiftResolution();
-    final attendanceList = _deduplicateAttendanceByDate(
-      md['attendance'] as List,
-    );
-    final n = DateTime.now();
-    final todayWall = DateTime(n.year, n.month, n.day);
-    for (final entry in attendanceList) {
-      try {
-        final dateStr = _attendanceCalendarDate(entry['date']);
-        if (dateStr.isEmpty || !dateStr.startsWith(prefix)) continue;
-        final parts = dateStr.split('-');
-        if (parts.length != 3) continue;
-        final dayYear = int.tryParse(parts[0]) ?? 0;
-        final dayMonth = int.tryParse(parts[1]) ?? 0;
-        final entryDay = int.tryParse(parts[2]) ?? 0;
-        if (dayYear != year || dayMonth != month || entryDay <= 0) {
-          continue;
-        }
-        final entryDateOnly = DateTime(dayYear, dayMonth, entryDay);
-        if (entryDateOnly.isAfter(todayWall)) continue;
-        if (entry['appliedShiftId'] == null) continue;
-        final resolved = appliedShiftPastResolvedFromCompany(
-          companyDoc: companyDoc,
-          appliedShiftId: entry['appliedShiftId'],
-        );
-        if (resolved == null) continue;
-        if (resolved.isOpen) {
-          final h = resolved.openWorkHours;
-          if (h != null && h > 0) {
-            final label = h == h.roundToDouble()
-                ? '${h.toInt()}h'
-                : '${h.toStringAsFixed(1)}h';
-            _dayShiftTimingCompactByDate[dateStr] = 'Open $label';
-          }
-        } else {
-          final a = resolved.startTime ?? '';
-          final b = resolved.endTime ?? '';
-          if (a.isNotEmpty && b.isNotEmpty) {
-            _dayShiftTimingCompactByDate[dateStr] = '$a-$b';
-          }
-        }
-      } catch (_) {}
     }
   }
 
@@ -674,7 +608,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _absentDateSet.clear();
         _leaveDateSet.clear();
         _pendingWithCheckInDateSet.clear();
-        _dayShiftTimingCompactByDate.clear();
       });
     }
     try {
@@ -713,7 +646,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _absentDateSet.clear();
         _leaveDateSet.clear();
         _pendingWithCheckInDateSet.clear();
-        _dayShiftTimingCompactByDate.clear();
 
         if (_monthData != null) {
           // Attendance-based maps: one record per date (use attendance collection date; deduplicate)
@@ -785,7 +717,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 continue;
               }
             }
-            _repopulateDayShiftTimingCompactForMonth(year, month);
           }
 
           // Holiday dates
@@ -3866,6 +3797,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         day.day == now.day &&
         day.month == now.month &&
         day.year == now.year;
+    final bool isSelectedDay = isCurrentMonth && isSameDay(_selectedDay, day);
 
     Color bgColor = Colors.transparent;
     Color textColor = isCurrentMonth
@@ -4033,7 +3965,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       decoration: BoxDecoration(
         color: bgColor == Colors.transparent ? null : bgColor,
         borderRadius: BorderRadius.circular(8),
-        border: isToday ? Border.all(color: AppColors.primary, width: 2) : null,
+        border: isToday
+            ? Border.all(color: AppColors.primary, width: 2)
+            : (isSelectedDay
+                  ? Border.all(color: const Color(0xFF1E40AF), width: 2)
+                  : null),
       ),
       child: Stack(
         children: [
@@ -4069,35 +4005,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                     : const Color(0xFF1E293B))
                                 .withOpacity(0.9),
                       ),
-                    ),
-                  ],
-                  if (isCurrentMonth) ...[
-                    Builder(
-                      builder: (context) {
-                        final shiftSub = _dayShiftTimingCompactByDate[dateStr];
-                        if (shiftSub == null || shiftSub.isEmpty) {
-                          return const SizedBox.shrink();
-                        }
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 1),
-                          child: Text(
-                            shiftSub,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 7,
-                              fontWeight: FontWeight.w600,
-                              height: 1.05,
-                              color:
-                                  (bgColor != Colors.transparent
-                                          ? textColor
-                                          : const Color(0xFF1E293B))
-                                      .withOpacity(0.85),
-                            ),
-                          ),
-                        );
-                      },
                     ),
                   ],
                 ],
@@ -4783,6 +4690,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       defaultBuilder: (context, day, focusedDay) {
                         return _buildCustomDay(context, day);
                       },
+                      selectedBuilder: (context, day, focusedDay) {
+                        return _buildCustomDay(context, day);
+                      },
+                      todayBuilder: (context, day, focusedDay) {
+                        return _buildCustomDay(context, day);
+                      },
                       holidayBuilder: (context, day, focusedDay) {
                         return _buildCustomDay(context, day);
                       },
@@ -5284,6 +5197,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             unawaited(_runPostPunchSuccessTasks(false));
           }
         } else if (state is AttendanceFailure) {
+          if (kDebugMode) {
+            debugPrint(
+              '[PunchFlow][AttendanceTab][BlocListener] AttendanceFailure '
+              'shouldHandleForegroundUi=$shouldHandleForegroundUi msg=${state.message}',
+            );
+          }
           _setPunchActionInProgress(false);
           if (_isSubmittingFromAttendanceCamera) {
             _isSubmittingFromAttendanceCamera = false;
@@ -5294,6 +5213,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               context,
               ErrorMessageUtils.sanitizeForDisplay(state.message),
               isError: true,
+              debugSource: 'AttendanceScreen.BlocListener.AttendanceFailure',
             );
           }
         }
@@ -5780,20 +5700,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       _setPunchActionInProgress(false);
       return;
     }
-    if (isCheckedIn && _isOnLeave && !_checkOutAllowed) {
-      final String msg = isSecondHalfLeave
-          ? 'Not allowed check-out. You are on leave on second half.'
-          : isFirstHalfLeave
-          ? 'Not allowed check-out. You are on leave on first half.'
-          : (_leaveMessage ?? 'Check-out is not allowed at this time.');
-      SnackBarUtils.showSnackBar(
-        context,
-        ErrorMessageUtils.sanitizeForDisplay(msg),
-        isError: true,
-      );
-      _setPunchActionInProgress(false);
-      return;
-    }
+    // Do not block check-out client-side when already punched in; server decides.
 
     if (_isHoliday &&
         _attendanceTemplate?['allowAttendanceOnHolidays'] == false) {
@@ -5815,7 +5722,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       _setPunchActionInProgress(false);
       return;
     }
-    if (_isPaidLeaveToday) {
+    if (_isPaidLeaveContext && !isCheckedIn) {
       SnackBarUtils.showSnackBar(context, "Today is paid leave", isError: true);
       _setPunchActionInProgress(false);
       return;
@@ -6396,8 +6303,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final bool isSecondHalfLeave =
         resolvedHalf == 'Second Half Day' || resolvedHalf == '2';
 
-    // PRIORITY 0: Paid leave day - block check-in/out, show "Paid Leave Today"
-    if (_isPaidLeaveToday) {
+    // PRIORITY 0: Paid leave day — block new check-in from app; if already punched in (e.g. web), show punch card for check-out.
+    if (_isPaidLeaveContext && !isCheckedIn) {
       return Card(
         elevation: 0,
         color: Colors.blue.withOpacity(0.05),
@@ -6431,11 +6338,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // PRIORITY 1: Check if On Approved Leave.
     // Full-day leave: show leave-only card (no punch). Half-day: show leave-only card only when
     // currently in leave session (check-in and check-out both disallowed); otherwise show punch card with half-day message.
+    // Open punch session (check-in without check-out) always shows punch card so staff can complete check-out.
     bool isActuallyOnLeave = _isOnLeave;
     final bool inLeaveSessionNow =
         isHalfDayLeave && !_checkInAllowed && !_checkOutAllowed;
     final bool shouldShowLeaveOnlyCard =
-        isActuallyOnLeave && (!isHalfDayLeave || inLeaveSessionNow);
+        isActuallyOnLeave &&
+        (!isHalfDayLeave || inLeaveSessionNow) &&
+        !isCheckedIn;
 
     if (shouldShowLeaveOnlyCard) {
       // Show approved leave message: half-day → "You are on leave - First Half" / "Second Half" (based on attendance.halfDaySession / API); full-day → generic
@@ -6502,7 +6412,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       holidayText = "Today is comp off";
       holidayIcon = Icons.event_busy;
       holidayColor = Colors.orange;
-    } else if (_isPaidLeaveToday) {
+    } else if (_isPaidLeaveContext && !isCheckedIn) {
       showHolidayCard = true;
       holidayText = "Paid Leave Today";
       holidayIcon = Icons.paid_outlined;
@@ -6600,7 +6510,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 Text(
                   (_isCompensationWeekOff ||
                           _isCompensationCompOff ||
-                          _isPaidLeaveToday)
+                          _isPaidLeaveContext)
                       ? "Punch on your alternate work date instead."
                       : _isHoliday
                       ? (_holidayInfo?['name'] ?? "Public Holiday")
@@ -6619,7 +6529,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _isPunchActionInProgress ||
         (isHalfDayLeave &&
             ((!isCheckedIn && !_checkInAllowed) ||
-                (isCheckedIn && !_checkOutAllowed)));
+                (isCheckedIn &&
+                    !_checkOutAllowed &&
+                    !_isPaidLeaveContext)));
 
     return Opacity(
       opacity: punchDisabled ? 0.65 : 1.0,
