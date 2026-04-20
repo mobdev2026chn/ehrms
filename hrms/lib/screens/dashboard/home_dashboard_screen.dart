@@ -74,6 +74,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   final SettingsService _settingsService = SettingsService();
   final SalaryService _salaryService = SalaryService();
 
+  List<dynamic> _recentLeaves = [];
+
   // ignore: unused_field - kept for when Active Loans card is shown again
   List<dynamic> _activeLoans = [];
   bool _isLoadingDashboard = false;
@@ -94,6 +96,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   /// True when staff's assigned shift row is rotational (today's template only applies to "today").
   bool _profileShiftIsRotational = false;
+
+  // Salary calculation data (same logic as Salary Overview "This Month Net")
+  double _calculatedMonthSalary = 0;
+  double _overallMonthlyNetSalary = 0;
 
   // ignore: unused_field - kept for when Present Days / salary breakdown is shown again
   int _workingDaysForSalary =
@@ -404,6 +410,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               : <dynamic>[];
           setState(() {
             _stats = stats;
+            _recentLeaves = data['recentLeaves'] ?? [];
             _activeLoans = loansList;
             _activeLoansCount = loansList.length;
             _todayAttendance = liveTodayAttendance ?? stats?['attendanceToday'];
@@ -445,6 +452,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           if (kDebugMode) {
             debugPrint(
               '[DashboardLoad] state updated in ${sw.elapsedMilliseconds}ms | '
+              'recentLeaves=${_recentLeaves.length} | '
               'todayAnnouncements=${_todayAnnouncements.length} | '
               'todayCelebrations=${_todayCelebrations.length}',
             );
@@ -1234,9 +1242,29 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         'fine=$totalFineAmount mtdGross=${proratedSalary.proratedGrossSalary} mtdNet=$proratedNetForMtd',
       );
 
+      final payrollMtdNet = (currentPayroll?['netPay'] as num?)?.toDouble();
+      final previewNet = (payrollPreview?['netPay'] as num?)?.toDouble();
+      // Salary Overview `_buildThisMonthNetCard`: whenever GET /payroll returns a row
+      // (any status including Pending), "This Month Net" uses that document's `netPay`.
+      final dynamic statsNetRaw = backendStats?['thisMonthNet'];
+      final double? statsThisMonthNet = statsNetRaw is num
+          ? statsNetRaw.toDouble()
+          : (statsNetRaw is String
+              ? double.tryParse(statsNetRaw.trim())
+              : null);
+      final rawThisMonthNet = currentPayroll != null
+          ? (payrollMtdNet ?? previewNet ?? proratedNetForMtd)
+          : (statsThisMonthNet ?? previewNet ?? proratedNetForMtd);
+      final displayThisMonthNet = rawThisMonthNet < 0 ? 0.0 : rawThisMonthNet;
+
       if (mounted) {
         final workingDaysUsed = workingDaysInfo.workingDays;
         setState(() {
+          _calculatedMonthSalary = displayThisMonthNet;
+          _overallMonthlyNetSalary =
+              calculatedSalary.monthly.netMonthlySalary < 0
+                  ? 0.0
+                  : calculatedSalary.monthly.netMonthlySalary;
           _workingDaysForSalary = workingDaysUsed;
           if (_companyName.isEmpty &&
               companyName != null &&
@@ -1252,8 +1280,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width > 800;
     final colorScheme = Theme.of(context).colorScheme;
+
+    final pendingLeaves = _stats?['pendingLeaves']?.toString() ?? '0';
+    final formatter = NumberFormat('#,##0.00');
+    final mtdNet = _calculatedMonthSalary;
+    final monthlyNet = _overallMonthlyNetSalary;
+    final hasSalary = mtdNet > 0 || monthlyNet > 0;
+    final mtdDisplay = hasSalary ? '₹${formatter.format(mtdNet)}' : '--';
+    final monthlyDisplay = hasSalary
+        ? '₹${formatter.format(monthlyNet)}'
+        : null;
+    final presentDaysVal =
+        _stats?['attendanceSummary']?['presentDays']?.toString() ?? '0';
+    final paidLeaveDaysVal =
+        _stats?['attendanceSummary']?['paidLeaveDays']?.toString() ?? '0';
+    final presentDaysInt = int.tryParse(presentDaysVal) ?? 0;
+    final paidLeaveInt = int.tryParse(paidLeaveDaysVal) ?? 0;
+    final presentDays = paidLeaveInt > 0
+        ? '$presentDaysInt days present + $paidLeaveInt PL'
+        : (presentDaysInt > 0 ? '$presentDaysInt days present' : '');
 
     final content = RefreshIndicator(
       onRefresh: _loadData,
@@ -1310,25 +1356,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
                   const SizedBox(height: 32),
 
-                  // 4. Celebration and Announcement cards (always visible)
-                  isWide
-                      ? IntrinsicHeight(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(child: _buildCelebrationsCard()),
-                              const SizedBox(width: 16),
-                              Expanded(child: _buildTodayAnnouncementsCard()),
-                            ],
-                          ),
-                        )
-                      : Column(
-                          children: [
-                            _buildCelebrationsCard(),
-                            const SizedBox(height: 16),
-                            _buildTodayAnnouncementsCard(),
-                          ],
-                        ),
+                  // 3. Recent Leaves
+                  _buildRecentLeavesCard(),
+                  const SizedBox(height: 24),
+
+                  // 4. Celebration and Announcement cards (always visible, one row)
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: _buildCelebrationsCard()),
+                        const SizedBox(width: 16),
+                        Expanded(child: _buildTodayAnnouncementsCard()),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 24),
 
                   // 5. Today attendance card
@@ -1336,6 +1378,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     _buildMonthAttendanceCard(dashboardCompact: true),
                     const SizedBox(height: 24),
                   ],
+
+                  // 6. Leave Requests and This Month Net
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: _buildPendingLeavesSummaryCard(pendingLeaves),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildThisMonthNetSummaryCard(
+                            mtdDisplay,
+                            monthlyDisplay,
+                            presentDays,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -2344,6 +2406,282 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
+  /// White card with donut progress — pending leave requests count.
+  Widget _buildPendingLeavesSummaryCard(String value) {
+    final count = int.tryParse(value) ?? 0;
+    final progress = count > 0 ? (count / 10.0).clamp(0.0, 1.0) : 0.0;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                CircularProgressIndicator(
+                  value: progress > 0 ? progress : 0.75,
+                  strokeWidth: 4,
+                  backgroundColor: AppColors.primary.withOpacity(0.2),
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Leave Requests',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+                Text(
+                  'Pending',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// White card — This Month Net (MTD) + contract monthly net subtitle.
+  Widget _buildThisMonthNetSummaryCard(
+    String mtdAmount,
+    String? monthlyAmount,
+    String presentDaysSubtitle,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.trending_up, color: Colors.white, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'This Month Net',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    mtdAmount,
+                    style: const TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E293B),
+                    ),
+                  ),
+                ),
+                if (monthlyAmount != null && monthlyAmount.isNotEmpty)
+                  Text(
+                    'Total monthly salary $monthlyAmount',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                if (presentDaysSubtitle.isNotEmpty)
+                  Text(
+                    presentDaysSubtitle,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentLeavesCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppColors.primary, AppColors.primaryDark],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Recent Leaves',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_isLoadingDashboard)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: AppTabLoader(),
+              ),
+            )
+          else if (_recentLeaves.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20.0),
+                child: Text(
+                  'No recent leave requests',
+                  style: TextStyle(color: Colors.white.withOpacity(0.9)),
+                ),
+              ),
+            )
+          else ...[
+            ..._recentLeaves
+                .take(3)
+                .map((leave) => _buildRecentLeaveItem(leave)),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton(
+                onPressed: () {
+                  final fn = widget.onNavigate;
+                  if (fn != null) fn(1, subTabIndex: 0);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  elevation: 0,
+                ),
+                child: const Text(
+                  'View All',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentLeaveItem(dynamic leave) {
+    final leaveType = leave['leaveType']?.toString() ?? 'Leave';
+    final status = leave['status']?.toString() ?? 'N/A';
+    String dateStr = '';
+    try {
+      final start = DateTime.parse(leave['startDate'].toString());
+      dateStr = DateFormat('dd-MM-yy').format(start);
+    } catch (_) {}
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.check_circle, color: Colors.white, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '$leaveType - $status${dateStr.isNotEmpty ? ' - $dateStr' : ''}',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withOpacity(0.95),
+                fontWeight: FontWeight.w500,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Calendar date (yyyy-MM-dd) from attendance collection. UTC/ISO date only (no local timezone shift).
   /// Handles: ISO string, date-only string, or DateTime (UTC components).
   String _attendanceCalendarDate(dynamic dateValue) {
@@ -2416,6 +2754,55 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }) {
     final monthName = DateFormat('MMMM yyyy').format(_selectedMonth);
 
+    // Dashboard: work hours card first, then Today card (siblings, no outer shell).
+    if (dashboardCompact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_todayAttendance != null &&
+              _todayAttendance!['punchIn'] != null &&
+              _todayAttendance!['punchIn'].toString().trim().isNotEmpty) ...[
+            Builder(
+              builder: (context) {
+                DateTime punchInTime = DateTime.now();
+                try {
+                  punchInTime = DateTime.parse(
+                    _todayAttendance!['punchIn'].toString(),
+                  ).toLocal();
+                } catch (_) {}
+                DateTime? punchOutTime;
+                final po = _todayAttendance!['punchOut'];
+                if (po != null && po.toString().trim().isNotEmpty) {
+                  try {
+                    punchOutTime = DateTime.parse(po.toString()).toLocal();
+                  } catch (_) {}
+                }
+                final whRaw = _todayAttendance!['workHours'];
+                final whNum = whRaw is num
+                    ? whRaw
+                    : num.tryParse(whRaw?.toString() ?? '');
+                return CloudPunchCard(
+                  key: ValueKey(
+                    'worked_${punchInTime.millisecondsSinceEpoch}_'
+                    '${punchOutTime?.millisecondsSinceEpoch ?? 0}_'
+                    '${whNum ?? ''}',
+                  ),
+                  punchInTime: punchInTime,
+                  punchOutTime: punchOutTime,
+                  workHoursFromAttendance: whNum,
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+          _buildTodayAttendanceSubCard(
+            showCalendarIconInHeader: showHeaderIcon,
+            standaloneDashboardCard: true,
+          ),
+        ],
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -2433,111 +2820,63 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!dashboardCompact)
-            Row(
-              children: [
-                if (showHeaderIcon) ...[
-                  InkWell(
-                    onTap: _openDashboardCalendarDetailsScreen,
-                    borderRadius: BorderRadius.circular(18),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.calendar_month,
-                        size: 22,
-                        color: AppColors.primary,
-                      ),
+          Row(
+            children: [
+              if (showHeaderIcon) ...[
+                InkWell(
+                  onTap: _openDashboardCalendarDetailsScreen,
+                  borderRadius: BorderRadius.circular(18),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.calendar_month,
+                      size: 22,
+                      color: AppColors.primary,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Expanded(
-                  child: Text(
-                    'Attendance ($monthName)',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 8),
               ],
-            ),
-          if (!dashboardCompact) const SizedBox(height: 24),
-          // Today summary (icon + date + punches) and worked-time: two separate cards on dashboard.
-          if (dashboardCompact) ...[
-            _buildTodayAttendanceSubCard(
-              showCalendarIconInHeader: showHeaderIcon,
-            ),
-            if (_todayAttendance != null &&
-                _todayAttendance!['punchIn'] != null &&
-                _todayAttendance!['punchIn'].toString().trim().isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Builder(
-                builder: (context) {
-                  DateTime punchInTime = DateTime.now();
-                  try {
-                    punchInTime = DateTime.parse(
-                      _todayAttendance!['punchIn'].toString(),
-                    ).toLocal();
-                  } catch (_) {}
-                  DateTime? punchOutTime;
-                  final po = _todayAttendance!['punchOut'];
-                  if (po != null && po.toString().trim().isNotEmpty) {
-                    try {
-                      punchOutTime = DateTime.parse(po.toString()).toLocal();
-                    } catch (_) {}
-                  }
-                  final whRaw = _todayAttendance!['workHours'];
-                  final whNum = whRaw is num
-                      ? whRaw
-                      : num.tryParse(whRaw?.toString() ?? '');
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: CloudPunchCard(
-                      key: ValueKey(
-                        'worked_${punchInTime.millisecondsSinceEpoch}_'
-                        '${punchOutTime?.millisecondsSinceEpoch ?? 0}_'
-                        '${whNum ?? ''}',
-                      ),
-                      punchInTime: punchInTime,
-                      punchOutTime: punchOutTime,
-                      workHoursFromAttendance: whNum,
-                    ),
-                  );
-                },
+              Expanded(
+                child: Text(
+                  'Attendance ($monthName)',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
-          ],
-          if (!dashboardCompact) ...[
-            _buildSimpleCalendar(),
-            const SizedBox(height: 24),
-            _buildStatusLegend(),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  final fn = widget.onNavigate;
-                  if (fn != null) fn(4, subTabIndex: 1);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: const Color(0xFF1E293B),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 0,
+          ),
+          const SizedBox(height: 24),
+          _buildSimpleCalendar(),
+          const SizedBox(height: 24),
+          _buildStatusLegend(),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                final fn = widget.onNavigate;
+                if (fn != null) fn(4, subTabIndex: 1);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: const Color(0xFF1E293B),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text(
-                  'View Full Attendance',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
+                elevation: 0,
+              ),
+              child: const Text(
+                'View Full Attendance',
+                style: TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -2545,6 +2884,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   Widget _buildTodayAttendanceSubCard({
     bool showCalendarIconInHeader = false,
+    bool standaloneDashboardCard = false,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
@@ -2568,11 +2908,24 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outline),
-      ),
+      decoration: standaloneDashboardCard
+          ? BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: colorScheme.outline.withOpacity(0.35)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            )
+          : BoxDecoration(
+              color: colorScheme.surfaceContainerLowest,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colorScheme.outline),
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

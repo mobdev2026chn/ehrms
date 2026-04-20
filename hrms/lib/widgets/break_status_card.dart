@@ -24,11 +24,24 @@ class _BreakStatusCardState extends State<BreakStatusCard>
     with WidgetsBindingObserver {
   Timer? _timer;
   Duration _elapsed = Duration.zero;
+  /// Stable anchor for the ticker — [widget.startTime] can be recomputed each parent
+  /// rebuild (e.g. parser edge cases); mutating "now" there would reset elapsed every frame.
+  late DateTime _anchorStart;
+
+  static DateTime _anchorFromApiStart(DateTime apiStart) {
+    final now = DateTime.now();
+    // Parsed start should not be meaningfully after host clock (bad TZ / payload).
+    if (apiStart.isAfter(now.add(const Duration(seconds: 3)))) {
+      return now;
+    }
+    return apiStart;
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _anchorStart = _anchorFromApiStart(widget.startTime);
     _tick();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
@@ -44,6 +57,8 @@ class _BreakStatusCardState extends State<BreakStatusCard>
   void didUpdateWidget(covariant BreakStatusCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.startTime != widget.startTime) {
+      _anchorStart = _anchorFromApiStart(widget.startTime);
+      _elapsed = Duration.zero;
       _tick();
     }
   }
@@ -57,7 +72,15 @@ class _BreakStatusCardState extends State<BreakStatusCard>
 
   void _tick() {
     if (!mounted) return;
-    final raw = DateTime.now().difference(widget.startTime);
+    final now = DateTime.now();
+    if (_anchorStart.isAfter(now.add(const Duration(seconds: 3)))) {
+      setState(() {
+        _anchorStart = now;
+        _elapsed = Duration.zero;
+      });
+      return;
+    }
+    final raw = now.difference(_anchorStart);
     // Clock skew / bad parse can make start appear in the future; never show negative.
     final elapsed = raw.isNegative ? Duration.zero : raw;
     if (elapsed != _elapsed) {

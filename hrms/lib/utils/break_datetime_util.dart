@@ -45,8 +45,10 @@ DateTime _naiveIsoToLocalBestEffort(DateTime d) {
   if (okUtc && okLoc) {
     return asUtcLocal.isAfter(asLocalWall) ? asUtcLocal : asLocalWall;
   }
-  // Both appear "in the future" — bad / ambiguous payload; anchor to now so UI can count up.
-  return now;
+  // Both appear far in the future — do **not** return [DateTime.now]: this parser is invoked
+  // on every parent rebuild and a fresh "now" would keep resetting the break timer to 00:00:00.
+  // Return the earlier candidate (smallest shift from a bogus future); UI may clamp once.
+  return asUtcLocal.isBefore(asLocalWall) ? asUtcLocal : asLocalWall;
 }
 
 DateTime? parseApiDateTimeToLocal(dynamic value) {
@@ -61,7 +63,8 @@ DateTime? parseApiDateTimeToLocal(dynamic value) {
     return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true).toLocal();
   }
   if (value is num) {
-    return parseApiDateTimeToLocal(value.toInt());
+    final n = value.round();
+    return parseApiDateTimeToLocal(n);
   }
   if (value is Map) {
     final inner =
@@ -74,6 +77,10 @@ DateTime? parseApiDateTimeToLocal(dynamic value) {
     if (_hasExplicitTimezone(s)) {
       final d = DateTime.tryParse(s);
       return d?.toLocal();
+    }
+    // Plain integer string = epoch (ms or s) from some gateways.
+    if (RegExp(r'^\d{10,16}$').hasMatch(s)) {
+      return parseApiDateTimeToLocal(int.parse(s));
     }
     final d = DateTime.tryParse(s);
     if (d == null) return null;

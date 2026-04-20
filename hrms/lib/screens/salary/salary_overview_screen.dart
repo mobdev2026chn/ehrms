@@ -27,6 +27,7 @@ import '../../utils/salary_fine_summary.dart';
 import '../../utils/fine_calculation_util.dart';
 import '../../utils/app_event_bus.dart';
 import '../../utils/attendance_display_util.dart';
+import '../../utils/mongo_date_parse.dart';
 import '../../utils/snackbar_utils.dart';
 import 'staff_salary_structure_screen.dart';
 
@@ -3883,10 +3884,15 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         : null;
     final previewPresentForCards =
         (previewAttMap?['presentDays'] as num?)?.toDouble();
-    // Web: `previewSalary?.attendance?.presentDays ?? presentDays` (always prefers preview when set).
-    final salaryCardPresentDays =
+    // Payable headline (present + paid leave when rule is present_plus_paid_leave).
+    final salaryCardPresentDaysPayable =
         previewPresentForCards ??
         (salaryCardCounts['presentDays'] ?? _presentDays);
+    // Web attendance %: present-only ÷ working till (not payable present+PL).
+    final salaryCardPresentDaysOnly =
+        previewPresentForCards ??
+        ((salaryCardCounts['presentDaysOnly'] as num?)?.toDouble() ??
+            _webPresentDays);
     final salaryCardWorkingTill =
         salaryCardCounts['workingDays']?.toInt() ?? (_workingDaysInfo?.workingDays ?? 0);
     // Web salary card label/percentage uses till-date working days (preview attendance.workingDaysTillCurrentDate),
@@ -3905,7 +3911,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       denomForSalaryCards = _workingDaysInfo!.workingDays;
     }
     var attendancePercentForCards = denomForSalaryCards > 0
-        ? (salaryCardPresentDays / denomForSalaryCards) * 100
+        ? (salaryCardPresentDaysOnly / denomForSalaryCards) * 100
         : 0.0;
     if (!usePayrollDocMtd && _payrollPreview != null) {
       final pa = _payrollPreview!['attendance'];
@@ -3933,7 +3939,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         }
         debugPrint(
           '[SalaryOverview][cardsAttPct] payrollFinal=$payrollFinal '
-          'presentForCard=$salaryCardPresentDays localPresent=${salaryCardCounts['presentDays'] ?? _presentDays} '
+          'presentPayable=$salaryCardPresentDaysPayable presentOnly=$salaryCardPresentDaysOnly '
+          'localPresent=${salaryCardCounts['presentDays'] ?? _presentDays} '
           'denomForCards=$denomForSalaryCards '
           'preview.present=$previewPresent preview.wdTill=$previewWorkingTill preview.wd=$previewWorking '
           'preview.ap=$ap derived=${derivedFromPreview?.toStringAsFixed(2) ?? "n/a"} '
@@ -3955,7 +3962,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       );
     } else if (_workingDaysInfo != null || _attendanceRecords.isNotEmpty) {
       netCardExtra.write(
-        'Based on ${_formatDayChip(salaryCardPresentDays)} payable days out of $denomForSalaryCards working days till date',
+        'Based on ${_formatDayChip(salaryCardPresentDaysPayable)} payable days out of $denomForSalaryCards working days till date',
       );
       if (fineAmt > 0) {
         netCardExtra.write(' (Fine: ${currencyFormat.format(fineAmt)})');
@@ -3974,7 +3981,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       'previewGross=$previewGross previewDed=$previewDeductions previewNet=$previewNet '
       'proratedGross=${_proratedSalary?.proratedGrossSalary} proratedNet=${_proratedSalary?.proratedNetSalary} '
       'displayDed=$thisMonthDeductionsDisplay '
-      'salaryCardPresentDays=$salaryCardPresentDays workTill=$salaryCardWorkingTill denomForCards=$denomForSalaryCards '
+      'salaryCardPresentPayable=$salaryCardPresentDaysPayable presentOnly=$salaryCardPresentDaysOnly '
+      'workTill=$salaryCardWorkingTill denomForCards=$denomForSalaryCards '
       'displayGross=$thisMonthGrossDisplay displayNet=$displayThisMonthNet',
     );
 
@@ -4152,6 +4160,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
     return {
       'presentDays': effectivePresent,
+      /// Physical present (no paid leave); web attendance % uses this ÷ working days.
+      'presentDaysOnly': presentDays,
       'workingDays': workingDays.toDouble(),
     };
   }
@@ -4373,7 +4383,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     );
   }
 
-  /// Web `salaryCardAttendancePct`: preview % else (salaryCardPresentDays / salaryCardWorkingDays) * 100.
+  /// Web `salaryCardAttendancePct`: preview % else (present-days-only / working till) × 100.
   double _monthGrossCardAttendancePercent() {
     final previewAtt = _payrollPreview?['attendance'] as Map<String, dynamic>?;
     final previewPct = (previewAtt?['attendancePercentage'] as num?)?.toDouble();
@@ -4401,7 +4411,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       return previewPct;
     }
     final salaryCardCounts = _computeSalaryCardDayCountsFromAttendance();
-    final days = previewDays ?? (salaryCardCounts['presentDays'] ?? _presentDays);
+    final presentOnlyForPct =
+        (salaryCardCounts['presentDaysOnly'] as num?)?.toDouble() ??
+            _webPresentDays;
+    final days = previewDays ?? presentOnlyForPct;
     final previewWdInt =
         (previewAtt?['workingDaysTillCurrentDate'] as num?)?.toInt() ??
             (previewAtt?['workingDays'] as num?)?.toInt();
@@ -4439,6 +4452,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final present = usePreviewChipsInSummary
         ? _previewChipPresentDays!
         : (salaryCardCounts['presentDays'] ?? _presentDays);
+    final presentOnlyForAttendancePct = usePreviewChipsInSummary
+        ? _previewChipPresentDays!
+        : ((salaryCardCounts['presentDaysOnly'] as num?)?.toDouble() ??
+            _webPresentDays);
     final absent = usePreviewChipsInSummary
         ? _previewChipAbsentDays!
         : (working - present).clamp(0.0, double.infinity);
@@ -4449,8 +4466,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final paidLeaveForSummary = usePreviewChipsInSummary
         ? (_previewChipPaidLeaveDays ?? 0.0)
         : _paidLeaveDays;
+    // Web: attendance % = physical present ÷ working till — not (present + paid leave).
     final percent = _salaryOverviewHasPayrollDocForSelectedMonth && working > 0
-        ? (present / working) * 100
+        ? (presentOnlyForAttendancePct / working) * 100
         : _monthGrossCardAttendancePercent();
 
     return Container(
@@ -5425,47 +5443,22 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   }
 
   String? _recordDateKey(dynamic record) {
-    try {
-      final raw = (record?['date'] ?? '').toString().trim();
-      if (raw.isEmpty) return null;
-      return _normalizeDateKey(raw);
-    } catch (_) {
-      try {
-        final raw = (record?['date'] ?? '').toString();
-        if (raw.contains('T')) return raw.split('T')[0];
-        if (raw.contains(' ')) return raw.split(' ')[0];
-        return raw.isNotEmpty ? raw : null;
-      } catch (_) {
-        return null;
-      }
-    }
+    if (record == null || record is! Map) return null;
+    return attendanceIndiaCalendarKey((record as Map)['date']);
   }
 
   /// Calendar date key in IST (Asia/Kolkata) for salary overview.
-  /// Handles date-only and ISO datetime values.
+  /// Handles date-only strings, ISO instants, BSON, and [DateTime].
   String? _normalizeDateKey(dynamic rawValue) {
-    try {
-      final raw = (rawValue ?? '').toString().trim();
-      if (raw.isEmpty) return null;
-      if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(raw)) return raw;
-      final parsed = DateTime.parse(raw);
-      final ist = parsed.toUtc().add(const Duration(hours: 5, minutes: 30));
-      return DateFormat('yyyy-MM-dd').format(ist);
-    } catch (_) {
-      return normalizeAttendanceDateKeyForSalary(rawValue);
-    }
+    final k = attendanceIndiaCalendarKey(rawValue);
+    if (k != null) return k;
+    return normalizeAttendanceDateKeyForSalary(rawValue);
   }
 
-  /// Holiday `date` from API / model: match server-style calendar key (UTC components).
+  /// Holiday `date` from API / model: same IST calendar key as attendance rows.
   String? _holidayCalendarKey(dynamic value) {
     if (value == null) return null;
-    if (value is DateTime) {
-      final ist = value.toUtc().add(const Duration(hours: 5, minutes: 30));
-      return '${ist.year.toString().padLeft(4, '0')}-'
-          '${ist.month.toString().padLeft(2, '0')}-'
-          '${ist.day.toString().padLeft(2, '0')}';
-    }
-    return _normalizeDateKey(value);
+    return attendanceIndiaCalendarKey(value);
   }
 
   bool _isWeekOffDay(DateTime date, bool isHoliday) {
@@ -5718,11 +5711,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               for (final r in _attendanceRecords) {
                 if (r == null || r is! Map) continue;
                 try {
-                  final recDateStr = r['date']?.toString() ?? '';
-                  final recDateOnly = recDateStr.contains('T')
-                      ? recDateStr.split('T')[0]
-                      : recDateStr.split(' ')[0];
-                  if (recDateOnly == dateStr) {
+                  final key = _recordDateKey(r);
+                  if (key != null && key == dateStr) {
                     record = Map<String, dynamic>.from(r);
                     break;
                   }
