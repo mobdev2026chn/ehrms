@@ -530,7 +530,13 @@ bool shiftRowHasRotationalCycle(Map<String, dynamic> wrapper) {
   final byWd =
       (cfg['shiftIdsByWeekday'] as List?)?.where((e) => e != null).toList() ??
       [];
-  return ids.isNotEmpty || names.isNotEmpty || byWd.isNotEmpty;
+  final byCal =
+      (cfg['weeklyDateAssignments'] as List?)?.where((e) => e != null).toList() ??
+      [];
+  return ids.isNotEmpty ||
+      names.isNotEmpty ||
+      byWd.isNotEmpty ||
+      byCal.isNotEmpty;
 }
 
 /// Rotational wrapper: explicit [shiftType] **or** a cycle config (web often relies on config).
@@ -601,21 +607,32 @@ Map<String, dynamic> resolveEffectiveShiftForDate(
         [];
     if (rows.isEmpty) return wResolved;
     final targetDate = _calendarDateYmd(attendanceDay);
+    var anyWeekOff = false;
+    Map<String, dynamic>? lastWorkRow;
     for (final row in rows) {
       if (row is! Map) continue;
       final rm = Map<String, dynamic>.from(row);
       if (_normalizeAssignmentDateYmd(rm['date']) != targetDate) continue;
-
       if (_parseBoolLoose(rm['isWeekOff'])) {
-        return {
-          ...wResolved,
-          '__rotationWeekOff': true,
-          '__rotationDate': targetDate,
-          '__rotationType': rotType,
-        };
+        anyWeekOff = true;
+        continue;
       }
-
       final effectiveIdRaw = rm['shiftId'] ?? rm['shift_id'];
+      if (effectiveIdRaw != null) {
+        lastWorkRow = rm;
+      }
+    }
+    if (anyWeekOff) {
+      return {
+        ...wResolved,
+        '__rotationWeekOff': true,
+        '__rotationDate': targetDate,
+        '__rotationType': rotType,
+      };
+    }
+    if (lastWorkRow != null) {
+      final effectiveIdRaw =
+          lastWorkRow['shiftId'] ?? lastWorkRow['shift_id'];
       for (final raw in shifts) {
         if (raw is! Map) continue;
         final s = Map<String, dynamic>.from(raw);
@@ -624,7 +641,6 @@ Map<String, dynamic> resolveEffectiveShiftForDate(
           return s;
         }
       }
-      return wResolved;
     }
     return wResolved;
   }

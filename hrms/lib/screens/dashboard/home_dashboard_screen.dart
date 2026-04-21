@@ -1252,9 +1252,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           : (statsNetRaw is String
                 ? double.tryParse(statsNetRaw.trim())
                 : null);
+      // Keep parity with Salary Overview/Web:
+      // - payroll doc net wins when a row exists
+      // - otherwise preview net should win over /payroll/stats fallback
       final rawThisMonthNet = currentPayroll != null
           ? (payrollMtdNet ?? previewNet ?? proratedNetForMtd)
-          : (statsThisMonthNet ?? previewNet ?? proratedNetForMtd);
+          : (previewNet ?? statsThisMonthNet ?? proratedNetForMtd);
       final displayThisMonthNet = rawThisMonthNet < 0 ? 0.0 : rawThisMonthNet;
 
       if (mounted) {

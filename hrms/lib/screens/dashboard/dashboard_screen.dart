@@ -73,6 +73,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   /// Starts false so the bottom bar matches the today card (no stale prefs via null).
   bool _isPunchedInToday = false;
   bool _isPunchCompletedToday = false;
+
   /// From company shift [breakPolicy.enabled] for today's [appliedShiftId] (tea-break icon).
   bool _showBreakNavForShiftPolicy = true;
   Map<String, dynamic>? _activeBreak;
@@ -280,9 +281,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             companyDoc = Map<String, dynamic>.from(rawT);
           }
         }
-        if (companyDoc != null &&
-            companyDoc.isNotEmpty &&
-            appliedId != null) {
+        if (companyDoc != null && companyDoc.isNotEmpty && appliedId != null) {
           final shiftRow = shiftRowForAppliedShiftId(
             companyDoc: companyDoc,
             appliedShiftId: appliedId,
@@ -570,8 +569,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         year: day.year,
       );
       final remainingFromApi =
-          ((balRes['data']?['remainingMinutes'] as num?)?.toInt() ?? 0)
-              .clamp(0, 1000000);
+          ((balRes['data']?['remainingMinutes'] as num?)?.toInt() ?? 0).clamp(
+            0,
+            1000000,
+          );
       final data = reqRes['data'];
       final listRaw = (data is Map) ? data['permissions'] : data;
       int approvedLate = 0;
@@ -593,8 +594,10 @@ class _DashboardScreenState extends State<DashboardScreen>
               d.day != day.day) {
             continue;
           }
-          final mins =
-              ((item['requestedMinutes'] as num?)?.toInt() ?? 0).clamp(0, 1000000);
+          final mins = ((item['requestedMinutes'] as num?)?.toInt() ?? 0).clamp(
+            0,
+            1000000,
+          );
           if (mins <= 0) continue;
           final type = (item['type'] ?? 'both').toString().trim();
           if (type == 'lateArrival') {
@@ -625,18 +628,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       final totalConsume = totalEligible.clamp(0, remainingFromApi);
       var consumeLate = eligibleLate.clamp(0, totalConsume);
       final consumeEarly = (totalConsume - consumeLate).clamp(0, eligibleEarly);
-      return {
-        'consumeLate': consumeLate,
-        'consumeEarly': consumeEarly,
-      };
+      return {'consumeLate': consumeLate, 'consumeEarly': consumeEarly};
     } catch (_) {
-      return {
-        'consumeLate': 0,
-        'consumeEarly': 0,
-      };
+      return {'consumeLate': 0, 'consumeEarly': 0};
     }
   }
-
 
   Future<Map<String, dynamic>> _buildFinePayloadForPunch({
     required bool isCheckedIn,
@@ -827,10 +823,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
 
     final isOpenShift = _templateIsOpenShift(tmpl);
-    final permissionApplyTo =
-        (tmpl['permissionPolicy'] is Map<String, dynamic>)
-            ? (tmpl['permissionPolicy']['applyTo']?.toString())
-            : null;
+    final permissionApplyTo = (tmpl['permissionPolicy'] is Map<String, dynamic>)
+        ? (tmpl['permissionPolicy']['applyTo']?.toString())
+        : null;
     // At checkout, do not pass stored [lateMinutes] into permission splitting: that
     // value was already settled at check-in and would steal the whole permission
     // balance as "eligible late", zeroing early exit minutes and checkout fine.
@@ -842,10 +837,10 @@ class _DashboardScreenState extends State<DashboardScreen>
       isCheckout: isCheckedIn,
       applyTo: permissionApplyTo,
     );
-    lateMinutes =
-        (lateMinutes - (permissionAdjustment['consumeLate'] ?? 0)).clamp(0, 1000000);
-    earlyMinutes =
-        (earlyMinutes - (permissionAdjustment['consumeEarly'] ?? 0)).clamp(0, 1000000);
+    lateMinutes = (lateMinutes - (permissionAdjustment['consumeLate'] ?? 0))
+        .clamp(0, 1000000);
+    earlyMinutes = (earlyMinutes - (permissionAdjustment['consumeEarly'] ?? 0))
+        .clamp(0, 1000000);
 
     if (shiftHoursForFinalFine <= 0) {
       if (isOpenShift) {
@@ -853,7 +848,10 @@ class _DashboardScreenState extends State<DashboardScreen>
       } else {
         final shiftStartStr = _getShiftStartTimeFromDb(tmpl) ?? '09:30';
         final shiftEndStr = _getShiftEndTimeFromDb(tmpl) ?? '18:30';
-        shiftHoursForFinalFine = calculateShiftHours(shiftStartStr, shiftEndStr);
+        shiftHoursForFinalFine = calculateShiftHours(
+          shiftStartStr,
+          shiftEndStr,
+        );
       }
     }
     double computeLegFine(String action, int minutes) {
@@ -878,7 +876,10 @@ class _DashboardScreenState extends State<DashboardScreen>
               .round() /
           100;
     }
-    final lateFine = isOpenShift ? 0.0 : computeLegFine('lateArrival', lateMinutes);
+
+    final lateFine = isOpenShift
+        ? 0.0
+        : computeLegFine('lateArrival', lateMinutes);
     final earlyFine = computeLegFine('earlyExit', earlyMinutes);
     fineAmount = lateFine + earlyFine;
 
@@ -1378,9 +1379,15 @@ class _DashboardScreenState extends State<DashboardScreen>
         'checkOutAllowed': body['checkOutAllowed'] ?? true,
       });
 
+      final companyDocForShift = companyDocForBreakPolicyFromTodayApiRoot(body);
+
       return {
         'staffHasTemplate': staffHasTemplate,
         'template': template,
+        'companyDocForShift': companyDocForShift,
+        'staffData': staffData != null
+            ? Map<String, dynamic>.from(staffData)
+            : null,
         'branchData': branchData,
         'shiftAssigned': shiftAssigned,
         'attendanceData': attendanceData,
@@ -1699,6 +1706,58 @@ class _DashboardScreenState extends State<DashboardScreen>
     return false;
   }
 
+  static bool _templateIsRotationalWrapper(Map<String, dynamic>? template) {
+    if (template == null) return false;
+    final st = (template['shiftType'] ?? '').toString().toLowerCase().trim();
+    if (st == 'rotational') return true;
+    final rc = template['rotationalConfig'];
+    if (rc is Map) {
+      final ids = rc['shiftIdsInCycle'];
+      if (ids is List && ids.isNotEmpty) return true;
+      final names = rc['shiftNamesInCycle'];
+      if (names is List && names.isNotEmpty) return true;
+      final byWd = rc['shiftIdsByWeekday'];
+      if (byWd is List && byWd.isNotEmpty) return true;
+      final byCal = rc['weeklyDateAssignments'];
+      if (byCal is List && byCal.isNotEmpty) return true;
+    }
+    return false;
+  }
+
+  static bool _templateHasTodayByWeekCalendarWeekOff(
+    Map<String, dynamic>? template,
+  ) {
+    if (template == null) return false;
+    final st = (template['shiftType'] ?? '').toString().toLowerCase().trim();
+    if (st != 'rotational') return false;
+    final rc = template['rotationalConfig'];
+    if (rc is! Map) return false;
+    final rotType = (rc['rotationType'] ?? '').toString().toLowerCase().trim();
+    if (rotType != 'byweekcalendar' && rotType != 'by_week_calendar') {
+      return false;
+    }
+    final rows = rc['weeklyDateAssignments'];
+    if (rows is! List || rows.isEmpty) return false;
+    final now = DateTime.now();
+    final todayYmd =
+        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final dateRaw = row['date']?.toString().trim() ?? '';
+      if (dateRaw.isEmpty) continue;
+      final m = RegExp(r'^(\d{4}-\d{2}-\d{2})').firstMatch(dateRaw);
+      final ymd = m?.group(1);
+      if (ymd != todayYmd) continue;
+      final weekOffRaw = row['isWeekOff'];
+      final isWeekOff =
+          weekOffRaw == true ||
+          weekOffRaw == 1 ||
+          weekOffRaw?.toString().trim().toLowerCase() == 'true';
+      if (isWeekOff) return true;
+    }
+    return false;
+  }
+
   static double _templateOpenRequiredHours(Map<String, dynamic>? template) {
     if (template == null || !_templateIsOpenShift(template)) return 8;
     for (final key in ['openWorkHours', 'workHours']) {
@@ -1880,6 +1939,39 @@ class _DashboardScreenState extends State<DashboardScreen>
       return false;
     }
     final Map<String, dynamic> tmpl = template!;
+    final staffData = data['staffData'] as Map<String, dynamic>?;
+    final companyDocRaw = data['companyDocForShift'] as Map<String, dynamic>?;
+    EffectiveShiftDay? todayEffectiveShift;
+    if (staffData != null && shiftsListFromCompany(companyDocRaw) != null) {
+      final templateLabel =
+          (tmpl['name'] ?? tmpl['shiftName'] ?? '').toString().trim();
+      final shiftKey = staffShiftKeyFromProfileMap(
+        staffData,
+        attendanceTemplateName: templateLabel.isEmpty ? null : templateLabel,
+      );
+      todayEffectiveShift = effectiveShiftForCalendarDay(
+        companyDoc: companyDocRaw,
+        staffShiftKey: shiftKey,
+        dayLocal: DateTime.now(),
+        joiningDate: null,
+        attendanceTodayTemplate: tmpl,
+      );
+    }
+    final staffShiftIdLog =
+        objectIdHexLoose(staffData?['shiftId']) ?? '(none)';
+    final effWin = todayEffectiveShift != null &&
+            !todayEffectiveShift.isWeekOff &&
+            !todayEffectiveShift.isOpen
+        ? '${todayEffectiveShift.startTime ?? ''}-${todayEffectiveShift.endTime ?? ''}'
+        : '';
+    punchFlowLog(
+      '[PunchFlow][todayShift] staffShiftId=$staffShiftIdLog '
+      'template=${(tmpl['name'] ?? tmpl['shiftName'] ?? '(unnamed)').toString()} '
+      'type=${(tmpl['shiftType'] ?? '').toString()} '
+      'effectiveName=${todayEffectiveShift?.displayName ?? '(n/a)'} '
+      'effectiveIsWeekOff=${todayEffectiveShift?.isWeekOff == true} '
+      'effectiveWindow=${effWin.isEmpty ? '(n/a)' : effWin}',
+    );
     if (shiftAssigned != true) {
       await _showValidationAlertDialog('Shift not assigned. Contact HR.');
       return false;
@@ -1924,16 +2016,25 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!_templateIsOpenShift(tmpl)) {
       final shiftStart = _getShiftStartTimeFromDb(tmpl);
       final shiftEnd = _getShiftEndTimeFromDb(tmpl);
+      final fromEffective = todayEffectiveShift != null &&
+          !todayEffectiveShift.isWeekOff &&
+          (todayEffectiveShift.isOpen ||
+              ((todayEffectiveShift.startTime ?? '').isNotEmpty &&
+                  (todayEffectiveShift.endTime ?? '').isNotEmpty));
       if (shiftStart == null ||
           shiftStart.isEmpty ||
           shiftEnd == null ||
           shiftEnd.isEmpty) {
-        await _showValidationAlertDialog(
-          shiftAssigned == true
-              ? 'Shift timings not set. Contact HR.'
-              : 'Shift not assigned. Contact HR.',
-        );
-        return false;
+        // Rotational wrappers intentionally do not carry direct start/end in template;
+        // effective shift window is resolved server-side per date.
+        if (!_templateIsRotationalWrapper(tmpl) && !fromEffective) {
+          await _showValidationAlertDialog(
+            shiftAssigned == true
+                ? 'Shift timings not set. Contact HR.'
+                : 'Shift not assigned. Contact HR.',
+          );
+          return false;
+        }
       }
     }
 
@@ -1966,7 +2067,8 @@ class _DashboardScreenState extends State<DashboardScreen>
               : (leaveMessage ?? 'Check-in is not allowed at this time.'),
         ),
         isError: true,
-        debugSource: 'Dashboard._runFingerprintAttendanceValidations.blockCheckInOnLeave',
+        debugSource:
+            'Dashboard._runFingerprintAttendanceValidations.blockCheckInOnLeave',
       );
       await NotificationReactionOverlay.show(context, emoji: '😊');
       return false;
@@ -1990,6 +2092,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
     if (isPaidLeaveContext && !isCheckedIn) {
       SnackBarUtils.showSnackBar(context, 'Today is paid leave', isError: true);
+      return false;
+    }
+    if (todayEffectiveShift?.isWeekOff == true ||
+        (todayEffectiveShift == null &&
+            _templateHasTodayByWeekCalendarWeekOff(tmpl))) {
+      SnackBarUtils.showSnackBar(context, 'Today is weekoff', isError: true);
       return false;
     }
     if (isWeeklyOff &&
@@ -2104,8 +2212,8 @@ class _DashboardScreenState extends State<DashboardScreen>
               );
               final permissionApplyTo =
                   (tmpl['permissionPolicy'] is Map<String, dynamic>)
-                      ? (tmpl['permissionPolicy']['applyTo']?.toString())
-                      : null;
+                  ? (tmpl['permissionPolicy']['applyTo']?.toString())
+                  : null;
               final permissionAdjustment = await _getPermissionAdjustment(
                 day: DateTime(now.year, now.month, now.day),
                 lateMinutes: fineResult.lateMinutes,
@@ -2135,10 +2243,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                 lateFineAmount =
                     ((netPerDaySalary ?? 0) > 0 && shiftHoursForFormula > 0)
                     ? (((netPerDaySalary! / shiftHoursForFormula) *
-                                    (adjustedLateMinutes / 60) *
-                                    100)
-                                .round() /
-                            100)
+                                  (adjustedLateMinutes / 60) *
+                                  100)
+                              .round() /
+                          100)
                     : 0.0;
               }
               if (kDebugMode) {
@@ -2229,8 +2337,8 @@ class _DashboardScreenState extends State<DashboardScreen>
             if (earlyMinutes > 0) {
               final permissionApplyTo =
                   (tmpl['permissionPolicy'] is Map<String, dynamic>)
-                      ? (tmpl['permissionPolicy']['applyTo']?.toString())
-                      : null;
+                  ? (tmpl['permissionPolicy']['applyTo']?.toString())
+                  : null;
               final permissionAdjustment = await _getPermissionAdjustment(
                 day: DateTime(now.year, now.month, now.day),
                 lateMinutes: 0,
@@ -2245,7 +2353,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               double estimatedFine = 0;
               if (netPerDaySalary != null && netPerDaySalary > 0 && reqH > 0) {
                 estimatedFine =
-                    ((netPerDaySalary / reqH) * (adjustedEarlyMinutes / 60) * 100)
+                    ((netPerDaySalary / reqH) *
+                            (adjustedEarlyMinutes / 60) *
+                            100)
                         .round() /
                     100;
               }
@@ -2334,8 +2444,8 @@ class _DashboardScreenState extends State<DashboardScreen>
               final earlyRule = _matchFineRuleForAction('earlyExit');
               final permissionApplyTo =
                   (tmpl['permissionPolicy'] is Map<String, dynamic>)
-                      ? (tmpl['permissionPolicy']['applyTo']?.toString())
-                      : null;
+                  ? (tmpl['permissionPolicy']['applyTo']?.toString())
+                  : null;
               final permissionAdjustment = await _getPermissionAdjustment(
                 day: DateTime(now.year, now.month, now.day),
                 lateMinutes: 0,
@@ -2363,10 +2473,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                 earlyFineAmount =
                     ((netPerDaySalary ?? 0) > 0 && shiftHoursForFormula > 0)
                     ? (((netPerDaySalary! / shiftHoursForFormula) *
-                                    (adjustedEarlyMinutes / 60) *
-                                    100)
-                                .round() /
-                            100)
+                                  (adjustedEarlyMinutes / 60) *
+                                  100)
+                              .round() /
+                          100)
                     : 0.0;
               }
               if (kDebugMode) {

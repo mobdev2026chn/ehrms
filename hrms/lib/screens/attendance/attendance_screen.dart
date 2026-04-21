@@ -3135,9 +3135,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (fromRecord.isNotEmpty) {
       return fromRecord;
     }
-    final tName = (_attendanceTemplate?['name'] ?? _attendanceTemplate?['shiftName'])
-        ?.toString()
-        .trim();
+    final tName =
+        (_attendanceTemplate?['name'] ?? _attendanceTemplate?['shiftName'])
+            ?.toString()
+            .trim();
     if (tName != null && tName.isNotEmpty) return tName;
     return 'Shift';
   }
@@ -3163,7 +3164,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     if (_isOpenShiftTemplate()) {
       final h = _openShiftRequiredHours();
-      final label = h == h.roundToDouble() ? '${h.toInt()}' : h.toStringAsFixed(1);
+      final label = h == h.roundToDouble()
+          ? '${h.toInt()}'
+          : h.toStringAsFixed(1);
       return 'Open shift · $label hrs required';
     }
     final halfDayTimings = _getWorkingSessionTimingsForRecord(record);
@@ -3601,6 +3604,51 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     } catch (e) {
       return false;
     }
+  }
+
+  DateTime? _profileJoiningDateForShiftResolution() {
+    final snap = _profileStaffDataSnapshot;
+    if (snap == null) return null;
+    return parseJoiningDate(snap['joiningDate']);
+  }
+
+  bool _isTodayAssignedRotationalWeekOff() {
+    final companyDoc = _companyDocForAppliedShiftResolution();
+    if (companyDoc == null) return false;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final effective = effectiveShiftForCalendarDay(
+      companyDoc: companyDoc,
+      staffShiftKey: _profileStaffShiftName,
+      dayLocal: today,
+      joiningDate: _profileJoiningDateForShiftResolution(),
+      attendanceTodayTemplate: _attendanceTemplate,
+    );
+    return effective?.isWeekOff == true;
+  }
+
+  EffectiveShiftDay? _todayEffectiveShiftForAttendance() {
+    final companyDoc = _companyDocForAppliedShiftResolution();
+    if (companyDoc == null) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return effectiveShiftForCalendarDay(
+      companyDoc: companyDoc,
+      staffShiftKey: _profileStaffShiftName,
+      dayLocal: today,
+      joiningDate: _profileJoiningDateForShiftResolution(),
+      attendanceTodayTemplate: _attendanceTemplate,
+    );
+  }
+
+  bool _isAssignedShiftRotationalWrapper() {
+    final companyDoc = _companyDocForAppliedShiftResolution();
+    final shifts = shiftsListFromCompany(companyDoc);
+    final key = (_profileStaffShiftName ?? '').trim();
+    if (shifts == null || shifts.isEmpty || key.isEmpty) return false;
+    final wrapper = findShiftByStaffKey(shifts, key);
+    if (wrapper == null) return false;
+    return isRotationalShiftWrapper(wrapper);
   }
 
   /// Normalizes workHours to minutes. API stores in minutes; legacy values may be in hours (0–24 decimal).
@@ -5656,20 +5704,45 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       _setPunchActionInProgress(false);
       return;
     }
-    if (!_isOpenShiftTemplate()) {
-      final shiftStart = _getShiftStartTimeFromDb();
-      final shiftEnd = _getShiftEndTimeFromDb();
+    final todayEffectiveShift = _todayEffectiveShiftForAttendance();
+    if (kDebugMode) {
+      debugPrint(
+        '[PunchFlow][AttendanceTab][todayShift] '
+        'name=${todayEffectiveShift?.displayName ?? '(none)'} '
+        'type=${todayEffectiveShift?.shiftTypeLower ?? '(none)'} '
+        'isWeekOff=${todayEffectiveShift?.isWeekOff == true} '
+        'start=${todayEffectiveShift?.startTime ?? '(none)'} '
+        'end=${todayEffectiveShift?.endTime ?? '(none)'}',
+      );
+    }
+    if (todayEffectiveShift?.isWeekOff == true) {
+      SnackBarUtils.showSnackBar(context, "Today is weekoff", isError: true);
+      _setPunchActionInProgress(false);
+      return;
+    }
+    final isOpenShiftForToday =
+        todayEffectiveShift?.isOpen ?? _isOpenShiftTemplate();
+    if (!isOpenShiftForToday) {
+      final shiftStart =
+          todayEffectiveShift?.startTime?.trim() ?? _getShiftStartTimeFromDb();
+      final shiftEnd =
+          todayEffectiveShift?.endTime?.trim() ?? _getShiftEndTimeFromDb();
       if (shiftStart == null ||
           shiftStart.isEmpty ||
           shiftEnd == null ||
           shiftEnd.isEmpty) {
-        await _showValidationAlert(
-          _shiftAssigned == true
-              ? 'Shift timings not set. Contact HR.'
-              : 'Shift not assigned. Contact HR.',
-        );
-        _setPunchActionInProgress(false);
-        return;
+        // Rotational wrappers may not carry direct start/end; effective day timing is resolved server-side.
+        if (_isAssignedShiftRotationalWrapper()) {
+          // Do not block here with a false "timings not set" error for rotational assignments.
+        } else {
+          await _showValidationAlert(
+            _shiftAssigned == true
+                ? 'Shift timings not set. Contact HR.'
+                : 'Shift not assigned. Contact HR.',
+          );
+          _setPunchActionInProgress(false);
+          return;
+        }
       }
     }
     // --- End validation ---
@@ -5724,6 +5797,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     if (_isPaidLeaveContext && !isCheckedIn) {
       SnackBarUtils.showSnackBar(context, "Today is paid leave", isError: true);
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_isTodayAssignedRotationalWeekOff()) {
+      SnackBarUtils.showSnackBar(context, "Today is weekoff", isError: true);
       _setPunchActionInProgress(false);
       return;
     }
@@ -6529,9 +6607,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _isPunchActionInProgress ||
         (isHalfDayLeave &&
             ((!isCheckedIn && !_checkInAllowed) ||
-                (isCheckedIn &&
-                    !_checkOutAllowed &&
-                    !_isPaidLeaveContext)));
+                (isCheckedIn && !_checkOutAllowed && !_isPaidLeaveContext)));
 
     return Opacity(
       opacity: punchDisabled ? 0.65 : 1.0,

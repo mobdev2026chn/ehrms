@@ -739,9 +739,17 @@ const resolveEffectiveShiftRaw = (shifts, wrapper, attendanceDate, rotationAncho
         const rows = Array.isArray(cfg.weeklyDateAssignments) ? cfg.weeklyDateAssignments.filter(Boolean) : [];
         if (rows.length === 0) return wrapper;
         const targetDate = formatDateUtcYmd(attendanceDate || new Date());
-        const row = rows.find((e) => e && normalizeAssignmentDateYmd(e.date) === targetDate);
-        if (!row) return wrapper;
-        if (parseBoolLoose(row.isWeekOff)) {
+        let anyWeekOff = false;
+        let lastWorkRow = null;
+        for (const e of rows) {
+            if (!e || normalizeAssignmentDateYmd(e.date) !== targetDate) continue;
+            if (parseBoolLoose(e.isWeekOff)) {
+                anyWeekOff = true;
+                continue;
+            }
+            if (e.shiftId != null) lastWorkRow = e;
+        }
+        if (anyWeekOff) {
             return {
                 ...wrapper,
                 __rotationWeekOff: true,
@@ -749,8 +757,8 @@ const resolveEffectiveShiftRaw = (shifts, wrapper, attendanceDate, rotationAncho
                 __rotationType: rotationType
             };
         }
-        if (row.shiftId == null) return wrapper;
-        const needle = normalizeShiftObjectIdStr(row.shiftId);
+        if (!lastWorkRow || lastWorkRow.shiftId == null) return wrapper;
+        const needle = normalizeShiftObjectIdStr(lastWorkRow.shiftId);
         const effective = shifts.find((s) => {
             if (!isLeafShiftRow(s) || s._id == null) return false;
             return needle && normalizeShiftObjectIdStr(s._id) === needle;
