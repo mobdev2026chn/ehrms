@@ -58,6 +58,7 @@ class AttendanceScreen extends StatefulWidget {
 class _AttendanceScreenState extends State<AttendanceScreen>
     with SingleTickerProviderStateMixin {
   static const Duration _networkTimeout = Duration(seconds: 45);
+  static const Duration _businessLookupCacheDuration = Duration(minutes: 5);
   Map<String, dynamic>? _attendanceData;
 
   /// Date we last fetched attendance status for (ensures selected-date card shows correct date)
@@ -68,6 +69,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   /// Full business from `GET /settings/business` (fallback when API omits embedded list).
   Map<String, dynamic>? _businessDocForShifts;
+  DateTime? _lastBusinessLookupAt;
 
   /// From `GET /attendance/today` or month payload [businessShifts] — full company shift rows for [appliedShiftId].
   List<dynamic>? _embeddedBusinessShiftsFromApi;
@@ -262,15 +264,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     setState(() => _isFetchingTemplateDetails = false);
     if (!mounted) return;
 
-    await _fetchHistory(refresh: true);
-    if (!mounted) return;
-    await _fetchMonthData(
-      _focusedDay.year,
-      _focusedDay.month,
-      forceRefresh: forceRefresh,
-    );
-    if (!mounted) return;
-    await _fetchFineCalculation();
+    await Future.wait<void>([
+      _fetchHistory(refresh: true),
+      _fetchMonthData(
+        _focusedDay.year,
+        _focusedDay.month,
+        forceRefresh: forceRefresh,
+      ),
+      _fetchFineCalculation(),
+    ]);
   }
 
   Future<Map<String, dynamic>> _withTimeoutRetry(
@@ -460,7 +462,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     );
   }
 
-  Future<void> _loadBusinessForAppliedShiftLookup() async {
+  Future<void> _loadBusinessForAppliedShiftLookup({
+    bool forceRefresh = false,
+  }) async {
+    final lastLookup = _lastBusinessLookupAt;
+    if (!forceRefresh &&
+        _businessDocForShifts != null &&
+        lastLookup != null &&
+        DateTime.now().difference(lastLookup) < _businessLookupCacheDuration) {
+      return;
+    }
     try {
       final res = await _settingsService.getBusiness();
       if (!mounted) return;
@@ -470,6 +481,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         if (b is Map) {
           setState(() {
             _businessDocForShifts = Map<String, dynamic>.from(b as Map);
+            _lastBusinessLookupAt = DateTime.now();
           });
           return;
         }
@@ -477,12 +489,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (mounted) {
         setState(() {
           _businessDocForShifts = null;
+          _lastBusinessLookupAt = null;
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _businessDocForShifts = null;
+          _lastBusinessLookupAt = null;
         });
       }
     }
@@ -569,23 +583,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     final year = _focusedDay.year;
     final month = _focusedDay.month;
-    if (!_showHistoryView) {
-      await _fetchAttendanceStatus(date: DateTime.now());
-      if (!mounted) return;
-      await _fetchHistory(refresh: true);
-      if (!mounted) return;
-      await _fetchMonthData(year, month, forceRefresh: forceRefresh);
-    } else {
-      await _fetchAttendanceStatus(date: _focusedDay);
-      if (!mounted) return;
-      await _fetchHistory(refresh: true);
-      if (!mounted) return;
-      await _fetchMonthData(year, month, forceRefresh: forceRefresh);
-    }
-    if (!mounted) return;
-    await _fetchFineCalculation();
-    if (!mounted) return;
-    await _loadBusinessForAppliedShiftLookup();
+    final statusDate = _showHistoryView ? _focusedDay : DateTime.now();
+    await Future.wait<void>([
+      _fetchAttendanceStatus(date: statusDate),
+      _fetchHistory(refresh: true),
+      _fetchMonthData(year, month, forceRefresh: forceRefresh),
+      _fetchFineCalculation(),
+      _loadBusinessForAppliedShiftLookup(forceRefresh: forceRefresh),
+    ]);
   }
 
   Future<void> _fetchMonthData(
@@ -4297,7 +4302,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 12,
-                            color: colorScheme.onSurfaceVariant,
+                            color: Colors.black,
                           ),
                         ),
                       ],
@@ -4440,7 +4445,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                   checkInStatus,
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: colorScheme.onSurfaceVariant,
+                                    color: Colors.black,
                                   ),
                                 ),
                               ],
@@ -4516,7 +4521,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                   isCompleted ? 'Done' : 'Start at $shiftEnd',
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: colorScheme.onSurfaceVariant,
+                                    color: Colors.black,
                                   ),
                                 ),
                               ],
@@ -4643,7 +4648,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 12,
-                    color: colorScheme.onSurfaceVariant,
+                    color: Colors.black,
                   ),
                 ),
               ],
@@ -4816,20 +4821,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                         color: cs.onSurface,
                       ),
                     ),
-                    if (_totalPages > 1 || _historyList.isNotEmpty)
-                      GestureDetector(
-                        onTap: _totalPages > 1
-                            ? () => _fetchHistory(page: _page + 1)
-                            : null,
-                        child: Text(
-                          'See More',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
                   ],
                 );
               },
@@ -4974,7 +4965,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             onPressed: _page > 1 ? () => _fetchHistory(page: _page - 1) : null,
             color: _page > 1
                 ? colorScheme.primary
-                : colorScheme.onSurfaceVariant,
+                : Colors.black,
           ),
           const SizedBox(width: 8),
           // Page numbers
@@ -5030,7 +5021,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 : null,
             color: _page < _totalPages
                 ? colorScheme.primary
-                : colorScheme.onSurfaceVariant,
+                : Colors.black,
           ),
         ],
       ),
@@ -5118,7 +5109,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         const SizedBox(height: 2),
         Text(
           label,
-          style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
+          style: const TextStyle(fontSize: 9, color: Colors.black),
         ),
       ],
     );
@@ -5677,25 +5668,29 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       return;
     }
     final geofence = _branchData!['geofence'] as Map<String, dynamic>?;
-    final geofenceEnabled = geofence?['enabled'] == true;
-    if (!geofenceEnabled) {
-      await _showValidationAlert('Geo fence is not set for your branch.');
-      _setPunchActionInProgress(false);
-      return;
-    }
-    final branchLat = geofence?['latitude'];
-    final branchLng = geofence?['longitude'];
-    final bool latLngSet =
-        branchLat != null &&
-        branchLng != null &&
-        (branchLat is num ||
-            (branchLat is String && branchLat.toString().trim().isNotEmpty)) &&
-        (branchLng is num ||
-            (branchLng is String && branchLng.toString().trim().isNotEmpty));
-    if (!latLngSet) {
-      await _showValidationAlert('Lat and long is not set for the branch.');
-      _setPunchActionInProgress(false);
-      return;
+    final requireTemplateGeolocation =
+        _attendanceTemplate?['requireGeolocation'] ?? true;
+    if (requireTemplateGeolocation == true) {
+      final geofenceEnabled = geofence?['enabled'] == true;
+      if (!geofenceEnabled) {
+        await _showValidationAlert('Geo fence is not set for your branch.');
+        _setPunchActionInProgress(false);
+        return;
+      }
+      final branchLat = geofence?['latitude'];
+      final branchLng = geofence?['longitude'];
+      final bool latLngSet =
+          branchLat != null &&
+          branchLng != null &&
+          (branchLat is num ||
+              (branchLat is String && branchLat.toString().trim().isNotEmpty)) &&
+          (branchLng is num ||
+              (branchLng is String && branchLng.toString().trim().isNotEmpty));
+      if (!latLngSet) {
+        await _showValidationAlert('Lat and long is not set for the branch.');
+        _setPunchActionInProgress(false);
+        return;
+      }
     }
     if (_attendanceTemplate!['isActive'] == false) {
       await _showValidationAlert(
@@ -6218,32 +6213,28 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     String? city;
     String? pincode;
 
-    if (requireGeolocation) {
-      final location = await _getCurrentLocation();
-      if (!mounted) return;
-      if (location.position == null) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'Location is required. Please enable location and try again.',
-          isError: true,
-        );
-        _setPunchActionInProgress(false);
-        return;
-      }
-      position = location.position;
-      address = location.address;
-      area = location.area;
-      city = location.city;
-      pincode = location.pincode;
+    final location = await _getCurrentLocation();
+    if (!mounted) return;
+    if (location.position == null) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Location is required. Please enable location and try again.',
+        isError: true,
+      );
+      _setPunchActionInProgress(false);
+      return;
     }
+    position = location.position;
+    address = location.address;
+    area = location.area;
+    city = location.city;
+    pincode = location.pincode;
 
-    final locationStr = requireGeolocation
-        ? (address.isNotEmpty
-              ? address
-              : (area != null
-                    ? '$area, ${city ?? ''}${pincode != null ? ' $pincode' : ''}'
-                    : null))
-        : 'Location not required';
+    final locationStr = address.isNotEmpty
+        ? address
+        : (area != null
+              ? '$area, ${city ?? ''}${pincode != null ? ' $pincode' : ''}'
+              : null);
 
     if (!requireSelfie) {
       await _submitAttendanceWithoutSelfie(
@@ -6260,16 +6251,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final result = await SelfieCameraScreen.captureSelfie(
       context,
       location: locationStr,
-      onRefreshLocation: requireGeolocation
-          ? () async {
-              final loc = await _getCurrentLocation();
-              return loc.address.isNotEmpty
-                  ? loc.address
-                  : (loc.area != null
-                        ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
-                        : null);
-            }
-          : null,
+      onRefreshLocation: () async {
+        final loc = await _getCurrentLocation();
+        return loc.address.isNotEmpty
+            ? loc.address
+            : (loc.area != null
+                  ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
+                  : null);
+      },
     );
     if (!mounted) return;
     File? file;

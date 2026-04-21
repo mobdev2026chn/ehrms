@@ -92,6 +92,11 @@ const staffSchema = new mongoose.Schema({
     // LMS access (employee portal "My Learning" visibility)
     lmsAccessEnabled: { type: Boolean, default: true },
 
+    // Employee app / web: Salary Overview visibility (stored on staffs; must survive toObject() for GET /auth/profile).
+    salaryDetailsAccessEnabled: { type: Boolean },
+    // When true, employee may view current-cycle salary details before payroll is finalized (product-specific).
+    allowCurrentCycleSalaryAccess: { type: Boolean },
+
     // Two-Factor Authentication
     twoFactorEnabled: { type: Boolean, default: false },
 

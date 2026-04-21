@@ -50,8 +50,8 @@ typedef _ResolvedLocation = ({
 });
 
 class DashboardScreen extends StatefulWidget {
-  /// 0=Dashboard, 1=Requests, 2=Salary, 3=Holidays, 4=Attendance, 5=punch flow, 6=break flow.
-  /// Tab 2 is only available when [staffData.salaryDetailsAccessEnabled] is true (see [_refreshSalaryOverviewAccess]).
+  /// 0=Dashboard, 1=Requests, 2=Salary overview (IndexedStack only; not in bottom bar), 3=Holidays, 4=Attendance, 5=punch flow, 6=break flow.
+  /// Tab 2 opens from quick actions when [staffData.salaryDetailsAccessEnabled] is true (staffs collection / profile).
   final int? initialIndex;
   const DashboardScreen({super.key, this.initialIndex});
 
@@ -80,11 +80,17 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _openBreakAfterBuild = false;
   Map<String, dynamic>? _fineCalculation;
 
-  /// Web `staffData.salaryDetailsAccessEnabled` — must be explicitly true to show Salary in the bottom bar.
+  /// Staffs collection `salaryDetailsAccessEnabled` on profile [staffData] — must be explicitly true for Salary Overview quick action (tab 2).
   bool _hasSalaryOverviewAccess = false;
 
   /// When true, [initialIndex] was 2; apply tab 2 only after access is confirmed.
   bool _deferSalaryInitialTab = false;
+
+  static void _logSalaryAccessTest(String message) {
+    if (kDebugMode) {
+      debugPrint('[SalaryAccess][TEST] $message');
+    }
+  }
 
   final AttendanceService _attendanceService = AttendanceService();
   final BreakService _breakService = BreakService();
@@ -940,15 +946,21 @@ class _DashboardScreenState extends State<DashboardScreen>
     return index.clamp(0, 4);
   }
 
-  /// Bottom bar indices are 0..2 when salary is enabled, else 0..1 only. Punch/break use 5 and 6.
+  /// Bottom bar: Dashboard (0), Requests (1), and Attendance (2). Punch/break use 5 and 6.
   int _bottomBarSelectedIndex() {
     if (_currentIndex >= 0 && _currentIndex <= 1) return _currentIndex;
-    if (_currentIndex == 2 && _hasSalaryOverviewAccess) return 2;
+    if (_currentIndex == 4) return 2;
     return -1;
   }
 
+  int _mapBottomNavIndexToScreenIndex(int index) {
+    // Bottom bar third icon is Attendance, which lives at screen index 4.
+    if (index == 2) return 4;
+    return _normalizeTabIndex(index);
+  }
+
   List<NavItem> _buildBottomNavItems() {
-    const core = <NavItem>[
+    return const <NavItem>[
       NavItem(
         icon: Icons.dashboard_outlined,
         activeIcon: Icons.dashboard_rounded,
@@ -959,20 +971,20 @@ class _DashboardScreenState extends State<DashboardScreen>
         activeIcon: Icons.description_rounded,
         label: 'Requests',
       ),
-    ];
-    if (!_hasSalaryOverviewAccess) return core;
-    return [
-      ...core,
-      const NavItem(
-        icon: Icons.account_balance_wallet_outlined,
-        activeIcon: Icons.account_balance_wallet_rounded,
-        label: 'Salary',
+      NavItem(
+        icon: Icons.fact_check_outlined,
+        activeIcon: Icons.fact_check,
+        label: 'Attendance',
       ),
     ];
   }
 
-  Future<void> _refreshSalaryOverviewAccess() async {
-    final enabled = await _loadSalaryDetailsAccessEnabled();
+  Future<void> _refreshSalaryOverviewAccess({bool preferServer = false}) async {
+    final hasAccessBefore = _hasSalaryOverviewAccess;
+    final tabBefore = _currentIndex;
+    final enabled = await _loadSalaryDetailsAccessEnabled(
+      preferServer: preferServer,
+    );
     if (!mounted) return;
     setState(() {
       _hasSalaryOverviewAccess = enabled;
@@ -985,39 +997,106 @@ class _DashboardScreenState extends State<DashboardScreen>
         _currentIndex = 0;
       }
     });
+    _logSalaryAccessTest(
+      '_refreshSalaryOverviewAccess | '
+      'hasAccessBefore=$hasAccessBefore hasAccessAfter=$enabled | '
+      'tabIndexBefore=$tabBefore tabIndexAfter=$_currentIndex',
+    );
+  }
+
+  /// Runs when the home dashboard finishes a load: open tab, pull-to-refresh, or [refreshTrigger].
+  Future<void> _onHomeDashboardDataRefreshed() async {
+    await _refreshSalaryOverviewAccess(preferServer: true);
+    await _fetchPunchStatusForNavBar();
   }
 
   /// Same rule as [SalaryOverviewScreen]: `salaryDetailsAccessEnabled == true` only.
-  Future<bool> _loadSalaryDetailsAccessEnabled() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final userStr = prefs.getString('user');
-      if (userStr != null) {
-        final user = jsonDecode(userStr) as Map<String, dynamic>;
-        if (user['salaryDetailsAccessEnabled'] == true) return true;
-        if (user['salaryDetailsAccessEnabled'] == false) return false;
-        final staffRaw = user['staffData'] ?? user['staff'];
-        if (staffRaw is Map) {
-          final staff = Map<String, dynamic>.from(staffRaw);
-          if (staff['salaryDetailsAccessEnabled'] == true) return true;
-          if (staff['salaryDetailsAccessEnabled'] == false) return false;
+  ///
+  /// When [preferServer] is true, skips prefs short-circuit so GET /auth/profile always runs
+  /// (dashboard refresh / tab focus reflects HR toggles without re-login).
+  Future<bool> _loadSalaryDetailsAccessEnabled({bool preferServer = false}) async {
+    bool result(bool value, String reason) {
+      _logSalaryAccessTest(
+        '_loadSalaryDetailsAccessEnabled -> salaryOverviewEnabled=$value ($reason)',
+      );
+      return value;
+    }
+
+    if (!preferServer) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final userStr = prefs.getString('user');
+        if (userStr != null) {
+          final user = jsonDecode(userStr) as Map<String, dynamic>;
+          final staffRaw = user['staffData'] ?? user['staff'];
+          Map<String, dynamic>? staffMap;
+          if (staffRaw is Map) {
+            staffMap = Map<String, dynamic>.from(staffRaw);
+            final s = staffMap['salaryDetailsAccessEnabled'];
+            _logSalaryAccessTest(
+              '_loadSalaryDetailsAccessEnabled prefs | '
+              'staffData.salaryDetailsAccessEnabled raw=$s (${s.runtimeType})',
+            );
+            if (s == true) {
+              return result(true, 'prefs:staffData==true');
+            }
+          }
+          final flat = user['salaryDetailsAccessEnabled'];
+          _logSalaryAccessTest(
+            '_loadSalaryDetailsAccessEnabled prefs | '
+            'user.salaryDetailsAccessEnabled raw=$flat (${flat.runtimeType})',
+          );
+          if (flat == true) {
+            return result(true, 'prefs:user_root==true');
+          }
+          if (staffMap != null && staffMap['salaryDetailsAccessEnabled'] == false) {
+            return result(false, 'prefs:staffData==false');
+          }
+          if (flat == false) {
+            return result(false, 'prefs:user_root==false');
+          }
+        } else {
+          _logSalaryAccessTest(
+            '_loadSalaryDetailsAccessEnabled prefs | no user json in SharedPreferences',
+          );
         }
+      } catch (e) {
+        _logSalaryAccessTest('_loadSalaryDetailsAccessEnabled prefs | error=$e');
       }
-    } catch (_) {}
+    } else {
+      _logSalaryAccessTest(
+        '_loadSalaryDetailsAccessEnabled | preferServer=true (skip prefs, use GET /auth/profile)',
+      );
+    }
     try {
       final res = await _authService.getProfile();
+      final ok = res['success'] == true;
+      _logSalaryAccessTest(
+        '_loadSalaryDetailsAccessEnabled profile | success=$ok',
+      );
       if (res['success'] == true && res['data'] is Map) {
         final data = Map<String, dynamic>.from(res['data'] as Map);
         final staffRaw = data['staffData'];
         if (staffRaw is Map) {
           final staff = Map<String, dynamic>.from(staffRaw);
-          final enabled = staff['salaryDetailsAccessEnabled'] == true;
-          await _persistSalaryAccessOnUser(staff['salaryDetailsAccessEnabled']);
-          return enabled;
+          final raw = staff['salaryDetailsAccessEnabled'];
+          final enabled = raw == true;
+          _logSalaryAccessTest(
+            '_loadSalaryDetailsAccessEnabled profile | '
+            'staffData.salaryDetailsAccessEnabled raw=$raw (${raw.runtimeType}) '
+            '=> strictTrue=$enabled',
+          );
+          await _persistSalaryAccessOnUser(raw);
+          return result(enabled, 'profile:staffData strict equality == true');
         }
+        _logSalaryAccessTest(
+          '_loadSalaryDetailsAccessEnabled profile | staffData missing or not a Map',
+        );
       }
-    } catch (_) {}
-    return false;
+    } catch (e) {
+      _logSalaryAccessTest('_loadSalaryDetailsAccessEnabled profile | error=$e');
+    }
+    return result(false, 'fallback:no_decisive_prefs_and_no_staff_true');
   }
 
   Future<void> _persistSalaryAccessOnUser(
@@ -1026,11 +1105,32 @@ class _DashboardScreenState extends State<DashboardScreen>
     try {
       final prefs = await SharedPreferences.getInstance();
       final userStr = prefs.getString('user');
-      if (userStr == null) return;
+      if (userStr == null) {
+        _logSalaryAccessTest(
+          '_persistSalaryAccessOnUser skipped | no user string in prefs '
+          '(would have written salaryDetailsAccessEnabled=$salaryDetailsAccessEnabled)',
+        );
+        return;
+      }
       final user = jsonDecode(userStr) as Map<String, dynamic>;
       user['salaryDetailsAccessEnabled'] = salaryDetailsAccessEnabled;
+      if (user['staffData'] is Map) {
+        final st = Map<String, dynamic>.from(user['staffData'] as Map);
+        st['salaryDetailsAccessEnabled'] = salaryDetailsAccessEnabled;
+        user['staffData'] = st;
+      } else if (user['staff'] is Map) {
+        final st = Map<String, dynamic>.from(user['staff'] as Map);
+        st['salaryDetailsAccessEnabled'] = salaryDetailsAccessEnabled;
+        user['staff'] = st;
+      }
       await prefs.setString('user', jsonEncode(user));
-    } catch (_) {}
+      _logSalaryAccessTest(
+        '_persistSalaryAccessOnUser | wrote user+staffData salaryDetailsAccessEnabled='
+        '$salaryDetailsAccessEnabled (${salaryDetailsAccessEnabled.runtimeType})',
+      );
+    } catch (e) {
+      _logSalaryAccessTest('_persistSalaryAccessOnUser error=$e');
+    }
   }
 
   void _onDrawerNavigateToIndex(int index) {
@@ -1334,7 +1434,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           onTimeout: () => {'success': false, 'message': 'profile timeout'},
         ),
         _attendanceService
-            .getAttendanceByDate(todayStr)
+            .getTodayAttendance(forceRefresh: true, date: todayStr)
             .timeout(
               validationTimeout,
               onTimeout: () => {'success': false, 'message': 'today timeout'},
@@ -1350,9 +1450,66 @@ class _DashboardScreenState extends State<DashboardScreen>
         '[PunchFlow] validation data settled in ${sw.elapsedMilliseconds}ms | '
         'profileSuccess=${profileResult['success']} | todaySuccess=${result['success']}',
       );
-      if (result['success'] != true || result['data'] == null) return null;
+      Map<String, dynamic> effectiveResult = Map<String, dynamic>.from(result);
+      if (effectiveResult['success'] != true || effectiveResult['data'] == null) {
+        punchFlowLog(
+          '[PunchFlow] primary today fetch failed; trying getAttendanceByDate fallback | '
+          'message=${effectiveResult['message'] ?? '(none)'}',
+        );
+        try {
+          final fallback = await _attendanceService
+              .getAttendanceByDate(todayStr)
+              .timeout(
+                validationTimeout,
+                onTimeout: () => {'success': false, 'message': 'today fallback timeout'},
+              );
+          if (fallback['success'] == true && fallback['data'] != null) {
+            effectiveResult = Map<String, dynamic>.from(fallback);
+            punchFlowLog(
+              '[PunchFlow] getAttendanceByDate fallback succeeded in '
+              '${sw.elapsedMilliseconds}ms',
+            );
+          } else {
+            punchFlowLog(
+              '[PunchFlow] getAttendanceByDate fallback failed | '
+              'message=${fallback['message'] ?? '(none)'}',
+            );
+          }
+        } catch (e) {
+          punchFlowLog('[PunchFlow] getAttendanceByDate fallback error: $e');
+        }
+      }
+      if (effectiveResult['success'] != true || effectiveResult['data'] == null) {
+        // One final short retry helps when backend is momentarily busy.
+        await Future.delayed(const Duration(milliseconds: 450));
+        final retry = await _attendanceService
+            .getTodayAttendance(forceRefresh: true, date: todayStr)
+            .timeout(
+              validationTimeout,
+              onTimeout: () => {'success': false, 'message': 'today retry timeout'},
+            );
+        if (retry['success'] == true && retry['data'] != null) {
+          effectiveResult = Map<String, dynamic>.from(retry);
+          punchFlowLog(
+            '[PunchFlow] getTodayAttendance retry succeeded in '
+            '${sw.elapsedMilliseconds}ms',
+          );
+        } else {
+          punchFlowLog(
+            '[PunchFlow] getTodayAttendance retry failed | '
+            'message=${retry['message'] ?? '(none)'}',
+          );
+        }
+      }
+      if (effectiveResult['success'] != true || effectiveResult['data'] == null) {
+        punchFlowLog(
+          '[PunchFlow] validation data unavailable after retries in '
+          '${sw.elapsedMilliseconds}ms',
+        );
+        return null;
+      }
 
-      final body = result['data'] as Map<String, dynamic>;
+      final body = effectiveResult['data'] as Map<String, dynamic>;
       final template = asAttendanceTemplateMap(body['template']);
       if (kDebugMode) {
         _logTodayShiftTimingsFromDb(template);
@@ -1987,25 +2144,28 @@ class _DashboardScreenState extends State<DashboardScreen>
       return false;
     }
     final geofence = branchData['geofence'] as Map<String, dynamic>?;
-    final geofenceEnabled = geofence?['enabled'] == true;
-    if (!geofenceEnabled) {
-      await _showValidationAlertDialog('Geo fence is not set for your branch.');
-      return false;
-    }
-    final branchLat = geofence?['latitude'];
-    final branchLng = geofence?['longitude'];
-    final latLngSet =
-        branchLat != null &&
-        branchLng != null &&
-        (branchLat is num ||
-            (branchLat is String && branchLat.toString().trim().isNotEmpty)) &&
-        (branchLng is num ||
-            (branchLng is String && branchLng.toString().trim().isNotEmpty));
-    if (!latLngSet) {
-      await _showValidationAlertDialog(
-        'Lat and long is not set for the branch.',
-      );
-      return false;
+    final requireTemplateGeolocation = tmpl['requireGeolocation'] ?? true;
+    if (requireTemplateGeolocation == true) {
+      final geofenceEnabled = geofence?['enabled'] == true;
+      if (!geofenceEnabled) {
+        await _showValidationAlertDialog('Geo fence is not set for your branch.');
+        return false;
+      }
+      final branchLat = geofence?['latitude'];
+      final branchLng = geofence?['longitude'];
+      final latLngSet =
+          branchLat != null &&
+          branchLng != null &&
+          (branchLat is num ||
+              (branchLat is String && branchLat.toString().trim().isNotEmpty)) &&
+          (branchLng is num ||
+              (branchLng is String && branchLng.toString().trim().isNotEmpty));
+      if (!latLngSet) {
+        await _showValidationAlertDialog(
+          'Lat and long is not set for the branch.',
+        );
+        return false;
+      }
     }
     if (tmpl['isActive'] == false) {
       await _showValidationAlertDialog(
@@ -2912,7 +3072,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         dashboardTabIndex: _currentIndex,
         isActiveTab: _currentIndex == 0,
         refreshTrigger: _dashboardRefreshTrigger,
-        onDashboardDataRefreshed: _fetchPunchStatusForNavBar,
+        onDashboardDataRefreshed: _onHomeDashboardDataRefreshed,
+        hasSalaryOverviewAccess: _hasSalaryOverviewAccess,
       ),
       MyRequestsScreen(
         key: ValueKey('Requests_$_requestsSubTabIndex'),
@@ -3143,73 +3304,66 @@ class _DashboardScreenState extends State<DashboardScreen>
                 String? useCity;
                 String? usePincode;
 
-                if (requireGeolocation) {
-                  // Get location only when required by the template.
-                  showDialog(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (ctx) => const AlertDialog(
-                      content: Row(
-                        children: [
-                          SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          SizedBox(width: 16),
-                          Text('Getting location…'),
-                        ],
-                      ),
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (ctx) => const AlertDialog(
+                    content: Row(
+                      children: [
+                        SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(width: 16),
+                        Text('Getting location…'),
+                      ],
                     ),
-                  );
-                  final location = await _getCurrentLocation();
-                  punchFlowLog(
-                    '[PunchFlow] location resolved in ${punchFlowSw.elapsedMilliseconds}ms | '
-                    'hasPosition=${location.position != null}',
-                  );
-                  if (!mounted) return;
-                  Navigator.of(context).pop(); // Dismiss "Getting location..."
+                  ),
+                );
+                final location = await _getCurrentLocation();
+                punchFlowLog(
+                  '[PunchFlow] location resolved in ${punchFlowSw.elapsedMilliseconds}ms | '
+                  'hasPosition=${location.position != null}',
+                );
+                if (!mounted) return;
+                Navigator.of(context).pop(); // Dismiss "Getting location..."
 
-                  if (location.position == null) {
-                    _setPunchActionInProgress(false);
-                    SnackBarUtils.showSnackBar(
-                      context,
-                      'Location is required. Please enable location and try again.',
-                      isError: true,
-                    );
-                    return;
-                  }
-
-                  position = location.position;
-                  useAddress = location.address;
-                  useArea = location.area;
-                  useCity = location.city;
-                  usePincode = location.pincode;
+                if (location.position == null) {
+                  _setPunchActionInProgress(false);
+                  SnackBarUtils.showSnackBar(
+                    context,
+                    'Location is required. Please enable location and try again.',
+                    isError: true,
+                  );
+                  return;
                 }
 
-                final locationStr = requireGeolocation
-                    ? (useAddress.isNotEmpty
-                          ? useAddress
-                          : (useArea != null
-                                ? '$useArea, ${useCity ?? ''}${usePincode != null ? ' $usePincode' : ''}'
-                                : null))
-                    : 'Location not required';
+                position = location.position;
+                useAddress = location.address;
+                useArea = location.area;
+                useCity = location.city;
+                usePincode = location.pincode;
+
+                final locationStr = useAddress.isNotEmpty
+                    ? useAddress
+                    : (useArea != null
+                          ? '$useArea, ${useCity ?? ''}${usePincode != null ? ' $usePincode' : ''}'
+                          : null);
 
                 File? file;
                 if (requireSelfie) {
                   final result = await SelfieCameraScreen.captureSelfie(
                     context,
                     location: locationStr,
-                    onRefreshLocation: requireGeolocation
-                        ? () async {
-                            final loc = await _getCurrentLocation();
-                            return loc.address.isNotEmpty
-                                ? loc.address
-                                : (loc.area != null
-                                      ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
-                                      : null);
-                          }
-                        : null,
+                    onRefreshLocation: () async {
+                      final loc = await _getCurrentLocation();
+                      return loc.address.isNotEmpty
+                          ? loc.address
+                          : (loc.area != null
+                                ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
+                                : null);
+                    },
                   );
                   if (!mounted) return;
                   punchFlowLog(
@@ -3286,8 +3440,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 );
                 return;
               }
-              if (index == 2 && !_hasSalaryOverviewAccess) return;
-              final normalized = _normalizeTabIndex(index);
+              final normalized = _mapBottomNavIndexToScreenIndex(index);
               setState(() => _currentIndex = normalized);
               unawaited(_fetchPunchStatusForNavBar());
             },

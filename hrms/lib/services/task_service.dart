@@ -112,6 +112,67 @@ class TaskService {
     }
   }
 
+  Future<Map<String, dynamic>> getAssignedTasksPaginated(
+    String staffId, {
+    int page = 1,
+    int limit = 20,
+    String? search,
+    DateTime? startDate,
+    DateTime? endDate,
+    List<String>? statusGroups,
+  }) async {
+    try {
+      await _setToken();
+      final query = <String, dynamic>{
+        'page': page,
+        'limit': limit,
+      };
+      final q = (search ?? '').trim();
+      if (q.isNotEmpty) query['search'] = q;
+      if (startDate != null) {
+        query['startDate'] =
+            DateTime(startDate.year, startDate.month, startDate.day).toUtc().toIso8601String();
+      }
+      if (endDate != null) {
+        query['endDate'] = DateTime(
+          endDate.year,
+          endDate.month,
+          endDate.day,
+          23,
+          59,
+          59,
+          999,
+        ).toUtc().toIso8601String();
+      }
+      if (statusGroups != null && statusGroups.isNotEmpty) {
+        query['statusGroups'] = statusGroups.join(',');
+      }
+
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/tasks/staff/$staffId/paginated',
+        queryParameters: query,
+      );
+      final body = response.data ?? const <String, dynamic>{};
+      final rawList = (body['data'] as List?) ?? const [];
+      final pagination = body['pagination'] as Map<String, dynamic>? ?? const {};
+      final tasks = rawList
+          .whereType<Map>()
+          .map((j) => Task.fromJson(Map<String, dynamic>.from(j)))
+          .toList();
+      return {
+        'tasks': tasks,
+        'page': (pagination['page'] as num?)?.toInt() ?? page,
+        'limit': (pagination['limit'] as num?)?.toInt() ?? limit,
+        'total': (pagination['total'] as num?)?.toInt() ?? tasks.length,
+        'totalPages': (pagination['totalPages'] as num?)?.toInt() ?? 1,
+      };
+    } on DioException catch (e) {
+      throw Exception(
+        'Failed to load assigned tasks: ${e.response?.statusCode ?? e.message}',
+      );
+    }
+  }
+
   Future<Task> getTaskById(String id) async {
     try {
       await _setToken();

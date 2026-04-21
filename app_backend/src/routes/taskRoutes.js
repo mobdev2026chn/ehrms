@@ -7,6 +7,7 @@ const { protect } = require('../middleware/authMiddleware');
 const {
   getAllTasks,
   getTasksByStaffId,
+  getTasksByStaffIdPaginated,
   getTaskById,
   createTask,
   updateTask,
@@ -44,6 +45,7 @@ const upload = multer({
 });
 
 router.get('/', getAllTasks);
+router.get('/staff/:staffId/paginated', getTasksByStaffIdPaginated);
 router.get('/staff/:staffId', getTasksByStaffId);
 router.get('/:id/completion-report', getCompletionReport);
 router.get('/:id/tracking-path', protect, getTrackingPath);

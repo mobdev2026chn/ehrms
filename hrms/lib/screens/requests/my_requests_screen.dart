@@ -58,16 +58,15 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
   final GlobalKey<_LeaveRequestsTabState> _leaveTabKey = GlobalKey();
   final GlobalKey<_LoanRequestsTabState> _loanTabKey = GlobalKey();
   final GlobalKey<_ExpenseRequestsTabState> _expenseTabKey = GlobalKey();
-  final GlobalKey<_PayslipRequestsTabState> _payslipTabKey = GlobalKey();
   final GlobalKey<_PermissionRequestsTabState> _permissionTabKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(
-      length: 5,
+      length: 4,
       vsync: this,
-      initialIndex: widget.initialTabIndex.clamp(0, 4),
+      initialIndex: widget.initialTabIndex.clamp(0, 3),
     );
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
@@ -99,9 +98,6 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
       case 3:
         _permissionTabKey.currentState?.refresh();
         break;
-      case 4:
-        _payslipTabKey.currentState?.refresh();
-        break;
     }
   }
 
@@ -114,7 +110,6 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final tabItemWidth = (MediaQuery.of(context).size.width / 5) - 6;
 
     return Scaffold(
       backgroundColor: colorScheme.surfaceContainerHighest,
@@ -142,26 +137,21 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
                 case 3:
                   _permissionTabKey.currentState?.toggleFilters();
                   break;
-                case 4:
-                  _payslipTabKey.currentState?.toggleFilters();
-                  break;
               }
             },
           ),
         ],
         bottom: TabBar(
           controller: _tabController,
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
-          padding: EdgeInsets.zero,
+          isScrollable: false,
           labelColor: Colors.black,
           unselectedLabelColor: Colors.black,
           labelStyle: const TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
           unselectedLabelStyle: const TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.w500,
           ),
           indicatorColor: colorScheme.primary,
@@ -172,51 +162,10 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
             borderRadius: BorderRadius.circular(6),
           ),
           tabs: [
-            Tab(
-              child: SizedBox(
-                width: tabItemWidth,
-                child: const _CompactRequestTab(
-                  text: 'Leave',
-                  icon: Icons.calendar_today,
-                ),
-              ),
-            ),
-            Tab(
-              child: SizedBox(
-                width: tabItemWidth,
-                child: const _CompactRequestTab(
-                  text: 'Loan',
-                  icon: Icons.account_balance_wallet,
-                ),
-              ),
-            ),
-            Tab(
-              child: SizedBox(
-                width: tabItemWidth,
-                child: const _CompactRequestTab(
-                  text: 'Expense',
-                  icon: Icons.receipt,
-                ),
-              ),
-            ),
-            Tab(
-              child: SizedBox(
-                width: tabItemWidth,
-                child: const _CompactRequestTab(
-                  text: 'Permission',
-                  icon: Icons.fact_check_outlined,
-                ),
-              ),
-            ),
-            Tab(
-              child: SizedBox(
-                width: tabItemWidth,
-                child: const _CompactRequestTab(
-                  text: 'Payslip',
-                  icon: Icons.description,
-                ),
-              ),
-            ),
+            Tab(child: _CompactRequestTab(text: 'Leave', icon: Icons.calendar_today)),
+            Tab(child: _CompactRequestTab(text: 'Loan', icon: Icons.account_balance_wallet)),
+            Tab(child: _CompactRequestTab(text: 'Expense', icon: Icons.receipt)),
+            Tab(child: _CompactRequestTab(text: 'Permission', icon: Icons.fact_check_outlined)),
           ],
           onTap: (index) {
             _tabController.animateTo(index);
@@ -235,7 +184,6 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
           LoanRequestsTab(key: _loanTabKey),
           ExpenseRequestsTab(key: _expenseTabKey),
           PermissionRequestsTab(key: _permissionTabKey),
-          PayslipRequestsTab(key: _payslipTabKey),
         ],
       ),
       floatingActionButton: _buildFab(),
@@ -291,18 +239,6 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
             backgroundColor: AppColors.primary,
           ),
         );
-      case 4: // Payslip
-        return SizedBox(
-          height: 40,
-          child: FloatingActionButton.extended(
-            foregroundColor: Colors.white,
-            onPressed: () =>
-                _payslipTabKey.currentState?.showRequestPayslipDialog(),
-            label: Text('Request Payslip', style: style),
-            icon: const Icon(Icons.add, size: 18),
-            backgroundColor: AppColors.primary,
-          ),
-        );
       default:
         return null;
     }
@@ -320,13 +256,13 @@ class _CompactRequestTab extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(icon, size: 16),
-        const SizedBox(height: 1),
+        Icon(icon, size: 19),
+        const SizedBox(height: 2),
         Text(
           text,
           overflow: TextOverflow.ellipsis,
           maxLines: 1,
-          style: const TextStyle(fontSize: 11),
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         ),
       ],
     );
@@ -4103,11 +4039,11 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
           const SizedBox(height: 8),
           Row(
             children: [
-              _balanceTile('Quota', '${hours(quota)} h', Colors.blue),
+              _balanceTile('Quota', '${hours(quota)} h'),
               const SizedBox(width: 8),
-              _balanceTile('Used', '${hours(consumed)} h', Colors.orange),
+              _balanceTile('Used', '${hours(consumed)} h'),
               const SizedBox(width: 8),
-              _balanceTile('Left', '${hours(remain)} h', Colors.green),
+              _balanceTile('Left', '${hours(remain)} h'),
             ],
           ),
           const SizedBox(height: 12),
@@ -4230,21 +4166,35 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
     );
   }
 
-  Widget _balanceTile(String title, String value, Color color) {
+  Widget _balanceTile(String title, String value) {
+    IconData icon;
+    switch (title.toLowerCase()) {
+      case 'quota':
+        icon = Icons.inventory_2_outlined;
+        break;
+      case 'used':
+        icon = Icons.timelapse_outlined;
+        break;
+      default:
+        icon = Icons.check_circle_outline;
+        break;
+    }
     return Expanded(
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
           borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.primary.withOpacity(0.25)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Icon(icon, size: 18, color: AppColors.primary),
+            const SizedBox(height: 6),
             Text(
               title,
               style: TextStyle(
-                color: color,
+                color: AppColors.primary,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -4253,7 +4203,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
             Text(
               value,
               style: TextStyle(
-                color: color,
+                color: Theme.of(context).colorScheme.onSurface,
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
               ),

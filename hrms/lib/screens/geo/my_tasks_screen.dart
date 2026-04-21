@@ -1,6 +1,8 @@
 // hrms/lib/screens/geo/my_tasks_screen.dart
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:excel/excel.dart' hide Border;
 import 'package:flutter/material.dart';
@@ -46,7 +48,6 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   bool _isLoading = true;
   String? _errorMessage;
 
-  late TabController _tabController;
   late TabController _mainTabController;
   List<Customer> _customers = [];
   bool _isLoadingCustomers = true;
@@ -58,16 +59,19 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   bool _isSelectionMode = false;
   final Set<String> _selectedTaskIds = {};
   bool _exporting = false;
-  bool _showFilterSection = false;
+  bool _filterInProgress = false;
+  bool _filterHold = false;
+  bool _filterCompleted = false;
+  int _tasksPage = 1;
+  static const int _tasksPerPage = 20;
+  int _tasksTotal = 0;
+  int _tasksTotalPages = 1;
+  Timer? _searchDebounce;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _tabController = TabController(length: 7, vsync: this);
-    _tabController.addListener(() {
-      if (!_tabController.indexIsChanging && mounted) setState(() {});
-    });
     _mainTabController = TabController(length: 2, vsync: this);
     _mainTabController.addListener(() {
       if (!_mainTabController.indexIsChanging && mounted) setState(() {});
@@ -88,7 +92,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   void dispose() {
     appRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
-    _tabController.dispose();
+    _searchDebounce?.cancel();
     _mainTabController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -102,229 +106,304 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     }
   }
 
-  List<Task> get _filteredTasks {
-    List<Task> list = _tasks;
-    final tabIndex = _tabController.index;
-    switch (tabIndex) {
-      case 1: // In Progress (actively doing the task)
-        list = list
+  List<Task> get _filteredTasks => _tasks;
+
+  int _statusGroupCount(String group) {
+    switch (group) {
+      case 'inProgress':
+        return _tasks
             .where(
               (t) =>
                   t.status == TaskStatus.inProgress ||
                   t.status == TaskStatus.arrived,
             )
-            .toList();
-        break;
-      case 2: // Pending (not yet started)
-        list = list
-            .where(
-              (t) =>
-                  t.status == TaskStatus.pending ||
-                  t.status == TaskStatus.assigned ||
-                  t.status == TaskStatus.scheduled ||
-                  t.status == TaskStatus.approved ||
-                  t.status == TaskStatus.staffapproved,
-            )
-            .toList();
-        break;
-      case 3: // Hold
-        list = list
+            .length;
+      case 'hold':
+        return _tasks
             .where(
               (t) =>
                   t.status == TaskStatus.hold ||
                   t.status == TaskStatus.holdOnArrival,
             )
-            .toList();
-        break;
-      case 4: // Completed
-        list = list
+            .length;
+      case 'completed':
+        return _tasks
             .where(
               (t) =>
                   t.status == TaskStatus.completed ||
                   t.status == TaskStatus.waitingForApproval,
             )
-            .toList();
-        break;
-      case 5: // Rejected
-        list = list.where((t) => t.status == TaskStatus.rejected).toList();
-        break;
-      case 6: // Exited
-        list = list
-            .where(
-              (t) =>
-                  t.status == TaskStatus.exited ||
-                  t.status == TaskStatus.exitedOnArrival ||
-                  t.status == TaskStatus.reopenedOnArrival,
-            )
-            .toList();
-        break;
+            .length;
+      default:
+        return 0;
     }
-    // Search: customer name, task name, taskId
-    if (_searchQuery.trim().isNotEmpty) {
-      final q = _searchQuery.trim().toLowerCase();
-      list = list.where((t) {
-        if (t.taskId.toLowerCase().contains(q)) return true;
-        if (t.taskTitle.toLowerCase().contains(q)) return true;
-        if (t.customer != null &&
-            t.customer!.customerName.toLowerCase().contains(q)) {
-          return true;
-        }
-        return false;
-      }).toList();
-    }
-    // Date filter (expectedCompletionDate or completedDate in range)
-    if (_filterStartDate != null || _filterEndDate != null) {
-      list = list.where((t) {
-        final DateTime checkDate = t.completedDate ?? t.expectedCompletionDate;
-        if (_filterStartDate != null &&
-            checkDate.isBefore(
-              DateTime(
-                _filterStartDate!.year,
-                _filterStartDate!.month,
-                _filterStartDate!.day,
-              ),
-            )) {
-          return false;
-        }
-        if (_filterEndDate != null) {
-          final endOfDay = DateTime(
-            _filterEndDate!.year,
-            _filterEndDate!.month,
-            _filterEndDate!.day,
-            23,
-            59,
-            59,
-          );
-          if (checkDate.isAfter(endOfDay)) return false;
-        }
-        return true;
-      }).toList();
-    }
-    return list;
   }
 
-  void _refreshFilters() {
+  bool get _hasAnyFilters =>
+      _searchQuery.trim().isNotEmpty ||
+      _filterStartDate != null ||
+      _filterEndDate != null ||
+      _filterInProgress ||
+      _filterHold ||
+      _filterCompleted;
+
+  int get _totalTaskPages {
+    return math.max(_tasksTotalPages, 1);
+  }
+
+  int get _currentTaskPage =>
+      math.min(math.max(_tasksPage, 1), _totalTaskPages);
+
+  List<Task> get _pagedFilteredTasks {
+    return _filteredTasks;
+  }
+
+  List<String> _activeStatusGroups() {
+    final groups = <String>[];
+    if (_filterInProgress) groups.add('inProgress');
+    if (_filterHold) groups.add('hold');
+    if (_filterCompleted) groups.add('completed');
+    return groups;
+  }
+
+  Future<void> _refreshAndResetAllFilters() async {
+    _searchController.clear();
     setState(() {
-      _searchQuery = _searchController.text;
+      _searchQuery = '';
+      _filterStartDate = null;
+      _filterEndDate = null;
+      _filterInProgress = false;
+      _filterHold = false;
+      _filterCompleted = false;
+      _tasksPage = 1;
     });
+    await _fetchTasks();
   }
 
-  Widget _buildFilterSection() {
+  Future<void> _openTaskFilterBottomSheet() async {
+    DateTime? tempStart = _filterStartDate;
+    DateTime? tempEnd = _filterEndDate;
+    bool tempInProgress = _filterInProgress;
+    bool tempHold = _filterHold;
+    bool tempCompleted = _filterCompleted;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setBottomState) {
+            String dateText() {
+              if (tempStart == null && tempEnd == null) return 'Not selected';
+              if (tempStart != null && tempEnd != null) {
+                return '${DateFormat('dd/MM/yy').format(tempStart!)} - ${DateFormat('dd/MM/yy').format(tempEnd!)}';
+              }
+              if (tempStart != null) {
+                return 'From ${DateFormat('dd/MM/yy').format(tempStart!)}';
+              }
+              return 'To ${DateFormat('dd/MM/yy').format(tempEnd!)}';
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  12 + MediaQuery.of(ctx).viewInsets.bottom,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            'Filter tasks',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Date filter',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.date_range, size: 18),
+                        label: Text(dateText()),
+                        onPressed: () async {
+                          final now = DateTime.now();
+                          final initialStart = tempStart ?? now;
+                          final initialEnd = tempEnd ?? tempStart ?? now;
+                          final range = await showDateRangePicker(
+                            context: ctx,
+                            firstDate: DateTime(2020),
+                            lastDate: now.add(const Duration(days: 365)),
+                            initialDateRange: DateTimeRange(
+                              start: initialStart.isBefore(initialEnd)
+                                  ? initialStart
+                                  : initialEnd,
+                              end: initialEnd.isAfter(initialStart)
+                                  ? initialEnd
+                                  : initialStart,
+                            ),
+                            helpText: 'Select date range',
+                          );
+                          if (range != null) {
+                            setBottomState(() {
+                              tempStart = range.start;
+                              tempEnd = range.end;
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Status filter',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilterChip(
+                            label: Text(
+                              'In Progress (${_statusGroupCount('inProgress')})',
+                            ),
+                            selected: tempInProgress,
+                            onSelected: (v) => setBottomState(() => tempInProgress = v),
+                          ),
+                          FilterChip(
+                            label: Text('Hold (${_statusGroupCount('hold')})'),
+                            selected: tempHold,
+                            onSelected: (v) => setBottomState(() => tempHold = v),
+                          ),
+                          FilterChip(
+                            label: Text('Completed (${_statusGroupCount('completed')})'),
+                            selected: tempCompleted,
+                            onSelected: (v) => setBottomState(() => tempCompleted = v),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () {
+                                setBottomState(() {
+                                  tempStart = null;
+                                  tempEnd = null;
+                                  tempInProgress = false;
+                                  tempHold = false;
+                                  tempCompleted = false;
+                                });
+                                setState(() {
+                                  _filterStartDate = null;
+                                  _filterEndDate = null;
+                                  _filterInProgress = false;
+                                  _filterHold = false;
+                                  _filterCompleted = false;
+                                  _tasksPage = 1;
+                                });
+                                _fetchTasks();
+                              },
+                              child: const Text('Reset'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  _filterStartDate = tempStart;
+                                  _filterEndDate = tempEnd;
+                                  _filterInProgress = tempInProgress;
+                                  _filterHold = tempHold;
+                                  _filterCompleted = tempCompleted;
+                                  _tasksPage = 1;
+                                });
+                                Navigator.of(ctx).pop();
+                                _fetchTasks();
+                              },
+                              child: const Text('Apply'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSearchAndRefreshRow() {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        border: Border(bottom: BorderSide(color: colorScheme.outline)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      color: colorScheme.surface,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Row(
         children: [
-          // Search with Refresh on the right
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Customer name, task name, task ID',
-                    prefixIcon: const Icon(Icons.search, size: 20),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    filled: true,
-                    fillColor: colorScheme.surface,
-                  ),
-                  onChanged: (_) =>
-                      setState(() => _searchQuery = _searchController.text),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Customer name, task name, task ID',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
                 ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh tasks and filters',
-                onPressed: () async {
-                  _refreshFilters();
-                  await _fetchTasks();
-                  if (mounted) setState(() {});
-                },
-                style: IconButton.styleFrom(
-                  backgroundColor: colorScheme.surface,
-                  side: BorderSide(color: colorScheme.outline),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
                 ),
+                filled: true,
+                fillColor: colorScheme.surfaceContainerLowest,
               ),
-            ],
+              onChanged: (_) {
+                setState(() {
+                  _searchQuery = _searchController.text;
+                  _tasksPage = 1;
+                });
+                _searchDebounce?.cancel();
+                _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+                  if (mounted) _fetchTasks();
+                });
+              },
+            ),
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.date_range, size: 16),
-                  label: Text(
-                    _filterStartDate == null && _filterEndDate == null
-                        ? 'Date range (From - To)'
-                        : _filterStartDate != null && _filterEndDate != null
-                        ? '${DateFormat('dd/MM/yy').format(_filterStartDate!)} - ${DateFormat('dd/MM/yy').format(_filterEndDate!)}'
-                        : _filterStartDate != null
-                        ? 'From ${DateFormat('dd/MM/yy').format(_filterStartDate!)}'
-                        : 'To ${DateFormat('dd/MM/yy').format(_filterEndDate!)}',
-                    style: const TextStyle(fontSize: 12),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  onPressed: () async {
-                    final now = DateTime.now();
-                    final initialStart = _filterStartDate ?? now;
-                    final initialEnd =
-                        _filterEndDate ?? _filterStartDate ?? now;
-                    final range = await showDateRangePicker(
-                      context: context,
-                      firstDate: DateTime(2020),
-                      lastDate: now.add(const Duration(days: 365)),
-                      initialDateRange: DateTimeRange(
-                        start: initialStart.isBefore(initialEnd)
-                            ? initialStart
-                            : initialEnd,
-                        end: initialEnd.isAfter(initialStart)
-                            ? initialEnd
-                            : initialStart,
-                      ),
-                      helpText: 'Select date range (From - To)',
-                    );
-                    if (range != null && mounted) {
-                      setState(() {
-                        _filterStartDate = range.start;
-                        _filterEndDate = range.end;
-                      });
-                    }
-                  },
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                ),
-              ),
-              if (_filterStartDate != null || _filterEndDate != null) ...[
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.clear, size: 20),
-                  tooltip: 'Clear date filter',
-                  onPressed: () => setState(() {
-                    _filterStartDate = null;
-                    _filterEndDate = null;
-                  }),
-                  style: IconButton.styleFrom(
-                    backgroundColor: colorScheme.surface,
-                    side: BorderSide(color: colorScheme.outline),
-                  ),
-                ),
-              ],
-            ],
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh tasks and reset filters',
+            onPressed: _refreshAndResetAllFilters,
+            style: IconButton.styleFrom(
+              backgroundColor: colorScheme.surfaceContainerLowest,
+              side: BorderSide(color: colorScheme.outline),
+            ),
           ),
         ],
       ),
@@ -596,34 +675,32 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   Future<void> _fetchTasks() async {
     if (!mounted) return;
     try {
-      List<Task> assignedTasks;
       if (_loggedInStaffId != null && _loggedInStaffId!.isNotEmpty) {
-        assignedTasks = await TaskService().getAssignedTasks(_loggedInStaffId!);
-      } else {
-        assignedTasks = await TaskService().getAllTasks();
-      }
-
-      if (!mounted) return;
-      List<Task> tasksWithCustomer = [];
-      for (var task in assignedTasks) {
-        if (task.customerId != null && task.customerId!.isNotEmpty) {
-          try {
-            final customer = await CustomerService().getCustomerById(
-              task.customerId!,
-            );
-            tasksWithCustomer.add(task.copyWith(customer: customer));
-          } catch (_) {
-            tasksWithCustomer.add(task);
-          }
-        } else {
-          tasksWithCustomer.add(task);
-        }
+        final res = await TaskService().getAssignedTasksPaginated(
+          _loggedInStaffId!,
+          page: _tasksPage,
+          limit: _tasksPerPage,
+          search: _searchQuery,
+          startDate: _filterStartDate,
+          endDate: _filterEndDate,
+          statusGroups: _activeStatusGroups(),
+        );
         if (!mounted) return;
-      }
-
-      if (mounted) {
         setState(() {
-          _tasks = tasksWithCustomer;
+          _tasks = (res['tasks'] as List<Task>? ?? const []);
+          _tasksTotal = (res['total'] as int?) ?? _tasks.length;
+          _tasksTotalPages = (res['totalPages'] as int?) ?? 1;
+          _tasksPage = (res['page'] as int?) ?? _tasksPage;
+          _isLoading = false;
+          _errorMessage = null;
+        });
+      } else {
+        final assignedTasks = await TaskService().getAllTasks();
+        if (!mounted) return;
+        setState(() {
+          _tasks = assignedTasks;
+          _tasksTotal = assignedTasks.length;
+          _tasksTotalPages = 1;
           _isLoading = false;
           _errorMessage = null;
         });
@@ -660,6 +737,73 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     );
     if (!mounted || yes != true) return;
     onYes();
+  }
+
+  Widget _buildTaskPaginationBar(ColorScheme colorScheme) {
+    final totalPages = _totalTaskPages;
+    if (_filteredTasks.isEmpty) return const SizedBox.shrink();
+    final startItem = ((_currentTaskPage - 1) * _tasksPerPage) + 1;
+    final endItem = math.min(_currentTaskPage * _tasksPerPage, _tasksTotal);
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.view_list_rounded, size: 16, color: colorScheme.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Showing $startItem-$endItem of $_tasksTotal',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: _currentTaskPage > 1
+                    ? () {
+                        setState(() => _tasksPage = _currentTaskPage - 1);
+                        _fetchTasks();
+                      }
+                    : null,
+                tooltip: 'Previous page',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.chevron_left_rounded),
+              ),
+              Text(
+                '$_currentTaskPage/$totalPages',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              IconButton(
+                onPressed: _currentTaskPage < totalPages
+                    ? () {
+                        setState(() => _tasksPage = _currentTaskPage + 1);
+                        _fetchTasks();
+                      }
+                    : null,
+                tooltip: 'Next page',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.chevron_right_rounded),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Color _getStatusChipColor(TaskStatus status) {
@@ -743,97 +887,6 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       default:
         return '';
     }
-  }
-
-  Widget _buildTaskProgressBar() {
-    final colorScheme = Theme.of(context).colorScheme;
-    final total = _tasks.length;
-    if (total == 0) return const SizedBox.shrink();
-    final completed = _tasks
-        .where((t) => t.status == TaskStatus.completed)
-        .length;
-    final inProgress = _tasks
-        .where((t) => t.status == TaskStatus.inProgress)
-        .length;
-    final pending = _tasks
-        .where(
-          (t) =>
-              t.status == TaskStatus.pending ||
-              t.status == TaskStatus.assigned ||
-              t.status == TaskStatus.scheduled ||
-              t.status == TaskStatus.staffapproved,
-        )
-        .length;
-    final percentage = total > 0 ? (completed / total * 100).round() : 0;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLowest,
-        border: Border(bottom: BorderSide(color: colorScheme.outline)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '$percentage% complete',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-              Flexible(
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  alignment: WrapAlignment.end,
-                  children: [
-                    _progressChip('$completed done', Colors.green.shade600),
-                    _progressChip(
-                      '$inProgress in progress',
-                      Colors.blue.shade600,
-                    ),
-                    _progressChip('$pending pending', Colors.orange.shade600),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: total > 0 ? completed / total : 0.0,
-              backgroundColor: colorScheme.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.green.shade600),
-              minHeight: 6,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _progressChip(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.5), width: 0.5),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          color: color,
-        ),
-      ),
-    );
   }
 
   Widget _buildRequirementChip(String label, Color color) {
@@ -958,17 +1011,30 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   ],
                 ),
           actions: [
+            if (!_isSelectionMode &&
+                _mainTabController.index == 0 &&
+                _loggedInStaffId != null &&
+                _loggedInStaffId!.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.add),
+                tooltip: 'Add Task',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => AddTaskScreen(staffId: _loggedInStaffId!),
+                    ),
+                  ).then((_) => _fetchTasks());
+                },
+              ),
             if (!_isSelectionMode && _mainTabController.index == 0)
               IconButton(
                 icon: Icon(
-                  _showFilterSection
-                      ? Icons.filter_alt
-                      : Icons.filter_alt_outlined,
-                  color: _showFilterSection ? colorScheme.primary : null,
+                  _hasAnyFilters ? Icons.filter_alt : Icons.filter_alt_outlined,
+                  color: _hasAnyFilters ? colorScheme.primary : null,
                 ),
-                tooltip: _showFilterSection ? 'Hide filter' : 'Show filter',
-                onPressed: () =>
-                    setState(() => _showFilterSection = !_showFilterSection),
+                tooltip: 'Filter tasks',
+                onPressed: _openTaskFilterBottomSheet,
               ),
             if (_isSelectionMode || _mainTabController.index == 0)
               IconButton(
@@ -1017,46 +1083,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     : Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (!_isSelectionMode)
-                            Container(
-                              color: colorScheme.surface,
-                              child: TabBar(
-                                controller: _tabController,
-                                isScrollable: true,
-                                padding: EdgeInsets.zero,
-                                tabAlignment: TabAlignment.start,
-                                labelColor: colorScheme.primary,
-                                unselectedLabelColor: colorScheme.onSurfaceVariant,
-                                indicatorColor: colorScheme.primary,
-                                indicatorSize: TabBarIndicatorSize.tab,
-                                labelPadding: const EdgeInsets.symmetric(horizontal: 12),
-                                labelStyle: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                unselectedLabelStyle: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                indicator: BoxDecoration(
-                                  color: colorScheme.primary.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                tabs: const [
-                                  Tab(text: 'All Tasks'),
-                                  Tab(text: 'In Progress'),
-                                  Tab(text: 'Pending'),
-                                  Tab(text: 'Hold'),
-                                  Tab(text: 'Completed'),
-                                  Tab(text: 'Rejected'),
-                                  Tab(text: 'Exited'),
-                                ],
-                              ),
-                            ),
-                          if (!_isSelectionMode && _tasks.isNotEmpty)
-                            _buildTaskProgressBar(),
-                          if (!_isSelectionMode && _showFilterSection)
-                            _buildFilterSection(),
+                          if (!_isSelectionMode) _buildSearchAndRefreshRow(),
                           Expanded(
                     child: _tasks.isEmpty
                         ? RefreshIndicator(
@@ -1077,40 +1104,11 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                       ),
                                       const SizedBox(height: 12),
                                       Text(
-                                        'No tasks assigned yet',
+                                        _hasAnyFilters
+                                            ? 'No tasks match filters'
+                                            : 'No tasks assigned yet',
                                         style: TextStyle(
                                           fontSize: 16,
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                        : _filteredTasks.isEmpty
-                        ? RefreshIndicator(
-                            onRefresh: _fetchTasks,
-                            child: SingleChildScrollView(
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              child: SizedBox(
-                                height:
-                                    MediaQuery.of(context).size.height * 0.5,
-                                child: Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.filter_list_off,
-                                        size: 64,
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'No tasks match filters',
-                                        style: TextStyle(
-                                          fontSize: 14,
                                           color: colorScheme.onSurfaceVariant,
                                         ),
                                       ),
@@ -1124,9 +1122,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                             onRefresh: _fetchTasks,
                             child: ListView.builder(
                               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                              itemCount: _filteredTasks.length,
+                              itemCount: _tasks.length,
                               itemBuilder: (context, index) {
-                                final task = _filteredTasks[index];
+                                final task = _tasks[index];
                                 final taskKey = task.id ?? task.taskId;
                                 final isCompleted =
                                     task.status == TaskStatus.completed;
@@ -1597,43 +1595,27 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       ),
           ],
         ),
-        bottomNavigationBar: AppBottomNavigationBar(
-          currentIndex: -1,
-          onTap: (index) {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(
-                builder: (_) =>
-                    DashboardScreen(initialIndex: index.clamp(0, 4)),
-              ),
-              (route) => false,
-            );
-          },
+        bottomNavigationBar: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_mainTabController.index == 0 && !_isSelectionMode)
+              _buildTaskPaginationBar(colorScheme),
+            AppBottomNavigationBar(
+              currentIndex: -1,
+              onTap: (index) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        DashboardScreen(initialIndex: index.clamp(0, 4)),
+                  ),
+                  (route) => false,
+                );
+              },
+            ),
+          ],
         ),
-        floatingActionButton: _mainTabController.index == 0
-            ? (_loggedInStaffId != null && _loggedInStaffId!.isNotEmpty
-                ? SizedBox(
-                    height: 40,
-                    child: FloatingActionButton.extended(
-                      foregroundColor: Colors.white,
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                AddTaskScreen(staffId: _loggedInStaffId!),
-                          ),
-                        ).then((_) => _fetchTasks());
-                      },
-                      label: const Text(
-                        'Add Task',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                      ),
-                      icon: const Icon(Icons.add, size: 18),
-                      backgroundColor: colorScheme.primary,
-                    ),
-                  )
-                : null)
-            : SizedBox(
+        floatingActionButton: _mainTabController.index == 1
+            ? SizedBox(
                 height: 40,
                 child: FloatingActionButton.extended(
                   foregroundColor: Colors.white,
@@ -1652,7 +1634,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   icon: const Icon(Icons.person_add, size: 18),
                   backgroundColor: colorScheme.secondary,
                 ),
-              ),
+              )
+            : null,
       );
         },
       ),

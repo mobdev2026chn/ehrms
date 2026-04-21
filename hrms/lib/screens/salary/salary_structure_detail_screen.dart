@@ -375,7 +375,7 @@ class _SalaryStructureDetailScreenState
                 ),
               ),
             ),
-      bottomNavigationBar: const AppBottomNavigationBar(currentIndex: 2),
+      bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
   }
 

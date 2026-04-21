@@ -2,10 +2,11 @@
 class AppConstants {
   /// General app API (attendance, geo, profile, …).
   //static const String baseUrl = 'http://192.168.1.33:9001/api';
-// static const String baseUrl = 'https://app.ektahr.com/api';
-static const String baseUrl = 'https://ehrms.askeva.net/api';
+ static const String baseUrl = 'https://app.ektahr.com/api';
+//static const String baseUrl = 'https://ehrms.askeva.net/api';
   /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
-  static const String webBaseUrl = 'https://hrms.askeva.net/api';
+  //static const String webBaseUrl = 'https://hrms.askeva.net/api';
+ static const String webBaseUrl = 'https://my.ektahr.com/api';
 
   /// When **true** (default): Interaction REST + Socket use [webBaseUrl] like the web.
   /// With a different [baseUrl], [AuthService] performs a second `/auth/login` against [webBaseUrl]

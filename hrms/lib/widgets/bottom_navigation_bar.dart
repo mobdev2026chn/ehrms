@@ -241,32 +241,36 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
 
   void _handleNavigation(BuildContext context, int index) {
     HapticFeedback.lightImpact();
+    // Bottom-nav third icon is Attendance; DashboardScreen expects tab index 4.
+    final targetIndex = index == 2 ? 4 : index;
     if (widget.onTap != null) {
-      widget.onTap!(index);
+      widget.onTap!(targetIndex);
     } else {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => DashboardScreen(initialIndex: index)),
+        MaterialPageRoute(
+          builder: (_) => DashboardScreen(initialIndex: targetIndex),
+        ),
         (route) => route.isFirst,
       );
     }
   }
 
   List<NavItem> _buildItems() {
-    return [
-      const NavItem(
+    return const [
+      NavItem(
         icon: Icons.dashboard_outlined,
         activeIcon: Icons.dashboard_rounded,
         label: 'Dashboard',
       ),
-      const NavItem(
+      NavItem(
         icon: Icons.description_outlined,
         activeIcon: Icons.description_rounded,
         label: 'Requests',
       ),
-      const NavItem(
-        icon: Icons.account_balance_wallet_outlined,
-        activeIcon: Icons.account_balance_wallet_rounded,
-        label: 'Salary',
+      NavItem(
+        icon: Icons.fact_check_outlined,
+        activeIcon: Icons.fact_check,
+        label: 'Attendance',
       ),
     ];
   }

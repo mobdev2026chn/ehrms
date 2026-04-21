@@ -48,6 +48,9 @@ class HomeDashboardScreen extends StatefulWidget {
   /// Optional parent callback to recompute bottom-nav punch visibility after refresh.
   final Future<void> Function()? onDashboardDataRefreshed;
 
+  /// Staffs collection `salaryDetailsAccessEnabled` (profile [staffData]) — same strict `== true` as [SalaryOverviewScreen]; controls Salary Overview quick action only.
+  final bool hasSalaryOverviewAccess;
+
   const HomeDashboardScreen({
     super.key,
     this.onNavigate,
@@ -57,6 +60,7 @@ class HomeDashboardScreen extends StatefulWidget {
     this.isActiveTab,
     this.refreshTrigger,
     this.onDashboardDataRefreshed,
+    this.hasSalaryOverviewAccess = false,
   });
 
   @override
@@ -1349,7 +1353,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
-                        children: _buildQuickActionButtons(),
+                        children: _buildRequestQuickActionButtons(),
                       ),
                     ),
                   ),
@@ -1376,6 +1380,41 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   // 5. Today attendance card
                   if (!_isCandidate) ...[
                     _buildMonthAttendanceCard(dashboardCompact: true),
+                    const SizedBox(height: 24),
+                    Text(
+                      'More Actions',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1E293B),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 16,
+                        horizontal: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: _buildSalaryAttendanceQuickActionButtons(),
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 24),
                   ],
 
@@ -2030,50 +2069,24 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
-  List<Widget> _buildQuickActionButtons() {
+  List<Widget> _buildRequestQuickActionButtons() {
     final buttons = <Widget>[];
     final onNavigate = widget.onNavigate;
 
     final accent = AppColors.primary;
-    if (!_isCandidate && onNavigate != null) {
-      buttons.add(
-        _buildQuickActionButton(
-          icon: Icons.fingerprint,
-          label: 'Attendance',
-          color: accent,
-          onTap: () => onNavigate(4, subTabIndex: 0),
-        ),
-      );
-      buttons.add(
-        _buildQuickActionButton(
-          icon: Icons.account_balance_wallet_outlined,
-          label: 'Salary Overview',
-          color: accent,
-          onTap: () => onNavigate(2),
-        ),
-      );
-    }
-
     if (onNavigate != null) {
       buttons.addAll([
-        if (!_isCandidate)
-          _buildQuickActionButton(
-            icon: Icons.account_balance_wallet_outlined,
-            label: 'Salary Structure',
-            color: accent,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const StaffSalaryStructureScreen(),
-                ),
-              );
-            },
-          ),
         _buildQuickActionButton(
           icon: Icons.calendar_today,
           label: 'Apply Leave',
           color: accent,
           onTap: () => onNavigate(1, subTabIndex: 0),
+        ),
+        _buildQuickActionButton(
+          icon: Icons.fact_check_outlined,
+          label: 'Request Permission',
+          color: accent,
+          onTap: () => onNavigate(1, subTabIndex: 3),
         ),
         _buildQuickActionButton(
           icon: Icons.account_balance_wallet,
@@ -2087,19 +2100,76 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           color: accent,
           onTap: () => onNavigate(1, subTabIndex: 2),
         ),
+      ]);
+    }
+
+    return buttons;
+  }
+
+  List<Widget> _buildSalaryAttendanceQuickActionButtons() {
+    final buttons = <Widget>[];
+    final onNavigate = widget.onNavigate;
+    final accent = AppColors.primary;
+
+    if (onNavigate != null && !_isCandidate) {
+      buttons.add(
         _buildQuickActionButton(
           icon: Icons.fact_check_outlined,
-          label: 'Request Permission',
+          label: 'Attendance',
           color: accent,
-          onTap: () => onNavigate(1, subTabIndex: 3),
+          onTap: () => onNavigate(4, subTabIndex: 0),
         ),
+      );
+    }
+
+    if (onNavigate != null && !_isCandidate && widget.hasSalaryOverviewAccess) {
+      buttons.add(
+        _buildQuickActionButton(
+          icon: Icons.account_balance_wallet_outlined,
+          label: 'Salary Overview',
+          color: accent,
+          onTap: () => onNavigate(2),
+        ),
+      );
+    }
+
+    if (!_isCandidate) {
+      buttons.add(
+        _buildQuickActionButton(
+          icon: Icons.account_balance_wallet_outlined,
+          label: 'Salary Structure',
+          color: accent,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const StaffSalaryStructureScreen(),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    if (onNavigate != null) {
+      buttons.add(
         _buildQuickActionButton(
           icon: Icons.attach_money,
           label: 'Request Payslip',
           color: accent,
           onTap: () => onNavigate(1, subTabIndex: 4),
         ),
-      ]);
+      );
+    }
+
+    if (!_isCandidate) {
+      buttons.add(
+        _buildQuickActionButton(
+          icon: Icons.calendar_month,
+          label: 'Shifts',
+          color: accent,
+          onTap: _openDashboardCalendarDetailsScreen,
+        ),
+      );
     }
 
     return buttons;
@@ -2573,84 +2643,65 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   Widget _buildRecentLeavesCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.primary, AppColors.primaryDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+    final showInitialLoader =
+        _isLoadingDashboard && _stats == null && _recentLeaves.isEmpty;
+    return GestureDetector(
+      onTap: () {
+        final fn = widget.onNavigate;
+        if (fn != null) fn(1, subTabIndex: 0);
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [AppColors.primary, AppColors.primaryDark],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Recent Leaves',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 16),
-          if (_isLoadingDashboard)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: AppTabLoader(),
-              ),
-            )
-          else if (_recentLeaves.isEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 20.0),
-                child: Text(
-                  'No recent leave requests',
-                  style: TextStyle(color: Colors.white.withOpacity(0.9)),
-                ),
-              ),
-            )
-          else ...[
-            ..._recentLeaves
-                .take(3)
-                .map((leave) => _buildRecentLeaveItem(leave)),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton(
-                onPressed: () {
-                  final fn = widget.onNavigate;
-                  if (fn != null) fn(1, subTabIndex: 0);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: AppColors.primary,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 10,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  elevation: 0,
-                ),
-                child: const Text(
-                  'View All',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-              ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
             ),
           ],
-        ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Recent Leaves',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (showInitialLoader)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: AppTabLoader(),
+                ),
+              )
+            else if (_recentLeaves.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20.0),
+                  child: Text(
+                    'No recent leave requests',
+                    style: TextStyle(color: Colors.white.withOpacity(0.9)),
+                  ),
+                ),
+              )
+            else
+              ..._recentLeaves
+                  .take(3)
+                  .map((leave) => _buildRecentLeaveItem(leave)),
+          ],
+        ),
       ),
     );
   }
@@ -2802,7 +2853,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             const SizedBox(height: 16),
           ],
           _buildTodayAttendanceSubCard(
-            showCalendarIconInHeader: showHeaderIcon,
+            showCalendarIconInHeader: false,
             standaloneDashboardCard: true,
           ),
         ],

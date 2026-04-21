@@ -1119,9 +1119,6 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
         weeklyHolidays = weekOffConfig.weeklyHolidays;
     }
 
-    console.log(`[calculateAttendanceStats] Weekly Off Pattern: ${weeklyOffPattern}`);
-    console.log(`[calculateAttendanceStats] Weekly Holidays: ${JSON.stringify(weeklyHolidays)}`);
-    
     // Get holiday dates for the month - store as day numbers (1-31) for comparison
     // Use same date parsing logic as dashboard (local time, not UTC)
     const holidayDayNumbers = new Set();
@@ -1133,7 +1130,6 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
             const d = new Date(h.date);
             const holidayDay = d.getDate();
             holidayDayNumbers.add(holidayDay);
-            console.log(`[calculateAttendanceStats] Found holiday: Day ${holidayDay}, Month ${month}, Year ${year}`);
         });
     }
     
@@ -1154,8 +1150,6 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
     } else if (year === currentYear && month === currentMonth) {
         lastDayToCount = currentDay; // Current month: only up to today
     }
-    console.log(`[calculateAttendanceStats] Cap at today: lastDayToCount=${lastDayToCount} (current: ${currentYear}-${currentMonth}-${currentDay})`);
-
     // Count weekly off days and holidays only for days 1..lastDayToCount
     // Working days = days in range - Weekly Off Days - Holidays (so future days are not counted as absent)
     for (let day = 1; day <= lastDayToCount; day++) {
@@ -1167,7 +1161,6 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
         if (isHoliday) {
             // Count as holiday (even if it falls on weekly off day)
             holidays++;
-            console.log(`[calculateAttendanceStats] Day ${day} is a holiday (Day of week: ${dayOfWeek})`);
         } else {
             // Check if this day is a weekly off day
             let isWeeklyOff = false;
@@ -1178,9 +1171,6 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
                 } else if (dayOfWeek === 6) {
                     if (isOddEvenSaturdayWeeklyOff(year, month - 1, day, 'local')) {
                         isWeeklyOff = true;
-                        console.log(`[calculateAttendanceStats] Day ${day} is Even Saturday (weekly off)`);
-                    } else {
-                        console.log(`[calculateAttendanceStats] Day ${day} is Odd Saturday (working day)`);
                     }
                 }
             } else {
@@ -1225,18 +1215,6 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
     }
     const workingDaysFullMonth = daysInMonth - weeklyOffDaysFull - holidaysFull;
     
-    // Debug logging
-    console.log(`[calculateAttendanceStats] ========== CALCULATION DEBUG ==========`);
-    console.log(`[calculateAttendanceStats] Month: ${month}, Year: ${year}`);
-    console.log(`[calculateAttendanceStats] Weekly Off Pattern: ${weeklyOffPattern}`);
-    console.log(`[calculateAttendanceStats] Weekly Holidays (days of week): ${weeklyHolidays.map(h => h.day).join(', ')}`);
-    console.log(`[calculateAttendanceStats] Total days in month: ${daysInMonth}`);
-    console.log(`[calculateAttendanceStats] Weekly Off Days (non-holiday): ${weeklyOffDays}`);
-    console.log(`[calculateAttendanceStats] Holidays: ${holidays}`);
-    console.log(`[calculateAttendanceStats] Holiday day numbers: ${Array.from(holidayDayNumbers).sort((a, b) => a - b).join(', ')}`);
-    console.log(`[calculateAttendanceStats] Working days calculation: lastDayToCount=${lastDayToCount}, ${lastDayToCount} - ${weeklyOffDays} - ${holidays} = ${workingDays}`);
-    console.log(`[calculateAttendanceStats] ======================================`);
-
     // Calculate Present Days with specific Half Day logic
     // Rule: Check both Attendance and Leave collections for Half Day
     // Filter leaves by date range to avoid including leaves from other months
@@ -1294,14 +1272,12 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
     // If leaveType is "half day" -> 0.5, otherwise -> 1.0
     // All other statuses (Absent, Pending, etc.) -> 0.0
     const todayStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(currentDay).padStart(2, '0')}`;
-    console.log(`[calculateAttendanceStats] ======== PRESENT DAYS CALCULATION (dates <= ${todayStr}) ========`);
     const presentDays = Object.entries(dateMap).reduce((sum, [date, data]) => {
         if (date > todayStr) return sum; // Don't count future dates as present
         const status = data.attendanceStatus || '';
         const attLeaveType = data.attendanceLeaveType || '';
         
         let dayValue = 0;
-        let reason = '';
         
         // Present, Approved, or Half day status only (paid leave counted separately)
         // Half day = 0.5, full day = 1.0
@@ -1311,24 +1287,14 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
 
             if (isHalfDay) {
                 dayValue = 0.5;
-                reason = `Half Day (status="${status}", leaveType="${attLeaveType}", hasHalfDayLeave=${data.hasHalfDayLeave})`;
             } else {
                 dayValue = 1;
-                reason = `Full Day (status="${status}")`;
             }
         } else {
             dayValue = 0;
-            reason = `Not Counted (status="${status}", leaveType="${attLeaveType}")`;
         }
-        
-        console.log(`[calculateAttendanceStats] ${date}: ${reason} = ${dayValue} day(s)`);
         return sum + dayValue;
     }, 0);
-    console.log(`[calculateAttendanceStats] ==========================================`);
-    
-    console.log(`[calculateAttendanceStats] Attendance Records Found: ${attendanceRecords.length}`);
-    console.log(`[calculateAttendanceStats] Leave Records Found: ${leaveRecords.length}`);
-    console.log(`[calculateAttendanceStats] Calculated Weighted Present Days: ${presentDays}`);
 
     // Half day paid leave: dates <= today where attendance is present/approved and (half day)
     let halfDayPaidLeaveCount = 0;
@@ -1378,9 +1344,6 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
         leaveDays,
         attendancePercentage: workingDays > 0 ? (effectivePaidDays / workingDays) * 100 : 0
     };
-    
-    // Additional debug logging
-    console.log(`[calculateAttendanceStats] RETURNING: ${JSON.stringify(result)}`);
     
     return result;
 };
