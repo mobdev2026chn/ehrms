@@ -278,6 +278,18 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
   DateTime? initialStart,
   DateTime? initialEnd,
 }) async {
+  DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+  DateTime _clampDay(DateTime d, DateTime min, DateTime max) {
+    final day = _dateOnly(d);
+    final minDay = _dateOnly(min);
+    final maxDay = _dateOnly(max);
+    if (day.isBefore(minDay)) return minDay;
+    if (day.isAfter(maxDay)) return maxDay;
+    return day;
+  }
+
+  final firstDay = _dateOnly(firstDate);
+  final lastDay = _dateOnly(lastDate);
   final now = DateTime.now();
   DateTime? rangeStart = initialStart != null
       ? DateTime(initialStart.year, initialStart.month, initialStart.day)
@@ -285,8 +297,11 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
   DateTime? rangeEnd = initialEnd != null
       ? DateTime(initialEnd.year, initialEnd.month, initialEnd.day)
       : null;
-  DateTime focusedDay =
-      rangeEnd ?? rangeStart ?? DateTime(now.year, now.month, now.day);
+  DateTime focusedDay = _clampDay(
+    rangeEnd ?? rangeStart ?? DateTime(now.year, now.month, now.day),
+    firstDay,
+    lastDay,
+  );
 
   final result = await showModalBottomSheet<DateTimeRange>(
     context: context,
@@ -353,16 +368,8 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
                     child: SingleChildScrollView(
                       controller: scrollController,
                       child: TableCalendar(
-                        firstDay: DateTime(
-                          firstDate.year,
-                          firstDate.month,
-                          firstDate.day,
-                        ),
-                        lastDay: DateTime(
-                          lastDate.year,
-                          lastDate.month,
-                          lastDate.day,
-                        ),
+                        firstDay: firstDay,
+                        lastDay: lastDay,
                         focusedDay: focusedDay,
                         rangeStartDay: rangeStart,
                         rangeEndDay: rangeEnd,
@@ -371,11 +378,13 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
                           setModalState(() {
                             rangeStart = start;
                             rangeEnd = end;
-                            focusedDay = focused;
+                            focusedDay = _clampDay(focused, firstDay, lastDay);
                           });
                         },
                         onPageChanged: (focused) {
-                          setModalState(() => focusedDay = focused);
+                          setModalState(
+                            () => focusedDay = _clampDay(focused, firstDay, lastDay),
+                          );
                         },
                         calendarFormat: CalendarFormat.month,
                         headerStyle: HeaderStyle(

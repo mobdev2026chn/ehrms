@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/error_message_utils.dart';
 import 'api_client.dart';
@@ -354,6 +355,13 @@ class RequestService {
   Future<Map<String, dynamic>> applyExpense(Map<String, dynamic> data) async {
     try {
       await _setToken();
+      if (kDebugMode) {
+        final headers = _api.dio.options.headers;
+        debugPrint(
+          '[ExpenseUpload] baseUrl=${_api.dio.options.baseUrl} '
+          'X-Storage-Environment=${headers['X-Storage-Environment'] ?? headers['x-storage-environment']}',
+        );
+      }
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/requests/expense',
         data: data,
@@ -366,6 +374,12 @@ class RequestService {
       if (body.containsKey('data') && body['data'] is Map) {
         final d = body['data'] as Map;
         responseData = d['reimbursement'] ?? d;
+        if (kDebugMode && responseData is Map) {
+          final proofs = responseData['proofFiles'];
+          if (proofs is List && proofs.isNotEmpty) {
+            debugPrint('[ExpenseUpload] proofFileUrl=${proofs.first}');
+          }
+        }
       }
       return {'success': true, 'data': responseData};
     } on DioException catch (e) {

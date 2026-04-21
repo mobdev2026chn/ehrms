@@ -3970,7 +3970,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                               webBadgeBg = const Color(0xFFE8D5C4);
                               webBadgeFg = const Color(0xFF78350F);
                             } else if (isHoliday) {
-                              webBadgeLabel = 'HA';
+                              webBadgeLabel = 'H';
                               webBadgeBg = const Color(0xFFFEF3C7);
                               webBadgeFg = const Color(0xFF92400E);
                             } else if (isAbsentStatusForAbbr ||
@@ -4214,7 +4214,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           textColor: const Color(0xFF78350F),
         ),
         _buildLegendItem('WF', 'Week Off', textColor: const Color(0xFF374151)),
-        _buildLegendItem('HA', 'Holiday', textColor: const Color(0xFF92400E)),
+        _buildLegendItem('H', 'Holiday', textColor: const Color(0xFF92400E)),
         _buildLegendItem(
           'LEAVE',
           'On Leave',

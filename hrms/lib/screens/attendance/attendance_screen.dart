@@ -1593,6 +1593,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     String? overtimeDisplay,
     String? openShiftBufferDisplay,
   }) {
+    final shiftLine = shiftTime.trim().isEmpty
+        ? shiftLabel
+        : '$shiftLabel - $shiftTime';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -1612,8 +1615,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '$shiftLabel - $shiftTime',
-                      style: const TextStyle(
+                      shiftLine,
+                      style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                       ),
@@ -3149,6 +3152,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   String _shiftTimeLineForAttendanceDetail(Map<String, dynamic> record) {
+    final statusLower = (record['status'] ?? '').toString().toLowerCase();
+    final compensationLower =
+        (record['compensationType'] ?? '').toString().toLowerCase();
+    final dateKey = _dateKey(record);
+    final isWeekOffRecord =
+        statusLower == 'weekend' ||
+        statusLower == 'week off' ||
+        compensationLower == 'weekoff' ||
+        (dateKey.isNotEmpty &&
+            _weekOffDateSet.contains(dateKey) &&
+            !_alternateWorkDatesInMonth.contains(dateKey));
+    // Hide shift timing text for week-off days.
+    if (isWeekOffRecord) return '';
+
     if (record['appliedShiftId'] != null) {
       final r = appliedShiftPastResolvedFromCompany(
         companyDoc: _companyDocForAppliedShiftResolution(),
@@ -3980,6 +3997,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         leaveTypeAbbr = AttendanceDisplayUtil.leaveTypeToAbbreviation(
           _dayLeaveTypeByDate[dateStr],
         );
+      } else if (isHoliday) {
+        leaveTypeAbbr = 'H';
       } else if (isWeekOff) {
         leaveTypeAbbr = 'WF';
       } else if (_alternateWorkDatesInMonth.contains(dateStr)) {
@@ -4654,41 +4673,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               ],
             ),
           ),
-          GestureDetector(
-            onTap: () => setState(() => _showHistoryView = true),
-            child: Container(
-              width: 44,
-              height: 44,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _showHistoryView
-                    ? AppColors.primary
-                    : AppColors.primary.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.calendar_month,
-                    color: _showHistoryView ? Colors.white : AppColors.primary,
-                    size: 22,
-                  ),
-                  Text(
-                    '${now.day}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: _showHistoryView
-                          ? Colors.white
-                          : AppColors.primary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          const SizedBox(width: 44, height: 44),
         ],
       ),
     );
