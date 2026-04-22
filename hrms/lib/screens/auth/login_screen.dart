@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../services/auth_service.dart';
 import '../../config/app_colors.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../dashboard/dashboard_screen.dart';
@@ -23,18 +21,16 @@ class _LoginScreenState extends State<LoginScreen>
   final _emailFocusNode = FocusNode();
   final _passwordFocusNode = FocusNode();
   final _otpFocusNode = FocusNode();
-  // Firebase Google Sign-In only; login/logout go through AuthBloc → AuthRepository.
-  final _authService = AuthService();
   final _formKey = GlobalKey<FormState>();
 
   bool _isPasswordVisible = false;
-  bool _lastAttemptWasGoogle = false;
 
   // 2FA state
   bool _show2FAInput = false;
   String _2faEmail = '';
   String _2faPassword = '';
   final _otpController = TextEditingController();
+  bool _loginSubmitLocked = false;
 
   // Entrance animations
   late AnimationController _entranceController;
@@ -56,9 +52,6 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   void initState() {
     super.initState();
-    _emailFocusNode.addListener(_resetKeyboardStateOnFocus);
-    _passwordFocusNode.addListener(_resetKeyboardStateOnFocus);
-    _otpFocusNode.addListener(_resetKeyboardStateOnFocus);
     _entranceController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -114,10 +107,6 @@ class _LoginScreenState extends State<LoginScreen>
     _buttonScale = Tween<double>(begin: 1, end: 0.96).animate(
       CurvedAnimation(parent: _buttonScaleController, curve: Curves.easeInOut),
     );
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _clearHardwareKeyboardState();
-    });
   }
 
   @override
@@ -128,37 +117,16 @@ class _LoginScreenState extends State<LoginScreen>
     _emailController.dispose();
     _passwordController.dispose();
     _otpController.dispose();
-    _emailFocusNode
-      ..removeListener(_resetKeyboardStateOnFocus)
-      ..dispose();
-    _passwordFocusNode
-      ..removeListener(_resetKeyboardStateOnFocus)
-      ..dispose();
-    _otpFocusNode
-      ..removeListener(_resetKeyboardStateOnFocus)
-      ..dispose();
+    _emailFocusNode.dispose();
+    _passwordFocusNode.dispose();
+    _otpFocusNode.dispose();
     super.dispose();
   }
 
-  void _resetKeyboardStateOnFocus() {
-    if (_emailFocusNode.hasFocus ||
-        _passwordFocusNode.hasFocus ||
-        _otpFocusNode.hasFocus) {
-      _clearHardwareKeyboardState();
-    }
-  }
-
-  void _clearHardwareKeyboardState() {
-    try {
-      // ignore: invalid_use_of_visible_for_testing_member
-      ServicesBinding.instance.keyboard.clearState();
-    } catch (_) {
-      // Best-effort workaround for Flutter's Android key-state mismatch.
-    }
-  }
-
   void _handleLogin() {
+    if (_loginSubmitLocked) return;
     if (_formKey.currentState!.validate()) {
+      setState(() => _loginSubmitLocked = true);
       context.read<AuthBloc>().add(
         AuthLoginRequested(
           _emailController.text.trim(),
@@ -186,26 +154,6 @@ class _LoginScreenState extends State<LoginScreen>
   void _handleResendOTP() {
     _otpController.clear();
     context.read<AuthBloc>().add(AuthLoginRequested(_2faEmail, _2faPassword));
-  }
-
-  Future<void> _handleGoogleLogin() async {
-    try {
-      final userCredential = await _authService.signInWithGoogle();
-      if (userCredential == null || userCredential.user?.email == null) return;
-      if (!mounted) return;
-      _lastAttemptWasGoogle = true;
-      context.read<AuthBloc>().add(
-        AuthGoogleLoginRequested(userCredential.user!.email!),
-      );
-    } catch (error) {
-      if (mounted) {
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.toUserFriendlyMessage(error),
-          isError: true,
-        );
-      }
-    }
   }
 
   void _playSuccessAndNavigate(BuildContext context) {
@@ -240,6 +188,9 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   void _onAuthStateChanged(BuildContext context, AuthState state) {
+    if (state is! AuthLoadInProgress && _loginSubmitLocked) {
+      setState(() => _loginSubmitLocked = false);
+    }
     if (state is AuthRequires2FA) {
       setState(() {
         _show2FAInput = true;
@@ -262,10 +213,6 @@ class _LoginScreenState extends State<LoginScreen>
       }
       _playSuccessAndNavigate(context);
     } else if (state is AuthFailure) {
-      if (_lastAttemptWasGoogle) {
-        _lastAttemptWasGoogle = false;
-        context.read<AuthBloc>().add(const AuthLogoutRequested());
-      }
       SnackBarUtils.showSnackBar(
         context,
         ErrorMessageUtils.sanitizeForDisplay(
@@ -274,8 +221,6 @@ class _LoginScreenState extends State<LoginScreen>
         ),
         isError: true,
       );
-    } else if (state is AuthLoadInProgress) {
-      _lastAttemptWasGoogle = false;
     }
   }
 
@@ -284,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen>
     return BlocConsumer<AuthBloc, AuthState>(
       listener: _onAuthStateChanged,
       builder: (context, state) {
-        final isLoading = state is AuthLoadInProgress;
+        final isLoading = state is AuthLoadInProgress || _loginSubmitLocked;
         return Scaffold(
           resizeToAvoidBottomInset: false,
           backgroundColor: const Color(0xFF1A1A1A),
@@ -465,7 +410,6 @@ class _LoginScreenState extends State<LoginScreen>
                 controller: _emailController,
                 focusNode: _emailFocusNode,
                 keyboardType: TextInputType.emailAddress,
-                onTap: _clearHardwareKeyboardState,
                 validator: (value) {
                   final email = value?.trim() ?? '';
                   if (email.isEmpty) return 'Please enter your email';
@@ -514,10 +458,10 @@ class _LoginScreenState extends State<LoginScreen>
                 controller: _passwordController,
                 focusNode: _passwordFocusNode,
                 obscureText: !_isPasswordVisible,
-                onTap: _clearHardwareKeyboardState,
                 validator: (value) {
-                  if (value == null || value.isEmpty)
+                  if (value == null || value.isEmpty) {
                     return 'Please enter your password';
+                  }
                   return null;
                 },
                 style: const TextStyle(color: Colors.white, fontSize: 16),
@@ -687,7 +631,6 @@ class _LoginScreenState extends State<LoginScreen>
               controller: _otpController,
               focusNode: _otpFocusNode,
               keyboardType: TextInputType.number,
-              onTap: _clearHardwareKeyboardState,
               maxLength: 6,
               textAlign: TextAlign.center,
               style: const TextStyle(

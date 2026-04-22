@@ -10,7 +10,6 @@ import '../../utils/snackbar_utils.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/notification_reaction_overlay.dart';
-import 'grievance_detail_screen.dart';
 
 class RaiseGrievanceScreen extends StatefulWidget {
   const RaiseGrievanceScreen({super.key});
@@ -211,7 +210,7 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                     )
                   else
                     DropdownButtonFormField<String>(
-                      value: _selectedCategoryId,
+                      initialValue: _selectedCategoryId,
                       decoration: InputDecoration(
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -326,7 +325,7 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                   const Text('Priority', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
-                    value: _priority,
+                    initialValue: _priority,
                     decoration: InputDecoration(
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

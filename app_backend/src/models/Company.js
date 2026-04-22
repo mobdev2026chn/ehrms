@@ -91,8 +91,39 @@ const CompanySchema = new Schema(
         },
         shifts: [{
           name: String,
+          shiftType: {
+            type: String,
+            enum: ['standard', 'rotational', 'open'],
+            default: 'standard'
+          },
           startTime: String,
           endTime: String,
+          /** Minutes after shift end with no OT accrual; OT = max(0, minutes past shift end − buffer). */
+          otBufferMinutes: { type: Number, default: 0 },
+          /** Open shifts: required hours per day (e.g. 9). */
+          workHours: { type: Number, default: null },
+          /** Rotational wrapper: cycle of embedded shift _ids or names (see main HRMS backend). */
+          rotationalConfig: {
+            rotationType: {
+              type: String,
+              enum: ['weekly', 'daily', 'custom', 'byWeekday', 'byWeekCalendar'],
+              default: null
+            },
+            cycleLengthDays: { type: Number, default: null },
+            /** Mixed so ObjectId, 24-char hex strings, and legacy {$oid} shapes all hydrate (avoids empty cycle on read). */
+            shiftIdsInCycle: [{ type: Schema.Types.Mixed }],
+            shiftNamesInCycle: [{ type: String }],
+            shiftIdsByWeekday: [{
+              day: { type: Number },
+              shiftId: { type: Schema.Types.Mixed },
+              isWeekOff: { type: Boolean, default: false }
+            }],
+            weeklyDateAssignments: [{
+              date: { type: String, required: true },
+              shiftId: { type: Schema.Types.Mixed },
+              isWeekOff: { type: Boolean, default: false }
+            }]
+          },
           graceTime: {
             value: Number,
             unit: { type: String, enum: ['minutes', 'hours'], default: 'minutes' }
@@ -155,6 +186,8 @@ const CompanySchema = new Schema(
       },
       payroll: {
         calculationLogic: String,
+        payableDaysRuleId: { type: Schema.Types.Mixed },
+        payableDaysRule: { type: Schema.Types.Mixed },
         payslipCustomization: Schema.Types.Mixed,
         processingRules: {
           autoProcess: { type: Boolean, default: false },
@@ -233,4 +266,9 @@ CompanySchema.index({ isActive: 1 });
 CompanySchema.index({ deletedAt: 1 });
 CompanySchema.index({ 'trial.trialEndDate': 1 });
 
-module.exports = mongoose.model('Company', CompanySchema);
+/**
+ * Mongo collection must match the main HRMS TypeScript `Business` model (default: `businesses`).
+ * Legacy deployments that only have `companies` can set MONGOOSE_COMPANY_COLLECTION=companies.
+ */
+const COMPANY_COLLECTION = process.env.MONGOOSE_COMPANY_COLLECTION || 'businesses';
+module.exports = mongoose.model('Company', CompanySchema, COMPANY_COLLECTION);

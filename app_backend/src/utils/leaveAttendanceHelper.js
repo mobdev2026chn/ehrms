@@ -369,7 +369,9 @@ const canCheckOutWithHalfDayLeave = (leave, now, shiftStartTime, shiftEndTime, t
  * @returns {string} IANA timezone e.g. 'Asia/Kolkata'
  */
 const getBusinessTimezone = (company) => {
-    const tz = company?.settings?.business?.timezone || company?.timezone;
+    const tz = company?.settings?.attendance?.timezone
+        || company?.settings?.business?.timezone
+        || company?.timezone;
     return (tz && typeof tz === 'string' && tz.trim()) ? tz.trim() : DEFAULT_BUSINESS_TIMEZONE;
 };
 
@@ -393,25 +395,802 @@ function getShiftBoundaryAsUTCDate(attendanceDate, timeStr, timeZone) {
     return new Date(startOfDayInTZ.getTime() + shiftMinutes * 60 * 1000);
 }
 
-const getShiftTimings = (company, staff = null) => {
-    // Default shift timings
-    let startTime = '09:30';
-    let endTime = '18:30';
+/**
+ * Calendar-day difference in UTC (matches attendance.date storage).
+ * @param {Date} attendanceDate
+ * @param {Date} anchorDate
+ */
+const diffDaysUTC = (attendanceDate, anchorDate) => {
+    if (!attendanceDate || !anchorDate) return 0;
+    const a = new Date(attendanceDate);
+    const b = new Date(anchorDate);
+    const da = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
+    const db = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+    return Math.round((da - db) / 86400000);
+};
+
+/** Single shift row as plain POJO so nested rotationalConfig.shiftIdsInCycle is enumerable (Mongoose subdocs). */
+const shiftRowToPlain = (row) => {
+    if (!row || typeof row !== 'object') return row;
+    if (typeof row.toObject === 'function') {
+        try {
+            return row.toObject({ flattenMaps: true, virtuals: false });
+        } catch (_) {
+            return { ...row };
+        }
+    }
+    return { ...row };
+};
+
+/** Lowercase 24-char hex for Mongo ObjectId comparisons (handles ObjectId, { $oid }, string). */
+const normalizeShiftObjectIdStr = (v) => {
+    if (v == null) return '';
+    if (typeof v === 'object') {
+        if (v._bsontype === 'ObjectID' || v.constructor?.name === 'ObjectId') {
+            return String(v).toLowerCase();
+        }
+        if (v.$oid != null) return String(v.$oid).toLowerCase();
+        if (v._id != null) return normalizeShiftObjectIdStr(v._id);
+    }
+    const s = String(v).trim().toLowerCase();
+    return /^[a-f0-9]{24}$/.test(s) ? s : '';
+};
+
+const plainRotationalConfig = (wrapper) => {
+    const w = shiftRowToPlain(wrapper);
+    let rc = w.rotationalConfig;
+    if (rc == null) return {};
+    if (typeof rc === 'string') {
+        try {
+            rc = JSON.parse(rc);
+        } catch (_) {
+            return {};
+        }
+    }
+    if (typeof rc !== 'object' || rc === null) return {};
+    const base =
+        typeof rc.toObject === 'function'
+            ? rc.toObject({ flattenMaps: true, virtuals: false })
+            : { ...rc };
+    const o = { ...base };
+    if (o.shiftIdsInCycle == null && o.shift_ids_in_cycle != null) o.shiftIdsInCycle = o.shift_ids_in_cycle;
+    if (o.shiftNamesInCycle == null && o.shift_names_in_cycle != null) o.shiftNamesInCycle = o.shift_names_in_cycle;
+    if (o.shiftIdsByWeekday == null && o.shift_ids_by_weekday != null) o.shiftIdsByWeekday = o.shift_ids_by_weekday;
+    if (o.cycleLengthDays == null && o.cycle_length_days != null) o.cycleLengthDays = o.cycle_length_days;
+    if (o.rotationType == null && o.rotation_type != null) o.rotationType = o.rotation_type;
+    return o;
+};
+
+/** shiftIdsInCycle entries → lowercase hex strings (empty if unparseable). */
+const normalizedCycleIdList = (cfg) => {
+    const raw = cfg && cfg.shiftIdsInCycle;
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const el of raw) {
+        if (el == null) continue;
+        const id = normalizeShiftObjectIdStr(el);
+        if (id) out.push(id);
+    }
+    return out;
+};
+
+/** Prefer richer rotationalConfig when several embedded rows share the same _id or name (stale partial subdocs). */
+const rotationalConfigRichnessScore = (cfg) => {
+    if (!cfg || typeof cfg !== 'object') return 0;
+    const ids = normalizedCycleIdList(cfg).length;
+    const wd = Array.isArray(cfg.shiftIdsByWeekday) ? cfg.shiftIdsByWeekday.filter(Boolean).length : 0;
+    const wc = Array.isArray(cfg.weeklyDateAssignments) ? cfg.weeklyDateAssignments.filter(Boolean).length : 0;
+    const names = Array.isArray(cfg.shiftNamesInCycle) ? cfg.shiftNamesInCycle.filter(Boolean).length : 0;
+    const cld = Number(cfg.cycleLengthDays);
+    const hasLen = Number.isFinite(cld) && cld > 0 ? 1 : 0;
+    return ids * 1000 + wd * 100 + wc * 100 + names * 50 + hasLen * 10;
+};
+
+const shiftMatchQualityScore = (s) => {
+    if (!s) return 0;
+    const p = shiftRowToPlain(s);
+    let sc = rotationalConfigRichnessScore(plainRotationalConfig(p));
+    if (isRotationalShiftWrapper(p)) sc += 10000;
+    if ((p.shiftType || '').toString().toLowerCase().trim() === 'rotational') sc += 500;
+    return sc;
+};
+
+const pickBestShiftAmongDuplicates = (matches) => {
+    if (!matches || matches.length === 0) return null;
+    if (matches.length === 1) return matches[0];
+    return matches.reduce((best, s) => (shiftMatchQualityScore(s) > shiftMatchQualityScore(best) ? s : best));
+};
+
+/**
+ * Merge the strongest rotationalConfig from any embedded row with the same _id or same name as [wrapper].
+ * Fixes Mongoose arrays where duplicate subdocuments share an id but only one row has shiftIdsInCycle filled in.
+ */
+const enrichWrapperRotationalFromDuplicateRows = (shifts, wrapper) => {
+    if (!wrapper || !Array.isArray(shifts)) return wrapper;
+    const w = shiftRowToPlain(wrapper);
+    const wid = normalizeShiftObjectIdStr(w._id);
+    const wname = (w.name || '').toString().trim().toLowerCase();
+    if (!wid && !wname) return w;
+
+    let bestRc = plainRotationalConfig(w);
+    let bestScore = rotationalConfigRichnessScore(bestRc);
+
+    for (const row of shifts) {
+        if (!row) continue;
+        const p = shiftRowToPlain(row);
+        const pid = normalizeShiftObjectIdStr(p._id);
+        const pname = (p.name || '').toString().trim().toLowerCase();
+        const sameId = wid && pid === wid;
+        const sameName = wname && pname === wname;
+        if (!sameId && !sameName) continue;
+        const rc = plainRotationalConfig(p);
+        const sc = rotationalConfigRichnessScore(rc);
+        if (sc > bestScore) {
+            bestScore = sc;
+            bestRc = rc;
+        }
+    }
+    if (bestScore === 0) return w;
+
+    const out = { ...w, rotationalConfig: { ...bestRc } };
+    const st = (out.shiftType || '').toString().toLowerCase().trim();
+    const hasCycle =
+        normalizedCycleIdList(bestRc).length > 0 ||
+        (Array.isArray(bestRc.shiftNamesInCycle) && bestRc.shiftNamesInCycle.filter(Boolean).length > 0) ||
+        (Array.isArray(bestRc.shiftIdsByWeekday) && bestRc.shiftIdsByWeekday.filter(Boolean).length > 0) ||
+        (Array.isArray(bestRc.weeklyDateAssignments) && bestRc.weeklyDateAssignments.filter(Boolean).length > 0);
+    if (!st && hasCycle) out.shiftType = 'rotational';
+    return out;
+};
+
+const shiftRowHasRotationalCycle = (wrapper) => {
+    if (!wrapper) return false;
+    const cfg = plainRotationalConfig(wrapper);
+    const ids = normalizedCycleIdList(cfg);
+    const names = Array.isArray(cfg.shiftNamesInCycle) ? cfg.shiftNamesInCycle.filter(Boolean) : [];
+    const byWd = Array.isArray(cfg.shiftIdsByWeekday) ? cfg.shiftIdsByWeekday.filter(Boolean) : [];
+    const byWc = Array.isArray(cfg.weeklyDateAssignments) ? cfg.weeklyDateAssignments.filter(Boolean) : [];
+    return ids.length > 0 || names.length > 0 || byWd.length > 0 || byWc.length > 0;
+};
+
+const parseBoolLoose = (v) => {
+    if (v === true || v === false) return v;
+    if (typeof v === 'number') return v !== 0;
+    if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        if (s === 'true' || s === '1' || s === 'yes') return true;
+        if (s === 'false' || s === '0' || s === 'no') return false;
+    }
+    return false;
+};
+
+const normalizeAssignmentDateYmd = (raw) => {
+    if (raw == null) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+    if (m) return m[1];
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return null;
+    return formatDateUtcYmd(d);
+};
+
+/** True when [rotationalConfig] has a cycle OR [shiftType] is rotational (cycle first — matches Flutter). */
+const isRotationalShiftWrapper = (wrapper) => {
+    if (!wrapper) return false;
+    const w = shiftRowToPlain(wrapper);
+    if (shiftRowHasRotationalCycle(w)) return true;
+    const st = (w.shiftType || '').toString().toLowerCase().trim();
+    return st === 'rotational';
+};
+
+/**
+ * Assigned row may omit rotationalConfig while another company.shifts[] row (same _id or name) has it (Mongoose / UI duplicates).
+ */
+const wrapperWithMergedRotationalConfig = (shifts, wrapper) => {
+    if (!wrapper || !Array.isArray(shifts)) return wrapper;
+    const wPlain = shiftRowToPlain(wrapper);
+    if (shiftRowHasRotationalCycle(wPlain)) return wPlain;
+    const wname = (wPlain.name || '').toString().trim().toLowerCase();
+    const wid = normalizeShiftObjectIdStr(wPlain._id);
+    for (const row of shifts) {
+        if (!row) continue;
+        const rPlain = shiftRowToPlain(row);
+        if (!shiftRowHasRotationalCycle(rPlain)) continue;
+        const cfg = plainRotationalConfig(rPlain);
+        const sname = (rPlain.name || '').toString().trim().toLowerCase();
+        const sid = normalizeShiftObjectIdStr(rPlain._id);
+        const sameId = wid && sid && wid === sid;
+        const sameName = wname && sname && wname === sname;
+        if (sameId || sameName) {
+            return { ...wPlain, rotationalConfig: { ...cfg } };
+        }
+    }
+    return wPlain;
+};
+
+const isLikelyMongoObjectIdHex = (v) => /^[a-fA-F0-9]{24}$/i.test(String(v).trim());
+
+/**
+ * Prefer explicit shiftId (24-char hex); else shiftName (may hold embedded shift _id as string).
+ * When [shiftName] equals the attendance template label only (e.g. "Temp"), do not use it as a
+ * company shift name — GET /attendance/today then falls back to shifts[0] like an unset key.
+ */
+const staffShiftKeyFromStaff = (staff, attendanceTemplateDoc) => {
+    if (!staff) return '';
+    const rawSid = staff.shiftId;
+    let sid = '';
+    if (rawSid != null && rawSid !== '') {
+        sid =
+            typeof rawSid === 'object' && rawSid._id != null
+                ? String(rawSid._id).trim()
+                : String(rawSid).trim();
+    }
+    if (sid && isLikelyMongoObjectIdHex(sid)) {
+        return sid.toLowerCase();
+    }
+    const sn = (staff.shiftName || '').toString().trim();
+    let templateName = '';
+    if (attendanceTemplateDoc) {
+        const tdoc =
+            typeof attendanceTemplateDoc.toObject === 'function'
+                ? attendanceTemplateDoc.toObject()
+                : attendanceTemplateDoc;
+        templateName = (tdoc.name || '').toString().trim();
+    }
+    if (templateName && sn === templateName) {
+        return sid || '';
+    }
+    if (sn && isLikelyMongoObjectIdHex(sn)) {
+        return sn.toLowerCase();
+    }
+    return sid || sn;
+};
+
+/**
+ * Match staff shift key to embedded shift by _id (24-char hex → id only) or name (case-insensitive).
+ * When several rows share the same display name, prefer the rotational / cycle-config row.
+ */
+const findShiftByStaffKey = (shifts, staffShiftKey) => {
+    if (!staffShiftKey || !Array.isArray(shifts)) return null;
+    const key = String(staffShiftKey).trim();
+    if (!key) return null;
+    const keyLower = key.toLowerCase();
+
+    // If staff key is open (any case), prefer shift row that is open by type or by name "OPEN" / "open shift".
+    if (keyLower === 'open' || keyLower === 'open shift') {
+        const openShift = shifts.find(s => {
+            const sShiftType = (s.shiftType || '').toString().toLowerCase();
+            if (sShiftType === 'open' || sShiftType === 'open shift') return true;
+            const nm = (s.name || '').toString().trim().toLowerCase();
+            return nm === 'open' || nm === 'open shift';
+        });
+        if (openShift) {
+            return openShift;
+        }
+    }
+
+    if (isLikelyMongoObjectIdHex(key)) {
+        const keyNorm = key.toLowerCase();
+        const matches = shifts.filter((s) => {
+            if (!s || s._id == null) return false;
+            const sid = normalizeShiftObjectIdStr(s._id);
+            return sid === keyNorm;
+        });
+        if (matches.length === 0) return null;
+        return pickBestShiftAmongDuplicates(matches);
+    }
+
+    const matches = shifts.filter((s) => {
+        if (!s) return false;
+        if (s._id != null && String(s._id) === key) return true;
+        if ((s.name || '').toString().trim().toLowerCase() === keyLower) return true;
+        return false;
+    });
+    if (matches.length === 0) return null;
+    return pickBestShiftAmongDuplicates(matches);
+};
+
+/**
+ * For rotational wrapper shift, return the effective standard/open row for this calendar day.
+ * - rotationType `byWeekday`: map UTC weekday (Sun=0…Sat=6) via shiftIdsByWeekday[].day → shiftId.
+ * - rotationType `weekly`: index = UTC calendar weekday (Sun=0…Sat=6) mod cycleLengthDays (or array length).
+ * - rotationType `custom` / `daily` / default: index = diffDaysUTC(attendance, anchor) mod cycle length (joining date anchor).
+ */
+const resolveEffectiveShiftRaw = (shifts, wrapper, attendanceDate, rotationAnchorDate) => {
+    if (!wrapper || !Array.isArray(shifts)) return wrapper;
+    if (!isRotationalShiftWrapper(wrapper)) return wrapper;
+    const cfg = plainRotationalConfig(wrapper);
+    const rotationType = (cfg.rotationType || 'custom').toString().toLowerCase().trim();
+
+    /**
+     * Leaf slot row only (parity with Flutter isLeafShiftRow): skip template; allow mis-tagged "rotational" rows that have a window but no cycle.
+     */
+    const isLeafShiftRow = (s) => {
+        if (!s) return false;
+        const p = shiftRowToPlain(s);
+        if (!isRotationalShiftWrapper(p)) return true;
+        const st = (p.startTime || '').toString().trim();
+        const en = (p.endTime || '').toString().trim();
+        const hasWindow = !!(st && en);
+        const hasCycle = shiftRowHasRotationalCycle(p);
+        return hasWindow && !hasCycle;
+    };
+
+    if (rotationType === 'byweekday' || rotationType === 'by_weekday') {
+        const entries = Array.isArray(cfg.shiftIdsByWeekday) ? cfg.shiftIdsByWeekday.filter(Boolean) : [];
+        if (entries.length === 0) return wrapper;
+        const att = attendanceDate || new Date();
+        const y = att.getUTCFullYear();
+        const mo = att.getUTCMonth();
+        const d = att.getUTCDate();
+        const jsDow = new Date(Date.UTC(y, mo, d)).getUTCDay();
+        const row = entries.find((e) => e && Number(e.day) === jsDow);
+        if (!row || row.shiftId == null) return wrapper;
+        const needle = normalizeShiftObjectIdStr(row.shiftId);
+        const effective = shifts.find((s) => {
+            if (!isLeafShiftRow(s) || s._id == null) return false;
+            return needle && normalizeShiftObjectIdStr(s._id) === needle;
+        });
+        return effective || wrapper;
+    }
+
+    if (rotationType === 'byweekcalendar' || rotationType === 'by_week_calendar') {
+        const rows = Array.isArray(cfg.weeklyDateAssignments) ? cfg.weeklyDateAssignments.filter(Boolean) : [];
+        if (rows.length === 0) return wrapper;
+        const targetDate = formatDateUtcYmd(attendanceDate || new Date());
+        let anyWeekOff = false;
+        let lastWorkRow = null;
+        for (const e of rows) {
+            if (!e || normalizeAssignmentDateYmd(e.date) !== targetDate) continue;
+            if (parseBoolLoose(e.isWeekOff)) {
+                anyWeekOff = true;
+                continue;
+            }
+            if (e.shiftId != null) lastWorkRow = e;
+        }
+        if (anyWeekOff) {
+            return {
+                ...wrapper,
+                __rotationWeekOff: true,
+                __rotationDate: targetDate,
+                __rotationType: rotationType
+            };
+        }
+        if (!lastWorkRow || lastWorkRow.shiftId == null) return wrapper;
+        const needle = normalizeShiftObjectIdStr(lastWorkRow.shiftId);
+        const effective = shifts.find((s) => {
+            if (!isLeafShiftRow(s) || s._id == null) return false;
+            return needle && normalizeShiftObjectIdStr(s._id) === needle;
+        });
+        return effective || wrapper;
+    }
+
+    const ids = normalizedCycleIdList(cfg);
+    const names = Array.isArray(cfg.shiftNamesInCycle) ? cfg.shiftNamesInCycle.filter(Boolean) : [];
+    let cycleLen = Number(cfg.cycleLengthDays);
+    if (!Number.isFinite(cycleLen) || cycleLen <= 0) {
+        cycleLen = ids.length || names.length || 0;
+    }
+    if (cycleLen <= 0) return wrapper;
+
+    let idx;
+    if (rotationType === 'weekly') {
+        // Same UTC calendar day as diffDaysUTC: use Y/M/D from the attendance instant in UTC.
+        const att = attendanceDate || new Date();
+        const y = att.getUTCFullYear();
+        const mo = att.getUTCMonth();
+        const d = att.getUTCDate();
+        const jsDow = new Date(Date.UTC(y, mo, d)).getUTCDay(); // 0 = Sun .. 6 = Sat
+        idx = jsDow % cycleLen;
+    } else {
+        // custom, daily, or unknown: days since anchor (joining date), modulo cycle length
+        const anchor = rotationAnchorDate ?? attendanceDate ?? new Date();
+        let diff = diffDaysUTC(attendanceDate || new Date(), anchor);
+        idx = diff % cycleLen;
+        if (idx < 0) idx += cycleLen;
+    }
+
+    const effectiveIdHex = ids.length > 0 ? ids[idx % ids.length] : null;
+    const effectiveName = names.length > 0 ? names[idx % names.length] : null;
+    const nameLower = effectiveName != null ? String(effectiveName).trim().toLowerCase() : '';
+    let effective = effectiveIdHex
+        ? shifts.find(
+              (s) =>
+                  isLeafShiftRow(s) &&
+                  normalizeShiftObjectIdStr(s._id) === effectiveIdHex
+          )
+        : null;
+    if (!effective && nameLower) {
+        effective = shifts.find(
+            (s) =>
+                isLeafShiftRow(s) &&
+                (s.name || '').toString().trim().toLowerCase() === nameLower
+        );
+    }
+    return effective || wrapper;
+};
+
+/**
+ * When the resolved embedded shift omits start/end (hydration / partial subdocs), copy window from
+ * the matching row in company.settings.attendance.shifts (Flutter: resolveStandardShiftWindowFromCompany).
+ */
+const enrichStandardShiftTimesFromShiftsList = (shifts, shift) => {
+    if (!shift || !Array.isArray(shifts)) return shift;
+    const plain = shiftRowToPlain(shift);
+    let startTime = (plain.startTime || '').toString().trim();
+    let endTime = (plain.endTime || '').toString().trim();
+    if (startTime && endTime) return plain;
+    const sid = plain._id != null ? normalizeShiftObjectIdStr(plain._id) : '';
+    const sn = (plain.name || '').toString().trim().toLowerCase();
+    for (const row of shifts) {
+        const r = shiftRowToPlain(row);
+        const rid = r._id != null ? normalizeShiftObjectIdStr(r._id) : '';
+        const rn = (r.name || '').toString().trim().toLowerCase();
+        const idMatch = sid && rid && sid === rid;
+        const nameMatch = sn && rn && sn === rn;
+        if (!idMatch && !nameMatch) continue;
+        const rs = (r.startTime || '').toString().trim();
+        const re = (r.endTime || '').toString().trim();
+        if (rs) startTime = startTime || rs;
+        if (re) endTime = endTime || re;
+        if (startTime && endTime) break;
+    }
+    if (startTime) plain.startTime = startTime;
+    if (endTime) plain.endTime = endTime;
+    return plain;
+};
+
+/**
+ * Required paid hours for open shifts from embedded shift; fall back to plain company POJO
+ * when Mongoose subdoc does not surface `workHours` (observed with some loads).
+ */
+const resolveOpenShiftWorkHoursRaw = (company, shift) => {
+    let raw = shift?.workHours ?? shift?.openWorkHours;
+    if (raw != null && raw !== '') {
+        const n = Number(raw);
+        if (Number.isFinite(n) && n > 0) return n;
+    }
+    try {
+        const plain = typeof company?.toObject === 'function' ? company.toObject() : company;
+        const arr = plain?.settings?.attendance?.shifts;
+        if (!Array.isArray(arr)) return null;
+        const sid = shift?._id != null ? String(shift._id) : null;
+        const sname = (shift?.name || '').toString().trim().toLowerCase();
+        const match = arr.find((s) => {
+            if (!s) return false;
+            if (sid && s._id != null && String(s._id) === sid) return true;
+            if (sname && (s.name || '').toString().trim().toLowerCase() === sname) return true;
+            return false;
+        });
+        const mwh = match?.workHours ?? match?.openWorkHours;
+        if (match && mwh != null && mwh !== '') {
+            const n = Number(mwh);
+            if (Number.isFinite(n) && n > 0) return n;
+        }
+    } catch (_) {}
+    return null;
+};
+
+/**
+ * @param {Object} company
+ * @param {Object|null} staff
+ * @param {Date|null} [attendanceDate] - calendar day for rotational resolution (default: now)
+ * @param {Date|null} [rotationAnchorDate] - default staff.joiningDate or now
+ */
+/** YYYY-MM-DD in UTC for shift-resolution logs (matches attendance date storage). */
+const formatDateUtcYmd = (d) => {
+    if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return null;
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+};
+
+/**
+ * Structured log payload: attendance UTC date, assigned rotational wrapper, cycle slot index,
+ * full cycle as sub-shifts with resolved timings (after enrich).
+ */
+const getRotationalCycleDebugInfo = (shifts, wrapper, attendanceDate, rotationAnchorDate) => {
+    if (!wrapper || !Array.isArray(shifts)) return null;
+    const w = shiftRowToPlain(wrapper);
+    if (!isRotationalShiftWrapper(w)) return null;
+    const cfg = plainRotationalConfig(w);
+    const rotationType = (cfg.rotationType || 'custom').toString().toLowerCase().trim();
+    const att = attendanceDate ? new Date(attendanceDate) : new Date();
+    const ymd = formatDateUtcYmd(att);
+
+    const isLeafShiftRow = (s) => {
+        if (!s) return false;
+        const p = shiftRowToPlain(s);
+        if (!isRotationalShiftWrapper(p)) return true;
+        const st = (p.startTime || '').toString().trim();
+        const en = (p.endTime || '').toString().trim();
+        const hasWindow = !!(st && en);
+        const hasCycle = shiftRowHasRotationalCycle(p);
+        return hasWindow && !hasCycle;
+    };
+
+    const resolveLeafByIdOrName = (idHex, nm) => {
+        let leaf = null;
+        if (idHex) {
+            leaf = shifts.find((s) => isLeafShiftRow(s) && normalizeShiftObjectIdStr(s._id) === idHex);
+        }
+        if (!leaf && nm) {
+            const nl = String(nm).trim().toLowerCase();
+            leaf = shifts.find(
+                (s) => isLeafShiftRow(s) && (s.name || '').toString().trim().toLowerCase() === nl
+            );
+        }
+        return leaf || null;
+    };
+
+    const legSummary = (s) => {
+        if (!s) {
+            return {
+                name: null,
+                id: null,
+                shiftType: null,
+                startTime: null,
+                endTime: null,
+                workHours: null
+            };
+        }
+        const p = enrichStandardShiftTimesFromShiftsList(shifts, shiftRowToPlain(s));
+        const st = (p.shiftType || '').toString().toLowerCase().trim();
+        const rawWh = p.workHours ?? p.openWorkHours;
+        const wh = rawWh != null && rawWh !== '' ? Number(rawWh) : null;
+        return {
+            name: (p.name || '').toString().trim() || null,
+            id: p._id != null ? normalizeShiftObjectIdStr(p._id) : null,
+            shiftType: st || null,
+            startTime: (p.startTime || '').toString().trim() || null,
+            endTime: (p.endTime || '').toString().trim() || null,
+            workHours: Number.isFinite(wh) ? wh : null
+        };
+    };
+
+    const wrapperOut = {
+        name: (w.name || '').toString().trim() || null,
+        id: normalizeShiftObjectIdStr(w._id) || null,
+        shiftType: (w.shiftType || '').toString().toLowerCase().trim() || null
+    };
+
+    const weekdayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    if (rotationType === 'byweekday' || rotationType === 'by_weekday') {
+        const entries = Array.isArray(cfg.shiftIdsByWeekday) ? cfg.shiftIdsByWeekday.filter(Boolean) : [];
+        const y = att.getUTCFullYear();
+        const mo = att.getUTCMonth();
+        const d = att.getUTCDate();
+        const jsDow = new Date(Date.UTC(y, mo, d)).getUTCDay();
+        const subShifts = entries.map((e) => {
+            const needle = e && e.shiftId != null ? normalizeShiftObjectIdStr(e.shiftId) : '';
+            const leaf = needle
+                ? shifts.find((s) => isLeafShiftRow(s) && normalizeShiftObjectIdStr(s._id) === needle)
+                : null;
+            const wd = e != null ? Number(e.day) : null;
+            return {
+                weekday0Sun6Sat: Number.isFinite(wd) ? wd : null,
+                weekdayShort: Number.isFinite(wd) && wd >= 0 && wd <= 6 ? weekdayShort[wd] : null,
+                ruleShiftId: needle || null,
+                ...legSummary(leaf)
+            };
+        });
+        const row = entries.find((e) => e && Number(e.day) === jsDow);
+        const effLeaf = row && row.shiftId != null ? resolveLeafByIdOrName(normalizeShiftObjectIdStr(row.shiftId), null) : null;
+        return {
+            kind: 'rotational',
+            rotationMode: 'byWeekday',
+            dateUtc: ymd,
+            utcWeekday0Sun6Sat: jsDow,
+            utcWeekdayLabel: weekdayShort[jsDow],
+            anchorUtc: formatDateUtcYmd(rotationAnchorDate ? new Date(rotationAnchorDate) : null),
+            assignedWrapper: wrapperOut,
+            subShifts,
+            effectiveForDate: {
+                weekday0Sun6Sat: jsDow,
+                ...legSummary(effLeaf)
+            }
+        };
+    }
+
+    const ids = normalizedCycleIdList(cfg);
+    const names = Array.isArray(cfg.shiftNamesInCycle) ? cfg.shiftNamesInCycle.filter(Boolean) : [];
+    let cycleLen = Number(cfg.cycleLengthDays);
+    if (!Number.isFinite(cycleLen) || cycleLen <= 0) {
+        cycleLen = ids.length || names.length || 0;
+    }
+    if (cycleLen <= 0) {
+        return {
+            kind: 'rotational',
+            rotationMode: rotationType,
+            dateUtc: ymd,
+            anchorUtc: formatDateUtcYmd(rotationAnchorDate ? new Date(rotationAnchorDate) : null),
+            assignedWrapper: wrapperOut,
+            error: 'cycle_empty',
+            subShifts: []
+        };
+    }
+
+    let idx;
+    let diffDaysUtc = null;
+    if (rotationType === 'weekly') {
+        const y = att.getUTCFullYear();
+        const mo = att.getUTCMonth();
+        const d = att.getUTCDate();
+        const jsDow = new Date(Date.UTC(y, mo, d)).getUTCDay();
+        idx = jsDow % cycleLen;
+        diffDaysUtc = null;
+    } else {
+        const anchor = rotationAnchorDate ? new Date(rotationAnchorDate) : att;
+        diffDaysUtc = diffDaysUTC(att, anchor);
+        idx = diffDaysUtc % cycleLen;
+        if (idx < 0) idx += cycleLen;
+    }
+
+    const subShifts = [];
+    for (let i = 0; i < cycleLen; i++) {
+        const idHex = ids.length > 0 ? ids[i % ids.length] : null;
+        const nm = names.length > 0 ? names[i % names.length] : null;
+        const leaf = resolveLeafByIdOrName(idHex, nm);
+        subShifts.push({
+            cycleSlotIndex0: i,
+            cycleSlotIndex1: i + 1,
+            ruleShiftId: idHex,
+            ruleShiftName: nm || null,
+            ...legSummary(leaf)
+        });
+    }
+
+    const effId = ids.length > 0 ? ids[idx % ids.length] : null;
+    const effNm = names.length > 0 ? names[idx % names.length] : null;
+    const effLeaf = resolveLeafByIdOrName(effId, effNm);
+
+    return {
+        kind: 'rotational',
+        rotationMode: rotationType === 'weekly' ? 'weekly' : 'custom',
+        dateUtc: ymd,
+        anchorUtc: formatDateUtcYmd(rotationAnchorDate ? new Date(rotationAnchorDate) : null),
+        diffDaysUtcFromAnchor: diffDaysUtc,
+        assignedWrapper: wrapperOut,
+        cycleLengthDays: cycleLen,
+        cycleDayIndex0: idx,
+        cycleDayIndex1: idx + 1,
+        subShifts,
+        effectiveForDate: {
+            cycleSlotIndex0: idx,
+            cycleSlotIndex1: idx + 1,
+            ruleShiftId: effId,
+            ruleShiftName: effNm || null,
+            ...legSummary(effLeaf)
+        }
+    };
+};
+
+const getShiftTimings = (
+    company,
+    staff = null,
+    attendanceDate = null,
+    rotationAnchorDate = null,
+    attendanceTemplateDoc = null
+) => {
+    /** No fabricated window: null when company/embed does not provide both start and end. */
+    let startTime = null;
+    let endTime = null;
     let gracePeriodMinutes = 0;
     let halfDaySettings = null;
+    let shiftType = 'standard';
+    /** Required paid/work hours per day when shiftType === 'open' (e.g. 9). */
+    let openWorkHours = null;
+    /** OT buffer on underlying standard shift (minutes after shift end before OT counts). */
+    let otBufferMinutes = 0;
+    /** For open shifts: duplicate of openWorkHours for controllers expecting workHours. */
+    let workHours = null;
+    let permissionPolicy = null;
+    let breakPolicy = null;
+    /** Embedded company row used for timings after rotational resolution (for logs / UI). */
+    let effectiveShiftName = null;
+    /** Mongo ObjectId string of the resolved embedded shift row (same calendar day as timings). */
+    let effectiveShiftId = null;
+
+    const dateForShift = attendanceDate ? new Date(attendanceDate) : new Date();
+    // Match Flutter rotational_shift_util: anchor = joiningDate ?? attendance calendar day (not "server now").
+    const anchor =
+        rotationAnchorDate != null && rotationAnchorDate !== undefined
+            ? rotationAnchorDate
+            : (staff && staff.joiningDate ? staff.joiningDate : dateForShift);
+
+    const staffIdStr = staff && staff._id != null ? String(staff._id) : null;
+    const attendanceYmd = formatDateUtcYmd(dateForShift);
+    const anchorYmd = formatDateUtcYmd(anchor);
 
     // Check company settings for shifts
     if (company && company.settings && company.settings.attendance && company.settings.attendance.shifts) {
-        const shifts = company.settings.attendance.shifts;
-        if (Array.isArray(shifts) && shifts.length > 0) {
-            // Use first shift as default (or match staff's shiftName if provided)
-            const shift = staff && staff.shiftName
-                ? shifts.find(s => s.name === staff.shiftName) || shifts[0]
+        const shiftsRaw = company.settings.attendance.shifts;
+        const shifts = Array.isArray(shiftsRaw) ? shiftsRaw.map(shiftRowToPlain) : [];
+        if (shifts.length > 0) {
+            const staffShiftKey = staffShiftKeyFromStaff(staff, attendanceTemplateDoc);
+            let wrapper = staffShiftKey
+                ? findShiftByStaffKey(shifts, staffShiftKey) || shifts[0]
                 : shifts[0];
-            
-            if (shift.startTime) startTime = shift.startTime;
-            if (shift.endTime) endTime = shift.endTime;
-            
+            wrapper = enrichWrapperRotationalFromDuplicateRows(shifts, wrapper);
+            wrapper = wrapperWithMergedRotationalConfig(shifts, wrapper);
+            const wrapperWasRotational = wrapper != null && isRotationalShiftWrapper(wrapper);
+
+            // console.log('[API][getShiftTimings] input', {
+            //     attendanceDateUtc: attendanceYmd,
+            //     rotationAnchorUtc: anchorYmd,
+            //     staffId: staffIdStr,
+            //     staffShiftKey: staffShiftKey || null,
+            //     embeddedShiftsCount: shifts.length,
+            //     wrapperName,
+            //     wrapperId,
+            //     wrapperIsRotational: wrapperRotational,
+            //     mergedRotationalConfigFromSibling: mergedSiblingConfig
+            // });
+
+            // const rotationalCycleDetail = getRotationalCycleDebugInfo(shifts, wrapper, dateForShift, anchor);
+            // if (rotationalCycleDetail) {
+            //     console.log(
+            //         '[API][getShiftTimings] rotationalCycleDetail',
+            //         JSON.stringify(rotationalCycleDetail, null, 2)
+            //     );
+            // }
+
+            let shift = resolveEffectiveShiftRaw(shifts, wrapper, dateForShift, anchor);
+            shift = enrichStandardShiftTimesFromShiftsList(shifts, shift);
+            effectiveShiftName = (shift.name || '').toString().trim() || null;
+            effectiveShiftId = shift._id != null ? String(shift._id) : null;
+            // console.log('[API][getShiftTimings] resolvedRow', {
+            //     effectiveShiftName,
+            //     effectiveShiftId,
+            //     rawStartTime: rawStartAfterResolve || null,
+            //     rawEndTime: rawEndAfterResolve || null,
+            //     resolvedToDifferentRowThanWrapper: resolvedDiffersFromWrapper
+            // });
+            // console.log('[Fine][getShiftTimings] Raw shift object: name=', shift.name, 'shiftType=', shift.shiftType, '_id=', effectiveShiftId);
+
+            shiftType = (shift.shiftType || '').toString().toLowerCase().trim();
+            if (!shiftType && shift.startTime && shift.endTime) {
+                shiftType = 'standard';
+            }
+            // console.log('[Fine][getShiftTimings] After initial shiftType assignment: shiftType=', shiftType);
+            // If the shift name is "OPEN" / "open shift" (any case), treat as open shift.
+            const shiftNameLower = (shift.name || '').toString().toLowerCase().trim();
+            if (shiftNameLower === 'open' || shiftNameLower === 'open shift') {
+                shiftType = 'open';
+                // console.log('[Fine][getShiftTimings] ShiftType updated to OPEN based on name (override): shiftType=', shiftType);
+            }
+
+            if (shiftType === 'open' || shiftType === 'open shift') {
+                const resolvedWh = resolveOpenShiftWorkHoursRaw(company, shift);
+                // console.log('[Fine][getShiftTimings] Raw shift.workHours from DB:', shift.workHours, 'resolved=', resolvedWh);
+                openWorkHours = Number(resolvedWh != null ? resolvedWh : shift.workHours);
+                if (!Number.isFinite(openWorkHours) || openWorkHours <= 0) openWorkHours = 8;
+                workHours = openWorkHours;
+                otBufferMinutes = Math.max(0, Math.floor(Number(shift.otBufferMinutes ?? 0) || 0));
+                startTime = null; // Explicitly set to null for open shifts
+                endTime = null;   // Explicitly set to null for open shifts
+                // console.log('[Fine][getShiftTimings] Open Shift Details: shiftType=', shiftType, 'openWorkHours=', openWorkHours, 'workHours=', workHours, 'otBufferMinutes=', otBufferMinutes, 'startTime=', startTime, 'endTime=', endTime);
+            } else {
+                const stWin = (shift.startTime || '').toString().trim();
+                const enWin = (shift.endTime || '').toString().trim();
+                if (stWin && enWin) {
+                    startTime = stWin;
+                    endTime = enWin;
+                } else {
+                    startTime = null;
+                    endTime = null;
+                }
+                if (shiftType === 'standard') {
+                    otBufferMinutes = Math.max(0, Math.floor(Number(shift.otBufferMinutes ?? 0) || 0));
+                }
+            }
+            if (!shiftType || shiftType === '') {
+                shiftType = wrapperWasRotational ? 'rotational' : 'standard';
+            }
+
             // Extract grace time from shift.graceTime.value and shift.graceTime.unit
             if (shift.graceTime) {
                 if (shift.graceTime.unit === 'hours') {
@@ -429,10 +1208,75 @@ const getShiftTimings = (company, staff = null) => {
                     secondHalfStrictLogin: shift.halfDaySettings.secondHalfStrictLogin === true
                 };
             }
+            if (shift.permissionPolicy && typeof shift.permissionPolicy === 'object') {
+                permissionPolicy = {
+                    enabled: shift.permissionPolicy.enabled === true,
+                    monthlyQuotaMinutes: Math.max(0, Number(shift.permissionPolicy.monthlyQuotaMinutes || 0)),
+                    applyTo: ['lateArrival', 'earlyExit', 'both'].includes(String(shift.permissionPolicy.applyTo || 'both'))
+                        ? String(shift.permissionPolicy.applyTo || 'both')
+                        : 'both'
+                };
+            }
+            if (shift.breakPolicy && typeof shift.breakPolicy === 'object') {
+                const fineTypeRaw = String(shift.breakPolicy.fineType || '1xSalary');
+                breakPolicy = {
+                    enabled: shift.breakPolicy.enabled === true,
+                    allowedMinutes: Math.max(0, Number(shift.breakPolicy.allowedMinutes || 0)),
+                    fineEnabled: shift.breakPolicy.fineEnabled === true,
+                    fineType: ['1xSalary', '2xSalary', '3xSalary', 'custom'].includes(fineTypeRaw)
+                        ? fineTypeRaw
+                        : '1xSalary',
+                    customFinePerHour: Math.max(0, Number(shift.breakPolicy.customFinePerHour || 0))
+                };
+            }
+
+            const missingStandardWindow =
+                shiftType !== 'open' &&
+                shiftType !== 'open shift' &&
+                (!startTime || !endTime);
+            // console.log('[API][getShiftTimings] output', {
+            //     attendanceDateUtc: attendanceYmd,
+            //     staffId: staffIdStr,
+            //     shiftType,
+            //     startTime: shiftType === 'open' || shiftType === 'open shift' ? null : startTime,
+            //     endTime: shiftType === 'open' || shiftType === 'open shift' ? null : endTime,
+            //     openWorkHours: shiftType === 'open' || shiftType === 'open shift' ? openWorkHours : null,
+            //     otBufferMinutes,
+            //     gracePeriodMinutes,
+            //     effectiveShiftName,
+            //     effectiveShiftId,
+            //     missingStandardWindow
+            // });
+        } else {
+            // console.log('[API][getShiftTimings] embedded_shifts_empty', {
+            //     attendanceDateUtc: attendanceYmd,
+            //     staffId: staffIdStr,
+            //     staffShiftKey: staffShiftKeyFromStaff(staff, attendanceTemplateDoc) || null
+            // });
         }
+    } else {
+        // console.log('[API][getShiftTimings] no_company_shifts', {
+        //     attendanceDateUtc: attendanceYmd,
+        //     staffId: staffIdStr,
+        //     hasCompany: !!company,
+        //     hasAttendanceSettings: !!(company && company.settings && company.settings.attendance)
+        // });
     }
 
-    return { startTime, endTime, gracePeriodMinutes, halfDaySettings };
+    return {
+        startTime,
+        endTime,
+        gracePeriodMinutes,
+        halfDaySettings,
+        shiftType,
+        openWorkHours,
+        otBufferMinutes,
+        workHours,
+        permissionPolicy,
+        breakPolicy,
+        effectiveShiftName,
+        effectiveShiftId
+    };
 };
 
 /**
@@ -443,8 +1287,12 @@ const getShiftTimings = (company, staff = null) => {
  */
 const calculateWorkHoursFromShift = (startTime, endTime) => {
     try {
-        const [startHours, startMins] = startTime.split(':').map(Number);
-        const [endHours, endMins] = endTime.split(':').map(Number);
+        if (startTime == null || endTime == null) return null;
+        const ss = String(startTime).trim();
+        const ee = String(endTime).trim();
+        if (!ss || !ee) return null;
+        const [startHours, startMins] = ss.split(':').map(Number);
+        const [endHours, endMins] = ee.split(':').map(Number);
         
         const startMinutes = startHours * 60 + startMins;
         const endMinutes = endHours * 60 + endMins;
@@ -551,8 +1399,6 @@ const markAttendanceForApprovedLeave = async (leave) => {
 
         // Get company for shift timings
         const company = await Company.findById(businessId);
-        const { startTime, endTime } = getShiftTimings(company, staff);
-        const workHours = calculateWorkHoursFromShift(startTime, endTime);
 
         // Generate all dates between startDate and endDate (inclusive) using UTC calendar day
         const dates = [];
@@ -573,9 +1419,13 @@ const markAttendanceForApprovedLeave = async (leave) => {
             const startOfDay = new Date(y, m, d, 0, 0, 0, 0);
             const endOfDay = new Date(y, m, d, 23, 59, 59, 999);
 
-            // Create punch in/out times based on shift timings
-            const [startHours, startMins] = startTime.split(':').map(Number);
-            const [endHours, endMins] = endTime.split(':').map(Number);
+            const { startTime, endTime } = getShiftTimings(company, staff, date, staff?.joiningDate);
+            const punchStart = startTime || DEFAULT_SHIFT_START;
+            const punchEnd = endTime || DEFAULT_SHIFT_END;
+
+            // Create punch in/out times based on shift timings (fallback when embed has no window)
+            const [startHours, startMins] = punchStart.split(':').map(Number);
+            const [endHours, endMins] = punchEnd.split(':').map(Number);
             
             const punchIn = new Date(startOfDay.getTime() + (startHours * 60 + startMins) * 60 * 1000);
             const punchOut = new Date(startOfDay.getTime() + (endHours * 60 + endMins) * 60 * 1000);
@@ -915,7 +1765,7 @@ const getWorkingSessionTimings = (session, shiftStartTime, shiftEndTime, halfDay
  * @param {Object} [fineConfig] - from getEffectiveFineConfig(company)
  * @returns {{ lateMinutes: number, fineAmount: number }}
  */
-const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePeriodMinutes, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null) => {
+const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePeriodMinutes, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null, dailyGrossForRules = null) => {
     const timings = getWorkingSessionTimings(session, shiftStartTime, shiftEndTime, halfDaySettings);
     if (!timings) return { lateMinutes: 0, fineAmount: 0 };
     const [startHours, startMins] = timings.startTime.split(':').map(Number);
@@ -927,7 +1777,19 @@ const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePer
     const lateMinutes = Math.max(0, Math.round((punchInTime.getTime() - shiftStart.getTime()) / (1000 * 60)));
     if (lateMinutes <= 0) return { lateMinutes, fineAmount: 0 };
     if (fineConfig && fineConfig.enabled === false) return { lateMinutes, fineAmount: 0 };
-    const fineAmount = calculateFineAmount(lateMinutes, 'lateArrival', fineConfig, dailySalary, shiftHours);
+    console.log(
+        '[Fine][formula][test][half-day][lateArrival] input | minutes=%s dailyNet=%s dailyGross=%s shiftHours=%s calcType=%s',
+        lateMinutes,
+        dailySalary,
+        dailyGrossForRules,
+        shiftHours,
+        fineConfig?.calculationType || 'shiftBased'
+    );
+    const fineAmount = calculateFineAmount(lateMinutes, 'lateArrival', fineConfig, dailySalary, shiftHours, dailyGrossForRules);
+    console.log(
+        '[Fine][formula][test][half-day][lateArrival] output | formula=Fine=(base÷shiftHours)×(minutes÷60) | finalFine=%s',
+        fineAmount
+    );
     return { lateMinutes, fineAmount };
 };
 
@@ -936,7 +1798,7 @@ const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePer
  * @param {Object} [fineConfig] - from getEffectiveFineConfig(company)
  * @returns {{ earlyMinutes: number, fineAmount: number }}
  */
-const calculateHalfDayEarlyFine = (punchOutTime, attendanceDate, session, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null) => {
+const calculateHalfDayEarlyFine = (punchOutTime, attendanceDate, session, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null, dailyGrossForRules = null) => {
     const timings = getWorkingSessionTimings(session, shiftStartTime, shiftEndTime, halfDaySettings);
     if (!timings) return { earlyMinutes: 0, fineAmount: 0 };
     const [endHours, endMins] = timings.endTime.split(':').map(Number);
@@ -946,8 +1808,54 @@ const calculateHalfDayEarlyFine = (punchOutTime, attendanceDate, session, dailyS
     const earlyMinutes = Math.max(0, Math.round((shiftEnd.getTime() - punchOutTime.getTime()) / (1000 * 60)));
     if (earlyMinutes <= 0) return { earlyMinutes, fineAmount: 0 };
     if (fineConfig && fineConfig.enabled === false) return { earlyMinutes, fineAmount: 0 };
-    const fineAmount = calculateFineAmount(earlyMinutes, 'earlyExit', fineConfig, dailySalary, shiftHours);
+    console.log(
+        '[Fine][formula][test][half-day][earlyExit] input | minutes=%s dailyNet=%s dailyGross=%s shiftHours=%s calcType=%s',
+        earlyMinutes,
+        dailySalary,
+        dailyGrossForRules,
+        shiftHours,
+        fineConfig?.calculationType || 'shiftBased'
+    );
+    const fineAmount = calculateFineAmount(earlyMinutes, 'earlyExit', fineConfig, dailySalary, shiftHours, dailyGrossForRules);
+    console.log(
+        '[Fine][formula][test][half-day][earlyExit] output | formula=Fine=(base÷shiftHours)×(minutes÷60) | finalFine=%s',
+        fineAmount
+    );
     return { earlyMinutes, fineAmount };
+};
+
+/**
+ * Open shift OT + buffer tracking (minutes). OT equals full extra worked time above required shift length.
+ * bufferTimeUsed repeats in full buffer blocks: floor(extra / buffer) * buffer (tracking only; OT is not reduced).
+ * @param {number} workedMinutes
+ * @param {number} requiredShiftMinutes  daily required minutes for the open shift
+ * @param {number} bufferTimeMinutes  otBufferMinutes from shift (0 if unset)
+ * @returns {{ overtimeMinutes: number, bufferTimeUsed: number }}
+ */
+const computeOpenShiftOvertimeWithBufferTracking = (
+    workedMinutes,
+    requiredShiftMinutes,
+    bufferTimeMinutes
+) => {
+    const w = Math.round(Number(workedMinutes) || 0);
+    const shiftMin = Math.max(0, Math.round(Number(requiredShiftMinutes) || 0));
+    const buf = Math.max(0, Math.round(Number(bufferTimeMinutes) || 0));
+    const extraMinutes = w - shiftMin;
+    if (extraMinutes <= 0) {
+        console.log('[OT Minutes][open shift] workMins=%s requiredMins=%s (%.2fh) extra=%s → overtime=0 bufferTime=0',
+            w, shiftMin, shiftMin / 60, extraMinutes);
+        return { overtimeMinutes: 0, bufferTimeUsed: 0 };
+    }
+    let bufferTimeUsed = 0;
+    if (buf > 0) {
+        bufferTimeUsed = Math.floor(extraMinutes / buf) * buf;
+    }
+    const fullBlocks = buf > 0 ? Math.floor(extraMinutes / buf) : 0;
+    console.log('[OT Minutes][open shift] formula: extra = workMins − requiredMins = %s − %s = %s | bufferTrack = floor(extra÷otBuffer)×otBuffer = floor(%s÷%s)×%s = %s',
+        w, shiftMin, extraMinutes, extraMinutes, buf || 'n/a', buf || 0, bufferTimeUsed);
+    console.log('[OT Minutes][open shift] result: overtimeMinutes=%s bufferTimeUsed=%s (fullBufferBlocks=%s)',
+        extraMinutes, bufferTimeUsed, fullBlocks);
+    return { overtimeMinutes: extraMinutes, bufferTimeUsed };
 };
 
 module.exports = {
@@ -963,7 +1871,9 @@ module.exports = {
     calculateHalfDayLateFine,
     calculateHalfDayEarlyFine,
     getShiftTimings,
+    staffShiftKeyFromStaff,
     calculateWorkHoursFromShift,
     getBusinessTimezone,
-    getShiftBoundaryAsUTCDate
+    getShiftBoundaryAsUTCDate,
+    computeOpenShiftOvertimeWithBufferTracking
 };

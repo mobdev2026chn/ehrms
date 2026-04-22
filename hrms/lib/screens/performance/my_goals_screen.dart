@@ -1067,7 +1067,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                     ),
                     const SizedBox(height: 14),
                     DropdownButtonFormField<String>(
-                      value: _selectedKraId,
+                      initialValue: _selectedKraId,
                       decoration: _profileInputDecoration(
                         'Link to KRA (Optional)',
                         Icons.link_rounded,
@@ -1189,7 +1189,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
     required void Function(String?) onChanged,
   }) {
     return DropdownButtonFormField<String?>(
-      value: (value == null || value.isEmpty) ? null : value,
+      initialValue: (value == null || value.isEmpty) ? null : value,
       decoration: _profileInputDecoration(label, icon),
       hint: Text(hint, style: TextStyle(color: Colors.grey.shade600)),
       items: items,

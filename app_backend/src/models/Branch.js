@@ -21,7 +21,17 @@ const branchSchema = new mongoose.Schema({
         enabled: { type: Boolean, default: false },
         latitude: { type: Number },
         longitude: { type: Number },
-        radius: { type: Number, default: 100 }
+        radius: { type: Number, default: 100 },
+        // Multiple sub-geofence circles for this branch.
+        // Example: geofence.locations[] each with its own latitude/longitude/radius.
+        locations: [
+            {
+                latitude: { type: Number },
+                longitude: { type: Number },
+                radius: { type: Number, default: 50 },
+                label: { type: String },
+            }
+        ]
     },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });

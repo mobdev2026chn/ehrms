@@ -1,6 +1,9 @@
-import 'package:flutter/material.dart';
-import '../config/app_colors.dart';
 import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../config/app_colors.dart';
+import 'punch_flow_log.dart';
 
 class SnackBarUtils {
   static OverlayEntry? _currentEntry;
@@ -13,12 +16,29 @@ class SnackBarUtils {
     Color? backgroundColor,
     bool isError = false,
     Duration? duration,
+    /// When set, included in punch trace log (see [punchFlowLog]).
+    String? debugSource,
   }) {
+    final lower = message.toLowerCase();
+    final traceLeaveOrPunch =
+        lower.contains('leave') ||
+        lower.contains('checkout') ||
+        lower.contains('check-out') ||
+        lower.contains('check-in') ||
+        lower.contains('punch') ||
+        lower.contains('attendance');
+    if (traceLeaveOrPunch || (debugSource != null && debugSource.isNotEmpty)) {
+      final preview = message.length > 160 ? '${message.substring(0, 160)}…' : message;
+      punchFlowLog(
+        '[SnackBarUtils][trace] source=${debugSource ?? "(auto)"} isError=$isError msg=$preview',
+      );
+    }
     // Attempt to find the top-level overlay
     final overlay = Navigator.of(context, rootNavigator: true).overlay;
     if (overlay == null) return;
 
-    // Remove existing snackbar immediately
+    // Remove existing app-level and Material snackbars immediately.
+    _clearMaterialSnackBars(context);
     _removeCurrentSnackBarSync();
 
     _currentEntry = OverlayEntry(
@@ -41,7 +61,33 @@ class SnackBarUtils {
   }
 
   /// Dismisses the currently shown snackbar (e.g. when location is captured).
-  static void dismiss() => _removeCurrentSnackBarSync();
+  static void dismiss([BuildContext? context]) {
+    if (context != null) {
+      _clearMaterialSnackBars(context);
+    }
+    _removeCurrentSnackBarSync();
+  }
+
+  static void _clearMaterialSnackBars(BuildContext context) {
+    // If any screen still shows ScaffoldMessenger snackbars, ensure they are
+    // dismissed so new messages never stack visually.
+    try {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).removeCurrentSnackBar();
+    } catch (_) {
+      // No ScaffoldMessenger in this subtree.
+    }
+    try {
+      ScaffoldMessenger.of(
+        Navigator.of(context, rootNavigator: true).context,
+      ).hideCurrentSnackBar();
+      ScaffoldMessenger.of(
+        Navigator.of(context, rootNavigator: true).context,
+      ).removeCurrentSnackBar();
+    } catch (_) {
+      // Root context may not host a ScaffoldMessenger.
+    }
+  }
 
   static void _removeCurrentSnackBarSync() {
     _timer?.cancel();

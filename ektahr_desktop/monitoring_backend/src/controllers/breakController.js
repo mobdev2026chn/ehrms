@@ -33,6 +33,10 @@ function serializeBreak(doc) {
         startTime: doc.startTime,
         endTime: doc.endTime,
         totalSeconds: doc.totalSeconds,
+        breakMin: doc.breakMin ?? 0,
+        breakCount: doc.breakCount ?? 0,
+        breakFineMins: doc.breakFineMins ?? 0,
+        breakFineAmount: doc.breakFineAmount ?? 0,
         source: doc.source || '',
         breakStartSelfie: doc.breakStartSelfie || '',
         breakEndSelfie: doc.breakEndSelfie || '',
@@ -198,6 +202,35 @@ exports.endBreak = async (req, res) => {
         if (!doc) {
             return res.status(404).json({ message: 'Break not found or already ended' });
         }
+        const allowedBreakMin = 5; // TEMP for testing; set 60 in production
+        const dayStart = new Date(doc.endTime || endTime);
+        dayStart.setUTCHours(0, 0, 0, 0);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+        const dayBreaks = await Break.find({
+            employeeID: device.employeeID,
+            tenantId: device.tenantId,
+            startTime: { $gte: dayStart, $lt: dayEnd },
+            endTime: { $ne: null }
+        }).select('totalSeconds startTime endTime').lean();
+        const totalBreakMin = dayBreaks.reduce((sum, b) => {
+            const secs = Number(b?.totalSeconds);
+            if (Number.isFinite(secs) && secs >= 0) return sum + Math.round(secs / 60);
+            const st = b?.startTime ? new Date(b.startTime).getTime() : 0;
+            const et = b?.endTime ? new Date(b.endTime).getTime() : 0;
+            if (!st || !et || et < st) return sum;
+            return sum + Math.round((et - st) / (1000 * 60));
+        }, 0);
+        const totalBreakCount = dayBreaks.length;
+        const breakFineMins = Math.max(0, totalBreakMin - allowedBreakMin);
+        await Break.updateOne(
+            { _id: doc._id },
+            { $set: { breakMin: totalBreakMin, breakCount: totalBreakCount, breakFineMins, breakFineAmount: doc.breakFineAmount || 0 } }
+        );
+        doc.breakMin = totalBreakMin;
+        doc.breakCount = totalBreakCount;
+        doc.breakFineMins = breakFineMins;
+        doc.breakFineAmount = doc.breakFineAmount || 0;
         await Device.updateOne({ deviceId: doc.deviceId }, { $set: { status: 'active', lastSeenAt: new Date() } });
 >>>>>>> development
         await Staff.updateOne({ _id: device.employeeID }, { $set: { monitoringStatus: 'active' } });

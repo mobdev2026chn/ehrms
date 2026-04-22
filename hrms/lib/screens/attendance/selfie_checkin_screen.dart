@@ -1,10 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
-import 'selfie_camera_screen.dart' show SelfieCameraScreen, useImagePickerFallback;
+import 'selfie_camera_screen.dart'
+    show SelfieCameraScreen, useImagePickerFallback;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_colors.dart';
@@ -105,14 +107,20 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     final stored = await AttendanceTemplateStore.loadTemplateDetails();
     if (mounted && stored != null) {
       final t = stored['template'];
-      setState(() => _effectiveTemplate =
-          t is Map<String, dynamic> ? t : (t is Map ? Map<String, dynamic>.from(t) : null));
+      setState(
+        () => _effectiveTemplate = t is Map<String, dynamic>
+            ? t
+            : (t is Map ? Map<String, dynamic>.from(t) : null),
+      );
     }
   }
 
   void _determinePositionFromTemplate() {
     final template = _effectiveTemplate ?? widget.template;
     final requireGeolocation = template?['requireGeolocation'] ?? true;
+    print(
+      '[SelfieCheckInScreen][TemplateFlags][determine-position] requireGeolocation=$requireGeolocation',
+    );
     if (requireGeolocation) {
       _determinePosition();
     } else {
@@ -125,6 +133,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   Future<void> _maybeShowPermissionDialog() async {
     final requireSelfie = _template?['requireSelfie'] ?? true;
     final requireGeolocation = _template?['requireGeolocation'] ?? true;
+    print(
+      '[SelfieCheckInScreen][TemplateFlags][permission-dialog] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation',
+    );
     if (!requireSelfie && !requireGeolocation) return;
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(_kAttendancePermissionDialogShown) == true) return;
@@ -188,7 +199,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Camera is used for your attendance selfie.',
+                        'Selfie required: $requireSelfie\nCamera is used for your attendance selfie.',
                         style: TextStyle(
                           fontSize: 14,
                           height: 1.4,
@@ -211,7 +222,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Location is used to record your check-in and check-out place.',
+                        'Location required: $requireGeolocation\nLocation is used to record your check-in and check-out place.',
                         style: TextStyle(
                           fontSize: 14,
                           height: 1.4,
@@ -263,7 +274,10 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     );
   }
 
-  Future<void> _onAttendanceStateChanged(BuildContext context, AttendanceState state) async {
+  Future<void> _onAttendanceStateChanged(
+    BuildContext context,
+    AttendanceState state,
+  ) async {
     if (state is AttendanceStatusLoaded) {
       if (!mounted) return;
       setState(() {
@@ -276,6 +290,19 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
         _isCompleted = state.isCompleted;
         _isStatusLoading = false;
       });
+      final tmpl = _template;
+      final branch = state.branchData;
+      if (tmpl != null && branch != null) {
+        unawaited(
+          AttendanceTemplateStore.saveTemplateDetails(<String, dynamic>{
+            'template': tmpl,
+            'branch': branch,
+            'shiftAssigned': true,
+            'checkInAllowed': state.checkInAllowed,
+            'checkOutAllowed': state.checkOutAllowed,
+          }),
+        );
+      }
     } else if (state is AttendanceFailure) {
       if (!mounted) return;
       setState(() {
@@ -299,7 +326,11 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           ),
         );
       } else {
-        SnackBarUtils.showSnackBar(context, ErrorMessageUtils.sanitizeForDisplay(msg), isError: true);
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.sanitizeForDisplay(msg),
+          isError: true,
+        );
       }
     } else if (state is AttendanceCheckInSuccess) {
       if (!mounted) return;
@@ -312,6 +343,11 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
               'To continue recording your attendance location while the app is in the background or the screen is off, this app needs "Allow all the time" location access.\n\n'
               'Your location is used only for attendance presence tracking and is sent to your organization\'s HRMS server.',
         );
+      }
+      final pinLat = state.checkInLat;
+      final pinLng = state.checkInLng;
+      if (pinLat != null && pinLng != null) {
+        await PresenceTrackingService().pinOfficeZoneAtCheckIn(pinLat, pinLng);
       }
       await PresenceTrackingService().ensureTrackingIfPunchedIn(true);
       final userName = await _authService.getCurrentUserName();
@@ -456,8 +492,11 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     }
 
     // In-app camera (live preview, location+refresh, no switch); fallback to system camera if init fails
-    final locationStr = _address ??
-        (_area != null ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}' : null);
+    final locationStr =
+        _address ??
+        (_area != null
+            ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
+            : null);
     final captureResult = await SelfieCameraScreen.captureSelfie(
       context,
       location: locationStr,
@@ -465,7 +504,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
         await _determinePosition();
         if (!mounted) return null;
         return _address ??
-            (_area != null ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}' : null);
+            (_area != null
+                ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
+                : null);
       },
     );
     File? file;
@@ -514,7 +555,11 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
         return AlertDialog(
           title: Row(
             children: [
-              Icon(Icons.warning_amber_rounded, color: AppColors.primary, size: 28),
+              Icon(
+                Icons.warning_amber_rounded,
+                color: AppColors.primary,
+                size: 28,
+              ),
               const SizedBox(width: 8),
               Text('Notice'),
             ],
@@ -522,10 +567,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           content: Text(message),
           actions: <Widget>[
             TextButton(
-              child: Text(
-                'OK',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
+              child: Text('OK', style: TextStyle(fontWeight: FontWeight.bold)),
               onPressed: () {
                 Navigator.of(context).pop();
               },
@@ -554,8 +596,10 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
       return;
     }
     final requireSelfie = _template?['requireSelfie'] ?? true;
-    final bool requireGeolocation =
-        _template?['requireGeolocation'] ?? true;
+    final bool requireGeolocation = _template?['requireGeolocation'] ?? true;
+    print(
+      '[SelfieCheckInScreen][TemplateFlags][submit] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation hasSelfie=${_imageFile != null} hasPosition=${_position != null}',
+    );
     if (requireSelfie && _imageFile == null) {
       SnackBarUtils.showSnackBar(
         context,
@@ -613,7 +657,11 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
         final msg =
             verify['message']?.toString() ??
             'Face not matching. Please try again.';
-        SnackBarUtils.showSnackBar(context, ErrorMessageUtils.sanitizeForDisplay(msg), isError: true);
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.sanitizeForDisplay(msg),
+          isError: true,
+        );
         return;
       }
       SnackBarUtils.showSnackBar(
@@ -668,7 +716,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   String get _shiftStartTime =>
       _template?['shiftStartTime']?.toString().trim() ?? '09:00';
   String get _shiftEndTime =>
-      widget.template?['shiftEndTime']?.toString().trim() ?? '17:00';
+      _template?['shiftEndTime']?.toString().trim() ?? '17:00';
 
   /// Grace period in minutes from template (for check-in overlay emoji).
   int _getGracePeriodMinutes() {
@@ -688,7 +736,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
         if (graceTime is Map) {
           final value = graceTime['value'];
           final unit = graceTime['unit']?.toString().toLowerCase();
-          final v = value is int ? value : int.tryParse(value?.toString() ?? '');
+          final v = value is int
+              ? value
+              : int.tryParse(value?.toString() ?? '');
           if (v != null) {
             if (unit == 'hours') return v * 60;
             return v;
@@ -700,13 +750,21 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   }
 
   /// Returns (emoji, message) for check-in success overlay: before shift = very happy, after shift = happy, in grace = somewhat sad.
-  ({String emoji, String message}) _getCheckInOverlayEmojiAndMessage(String userName) {
+  ({String emoji, String message}) _getCheckInOverlayEmojiAndMessage(
+    String userName,
+  ) {
     final shiftStr = _shiftStartTime;
     final parts = shiftStr.split(':').map((s) => int.tryParse(s) ?? 0).toList();
     final shiftHour = parts.isNotEmpty ? parts[0] : 9;
     final shiftMin = parts.length > 1 ? parts[1] : 0;
     final now = DateTime.now();
-    final shiftStart = DateTime(now.year, now.month, now.day, shiftHour, shiftMin);
+    final shiftStart = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      shiftHour,
+      shiftMin,
+    );
     final graceMinutes = _getGracePeriodMinutes();
     final graceEnd = shiftStart.add(Duration(minutes: graceMinutes));
 
@@ -764,10 +822,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           const SizedBox(height: 4),
           Text(
             label,
-            style: TextStyle(
-              fontSize: 13,
-              color: colorScheme.onSurfaceVariant,
-            ),
+            style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -857,7 +912,8 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                                   Padding(
                                     padding: const EdgeInsets.all(12),
                                     child: IconButton(
-                                      onPressed: (_isCompleted || _isDetectingFace)
+                                      onPressed:
+                                          (_isCompleted || _isDetectingFace)
                                           ? null
                                           : _takeSelfie,
                                       icon: Icon(
@@ -1079,8 +1135,8 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                                                   '${_city ?? ''} - ${_pincode ?? ''}',
                                                   style: TextStyle(
                                                     fontSize: 13,
-                                                    color:
-                                                        colorScheme.onSurfaceVariant,
+                                                    color: colorScheme
+                                                        .onSurfaceVariant,
                                                   ),
                                                 ),
                                               ),
@@ -1199,4 +1255,3 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     );
   }
 }
-

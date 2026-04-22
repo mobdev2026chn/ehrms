@@ -423,7 +423,7 @@ class _FormFillScreenState extends State<FormFillScreen> {
                 )
               else if (type == 'Dropdown')
                 DropdownButtonFormField<String>(
-                  value: value?.toString().isNotEmpty == true
+                  initialValue: value?.toString().isNotEmpty == true
                       ? value.toString()
                       : null,
                   decoration: _buildProfileStyleDecoration(

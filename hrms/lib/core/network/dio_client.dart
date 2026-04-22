@@ -7,6 +7,9 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../../config/constants.dart';
 
+/// Verbose per-request Dio logs (options, URLs, bodies). Off by default — very chatty.
+const _kLogDioTraffic = false;
+
 /// Retries on 429 (rate limit) with exponential backoff. Respects Retry-After.
 class RetryOnRateLimitInterceptor extends Interceptor {
   RetryOnRateLimitInterceptor(this.dio);
@@ -17,6 +20,12 @@ class RetryOnRateLimitInterceptor extends Interceptor {
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) async {
     if (err.response?.statusCode != 429) {
+      return handler.next(err);
+    }
+    // Some endpoints (e.g. login) should not silently back off/retry because it
+    // feels like the UI is "stuck". Allow opt-out per request.
+    final disableRetry = err.requestOptions.extra['disable_429_retry'] == true;
+    if (disableRetry) {
       return handler.next(err);
     }
     final extra = err.requestOptions.extra;
@@ -32,8 +41,9 @@ class RetryOnRateLimitInterceptor extends Interceptor {
     final retryAfter = err.response?.headers.value('retry-after');
     if (retryAfter != null && retryAfter.isNotEmpty) {
       final parsed = int.tryParse(retryAfter);
-      if (parsed != null && parsed > 0)
+      if (parsed != null && parsed > 0) {
         waitSeconds = parsed > 120 ? 120 : parsed;
+      }
     }
     await Future<void>.delayed(Duration(seconds: waitSeconds));
     final opts = err.requestOptions;
@@ -75,12 +85,15 @@ class DioClient {
     dio = Dio(
       BaseOptions(
         baseUrl: baseUrl,
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 20),
-        sendTimeout: const Duration(seconds: 20),
+        // Production mobile networks can have short jitter spikes; keep
+        // timeouts tolerant to avoid false "server timed out" UX.
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 45),
+        sendTimeout: const Duration(seconds: 45),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
+          'X-Storage-Environment': AppConstants.storageEnvironment,
         },
       ),
     );
@@ -90,7 +103,7 @@ class DioClient {
     dio.interceptors.addAll([
       FormDataContentTypeInterceptor(),
       RetryOnRateLimitInterceptor(dio),
-      if (kDebugMode)
+      if (kDebugMode && _kLogDioTraffic)
         LogInterceptor(
           requestBody: true,
           responseBody: false,

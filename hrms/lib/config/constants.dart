@@ -1,19 +1,39 @@
 // hrms/lib/config/constants.dart
 class AppConstants {
-  /// Production API – use for release builds.
- // static const String baseUrl = 'https://ehrms.askeva.net/api';
-static const String baseUrl = 'https://ehrms.askeva.net/api';
+  /// General app API (attendance, geo, profile, …).
+  //static const String baseUrl = 'http://192.168.1.33:9001/api';
+ //static const String baseUrl = 'https://app.ektahr.com/api';
+ static const String baseUrl = 'https://ehrms.askeva.net/api';
+  /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
+  static const String webBaseUrl = 'https://hrms.askeva.net/api';
+ //static const String webBaseUrl = 'https://my.ektahr.com/api';
 
-  /// Local dev – backend on port 9001. Use your machine's **current** LAN IP (USB does not
-  /// carry API traffic; the phone uses Wi‑Fi). On Windows run `ipconfig` and match Wi‑Fi IPv4.
-  /// Quick check: open `http://<that-ip>:9001/api` in the phone browser (same Wi‑Fi).
-  /// For LMS (and all) data to match the web for the same user, point [baseUrl]
-  /// to the same backend the web frontend uses (e.g. production or same dev server).
- // static const String baseUrl = 'http://192.168.16.115:9001/api';
+  /// When **true** (default): Interaction REST + Socket use [webBaseUrl] like the web.
+  /// With a different [baseUrl], [AuthService] performs a second `/auth/login` against [webBaseUrl]
+  /// and stores `interaction_access_token` so chat works without changing geo login.
+  /// When **false**: Interaction uses [baseUrl] (needs TypeScript `backend` with `/api/interaction` on that host).
+  static const bool interactionUseWebHost = true;
+  /// When true, login uses only one network call (`POST /auth/login`) and
+  /// skips post-login network side-effects for troubleshooting rate-limits.
+  static const bool singleApiLoginMode = false;
 
-  // Android emulator: use 10.0.2.2 to reach host
-  // stati
+  /// Prefs key: JWT for [webBaseUrl] when [baseUrl] is another server (set after web login sync).
+  static const String interactionAccessTokenPrefsKey = 'interaction_access_token';
 
+  /// REST base for `/interaction/*` and LMS routes on the same host as the web app.
+  static String get interactionApiBaseUrl =>
+      interactionUseWebHost ? webBaseUrl : baseUrl;
+
+  /// WhatsApp-style background for Interaction message threads (`pubspec`: `assets/images/`).
+  static const String interactionChatBackgroundAsset =
+      'assets/images/chat-bg.jpeg';
+
+  /// Socket.IO origin for Interaction (no `/api`, no trailing slash).
+  static String get interactionSocketOrigin {
+    final u = interactionApiBaseUrl;
+    if (u.endsWith('/api')) return u.substring(0, u.length - 4);
+    return u.replaceAll(RegExp(r'/+$'), '');
+  }
 
   /// Google Maps key — enable **Geocoding API** for reverse geocode (lat/lng → address in app).
   /// Also Maps SDK, Places, Directions as needed. Restrict by app + APIs in Google Cloud Console.
@@ -31,8 +51,24 @@ static const String baseUrl = 'https://ehrms.askeva.net/api';
     return u.replaceAll(RegExp(r'/+$'), '');
   }
 
+  /// Explicit environment hint sent to backend for storage routing.
+  /// This avoids relying only on proxy/origin headers for Spaces folder selection.
+  static String get storageEnvironment {
+    final host = Uri.tryParse(baseUrl)?.host.toLowerCase() ?? '';
+    const productionHosts = {'app.ektahr.com', 'my.ektahr.com', 'ektahr.com'};
+    return productionHosts.contains(host) ? 'production' : 'development';
+  }
+
+  /// Origin for Socket.IO (same server as REST; no trailing slash).
+  static String get socketOrigin {
+    final u = baseUrl;
+    if (u.endsWith('/api')) return u.substring(0, u.length - 4);
+    return u.replaceAll(RegExp(r'/+$'), '');
+  }
+
   /// Debug console: presence + live task tracking POSTs (flutter run / debug only).
-  static const bool logTrackingsToConsole = true;
+  // static const bool logTrackingsToConsole = true;
+  static const bool logTrackingsToConsole = false;
 
   /// When true, attendance selfie is verified against profile photo (face matching).
   /// When false, only on-device face detection runs; no server-side face matching.
@@ -52,8 +88,9 @@ static const String baseUrl = 'https://ehrms.askeva.net/api';
     if (path == null || path.isEmpty) return '';
     if (path.startsWith('http://') ||
         path.startsWith('https://') ||
-        path.startsWith('data:'))
+        path.startsWith('data:')) {
       return path;
+    }
     final p = path.startsWith('/') ? path : '/$path';
     return '$fileBaseUrl$p';
   }

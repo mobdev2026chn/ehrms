@@ -20,6 +20,9 @@ class AttendanceRepository {
     String? pincode,
     String? selfie,
     String? movementType,
+    int? lateMinutes,
+    int? earlyMinutes,
+    double? fineAmount,
   }) async {
     return _attendance.checkIn(
       lat,
@@ -30,6 +33,9 @@ class AttendanceRepository {
       pincode: pincode,
       selfie: selfie,
       movementType: movementType,
+      lateMinutes: lateMinutes,
+      earlyMinutes: earlyMinutes,
+      fineAmount: fineAmount,
     );
   }
 
@@ -43,6 +49,9 @@ class AttendanceRepository {
     String? pincode,
     String? selfie,
     String? movementType,
+    int? lateMinutes,
+    int? earlyMinutes,
+    double? fineAmount,
   }) async {
     return _attendance.checkOut(
       lat,
@@ -53,12 +62,21 @@ class AttendanceRepository {
       pincode: pincode,
       selfie: selfie,
       movementType: movementType,
+      lateMinutes: lateMinutes,
+      earlyMinutes: earlyMinutes,
+      fineAmount: fineAmount,
     );
   }
 
   /// Get today's attendance. Returns { success, data?, message? }.
-  Future<Map<String, dynamic>> getTodayAttendance({bool forceRefresh = false}) async {
-    return _attendance.getTodayAttendance(forceRefresh: forceRefresh);
+  Future<Map<String, dynamic>> getTodayAttendance({
+    bool forceRefresh = false,
+    bool useWebHrmsApi = false,
+  }) async {
+    return _attendance.getTodayAttendance(
+      forceRefresh: forceRefresh,
+      useWebHrmsApi: useWebHrmsApi,
+    );
   }
 
   /// Get attendance for a specific date. Returns { success, data?, message? }.
@@ -80,9 +98,18 @@ class AttendanceRepository {
     int year,
     int month, {
     bool forceRefresh = false,
+    bool useWebHrmsApi = false,
   }) async {
-    return _attendance.getMonthAttendance(year, month, forceRefresh: forceRefresh);
+    return _attendance.getMonthAttendance(
+      year,
+      month,
+      forceRefresh: forceRefresh,
+      useWebHrmsApi: useWebHrmsApi,
+    );
   }
 
-  void clearCachesForRefresh() => _attendance.clearCachesForRefresh();
+  void clearCachesForRefresh({bool clearWebHrmsSalaryCaches = false}) =>
+      _attendance.clearCachesForRefresh(
+        clearWebHrmsSalaryCaches: clearWebHrmsSalaryCaches,
+      );
 }

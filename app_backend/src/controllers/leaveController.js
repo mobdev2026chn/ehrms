@@ -7,7 +7,7 @@ const Attendance = require('../models/Attendance');
 const Company = require('../models/Company');
 const mongoose = require('mongoose');
 const { markAttendanceForApprovedLeave, calculateAvailableLeaves } = require('../utils/leaveAttendanceHelper');
-const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
+const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
 
 // Helper for date calculation
 const calculateDays = (start, end) => {
@@ -107,8 +107,10 @@ const getEffectiveWorkDatesInRange = async (staff, startDate, endDate) => {
         if (weeklyOffPattern === 'oddEvenSaturday') {
             if (dayOfWeek === 0) isWeekOff = true;
             else if (dayOfWeek === 6) {
-                const dayOfMonth = d.getUTCDate();
-                if (dayOfMonth % 2 === 0) isWeekOff = true;
+                const y = d.getUTCFullYear();
+                const mi = d.getUTCMonth();
+                const dom = d.getUTCDate();
+                if (isOddEvenSaturdayWeeklyOff(y, mi, dom, 'utc')) isWeekOff = true;
             }
         } else {
             isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
@@ -161,7 +163,12 @@ const getEffectiveWorkDatesFromList = async (staff, dateStrings) => {
         let isWeekOff = false;
         if (weeklyOffPattern === 'oddEvenSaturday') {
             if (dayOfWeek === 0) isWeekOff = true;
-            else if (dayOfWeek === 6 && d.getUTCDate() % 2 === 0) isWeekOff = true;
+            else if (dayOfWeek === 6) {
+                const y = d.getUTCFullYear();
+                const mi = d.getUTCMonth();
+                const dom = d.getUTCDate();
+                if (isOddEvenSaturdayWeeklyOff(y, mi, dom, 'utc')) isWeekOff = true;
+            }
         } else {
             isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
         }
@@ -556,7 +563,12 @@ const getLeaveDateCheckDetails = async (employeeId, staff, dateStrings) => {
         let isWeekOff = false;
         if (weeklyOffPattern === 'oddEvenSaturday') {
             if (dayOfWeek === 0) isWeekOff = true;
-            else if (dayOfWeek === 6 && d.getUTCDate() % 2 === 0) isWeekOff = true;
+            else if (dayOfWeek === 6) {
+                const y = d.getUTCFullYear();
+                const mi = d.getUTCMonth();
+                const dom = d.getUTCDate();
+                if (isOddEvenSaturdayWeeklyOff(y, mi, dom, 'utc')) isWeekOff = true;
+            }
         } else {
             isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
         }

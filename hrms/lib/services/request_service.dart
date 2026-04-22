@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/error_message_utils.dart';
 import 'api_client.dart';
@@ -147,7 +148,10 @@ class RequestService {
       if (selectedDates != null && selectedDates.isNotEmpty) {
         data = {
           'selectedDates': selectedDates
-              .map((d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}')
+              .map(
+                (d) =>
+                    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}',
+              )
               .toList(),
         };
       } else {
@@ -165,11 +169,15 @@ class RequestService {
         return {'success': false, 'hasConflict': false};
       }
       final resData = body['data'] as Map<String, dynamic>?;
-      final list = (dynamic value) => value is List ? List<String>.from(value.map((e) => e.toString())) : <String>[];
+      List<String> list(dynamic value) => value is List
+          ? List<String>.from(value.map((e) => e.toString()))
+          : <String>[];
       return {
         'success': true,
         'hasConflict': resData?['hasConflict'] == true,
-        'effectiveDays': (resData?['effectiveDays'] is int) ? resData!['effectiveDays'] as int : null,
+        'effectiveDays': (resData?['effectiveDays'] is int)
+            ? resData!['effectiveDays'] as int
+            : null,
         'paidLeaveDates': list(resData?['paidLeaveDates']),
         'pendingLeaveDates': list(resData?['pendingLeaveDates']),
         'approvedLeaveDates': list(resData?['approvedLeaveDates']),
@@ -177,9 +185,17 @@ class RequestService {
         'holidayDates': list(resData?['holidayDates']),
       };
     } on DioException catch (e) {
-      return {'success': false, 'hasConflict': false, 'message': _dioMessage(e)};
+      return {
+        'success': false,
+        'hasConflict': false,
+        'message': _dioMessage(e),
+      };
     } catch (e) {
-      return {'success': false, 'hasConflict': false, 'message': _handleException(e)};
+      return {
+        'success': false,
+        'hasConflict': false,
+        'message': _handleException(e),
+      };
     }
   }
 
@@ -194,7 +210,8 @@ class RequestService {
       if (body == null || body['success'] != true) {
         return {
           'success': false,
-          'message': ErrorMessageUtils.messageFromResponseData(body) ??
+          'message':
+              ErrorMessageUtils.messageFromResponseData(body) ??
               'Failed to load balance',
         };
       }
@@ -223,8 +240,9 @@ class RequestService {
         data: data,
       );
       final body = response.data;
-      if (body == null)
+      if (body == null) {
         return {'success': false, 'message': 'Invalid response'};
+      }
       var responseData = body;
       if (body.containsKey('data') && body['data'] is Map) {
         final d = body['data'] as Map;
@@ -266,8 +284,9 @@ class RequestService {
       );
       final body = response.data;
       if (body is List) return {'success': true, 'data': body};
-      if (body is Map && body['success'] == true)
+      if (body is Map && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
+      }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -320,8 +339,9 @@ class RequestService {
         queryParameters: q,
       );
       final body = response.data;
-      if (body != null && body['success'] == true)
+      if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
+      }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -335,17 +355,31 @@ class RequestService {
   Future<Map<String, dynamic>> applyExpense(Map<String, dynamic> data) async {
     try {
       await _setToken();
+      if (kDebugMode) {
+        final headers = _api.dio.options.headers;
+        debugPrint(
+          '[ExpenseUpload] baseUrl=${_api.dio.options.baseUrl} '
+          'X-Storage-Environment=${headers['X-Storage-Environment'] ?? headers['x-storage-environment']}',
+        );
+      }
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/requests/expense',
         data: data,
       );
       final body = response.data;
-      if (body == null)
+      if (body == null) {
         return {'success': false, 'message': 'Invalid response'};
+      }
       var responseData = body;
       if (body.containsKey('data') && body['data'] is Map) {
         final d = body['data'] as Map;
         responseData = d['reimbursement'] ?? d;
+        if (kDebugMode && responseData is Map) {
+          final proofs = responseData['proofFiles'];
+          if (proofs is List && proofs.isNotEmpty) {
+            debugPrint('[ExpenseUpload] proofFileUrl=${proofs.first}');
+          }
+        }
       }
       return {'success': true, 'data': responseData};
     } on DioException catch (e) {
@@ -378,8 +412,9 @@ class RequestService {
         queryParameters: q,
       );
       final body = response.data;
-      if (body != null && body['success'] == true)
+      if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
+      }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -437,8 +472,9 @@ class RequestService {
         queryParameters: q,
       );
       final body = response.data;
-      if (body != null && body['success'] == true)
+      if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
+      }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -509,6 +545,145 @@ class RequestService {
     }
   }
 
+  // --- PERMISSION ---
+
+  Future<Map<String, dynamic>> getPermissionRequests({
+    String? status,
+    int? month,
+    int? year,
+  }) async {
+    try {
+      await _setToken();
+      final now = DateTime.now();
+      final q = <String, dynamic>{
+        'month': month ?? now.month,
+        'year': year ?? now.year,
+        if (status != null && status != 'All Status') 'status': status,
+      };
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/requests/permission',
+        queryParameters: q,
+      );
+      final body = response.data;
+      if (body != null && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? body};
+      }
+      return {'success': true, 'data': body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  Future<Map<String, dynamic>> createPermissionRequest({
+    required DateTime date,
+    required String type,
+    required int requestedMinutes,
+    required String reason,
+  }) async {
+    try {
+      await _setToken();
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/requests/permission',
+        data: {
+          'date': DateTime(date.year, date.month, date.day).toIso8601String(),
+          'type': type,
+          'requestedMinutes': requestedMinutes,
+          'reason': reason,
+        },
+      );
+      final body = response.data;
+      if (body != null && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? body};
+      }
+      return {
+        'success': false,
+        'message': 'Failed to submit permission request',
+      };
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  Future<Map<String, dynamic>> cancelPermissionRequest(String requestId) async {
+    try {
+      await _setToken();
+      final response = await _api.dio.patch<Map<String, dynamic>>(
+        '/requests/permission/$requestId/cancel',
+      );
+      final body = response.data;
+      if (body != null && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? body};
+      }
+      return {
+        'success': false,
+        'message': 'Failed to cancel permission request',
+      };
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  Future<Map<String, dynamic>> getPermissionBalance({
+    int? month,
+    int? year,
+  }) async {
+    try {
+      await _setToken();
+      final now = DateTime.now();
+      final q = {
+        'month': month ?? now.month,
+        'year': year ?? now.year,
+      };
+
+      Map<String, dynamic>? balanceBody;
+      try {
+        // Web parity: primary endpoint.
+        final res = await _api.dio.get<Map<String, dynamic>>(
+          '/permissions/balance',
+          queryParameters: q,
+        );
+        balanceBody = res.data;
+      } on DioException {
+        // Fallback for older backend route.
+        final res = await _api.dio.get<Map<String, dynamic>>(
+          '/requests/permission/balance',
+          queryParameters: q,
+        );
+        balanceBody = res.data;
+      }
+
+      if (balanceBody == null || balanceBody['success'] != true) {
+        return {'success': false, 'message': 'Failed to load permission balance'};
+      }
+
+      final dataMap = balanceBody['data'] is Map
+          ? Map<String, dynamic>.from(balanceBody['data'] as Map)
+          : <String, dynamic>{};
+
+      num quota = (dataMap['monthlyQuotaMinutes'] as num?) ?? 0;
+      num consumed = (dataMap['consumedMinutes'] as num?) ?? 0;
+      num remaining = (dataMap['remainingMinutes'] as num?) ?? 0;
+
+      if (remaining <= 0 && quota > 0) remaining = (quota - consumed).clamp(0, quota);
+
+      dataMap['monthlyQuotaMinutes'] = quota;
+      dataMap['consumedMinutes'] = consumed;
+      dataMap['remainingMinutes'] = remaining;
+
+      return {'success': true, 'data': dataMap};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
   /// Fetches PDF bytes from a full URL (e.g. Cloudinary payslipUrl). No auth.
   Future<Map<String, dynamic>> getPdfBytesFromUrl(String url) async {
     try {
@@ -527,9 +702,7 @@ class RequestService {
           connectTimeout: const Duration(seconds: 30),
           validateStatus: (status) =>
               status != null && status >= 200 && status < 400,
-          headers: {
-            'Accept': '*/*',
-          },
+          headers: {'Accept': '*/*'},
         ),
       );
 

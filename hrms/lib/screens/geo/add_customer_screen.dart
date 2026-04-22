@@ -112,14 +112,11 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     } on DioException catch (e) {
       if (mounted) {
         setState(() => _submitting = false);
-        final msg = e.response?.data is Map
-            ? (e.response!.data as Map)['message'] ??
-                (e.response!.data as Map)['error'] as String?
-            : null;
-        final displayMsg =
-            msg != null && !ErrorMessageUtils.isTechnicalMessage(msg)
-                ? msg
-                : ErrorMessageUtils.toUserFriendlyMessage(e);
+        final parsed = ErrorMessageUtils.messageFromResponseData(e.response?.data);
+        final displayMsg = ErrorMessageUtils.sanitizeForDisplay(
+          parsed,
+          fallback: ErrorMessageUtils.toUserFriendlyMessage(e),
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(displayMsg),
@@ -181,7 +178,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                         SizedBox(
                           width: 132,
                           child: DropdownButtonFormField<_DialOption>(
-                            value: _selectedDial,
+                            initialValue: _selectedDial,
                             isExpanded: true,
                             decoration: InputDecoration(
                               labelText: 'Code',

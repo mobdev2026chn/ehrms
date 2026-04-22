@@ -188,7 +188,7 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  value: _selectedExitType,
+                  initialValue: _selectedExitType,
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: Colors.grey.shade50,
@@ -232,7 +232,7 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  value: _selectedReason,
+                  initialValue: _selectedReason,
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: Colors.grey.shade50,

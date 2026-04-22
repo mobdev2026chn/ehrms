@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'auth_service.dart';
 import 'api_client.dart';
 import '../utils/error_message_utils.dart';
+import 'web_hrms_api_dio.dart';
 
 /// Web RTK parity: `settingsApi` (e.g. `useGetBusinessQuery`).
 /// Endpoint may be absent on minimal dev backends — callers should tolerate failure.
@@ -15,10 +16,16 @@ class SettingsService {
   }
 
   /// Web: `GET /settings/business` — EmployeeSalaryOverview uses this for weekly-off fallback.
-  Future<Map<String, dynamic>> getBusiness() async {
+  Future<Map<String, dynamic>> getBusiness({bool useWebHrmsApi = false}) async {
     try {
-      await _setToken();
-      final response = await _api.dio.get<Map<String, dynamic>>(
+      if (!useWebHrmsApi) {
+        await _setToken();
+      }
+      final response = useWebHrmsApi
+          ? await webHrmsApiDio().get<Map<String, dynamic>>(
+              '/settings/business',
+            )
+          : await _api.dio.get<Map<String, dynamic>>(
         '/settings/business',
       );
       final body = response.data;

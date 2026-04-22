@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
 import '../../services/grievance_service.dart';
 import '../../utils/error_message_utils.dart';
-import '../../widgets/bottom_navigation_bar.dart';
 import 'grievance_detail_screen.dart';
 import '../../widgets/app_tab_loader.dart';
 
@@ -294,8 +293,9 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
     final createdAt = g['createdAt'];
     DateTime? date;
     if (createdAt != null) {
-      if (createdAt is String) date = DateTime.tryParse(createdAt);
-      else if (createdAt is Map && createdAt['\$date'] != null) date = DateTime.tryParse(createdAt['\$date'].toString());
+      if (createdAt is String) {
+        date = DateTime.tryParse(createdAt);
+      } else if (createdAt is Map && createdAt['\$date'] != null) date = DateTime.tryParse(createdAt['\$date'].toString());
     }
     final dateStr = date != null ? DateFormat('MMM dd, yyyy').format(date) : '';
 

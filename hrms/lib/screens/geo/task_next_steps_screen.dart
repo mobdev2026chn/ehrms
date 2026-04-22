@@ -4,8 +4,6 @@ import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/screens/geo/end_task_screen.dart';
-import 'package:hrms/widgets/app_drawer.dart';
-import 'package:hrms/widgets/bottom_navigation_bar.dart';
 import 'package:hrms/widgets/menu_icon_button.dart';
 
 class TaskNextStepsScreen extends StatelessWidget {

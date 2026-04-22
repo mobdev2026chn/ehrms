@@ -83,13 +83,21 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+// Listen on all interfaces so phones on the same LAN can reach the dev server (not only localhost).
+const HOST = process.env.HOST || '0.0.0.0';
 
 // Start Server
 const startServer = async () => {
     try {
         await connectDB();
+<<<<<<< HEAD
         app.listen(PORT, () => {
             console.log(`Server running on port ${PORT}`);
+=======
+        startPresenceTrackingStatusMonitor();
+        app.listen(PORT, HOST, () => {
+            console.log(`Server running on http://${HOST}:${PORT}`);
+>>>>>>> development
         });
     } catch (error) {
         console.error('Failed to start server:', error.message);

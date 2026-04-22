@@ -37,6 +37,8 @@ const trackingSchema = new mongoose.Schema({
   exitReason: { type: String },
   exitedAt: { type: Date },
   presenceStatus: { type: String, enum: ['in_office', 'task', 'out_of_office'] }, // based on task status + branch geofence
+  /** Set only on task-linked rows (ride GPS / exit / arrived). Daily distinct-task ordinal for this staff; resets next business day. */
+  taskCount: { type: Number },
 }, { timestamps: true });
 
 trackingSchema.index({ staffId: 1, timestamp: -1 });

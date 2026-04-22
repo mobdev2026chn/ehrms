@@ -61,11 +61,12 @@ class PerformanceService {
     String? status,
   }) async {
     final token = await _authService.getToken();
-    if (token == null)
+    if (token == null) {
       return {
         'success': true,
         'data': {'reviews': [], 'pagination': _emptyPagination()},
       };
+    }
     try {
       _api.setAuthToken(token);
       final response = await _api.dio.get<Map<String, dynamic>>(
@@ -84,11 +85,12 @@ class PerformanceService {
         'data': {'reviews': [], 'pagination': _emptyPagination()},
       };
     } on DioException catch (e) {
-      if (e.response?.statusCode == 404)
+      if (e.response?.statusCode == 404) {
         return {
           'success': true,
           'data': {'reviews': [], 'pagination': _emptyPagination()},
         };
+      }
       rethrow;
     }
   }
@@ -149,11 +151,12 @@ class PerformanceService {
     String? cycle,
   }) async {
     final token = await _authService.getToken();
-    if (token == null)
+    if (token == null) {
       return {
         'success': true,
         'data': {'goals': [], 'pagination': _emptyPagination()},
       };
+    }
     try {
       _api.setAuthToken(token);
       final response = await _api.dio.get<Map<String, dynamic>>(
@@ -173,11 +176,12 @@ class PerformanceService {
         'data': {'goals': [], 'pagination': _emptyPagination()},
       };
     } on DioException catch (e) {
-      if (e.response?.statusCode == 404)
+      if (e.response?.statusCode == 404) {
         return {
           'success': true,
           'data': {'goals': [], 'pagination': _emptyPagination()},
         };
+      }
       rethrow;
     }
   }
@@ -302,11 +306,12 @@ class PerformanceService {
     String? type,
   }) async {
     final token = await _authService.getToken();
-    if (token == null)
+    if (token == null) {
       return {
         'success': true,
         'data': {'cycles': [], 'pagination': _emptyPagination()},
       };
+    }
     try {
       _api.setAuthToken(token);
       final response = await _api.dio.get<Map<String, dynamic>>(
@@ -325,11 +330,12 @@ class PerformanceService {
         'data': {'cycles': [], 'pagination': _emptyPagination()},
       };
     } on DioException catch (e) {
-      if (e.response?.statusCode == 404)
+      if (e.response?.statusCode == 404) {
         return {
           'success': true,
           'data': {'cycles': [], 'pagination': _emptyPagination()},
         };
+      }
       rethrow;
     }
   }

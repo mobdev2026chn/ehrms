@@ -6,12 +6,10 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_colors.dart';
-import '../../config/constants.dart';
 import '../../services/grievance_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
-import '../../widgets/menu_icon_button.dart';
 import '../../widgets/app_tab_loader.dart';
 
 class GrievanceDetailScreen extends StatefulWidget {
@@ -300,8 +298,9 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
     final incidentDate = g['incidentDate'];
     DateTime? incDate;
     if (incidentDate != null) {
-      if (incidentDate is String) incDate = DateTime.tryParse(incidentDate);
-      else if (incidentDate is Map && incidentDate['\$date'] != null) incDate = DateTime.tryParse(incidentDate['\$date'].toString());
+      if (incidentDate is String) {
+        incDate = DateTime.tryParse(incidentDate);
+      } else if (incidentDate is Map && incidentDate['\$date'] != null) incDate = DateTime.tryParse(incidentDate['\$date'].toString());
     }
     final peopleInvolved = g['peopleInvolved'];
     final people = peopleInvolved is List ? peopleInvolved.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toList() : <String>[];
@@ -310,8 +309,9 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
     final createdAt = g['createdAt'];
     DateTime? created;
     if (createdAt != null) {
-      if (createdAt is String) created = DateTime.tryParse(createdAt);
-      else if (createdAt is Map && createdAt['\$date'] != null) created = DateTime.tryParse(createdAt['\$date'].toString());
+      if (createdAt is String) {
+        created = DateTime.tryParse(createdAt);
+      } else if (createdAt is Map && createdAt['\$date'] != null) created = DateTime.tryParse(createdAt['\$date'].toString());
       final c = created;
       if (c != null && c.isUtc) created = c.toLocal();
     }
@@ -489,8 +489,9 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                 final createdAt = n is Map ? n['createdAt'] : null;
                 DateTime? dt;
                 if (createdAt != null) {
-                  if (createdAt is String) dt = DateTime.tryParse(createdAt);
-                  else if (createdAt is Map && createdAt['\$date'] != null) dt = DateTime.tryParse(createdAt['\$date'].toString());
+                  if (createdAt is String) {
+                    dt = DateTime.tryParse(createdAt);
+                  } else if (createdAt is Map && createdAt['\$date'] != null) dt = DateTime.tryParse(createdAt['\$date'].toString());
                   if (dt != null && dt.isUtc) dt = dt.toLocal();
                 }
                 return Container(
@@ -560,8 +561,9 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                       final createdAt = h['createdAt'];
                       DateTime? dt;
                       if (createdAt != null) {
-                        if (createdAt is String) dt = DateTime.tryParse(createdAt);
-                        else if (createdAt is Map && createdAt['\$date'] != null) dt = DateTime.tryParse(createdAt['\$date'].toString());
+                        if (createdAt is String) {
+                          dt = DateTime.tryParse(createdAt);
+                        } else if (createdAt is Map && createdAt['\$date'] != null) dt = DateTime.tryParse(createdAt['\$date'].toString());
                         if (dt != null && dt.isUtc) dt = dt.toLocal();
                       }
                       final reason = h['reason']?.toString();

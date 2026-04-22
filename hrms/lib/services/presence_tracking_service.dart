@@ -16,6 +16,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'package:hrms/config/constants.dart';
+import 'package:hrms/services/attendance_template_store.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/geo/accurate_location_helper.dart';
 import 'package:hrms/services/geo/live_tracking_service.dart';
@@ -36,6 +37,8 @@ const String _kPresenceLastBackgroundAttemptTime =
     'presence_last_background_attempt_time';
 const String _kPresenceLastMovementType = 'presence_last_movement_type';
 const String _kPresenceConsecutiveLowSpeed = 'presence_consecutive_low_speed';
+/// JSON: { id, latitude, longitude, radius } — sub-zone from branch.geofence.locations hit at check-in.
+const String _kPresencePinnedGeofenceLocation = 'presence_pinned_geofence_location_json';
 const int _maxPendingPresence = 80;
 
 enum _PresenceSendResult { sent, skipped, failed }
@@ -71,6 +74,7 @@ class PresenceTrackingService {
   static const double _duplicateLocationThresholdMeters = 10;
 
   static const double defaultOfficeRadiusMeters = 200;
+  static const double _maxAccuracyBufferM = 80;
   static const AndroidConfig _presenceBackgroundConfig = AndroidConfig(
     notificationIcon: 'explore',
     notificationBody: 'Attendance presence tracking active. Tap to open.',
@@ -93,6 +97,9 @@ class PresenceTrackingService {
     if (token != null) _api.setAuthToken(token);
   }
 
+  /// Suppresses bursty duplicate uploads when the fix is almost the same, but still allows
+  /// one row per [trackingInterval] while checked in (otherwise background/foreground never
+  /// writes when you stay near the last point — typical at a desk or small GPS drift).
   Future<bool> _shouldSkipPresenceSend(
     double lat,
     double lng, {
@@ -102,19 +109,40 @@ class PresenceTrackingService {
     final lastLat = prefs.getDouble(_kPresenceLastSentLat);
     final lastLng = prefs.getDouble(_kPresenceLastSentLng);
     if (lastLat == null || lastLng == null) return false;
+
     final distanceM = gl.Geolocator.distanceBetween(lastLat, lastLng, lat, lng);
-    final shouldSkip = distanceM < _duplicateLocationThresholdMeters;
-    if (shouldSkip && kDebugMode && AppConstants.logTrackingsToConsole) {
+    if (distanceM >= _duplicateLocationThresholdMeters) return false;
+
+    final lastSentMs = prefs.getInt(_kPresenceLastSentTime);
+    if (lastSentMs == null || lastSentMs <= 0) return false;
+    final elapsedMs =
+        DateTime.now().millisecondsSinceEpoch - lastSentMs;
+    if (elapsedMs >= trackingInterval.inMilliseconds) {
+      if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        debugPrint(
+          '[Trackings] $logLabel duplicate_check '
+          'lastLat=${lastLat.toStringAsFixed(6)} lastLng=${lastLng.toStringAsFixed(6)} '
+          'currentLat=${lat.toStringAsFixed(6)} currentLng=${lng.toStringAsFixed(6)} '
+          'distance=${distanceM.toStringAsFixed(2)}m '
+          'elapsedSinceSuccess=${(elapsedMs / 1000).toStringAsFixed(0)}s '
+          'decision=allow_periodic',
+        );
+      }
+      return false;
+    }
+
+    if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
         '[Trackings] $logLabel duplicate_check '
         'lastLat=${lastLat.toStringAsFixed(6)} lastLng=${lastLng.toStringAsFixed(6)} '
         'currentLat=${lat.toStringAsFixed(6)} currentLng=${lng.toStringAsFixed(6)} '
         'distance=${distanceM.toStringAsFixed(2)}m '
         'threshold=${_duplicateLocationThresholdMeters.toStringAsFixed(1)}m '
+        'elapsedSinceSuccess=${(elapsedMs / 1000).toStringAsFixed(0)}s '
         'decision=skip',
       );
     }
-    return shouldSkip;
+    return true;
   }
 
   static String? _sanitizeStoredToken(String? token) {
@@ -144,6 +172,7 @@ class PresenceTrackingService {
       await prefs.remove(_kPresenceLastBackgroundAttemptTime);
       await prefs.remove(_kPresenceLastMovementType);
       await prefs.remove(_kPresenceConsecutiveLowSpeed);
+      await prefs.remove(_kPresencePinnedGeofenceLocation);
     }
   }
 
@@ -162,6 +191,123 @@ class PresenceTrackingService {
     await prefs.remove(_kPresenceLastBackgroundAttemptTime);
     await prefs.remove(_kPresenceLastMovementType);
     await prefs.remove(_kPresenceConsecutiveLowSpeed);
+    await prefs.remove(_kPresencePinnedGeofenceLocation);
+  }
+
+  Future<void> _clearPinnedOfficeZone() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kPresencePinnedGeofenceLocation);
+  }
+
+  /// Pins one geofence zone from [AttendanceTemplateStore] branch data using check-in coordinates.
+  /// Later presence pings compare only this zone (not every location every time).
+  Future<void> pinOfficeZoneAtCheckIn(double checkInLat, double checkInLng) async {
+    if (checkInLat == 0 && checkInLng == 0) {
+      await _clearPinnedOfficeZone();
+      return;
+    }
+    final details = await AttendanceTemplateStore.loadTemplateDetails();
+    final branchRaw = details?['branch'];
+    if (branchRaw is! Map) {
+      await _clearPinnedOfficeZone();
+      return;
+    }
+    final branch = Map<String, dynamic>.from(branchRaw);
+    final geofenceRaw = branch['geofence'];
+    if (geofenceRaw is! Map) {
+      await _clearPinnedOfficeZone();
+      return;
+    }
+    final geofence = Map<String, dynamic>.from(geofenceRaw);
+    if (geofence['enabled'] != true) {
+      await _clearPinnedOfficeZone();
+      return;
+    }
+
+    String? extractLocId(Map<String, dynamic> loc) {
+      final idObj = loc['_id'];
+      if (idObj is Map) {
+        final im = Map<String, dynamic>.from(idObj);
+        if (im[r'$oid'] != null) return im[r'$oid'].toString();
+      }
+      if (idObj != null) return idObj.toString();
+      return null;
+    }
+
+    final locations = geofence['locations'];
+    if (locations is List && locations.isNotEmpty) {
+      for (final item in locations) {
+        if (item is! Map) continue;
+        final loc = Map<String, dynamic>.from(item);
+        final plat = (loc['latitude'] as num?)?.toDouble();
+        final plng = (loc['longitude'] as num?)?.toDouble();
+        final radius =
+            (loc['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
+        if (plat == null || plng == null) continue;
+        final distM = gl.Geolocator.distanceBetween(
+          checkInLat,
+          checkInLng,
+          plat,
+          plng,
+        );
+        if (distM <= radius) {
+          final id = extractLocId(loc) ?? '';
+          final payload = <String, dynamic>{
+            'id': id,
+            'latitude': plat,
+            'longitude': plng,
+            'radius': radius,
+          };
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(
+            _kPresencePinnedGeofenceLocation,
+            jsonEncode(payload),
+          );
+          return;
+        }
+      }
+    }
+
+    final mainLat = (geofence['latitude'] as num?)?.toDouble();
+    final mainLng = (geofence['longitude'] as num?)?.toDouble();
+    final mainR =
+        (geofence['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
+    if (mainLat != null && mainLng != null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _kPresencePinnedGeofenceLocation,
+        jsonEncode(<String, dynamic>{
+          'id': '__main__',
+          'latitude': mainLat,
+          'longitude': mainLng,
+          'radius': mainR,
+        }),
+      );
+    } else {
+      await _clearPinnedOfficeZone();
+    }
+  }
+
+  Future<Map<String, dynamic>?> _effectiveOfficeGeofence(
+    Map<String, dynamic>? apiGeofence,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kPresencePinnedGeofenceLocation);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          final m = Map<String, dynamic>.from(decoded);
+          final lat = (m['latitude'] as num?)?.toDouble();
+          final lng = (m['longitude'] as num?)?.toDouble();
+          final r = (m['radius'] as num?)?.toDouble();
+          if (lat != null && lng != null && r != null) {
+            return {'latitude': lat, 'longitude': lng, 'radius': r};
+          }
+        }
+      } catch (_) {}
+    }
+    return apiGeofence;
   }
 
   Future<void> markAppForeground() async {
@@ -212,6 +358,27 @@ class PresenceTrackingService {
       if (kDebugMode) {
         debugPrint('[PresenceTracking] background tracker start failed: $e');
       }
+    }
+  }
+
+  static String? _presenceStatusFromPinnedJson(
+    String raw,
+    double lat,
+    double lng,
+  ) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final m = Map<String, dynamic>.from(decoded);
+      final plat = (m['latitude'] as num?)?.toDouble();
+      final plng = (m['longitude'] as num?)?.toDouble();
+      final r =
+          (m['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
+      if (plat == null || plng == null) return null;
+      final distM = gl.Geolocator.distanceBetween(lat, lng, plat, plng);
+      return distM <= r ? 'in_office' : 'out_of_office';
+    } catch (_) {
+      return null;
     }
   }
 
@@ -288,6 +455,11 @@ class PresenceTrackingService {
       'appStatus': await _getLifecycleAppStatusForBackgroundInsert(),
       'timestamp': capturedAt.toIso8601String(),
     };
+    final pinnedRaw = prefs.getString(_kPresencePinnedGeofenceLocation);
+    if (pinnedRaw != null && pinnedRaw.isNotEmpty) {
+      final ps = _presenceStatusFromPinnedJson(pinnedRaw, lat, lng);
+      if (ps != null) body['presenceStatus'] = ps;
+    }
     if (batteryPercent != null) body['batteryPercent'] = batteryPercent;
     if (accuracyM != null) body['accuracy'] = accuracyM;
     final movement = await _classifyBackgroundMovement(
@@ -423,14 +595,110 @@ class PresenceTrackingService {
       if (data == null) return {'canTrack': false, 'reason': 'unknown'};
       final d = data['data'];
       if (d is! Map) return {'canTrack': false, 'reason': 'invalid_response'};
+      var gf = d['branchGeofence'] as Map<String, dynamic>?;
+      // Web / admin check-in: no SharedPreferences pin; geofence still comes from API.
+      // If API payload is missing, use cached attendance template branch (dashboard loads it).
+      if (d['canTrack'] == true && (gf == null || !_branchGeofenceHasTargets(gf))) {
+        final fromTemplate = await _branchGeofenceFromTemplate();
+        if (fromTemplate != null) gf = fromTemplate;
+      }
       return {
         'canTrack': d['canTrack'] == true,
         'reason': d['reason'] as String?,
-        'branchGeofence': d['branchGeofence'] as Map<String, dynamic>?,
+        'branchGeofence': gf,
       };
     } catch (e) {
       return {'canTrack': false, 'reason': 'error'};
     }
+  }
+
+  bool _branchGeofenceHasTargets(Map<String, dynamic> gf) {
+    final t = gf['targets'];
+    return t is List && t.isNotEmpty;
+  }
+
+  /// Builds the same shape as GET /tracking/presence/status `branchGeofence` from [AttendanceTemplateStore].
+  Future<Map<String, dynamic>?> _branchGeofenceFromTemplate() async {
+    final details = await AttendanceTemplateStore.loadTemplateDetails();
+    final branchRaw = details?['branch'];
+    if (branchRaw is! Map) return null;
+    return _geofencePayloadFromBranchMap(Map<String, dynamic>.from(branchRaw));
+  }
+
+  /// Mirrors server `getBranchGeofenceTargets`: `locations[]`, single circle, or legacy branch lat/lng.
+  Map<String, dynamic>? _geofencePayloadFromBranchMap(Map<String, dynamic> branch) {
+    final geofenceRaw = branch['geofence'];
+    Map<String, dynamic>? legacyFromTopLevel() {
+      final legacyLat = (branch['latitude'] as num?)?.toDouble();
+      final legacyLng = (branch['longitude'] as num?)?.toDouble();
+      final legacyR =
+          (branch['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
+      if (legacyLat == null || legacyLng == null) return null;
+      return {
+        'enabled': true,
+        'targets': [
+          {
+            'latitude': legacyLat,
+            'longitude': legacyLng,
+            'radius': legacyR,
+          },
+        ],
+        'latitude': legacyLat,
+        'longitude': legacyLng,
+        'radius': legacyR,
+      };
+    }
+
+    if (geofenceRaw is! Map) {
+      return legacyFromTopLevel();
+    }
+    final geofence = Map<String, dynamic>.from(geofenceRaw);
+    if (geofence['enabled'] != true) {
+      return legacyFromTopLevel();
+    }
+
+    final locations = geofence['locations'];
+    if (locations is List && locations.isNotEmpty) {
+      final targets = <Map<String, dynamic>>[];
+      final fallbackR =
+          (geofence['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
+      for (final item in locations) {
+        if (item is! Map) continue;
+        final loc = Map<String, dynamic>.from(item);
+        final plat = (loc['latitude'] as num?)?.toDouble();
+        final plng = (loc['longitude'] as num?)?.toDouble();
+        final r =
+            (loc['radius'] as num?)?.toDouble() ?? fallbackR;
+        if (plat == null || plng == null) continue;
+        targets.add({'latitude': plat, 'longitude': plng, 'radius': r});
+      }
+      if (targets.isEmpty) return null;
+      final t0 = targets.first;
+      return {
+        'enabled': true,
+        'targets': targets,
+        'latitude': t0['latitude'],
+        'longitude': t0['longitude'],
+        'radius': t0['radius'],
+      };
+    }
+
+    final mainLat = (geofence['latitude'] as num?)?.toDouble();
+    final mainLng = (geofence['longitude'] as num?)?.toDouble();
+    final mainR =
+        (geofence['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
+    if (mainLat != null && mainLng != null) {
+      return {
+        'enabled': true,
+        'targets': [
+          {'latitude': mainLat, 'longitude': mainLng, 'radius': mainR},
+        ],
+        'latitude': mainLat,
+        'longitude': mainLng,
+        'radius': mainR,
+      };
+    }
+    return legacyFromTopLevel();
   }
 
   Future<void> _persistPresenceMovementState(
@@ -870,9 +1138,30 @@ class PresenceTrackingService {
   bool _isInsideOffice(
     double lat,
     double lng,
-    Map<String, dynamic>? branchGeofence,
-  ) {
+    Map<String, dynamic>? branchGeofence, {
+    double accuracyM = 0,
+  }) {
     if (branchGeofence == null) return false;
+    final buffer = accuracyM > 0
+        ? (accuracyM > _maxAccuracyBufferM ? _maxAccuracyBufferM : accuracyM)
+        : 0.0;
+
+    final targetsRaw = branchGeofence['targets'];
+    if (targetsRaw is List && targetsRaw.isNotEmpty) {
+      for (final item in targetsRaw) {
+        if (item is! Map) continue;
+        final m = Map<String, dynamic>.from(item);
+        final plat = (m['latitude'] as num?)?.toDouble();
+        final plng = (m['longitude'] as num?)?.toDouble();
+        final radius =
+            (m['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
+        if (plat == null || plng == null) continue;
+        final distM = gl.Geolocator.distanceBetween(lat, lng, plat, plng);
+        if (distM <= radius + buffer) return true;
+      }
+      return false;
+    }
+
     final officeLat = (branchGeofence['latitude'] as num?)?.toDouble();
     final officeLng = (branchGeofence['longitude'] as num?)?.toDouble();
     final radius =
@@ -882,7 +1171,7 @@ class PresenceTrackingService {
     if (officeLat == null || officeLng == null) return false;
 
     final distM = gl.Geolocator.distanceBetween(lat, lng, officeLat, officeLng);
-    return distM <= radius;
+    return distM <= radius + buffer;
   }
 
   Future<void> _tick(Map<String, dynamic>? branchGeofence) async {
@@ -919,7 +1208,9 @@ class PresenceTrackingService {
     );
     final movementType = await _classifyForegroundMovement(position);
 
-    final presenceStatus = _isInsideOffice(lat, lng, gf)
+    final effectiveGf = await _effectiveOfficeGeofence(gf);
+    final presenceStatus = _isInsideOffice(lat, lng, effectiveGf,
+            accuracyM: accuracy,)
         ? 'in_office'
         : 'out_of_office';
     final appStatus = await _getAppStatusForCurrentLifecycle();
@@ -1038,11 +1329,22 @@ class PresenceTrackingService {
         position.longitude,
       );
       final movementType = await _classifyForegroundMovement(position);
+      final presenceState = await getPresenceStatus();
+      final apiGf = presenceState['branchGeofence'] as Map<String, dynamic>?;
+      final effectiveGf = await _effectiveOfficeGeofence(apiGf);
+      final presenceStatus = _isInsideOffice(
+            position.latitude,
+            position.longitude,
+            effectiveGf,
+            accuracyM: position.accuracy,
+          )
+          ? 'in_office'
+          : 'out_of_office';
 
       final outcome = await _sendPresence(
         lat: position.latitude,
         lng: position.longitude,
-        presenceStatus: 'in_office',
+        presenceStatus: presenceStatus,
         status: 'active',
         appStatus: 'active',
         movementType: movementType,
@@ -1056,7 +1358,7 @@ class PresenceTrackingService {
       );
       if (kDebugMode) {
         debugPrint(
-          '[PresenceTracking] recordAppOpened: active, in_office '
+          '[PresenceTracking] recordAppOpened: active, presence=$presenceStatus '
           'result=${outcome.result == _PresenceSendResult.sent ? "ok" : outcome.result == _PresenceSendResult.skipped ? "skip" : "fail"} '
           'movement=${outcome.movementType}',
         );
@@ -1087,6 +1389,7 @@ class PresenceTrackingService {
     try {
       final status = await getPresenceStatus();
       final branchGeofence = status['branchGeofence'] as Map<String, dynamic>?;
+      final effectiveGf = await _effectiveOfficeGeofence(branchGeofence);
       final position = await _capturePresencePosition();
       int? batteryPercent;
       try {
@@ -1099,7 +1402,8 @@ class PresenceTrackingService {
       final presenceStatus = _isInsideOffice(
         position.latitude,
         position.longitude,
-        branchGeofence,
+        effectiveGf,
+        accuracyM: position.accuracy,
       )
           ? 'in_office'
           : 'out_of_office';
@@ -1121,7 +1425,6 @@ class PresenceTrackingService {
         pincode: resolvedAddress?.pincode,
       );
 
-      _isInsideOffice(position.latitude, position.longitude, branchGeofence);
       if (outcome.result == _PresenceSendResult.sent) {
         await _persistPresenceMovementState(
           position.latitude,

@@ -1,0 +1,122 @@
+================================================================================
+HRMS — FULL SALARY CALCULATION (same logic as Flutter Salary Overview + backend)
+================================================================================
+Target example: check123@gmail.com
+To generate LIVE numbers from your database, run from folder `app_backend`:
+
+  node src/scripts/salaryBreakdownByEmail.js check123@gmail.com [month] [year]
+
+Example (March 2026):
+  node src/scripts/salaryBreakdownByEmail.js check123@gmail.com 3 2026
+
+Output file (created next to `app_backend/`):
+  salary_breakdown_check123@gmail.com_2026-03.txt
+  (email characters sanitized in filename)
+
+This reference describes formulas only. Per-user amounts come from:
+  - Staff.salary (basic, DA, HRA, special, rates, benefits fields)
+  - Attendance + Leave + holidays + week-off rules (calculateAttendanceStats)
+  - Company fine config (late login fines)
+  - Optional Payroll document for that month (processed/paid)
+
+--------------------------------------------------------------------------------
+1) MONTHLY STRUCTURE (Flutter: hrms/lib/utils/salary_structure_calculator.dart)
+   Backend mirror: app_backend/src/controllers/payrollController.js
+   function computeMonthlySalaryFromStaffSalary
+--------------------------------------------------------------------------------
+
+grossFixedSalary = Basic + DA + HRA + Special Allowance
+
+Applicability (Indian payroll-style gates used in app):
+  isPFApplicable   = (Basic + DA) < 15000
+  isESIApplicable  = (Basic + DA + HRA) < 21000
+
+Employer contributions (only if applicable):
+  employerPF  = (employerPFRate / 100) × Basic            [0 if PF not applicable]
+  employerESI = (employerESIRate / 100) × grossFixedSalary [0 if ESI not applicable]
+
+Statutory PF lump when PF not applicable:
+  pfStaticAmount = 0 if PF applicable, else 1800
+
+Monthly GROSS:
+  grossSalary = grossFixedSalary + employerPF + employerESI + pfStaticAmount
+
+Employee deductions:
+  employeePF  = if PF applicable: (employeePFRate / 100) × Basic
+                else: pfStaticAmount (1800)
+  employeeESI = if ESI applicable: (employeeESIRate / 100) × grossSalary
+                else: 0
+                NOTE: ESI % is applied to grossSalary, not grossFixedSalary.
+
+totalMonthlyDeductions = employeePF + employeeESI
+netMonthlySalary     = grossSalary - totalMonthlyDeductions
+
+Legacy staff.salary (only gross/net, no basic): Flutter uses
+  calculatedSalaryFromLegacyStaffMap — synthetic split; prefer structured salary.
+
+--------------------------------------------------------------------------------
+2) CTC (backend getPayrollStats when no payroll row)
+--------------------------------------------------------------------------------
+
+annualGrossSalary   = grossSalary × 12
+annualIncentive     = (incentiveRate / 100) × (Basic × 12)
+annualGratuity      = (gratuityRate / 100) × (Basic × 12)
+annualStatutoryBonus= (statutoryBonusRate / 100) × (Basic × 12)
+medicalInsurance    = medicalInsuranceAmount (yearly fixed)
+annualMobileAllowance = mobileAllowance if type yearly else mobileAllowance × 12
+
+totalCTC = annualGrossSalary + annualIncentive + annualGratuity
+           + annualStatutoryBonus + medicalInsuranceAmount + annualMobileAllowance
+
+--------------------------------------------------------------------------------
+3) WORKING DAYS & ATTENDANCE (backend calculateAttendanceStats)
+--------------------------------------------------------------------------------
+
+- Builds calendar for the month with weekly-off pattern from staff template or company.
+- Subtracts holidays from holiday template.
+- For current month, only days up to “today” count for workingDays / present logic.
+- workingDaysFullMonth = full month working days (denominator for “this month WD”).
+
+Present days (weighted):
+  - Attendance status present / approved / half day (case-insensitive).
+  - Half day counts as 0.5; aligns with approved leave half-day flags.
+
+Paid leave days:
+  - Separate counter: “On Leave” with isPaidLeave, excluding weekoff/compOff comp types.
+
+effectivePaidDays = presentDays + paidLeaveDays  (used for absent % in stats)
+
+--------------------------------------------------------------------------------
+4) MTD / PRORATED PAY (what the app shows)
+--------------------------------------------------------------------------------
+
+Daily net for fines:
+  dailySalary = netMonthlySalary / workingDaysFullMonth
+
+A) Flutter client + GET /api/payrolls/stats (no payroll / linear MTD path):
+   prorationFactor = presentDays / workingDaysFullMonth
+   MTD gross = grossSalary × factor
+   MTD employee deductions (prorated) = totalMonthlyDeductions × factor
+   MTD net = MTD gross - prorated deductions - totalFineAmount
+   (Salary Overview may further subtract unpaid leave: daily net × unpaid days.)
+
+B) POST /api/payrolls/preview (when no payroll row exists):
+   prorationFactor = (presentDays + paidLeaveDays) / workingDaysFullMonth
+   Same gross/deduction scaling; net = max(0, ... - fines).
+   Flutter MTD cards prefer preview gross/net when the preview API returns data.
+
+C) If Payroll exists with status processed/paid:
+   Stored payslip gross/net may drive displayed totals for that month;
+   MTD cards use finalized values per app comments in salary_overview_screen.dart.
+
+--------------------------------------------------------------------------------
+5) LATE FINES
+--------------------------------------------------------------------------------
+
+Uses getRecordFineConfig + calculateFineAmount from fineCalculationHelper.
+Per attendance row (present/approved/half day): uses record.fineAmount if set,
+else derives from lateMinutes / fineHours vs dailySalary and shift hours.
+
+================================================================================
+END OF REFERENCE
+================================================================================

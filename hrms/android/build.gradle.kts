@@ -28,6 +28,14 @@ subprojects {
     }
 }
 
+// Plugin modules (e.g. google_maps_flutter_android) still run lintVital*; AGP lint uses older
+// Kotlin vs maps-utils 2.3. Disable those tasks after they are created (safe with evaluationDependsOn).
+gradle.projectsEvaluated {
+    subprojects.forEach { p ->
+        p.tasks.matching { it.name.startsWith("lintVital") }.configureEach { enabled = false }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

@@ -58,7 +58,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
   final GlobalKey<_LeaveRequestsTabState> _leaveTabKey = GlobalKey();
   final GlobalKey<_LoanRequestsTabState> _loanTabKey = GlobalKey();
   final GlobalKey<_ExpenseRequestsTabState> _expenseTabKey = GlobalKey();
-  final GlobalKey<_PayslipRequestsTabState> _payslipTabKey = GlobalKey();
+  final GlobalKey<_PermissionRequestsTabState> _permissionTabKey = GlobalKey();
 
   @override
   void initState() {
@@ -96,7 +96,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
         _expenseTabKey.currentState?.refresh();
         break;
       case 3:
-        _payslipTabKey.currentState?.refresh();
+        _permissionTabKey.currentState?.refresh();
         break;
     }
   }
@@ -135,7 +135,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
                   _expenseTabKey.currentState?.toggleFilters();
                   break;
                 case 3:
-                  _payslipTabKey.currentState?.toggleFilters();
+                  _permissionTabKey.currentState?.toggleFilters();
                   break;
               }
             },
@@ -143,23 +143,33 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
         ],
         bottom: TabBar(
           controller: _tabController,
-          labelColor: colorScheme.onPrimaryContainer,
-          unselectedLabelColor: colorScheme.onSurfaceVariant,
+          isScrollable: false,
+          labelColor: Colors.black,
+          unselectedLabelColor: Colors.black,
+          labelStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+          unselectedLabelStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
           indicatorColor: colorScheme.primary,
           indicatorSize: TabBarIndicatorSize.tab,
-          labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+          labelPadding: EdgeInsets.zero,
           indicator: BoxDecoration(
             color: colorScheme.primaryContainer,
             borderRadius: BorderRadius.circular(6),
           ),
           tabs: [
-            const Tab(text: 'Leave', icon: Icon(Icons.calendar_today)),
-            const Tab(text: 'Loan', icon: Icon(Icons.account_balance_wallet)),
-            const Tab(text: 'Expense', icon: Icon(Icons.receipt)),
-            const Tab(text: 'Payslip', icon: Icon(Icons.description)),
+            Tab(child: _CompactRequestTab(text: 'Leave', icon: Icons.calendar_today)),
+            Tab(child: _CompactRequestTab(text: 'Loan', icon: Icons.account_balance_wallet)),
+            Tab(child: _CompactRequestTab(text: 'Expense', icon: Icons.receipt)),
+            Tab(child: _CompactRequestTab(text: 'Permission', icon: Icons.fact_check_outlined)),
           ],
           onTap: (index) {
-            setState(() {}); // Rebuild FAB
+            _tabController.animateTo(index);
+            setState(() {});
           },
         ),
       ),
@@ -173,7 +183,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
           LeaveRequestsTab(key: _leaveTabKey),
           LoanRequestsTab(key: _loanTabKey),
           ExpenseRequestsTab(key: _expenseTabKey),
-          PayslipRequestsTab(key: _payslipTabKey),
+          PermissionRequestsTab(key: _permissionTabKey),
         ],
       ),
       floatingActionButton: _buildFab(),
@@ -217,14 +227,14 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
             backgroundColor: AppColors.primary,
           ),
         );
-      case 3: // Payslip
+      case 3: // Permission
         return SizedBox(
           height: 40,
           child: FloatingActionButton.extended(
             foregroundColor: Colors.white,
             onPressed: () =>
-                _payslipTabKey.currentState?.showRequestPayslipDialog(),
-            label: Text('Request Payslip', style: style),
+                _permissionTabKey.currentState?.showRequestPermissionDialog(),
+            label: Text('Request Permission', style: style),
             icon: const Icon(Icons.add, size: 18),
             backgroundColor: AppColors.primary,
           ),
@@ -232,6 +242,30 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
       default:
         return null;
     }
+  }
+}
+
+class _CompactRequestTab extends StatelessWidget {
+  final String text;
+  final IconData icon;
+
+  const _CompactRequestTab({required this.text, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 19),
+        const SizedBox(height: 2),
+        Text(
+          text,
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+      ],
+    );
   }
 }
 
@@ -244,6 +278,18 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
   DateTime? initialStart,
   DateTime? initialEnd,
 }) async {
+  DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+  DateTime _clampDay(DateTime d, DateTime min, DateTime max) {
+    final day = _dateOnly(d);
+    final minDay = _dateOnly(min);
+    final maxDay = _dateOnly(max);
+    if (day.isBefore(minDay)) return minDay;
+    if (day.isAfter(maxDay)) return maxDay;
+    return day;
+  }
+
+  final firstDay = _dateOnly(firstDate);
+  final lastDay = _dateOnly(lastDate);
   final now = DateTime.now();
   DateTime? rangeStart = initialStart != null
       ? DateTime(initialStart.year, initialStart.month, initialStart.day)
@@ -251,8 +297,11 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
   DateTime? rangeEnd = initialEnd != null
       ? DateTime(initialEnd.year, initialEnd.month, initialEnd.day)
       : null;
-  DateTime focusedDay =
-      rangeEnd ?? rangeStart ?? DateTime(now.year, now.month, now.day);
+  DateTime focusedDay = _clampDay(
+    rangeEnd ?? rangeStart ?? DateTime(now.year, now.month, now.day),
+    firstDay,
+    lastDay,
+  );
 
   final result = await showModalBottomSheet<DateTimeRange>(
     context: context,
@@ -319,16 +368,8 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
                     child: SingleChildScrollView(
                       controller: scrollController,
                       child: TableCalendar(
-                        firstDay: DateTime(
-                          firstDate.year,
-                          firstDate.month,
-                          firstDate.day,
-                        ),
-                        lastDay: DateTime(
-                          lastDate.year,
-                          lastDate.month,
-                          lastDate.day,
-                        ),
+                        firstDay: firstDay,
+                        lastDay: lastDay,
                         focusedDay: focusedDay,
                         rangeStartDay: rangeStart,
                         rangeEndDay: rangeEnd,
@@ -337,11 +378,13 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
                           setModalState(() {
                             rangeStart = start;
                             rangeEnd = end;
-                            focusedDay = focused;
+                            focusedDay = _clampDay(focused, firstDay, lastDay);
                           });
                         },
                         onPageChanged: (focused) {
-                          setModalState(() => focusedDay = focused);
+                          setModalState(
+                            () => focusedDay = _clampDay(focused, firstDay, lastDay),
+                          );
                         },
                         calendarFormat: CalendarFormat.month,
                         headerStyle: HeaderStyle(
@@ -1560,7 +1603,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     if (_isLoadingTypes)
                       const Padding(
                         padding: EdgeInsets.only(bottom: 20),
-                        child: const Center(child: AppTabLoader()),
+                        child: Center(child: AppTabLoader()),
                       )
                     else if (_allowedTypes.isEmpty)
                       const Padding(
@@ -1637,11 +1680,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                               : (v) {
                                   setState(() {
                                     _isOneDay = v;
-                                    if (_isOneDay && _startDate != null)
+                                    if (_isOneDay && _startDate != null) {
                                       _endDate = _startDate;
+                                    }
                                   });
                                 },
-                          activeColor: AppColors.primary,
+                          activeThumbColor: AppColors.primary,
                         ),
                       ],
                     ),
@@ -3788,6 +3832,639 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
   }
 }
 
+// --- PERMISSION TAB ---
+
+class PermissionRequestsTab extends StatefulWidget {
+  const PermissionRequestsTab({super.key});
+
+  @override
+  State<PermissionRequestsTab> createState() => _PermissionRequestsTabState();
+}
+
+class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
+  final RequestService _requestService = RequestService();
+  List<dynamic> _requests = [];
+  bool _isLoading = true;
+  bool _showFilters = false;
+  String _selectedStatus = 'All Status';
+  final List<String> _statusOptions = const [
+    'All Status',
+    'Pending',
+    'Approved',
+    'Rejected',
+    'Cancelled',
+  ];
+  DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  Map<String, dynamic>? _balance;
+
+  void toggleFilters() {
+    setState(() {
+      _showFilters = !_showFilters;
+    });
+  }
+
+  void refresh() {
+    _fetchRequests();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchRequests();
+    _fetchBalance();
+  }
+
+  Future<void> _fetchRequests() async {
+    setState(() => _isLoading = true);
+    final result = await _requestService.getPermissionRequests(
+      status: _selectedStatus,
+      month: _selectedMonth.month,
+      year: _selectedMonth.year,
+    );
+    if (!mounted) return;
+    if (result['success'] == true) {
+      final data = result['data'];
+      setState(() {
+        _requests = data is Map ? (data['permissions'] ?? []) : [];
+        _isLoading = false;
+      });
+    } else {
+      setState(() => _isLoading = false);
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.sanitizeForDisplay(
+          result['message']?.toString(),
+          fallback: 'Failed to fetch permission requests',
+        ),
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _fetchBalance() async {
+    final result = await _requestService.getPermissionBalance(
+      month: _selectedMonth.month,
+      year: _selectedMonth.year,
+    );
+    if (!mounted) return;
+    if (result['success'] == true) {
+      setState(() {
+        _balance = result['data'] is Map<String, dynamic>
+            ? result['data'] as Map<String, dynamic>
+            : (result['data'] is Map
+                  ? Map<String, dynamic>.from(result['data'])
+                  : null);
+      });
+    }
+  }
+
+  Future<void> _pickMonth() async {
+    final now = DateTime.now();
+    final initial = _selectedMonth;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year - 2, 1, 1),
+      lastDate: DateTime(now.year + 2, 12, 31),
+      helpText: 'Select Month',
+      initialDatePickerMode: DatePickerMode.year,
+    );
+    if (picked == null) return;
+    setState(() {
+      _selectedMonth = DateTime(picked.year, picked.month);
+    });
+    await _fetchRequests();
+    await _fetchBalance();
+  }
+
+  Future<void> _cancelRequest(String id) async {
+    final result = await _requestService.cancelPermissionRequest(id);
+    if (!mounted) return;
+    if (result['success'] == true) {
+      SnackBarUtils.showSnackBar(context, 'Permission request cancelled');
+      await _fetchRequests();
+    } else {
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.sanitizeForDisplay(
+          result['message']?.toString(),
+          fallback: 'Failed to cancel permission request',
+        ),
+        isError: true,
+      );
+    }
+  }
+
+  String _fmtDate(dynamic value) {
+    if (value == null) return '-';
+    final d = DateTime.tryParse(value.toString());
+    if (d == null) return '-';
+    return DateFormat('dd MMM yyyy').format(d.toLocal());
+  }
+
+  String _fmtType(String? type) {
+    switch (type) {
+      case 'lateArrival':
+        return 'Late Arrival';
+      case 'earlyExit':
+        return 'Early Exit';
+      case 'both':
+        return 'Both';
+      default:
+        return type ?? '-';
+    }
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'Approved':
+        return Colors.green;
+      case 'Rejected':
+        return Colors.red;
+      case 'Cancelled':
+        return Colors.grey;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  void showRequestPermissionDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      builder: (ctx) => RequestPermissionDialog(
+        onSuccess: () {
+          _fetchRequests();
+          _fetchBalance();
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final monthLabel = DateFormat('MMMM yyyy').format(_selectedMonth);
+    final quota = (_balance?['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
+    final consumed = (_balance?['consumedMinutes'] as num?)?.toDouble() ?? 0;
+    final remain = (_balance?['remainingMinutes'] as num?)?.toDouble() ?? 0;
+    final hours = (double v) => (v / 60).toStringAsFixed(2);
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _fetchRequests();
+        await _fetchBalance();
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(12),
+        children: [
+          Card(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Permission Balance ($monthLabel)',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _pickMonth,
+                    icon: const Icon(Icons.calendar_month),
+                    label: const Text('Month'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _balanceTile('Quota', '${hours(quota)} h'),
+              const SizedBox(width: 8),
+              _balanceTile('Used', '${hours(consumed)} h'),
+              const SizedBox(width: 8),
+              _balanceTile('Left', '${hours(remain)} h'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_showFilters)
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: DropdownButtonFormField<String>(
+                  value: _selectedStatus,
+                  items: _statusOptions
+                      .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                      .toList(),
+                  decoration: const InputDecoration(labelText: 'Status'),
+                  onChanged: (v) async {
+                    if (v == null) return;
+                    setState(() => _selectedStatus = v);
+                    await _fetchRequests();
+                  },
+                ),
+              ),
+            ),
+          if (_showFilters) const SizedBox(height: 12),
+          if (_isLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: AppTabLoader(),
+              ),
+            )
+          else if (_requests.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('No permission requests found'),
+              ),
+            )
+          else
+            ..._requests.map((raw) {
+              final req = raw is Map<String, dynamic>
+                  ? raw
+                  : Map<String, dynamic>.from(raw as Map);
+              final status = (req['status'] ?? '').toString();
+              final isPending = status == 'Pending';
+              return Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _fmtDate(req['date']),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _statusColor(status).withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              status,
+                              style: TextStyle(
+                                color: _statusColor(status),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text('Type: ${_fmtType(req['type']?.toString())}'),
+                      Text(
+                        'Requested Minutes: ${req['requestedMinutes'] ?? 0}',
+                      ),
+                      if ((req['reason'] ?? '')
+                          .toString()
+                          .trim()
+                          .isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text('Reason: ${req['reason']}'),
+                      ],
+                      const SizedBox(height: 4),
+                      Text('Applied: ${_fmtDate(req['createdAt'])}'),
+                      if (isPending) ...[
+                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton.icon(
+                            onPressed: () =>
+                                _cancelRequest(req['_id'].toString()),
+                            icon: const Icon(Icons.cancel_outlined),
+                            label: const Text('Cancel'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _balanceTile(String title, String value) {
+    IconData icon;
+    switch (title.toLowerCase()) {
+      case 'quota':
+        icon = Icons.inventory_2_outlined;
+        break;
+      case 'used':
+        icon = Icons.timelapse_outlined;
+        break;
+      default:
+        icon = Icons.check_circle_outline;
+        break;
+    }
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.primary.withOpacity(0.25)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 18, color: AppColors.primary),
+            const SizedBox(height: 6),
+            Text(
+              title,
+              style: TextStyle(
+                color: AppColors.primary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class RequestPermissionDialog extends StatefulWidget {
+  final VoidCallback onSuccess;
+
+  const RequestPermissionDialog({super.key, required this.onSuccess});
+
+  @override
+  State<RequestPermissionDialog> createState() =>
+      _RequestPermissionDialogState();
+}
+
+class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final RequestService _requestService = RequestService();
+  DateTime _date = DateTime.now();
+  String _type = 'both';
+  final TextEditingController _minutesController = TextEditingController(
+    text: '30',
+  );
+  final TextEditingController _reasonController = TextEditingController();
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _minutesController.dispose();
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(DateTime.now().year - 1, 1, 1),
+      lastDate: DateTime(DateTime.now().year + 1, 12, 31),
+    );
+    if (picked != null) {
+      setState(() => _date = DateTime(picked.year, picked.month, picked.day));
+    }
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final minutes = int.tryParse(_minutesController.text.trim());
+    final reason = _reasonController.text.trim();
+    if (minutes == null || minutes <= 0) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Requested minutes must be greater than 0',
+        isError: true,
+      );
+      return;
+    }
+    if (reason.isEmpty) {
+      SnackBarUtils.showSnackBar(context, 'Reason is required', isError: true);
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    final result = await _requestService.createPermissionRequest(
+      date: _date,
+      type: _type,
+      requestedMinutes: minutes,
+      reason: reason,
+    );
+    if (!mounted) return;
+    setState(() => _isSubmitting = false);
+
+    if (result['success'] == true) {
+      Navigator.of(context).pop();
+      widget.onSuccess();
+      final overlay = Navigator.of(context, rootNavigator: true).overlay;
+      if (overlay != null && overlay.mounted) {
+        showRequestSubmittedSuccessDialog(overlay.context);
+      }
+    } else {
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.sanitizeForDisplay(
+          result['message']?.toString(),
+          fallback: 'Failed to submit permission request',
+        ),
+        isError: true,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.85,
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+        left: 24,
+        right: 24,
+        top: 24,
+      ),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Request Permission',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Submit a new permission request',
+                      style: TextStyle(fontSize: 14, color: Colors.black54),
+                    ),
+                    const SizedBox(height: 20),
+                    InkWell(
+                      onTap: _pickDate,
+                      child: InputDecorator(
+                        decoration: _inputDecoration(
+                          'Date',
+                          Icons.calendar_today,
+                        ),
+                        child: Text(
+                          DateFormat('dd MMM yyyy').format(_date),
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: _type,
+                      decoration: _inputDecoration(
+                        'Permission Type',
+                        Icons.category,
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'both', child: Text('Both')),
+                        DropdownMenuItem(
+                          value: 'lateArrival',
+                          child: Text('Late Arrival'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'earlyExit',
+                          child: Text('Early Exit'),
+                        ),
+                      ],
+                      onChanged: (v) => setState(() => _type = v ?? 'both'),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _minutesController,
+                      keyboardType: TextInputType.number,
+                      decoration: _inputDecoration(
+                        'Requested Minutes',
+                        Icons.access_time,
+                      ),
+                      validator: (value) {
+                        final mins = int.tryParse((value ?? '').trim());
+                        if (mins == null || mins <= 0) {
+                          return 'Enter valid minutes';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _reasonController,
+                      maxLines: 3,
+                      decoration: _inputDecoration('Reason', Icons.notes),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter reason';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 28),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isSubmitting ? null : _submit,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          _isSubmitting ? 'Submitting...' : 'Submit Request',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _inputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, size: 22, color: AppColors.primary),
+      labelStyle: const TextStyle(color: Colors.black),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: AppColors.primary, width: 2),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+    );
+  }
+}
+
 // --- PAYSLIP TAB ---
 
 class PayslipRequestsTab extends StatefulWidget {
@@ -3911,8 +4588,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (context) =>
-              const Center(child: AppTabLoader()),
+          builder: (context) => const Center(child: AppTabLoader()),
         );
         final result = await _requestService.viewPayslipRequest(requestId);
         if (mounted) {
@@ -4032,8 +4708,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (context) =>
-              const Center(child: AppTabLoader()),
+          builder: (context) => const Center(child: AppTabLoader()),
         );
         final result = await _requestService.downloadPayslipRequest(requestId);
         if (mounted) {
@@ -4129,7 +4804,8 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
       }
 
       final bytes = result['data'] as List<int>;
-      final isPdf = bytes.length >= 4 &&
+      final isPdf =
+          bytes.length >= 4 &&
           bytes[0] == 0x25 &&
           bytes[1] == 0x50 &&
           bytes[2] == 0x44 &&
@@ -4146,7 +4822,9 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
       }
 
       final dir = await getTemporaryDirectory();
-      final safeBase = fileBaseName.trim().isEmpty ? 'Payslip' : fileBaseName.trim();
+      final safeBase = fileBaseName.trim().isEmpty
+          ? 'Payslip'
+          : fileBaseName.trim();
       final file = File('${dir.path}/$safeBase.pdf');
       await file.writeAsBytes(bytes, flush: true);
 
@@ -4482,10 +5160,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                         children: [
                           IconButton(
                             tooltip: 'Share Payslip',
-                            icon: const Icon(
-                              Icons.ios_share_rounded,
-                              size: 20,
-                            ),
+                            icon: const Icon(Icons.ios_share_rounded, size: 20),
                             color: AppColors.primary,
                             onPressed: () {
                               String monthName = 'Month';
@@ -4510,7 +5185,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                                 }
                               }
                               _sharePayslipPdf(
-                                url: payslipUrl ?? '',
+                                url: payslipUrl,
                                 fileBaseName: 'Payslip_$monthName',
                               );
                             },
@@ -5270,7 +5945,8 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 20),
                         child: DropdownButtonFormField<String>(
-                          value: _allowedMonthsForSelectedYear.contains(_month)
+                          initialValue:
+                              _allowedMonthsForSelectedYear.contains(_month)
                               ? _month
                               : (_allowedMonthsForSelectedYear.isNotEmpty
                                     ? _allowedMonthsForSelectedYear.first

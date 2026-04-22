@@ -188,8 +188,15 @@ function calculateWorkingDays(year, month, holidays, weeklyOffPattern, weeklyHol
                 if (dayOfWeek === 0) {
                     isWeeklyOff = true; // All Sundays are weekly off
                 } else if (dayOfWeek === 6) {
-                    if (day % 2 === 0) {
-                        isWeeklyOff = true; // Even Saturdays are weekly off
+                    // Calculate which Saturday of the month this is
+                    let saturdayOrdinal = 0;
+                    for (let d = 1; d <= day; d++) {
+                        if (new Date(year, month - 1, d).getDay() === 6) {
+                            saturdayOrdinal++;
+                        }
+                    }
+                    if (saturdayOrdinal % 2 === 0) {
+                        isWeeklyOff = true; // Even Saturdays (2nd, 4th, 6th) are weekly off
                     }
                 }
             } else {

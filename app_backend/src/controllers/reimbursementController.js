@@ -84,6 +84,13 @@ const createReimbursement = async (req, res) => {
         if (proofFiles && Array.isArray(proofFiles) && proofFiles.length > 0) {
             const companyId = currentStaff.businessId ? String(currentStaff.businessId) : undefined;
             const employeeName = currentStaff.name || 'unknown';
+            console.log('[ReimbursementUpload] Incoming request', {
+                employeeName,
+                companyId,
+                xStorageEnvironment: req.headers['x-storage-environment'],
+                host: req.headers.host,
+                origin: req.headers.origin,
+            });
             for (let i = 0; i < proofFiles.length; i++) {
                 const fileStr = proofFiles[i];
                 if (typeof fileStr !== 'string') continue;
@@ -126,6 +133,11 @@ const createReimbursement = async (req, res) => {
                             error: { message: result.error || 'Failed to upload proof file' }
                         });
                     }
+                    console.log('[ReimbursementUpload] Uploaded proof', {
+                        employeeName,
+                        uploadedUrl: result.url,
+                        key: result.key,
+                    });
                     uploadedProofUrls.push(result.url);
                 } catch (uploadError) {
                     console.error('Proof upload failed:', uploadError.message);

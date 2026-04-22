@@ -84,7 +84,7 @@ class _LmsAssessmentScreenState extends State<LmsAssessmentScreen> {
       final lessonTitle = group['lessonTitle']?.toString() ?? 'Course';
       for (final q in questions) {
         final qMap = q is Map
-            ? Map<String, dynamic>.from(q as Map)
+            ? Map<String, dynamic>.from(q)
             : <String, dynamic>{};
         qMap['lessonTitle'] = lessonTitle;
         final id = qMap['id']?.toString() ?? qMap['_id']?.toString();
@@ -332,8 +332,8 @@ class _LmsAssessmentScreenState extends State<LmsAssessmentScreen> {
                   orElse: () => <String, dynamic>{'questionText': 'Question'},
                 );
                 final isCorrect = r['isCorrect'] == true;
-                final fmt = (a) =>
-                    a is List ? (a as List).join(', ') : a?.toString() ?? '—';
+                String fmt(a) =>
+                    a is List ? (a).join(', ') : a?.toString() ?? '—';
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),
                   color: isCorrect

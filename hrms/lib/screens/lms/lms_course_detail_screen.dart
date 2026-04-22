@@ -1014,7 +1014,7 @@ class _AiQuizModalContentState extends State<_AiQuizModalContent> {
                     ),
                     const SizedBox(height: 4),
                     DropdownButtonFormField<String>(
-                      value: _difficulty,
+                      initialValue: _difficulty,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(

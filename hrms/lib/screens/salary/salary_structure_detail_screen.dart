@@ -253,7 +253,7 @@ class _SalaryStructureDetailScreenState
                                 currencyFormat,
                               ),
                               _buildTableRow(
-                                'PF (Employer) ${_salaryInputs?.employerPFRate.toStringAsFixed(0) ?? '0'}%',
+                                'PF (Employer) ${kWebStatutoryPfPercentOnBasic.toStringAsFixed(0)}%',
                                 _salaryStructure!.monthly.employerPF,
                                 _salaryStructure!.monthly.employerPF * 12,
                                 currencyFormat,
@@ -331,12 +331,12 @@ class _SalaryStructureDetailScreenState
                                   'yearly',
                             ),
                           ], null),
-                          // Employee Deductions Section
+                          // Deductions (web payslip: employee PF + ESI only; employer items are under gross above)
                           _buildSectionCard(
-                            'Employee Deductions',
+                            'Deductions',
                             [
                               _buildTableRow(
-                                'Employee contribution to PF (${_salaryInputs?.employeePFRate.toStringAsFixed(0) ?? '0'}%)',
+                                'Employee contribution to PF (${kWebStatutoryPfPercentOnBasic.toStringAsFixed(0)}%)',
                                 _salaryStructure!.monthly.employeePF,
                                 _salaryStructure!.monthly.employeePF * 12,
                                 currencyFormat,
@@ -375,7 +375,7 @@ class _SalaryStructureDetailScreenState
                 ),
               ),
             ),
-      bottomNavigationBar: const AppBottomNavigationBar(currentIndex: 2),
+      bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
   }
 

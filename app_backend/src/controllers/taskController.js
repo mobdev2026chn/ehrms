@@ -300,6 +300,110 @@ exports.getTasksByStaffId = async (req, res) => {
   }
 };
 
+exports.getTasksByStaffIdPaginated = async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+    const search = (req.query.search || '').toString().trim();
+    const startDateRaw = (req.query.startDate || '').toString().trim();
+    const endDateRaw = (req.query.endDate || '').toString().trim();
+    const statusGroupsRaw = (req.query.statusGroups || '').toString().trim();
+
+    const query = { assignedTo: staffId };
+
+    // Date range over expectedCompletionDate (same filter semantics as app list).
+    if (startDateRaw || endDateRaw) {
+      query.expectedCompletionDate = {};
+      if (startDateRaw) {
+        const s = new Date(startDateRaw);
+        if (!Number.isNaN(s.getTime())) {
+          query.expectedCompletionDate.$gte = new Date(
+            Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate(), 0, 0, 0, 0)
+          );
+        }
+      }
+      if (endDateRaw) {
+        const e = new Date(endDateRaw);
+        if (!Number.isNaN(e.getTime())) {
+          query.expectedCompletionDate.$lte = new Date(
+            Date.UTC(e.getUTCFullYear(), e.getUTCMonth(), e.getUTCDate(), 23, 59, 59, 999)
+          );
+        }
+      }
+      if (Object.keys(query.expectedCompletionDate).length === 0) {
+        delete query.expectedCompletionDate;
+      }
+    }
+
+    // Status-group filter.
+    if (statusGroupsRaw) {
+      const groups = statusGroupsRaw
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      const statusSet = new Set();
+      for (const g of groups) {
+        if (g === 'inprogress') {
+          ['in_progress', 'in progress', 'arrived'].forEach((x) => statusSet.add(x));
+        } else if (g === 'hold') {
+          ['hold', 'holdOnArrival', 'hold on arrival'].forEach((x) => statusSet.add(x));
+        } else if (g === 'completed') {
+          ['completed', 'waiting_for_approval', 'waiting for approval'].forEach((x) =>
+            statusSet.add(x)
+          );
+        }
+      }
+      if (statusSet.size > 0) query.status = { $in: Array.from(statusSet) };
+    }
+
+    // Search by task fields + customer name/number.
+    if (search) {
+      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      const customerIds = await Customer.find({
+        $or: [{ customerName: rx }, { customerNumber: rx }],
+      })
+        .select('_id')
+        .lean();
+      const cids = customerIds.map((c) => c._id);
+      query.$or = [{ taskId: rx }, { taskTitle: rx }, { description: rx }];
+      if (cids.length > 0) query.$or.push({ customerId: { $in: cids } });
+    }
+
+    const total = await Task.countDocuments(query);
+    const tasks = await Task.find(query)
+      .sort({ expectedCompletionDate: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('assignedTo')
+      .populate('customerId');
+
+    const companyId = tasks[0] ? getCompanyIdFromTask(tasks[0]) : null;
+    const mergedRaw = await Promise.all(tasks.map((t) => mergeTaskWithDetails(t)));
+    const merged = await Promise.all(
+      mergedRaw.map((t) => mergeTaskSettings(t, companyId))
+    );
+
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+    return res.status(200).json({
+      success: true,
+      data: merged,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error('[Tasks] Error fetching paginated tasks by staff:', error.message);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 /** Merge task-settings (enableOtpVerification, etc.) into task for API response. */
 async function mergeTaskSettings(taskDoc, companyId) {
   const task = taskDoc?.toObject ? taskDoc.toObject() : { ...taskDoc };

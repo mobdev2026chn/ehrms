@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_colors.dart';
+import '../services/attendance_service.dart';
 import '../services/break_service.dart';
 import '../screens/dashboard/dashboard_screen.dart';
+import '../utils/absent_alert_helper.dart';
 import '../utils/break_datetime_util.dart';
 import 'break_status_card.dart';
 
@@ -33,11 +35,15 @@ class AppBottomNavigationBar extends StatefulWidget {
 
   /// When provided, used for Punch button label (Punch In vs Punch Out). From today's attendance.
   final bool? isPunchedInToday;
+  /// When provided, controls hide/show of punch CTA based on today's completion state.
+  final bool? isPunchCompletedToday;
   final bool isPunchActionInProgress;
   final bool isBreakActive;
   final bool isBreakActionInProgress;
   final DateTime? activeBreakStartTime;
   final VoidCallback? onEndBreakTap;
+  /// When false, hides the tea-break control for shifts with `breakPolicy.enabled == false`.
+  final bool showBreakNavButton;
 
   const AppBottomNavigationBar({
     super.key,
@@ -45,11 +51,13 @@ class AppBottomNavigationBar extends StatefulWidget {
     this.onTap,
     this.items,
     this.isPunchedInToday,
+    this.isPunchCompletedToday,
     this.isPunchActionInProgress = false,
     this.isBreakActive = false,
     this.isBreakActionInProgress = false,
     this.activeBreakStartTime,
     this.onEndBreakTap,
+    this.showBreakNavButton = true,
   });
 
   static int getCurrentIndex(BuildContext context) {
@@ -71,8 +79,22 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   // ignore: unused_field
   bool _isCandidate = false;
   bool _isPunchedIn = false;
+  bool _isPunchCompletedToday = false;
+  bool _isPunchStateResolved = false;
+  final AttendanceService _attendanceService = AttendanceService();
   final BreakService _breakService = BreakService();
   DateTime? _fetchedBreakStartTime;
+
+  bool _isSameLocalDate(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  bool _isPunchDateForToday(String? rawValue, DateTime today) {
+    if (!hasParsablePunchDateTime(rawValue)) return false;
+    final parsed = DateTime.tryParse(rawValue!.trim())?.toLocal();
+    if (parsed == null) return false;
+    return _isSameLocalDate(parsed, today);
+  }
 
   @override
   void initState() {
@@ -80,6 +102,18 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     _checkRole();
     _checkPunchState();
     _fetchActiveBreak();
+  }
+
+  @override
+  void didUpdateWidget(AppBottomNavigationBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Only refresh prefs-backed punch state on nav changes when external dashboard
+    // state is not provided. This avoids show/hide flicker during tab switches.
+    final usesInternalPunchState =
+        widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
+    if (usesInternalPunchState && oldWidget.currentIndex != widget.currentIndex) {
+      _checkPunchState();
+    }
   }
 
   bool get _useExternalBreakState =>
@@ -100,7 +134,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     if (!mounted) return;
     final data = result['data'];
     final parsed = data is Map
-        ? parseApiDateTimeToLocal(data['startTime'])
+        ? breakDisplayStartFromApi(data['startTime'])
         : null;
     setState(() {
       _fetchedBreakStartTime = parsed;
@@ -125,6 +159,12 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   }
 
   Future<void> _checkPunchState() async {
+    final wasResolved = _isPunchStateResolved;
+    if (mounted && !wasResolved) {
+      setState(() {
+        _isPunchStateResolved = false;
+      });
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       // Read cached today's attendance punch state (same logic as dashboard today card)
@@ -133,57 +173,104 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
       final today = DateTime.now();
       final todayKey = '${today.year}-${today.month}-${today.day}';
       final cacheDay = prefs.getString('today_punch_date');
+      final hasPunchInToday = _isPunchDateForToday(punchIn, today);
+      final hasPunchOutToday = _isPunchDateForToday(punchOut, today);
 
-      final hasIn = punchIn != null && punchIn.toString().trim().isNotEmpty;
-      final hasOut = punchOut != null && punchOut.toString().trim().isNotEmpty;
-      final isPunchedInFromPrefs = cacheDay == todayKey && hasIn && !hasOut;
+      final isPunchedInFromPrefs = cacheDay == todayKey &&
+          isAwaitingPunchOutFromCachedPunchStrings(
+            punchIn: punchIn,
+            punchOut: punchOut,
+          );
+      final isPunchCompletedTodayFromPrefs =
+          cacheDay == todayKey && hasPunchInToday && hasPunchOutToday;
+      bool resolvedPunchedIn = isPunchedInFromPrefs;
+      bool resolvedPunchCompleted = isPunchCompletedTodayFromPrefs;
+
+      // Prefer live today attendance (same source used by Dashboard) so all screens
+      // keep the same Punch CTA visibility. Fall back to prefs on errors/offline.
+      try {
+        final todayRes = await _attendanceService.getTodayAttendance(
+          forceRefresh: true,
+        );
+        final data = todayRes['data'];
+        if (todayRes['success'] == true && data is Map<String, dynamic>) {
+          final attendance = flattenTodayAttendancePayload(data) ?? data;
+          final hasIn =
+              attendance['hasPunchIn'] == true ||
+              hasParsablePunchDateTime(attendance['punchIn']);
+          final hasOut =
+              attendance['hasPunchOut'] == true ||
+              hasParsablePunchDateTime(attendance['punchOut']);
+          resolvedPunchedIn = isAwaitingPunchOutFromTodayAttendance(attendance);
+          resolvedPunchCompleted = hasIn && hasOut;
+        }
+      } catch (_) {}
 
       if (kDebugMode) {
+        final label = resolvedPunchedIn ? 'Punch Out' : 'Punch In';
         debugPrint(
           '[AppBottomNav] _checkPunchState: todayKey=$todayKey cacheDay=$cacheDay '
           'punchIn=${punchIn != null ? "set" : "null"} punchOut=${punchOut != null ? "set" : "null"} '
-          'hasIn=$hasIn hasOut=$hasOut => isPunchedIn=$isPunchedInFromPrefs',
+          'hasPunchInToday=$hasPunchInToday hasPunchOutToday=$hasPunchOutToday '
+          'awaitingPunchOut=$resolvedPunchedIn completedToday=$resolvedPunchCompleted',
+        );
+        debugPrint(
+          '[PunchButton][BottomNav][today-from-prefs] '
+          'todayKey=$todayKey cacheDay=$cacheDay '
+          'punchIn="${punchIn ?? ""}" punchOut="${punchOut ?? ""}" '
+          'awaitingPunchOut=$resolvedPunchedIn => label="$label"',
         );
       }
 
       if (mounted) {
         setState(() {
-          _isPunchedIn = isPunchedInFromPrefs;
+          _isPunchedIn = resolvedPunchedIn;
+          _isPunchCompletedToday = resolvedPunchCompleted;
+          _isPunchStateResolved = true;
         });
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[AppBottomNav] _checkPunchState error: $e');
+      if (mounted) {
+        setState(() {
+          _isPunchStateResolved = true;
+        });
+      }
     }
   }
 
   void _handleNavigation(BuildContext context, int index) {
     HapticFeedback.lightImpact();
+    // Bottom-nav third icon is Attendance; DashboardScreen expects tab index 4.
+    final targetIndex = index == 2 ? 4 : index;
     if (widget.onTap != null) {
-      widget.onTap!(index);
+      widget.onTap!(targetIndex);
     } else {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => DashboardScreen(initialIndex: index)),
+        MaterialPageRoute(
+          builder: (_) => DashboardScreen(initialIndex: targetIndex),
+        ),
         (route) => route.isFirst,
       );
     }
   }
 
   List<NavItem> _buildItems() {
-    return [
-      const NavItem(
+    return const [
+      NavItem(
         icon: Icons.dashboard_outlined,
         activeIcon: Icons.dashboard_rounded,
         label: 'Dashboard',
       ),
-      const NavItem(
+      NavItem(
         icon: Icons.description_outlined,
         activeIcon: Icons.description_rounded,
         label: 'Requests',
       ),
-      const NavItem(
-        icon: Icons.account_balance_wallet_outlined,
-        activeIcon: Icons.account_balance_wallet_rounded,
-        label: 'Salary',
+      NavItem(
+        icon: Icons.fact_check_outlined,
+        activeIcon: Icons.fact_check,
+        label: 'Attendance',
       ),
     ];
   }
@@ -196,9 +283,9 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     final icon = isPunchedIn ? Icons.logout_rounded : Icons.login_rounded;
     final isDisabled = widget.isPunchActionInProgress;
 
-    final hPad = fillNavColumn ? 14.0 : 10.0;
-    final vPad = fillNavColumn ? 14.0 : 8.0;
-    final iconSize = fillNavColumn ? 18.0 : 16.0;
+    // Keep Punch In/Out fully visible in narrow dashboard widths.
+    final hPad = fillNavColumn ? 8.0 : 10.0;
+    final vPad = fillNavColumn ? 10.0 : 8.0;
     final fontSize = fillNavColumn ? 11.0 : 10.0;
 
     return Padding(
@@ -234,35 +321,43 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: fillNavColumn ? MainAxisSize.max : MainAxisSize.min,
+                mainAxisSize: fillNavColumn
+                    ? MainAxisSize.max
+                    : MainAxisSize.min,
                 children: [
-                  Icon(icon, size: iconSize, color: Colors.white),
-                  SizedBox(width: fillNavColumn ? 6 : 3),
-                  if (fillNavColumn)
-                    Expanded(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: fontSize,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.2,
+                  fillNavColumn
+                      ? Expanded(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.left,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: fontSize,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0,
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      : Text(
+                          label,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: fontSize,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0,
+                          ),
                         ),
-                      ),
-                    )
-                  else
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: fontSize,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
+                  SizedBox(width: fillNavColumn ? 3 : 2),
+                  Icon(icon, size: fillNavColumn ? 16 : 16, color: Colors.white),
                 ],
               ),
             ),
@@ -317,14 +412,23 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   @override
   Widget build(BuildContext context) {
     final navItems = widget.items ?? _buildItems();
-    // Tea break: same rule as Punch button — only after punch-in today (dashboard passes
-    // [isPunchedInToday]; otherwise prefs from [_checkPunchState]).
+    final usesInternalPunchState =
+        widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
+    final canRenderPunchButton = !usesInternalPunchState || _isPunchStateResolved;
+    // Break icon visibility is controlled by shift break policy from dashboard.
+    // Keep punch-state value for other UX pieces (e.g. BreakStatusCard).
     final isPunchedInForBreak = widget.isPunchedInToday ?? _isPunchedIn;
 
     // Nav bar background: black
     final barBg = Colors.black;
     final unselectedColor = const Color(0xFF94A3B8);
     final selectedColor = AppColors.primary;
+    if (kDebugMode) {
+      debugPrint(
+        '[BreakPolicy][BottomNav] showBreakNavButton=${widget.showBreakNavButton} '
+        'isPunchedInForBreak=$isPunchedInForBreak activeBreak=${_effectiveBreakStartTime != null}',
+      );
+    }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -334,7 +438,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: BreakStatusCard(
               startTime: _effectiveBreakStartTime!,
-              onEndBreak: widget.onEndBreakTap ?? () => _handleNavigation(context, 6),
+              onEndBreak:
+                  widget.onEndBreakTap ?? () => _handleNavigation(context, 6),
               isBusy: widget.isBreakActionInProgress,
               showSuccessBanner: false,
             ),
@@ -403,7 +508,9 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
                               ),
                             ),
                           ),
-                        if (isPunchedInForBreak)
+                        if (widget.currentIndex >= 0 &&
+                            isPunchedInForBreak &&
+                            widget.showBreakNavButton)
                           KeyedSubtree(
                             key: const ValueKey('bottom_nav_break'),
                             child: _buildBreakButton(context),
@@ -412,19 +519,18 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
                     ),
                   ),
                   // Punch CTA: ~3/8 of bar — larger pill (reference ~30–35% width).
-                  Expanded(
-                    flex: 3,
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 4, right: 10),
-                      child: KeyedSubtree(
-                        key: const ValueKey('bottom_nav_punch'),
-                        child: _buildPunchButton(
-                          context,
-                          fillNavColumn: true,
+                  if (canRenderPunchButton &&
+                      !(widget.isPunchCompletedToday ?? _isPunchCompletedToday))
+                    Expanded(
+                      flex: 3,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 4, right: 10),
+                        child: KeyedSubtree(
+                          key: const ValueKey('bottom_nav_punch'),
+                          child: _buildPunchButton(context, fillNavColumn: true),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),

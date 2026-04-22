@@ -4,6 +4,7 @@ import '../../config/app_colors.dart';
 import '../../services/attendance_service.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../utils/attendance_display_util.dart';
+import '../../utils/mongo_date_parse.dart';
 import '../../widgets/app_tab_loader.dart';
 
 /// Month Salary Details Screen
@@ -642,16 +643,13 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
               final date = DateTime(widget.year, widget.month, day);
               final dateStr = DateFormat('yyyy-MM-dd').format(date);
 
-              // Find attendance record for this date (date-only match to avoid timezone issues)
+              // Match Mongo/API instants to calendar day in IST (same as Salary Overview).
               dynamic record;
               for (final r in _attendanceRecords) {
                 if (r == null || r is! Map) continue;
                 try {
-                  final recDateStr = r['date']?.toString() ?? '';
-                  final recDateOnly = recDateStr.contains('T')
-                      ? recDateStr.split('T')[0]
-                      : recDateStr.split(' ')[0];
-                  if (recDateOnly == dateStr) {
+                  final key = attendanceIndiaCalendarKey((r as Map)['date']);
+                  if (key != null && key == dateStr) {
                     record = r;
                     break;
                   }
@@ -809,7 +807,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
         child: Row(
           children: [
             // Date
-            Container(
+            SizedBox(
               width: 60,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

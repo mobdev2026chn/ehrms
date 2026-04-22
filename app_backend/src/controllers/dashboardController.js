@@ -104,6 +104,10 @@ const getEmployeeDashboardStats = async (req, res) => {
         const effectivePaidDays = presentDays + paidLeaveDays;
         const absentDays = attendanceStats.absentDays ?? Math.max(0, totalWorkingDays - effectivePaidDays);
 
+        // appPerDayNetSalary / appPerdayGrossSalary: updated by mobile app from web payroll preview
+        // (PUT /auth/profile with salaryBasis ÷ fullMonth WD). Do not overwrite here — attendance WD
+        // divisor can differ from template preview (24 vs 26) and would break fine parity.
+
         console.log(`[getEmployeeDashboardStats] attendanceStats (same as payslip/salary): thisMonthWD=${thisMonthWorkingDays}, workingDaysTillToday=${totalWorkingDays}, presentDays=${presentDays}, paidLeaveDays=${paidLeaveDays}, absentDays=${absentDays}`);
 
         // 3. Leave Metrics
@@ -198,7 +202,7 @@ const getEmployeeDashboardStats = async (req, res) => {
                     const oneYearAfterJoining = new Date(d.getFullYear() + 1, jMonth, jDay);
                     const hasCompletedOneYear = now >= oneYearAfterJoining;
                     if (!hasCompletedOneYear || yearsOfService < 1) {
-                        console.log('[Dashboard] Anniversary skipped: name=%s joiningDate=%s oneYearAfter=%s hasCompletedOneYear=%s yearsOfService=%d', s.name, d.toISOString().slice(0, 10), oneYearAfterJoining.toISOString().slice(0, 10), hasCompletedOneYear, yearsOfService);
+                        // console.log('[Dashboard] Anniversary skipped: name=%s joiningDate=%s oneYearAfter=%s hasCompletedOneYear=%s yearsOfService=%d', s.name, d.toISOString().slice(0, 10), oneYearAfterJoining.toISOString().slice(0, 10), hasCompletedOneYear, yearsOfService);
                         continue;
                     }
                     const daysLeft = Math.ceil((nextAnniv - now) / (24 * 60 * 60 * 1000));

@@ -42,7 +42,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     (_) => TextEditingController(),
   );
   final List<FocusNode> _focusNodes = List.generate(4, (_) => FocusNode());
-  bool _verified = false;
+  final bool _verified = false;
   bool _verifying = false;
   bool _sendingOtp = false;
   bool _otpSent = false;
@@ -60,8 +60,12 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   @override
   void dispose() {
-    for (var c in _controllers) c.dispose();
-    for (var f in _focusNodes) f.dispose();
+    for (var c in _controllers) {
+      c.dispose();
+    }
+    for (var f in _focusNodes) {
+      f.dispose();
+    }
     super.dispose();
   }
 

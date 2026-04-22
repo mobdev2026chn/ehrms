@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/holiday_model.dart';
 import '../utils/error_message_utils.dart';
 import 'api_client.dart';
+import 'web_hrms_api_dio.dart';
 
 class HolidayService {
   final ApiClient _api = ApiClient();
@@ -19,10 +20,23 @@ class HolidayService {
     int? year,
     int? month,
     String? search,
+    bool useWebHrmsApi = false,
   }) async {
     try {
-      await _setToken();
-      final response = await _api.dio.get<Map<String, dynamic>>(
+      if (!useWebHrmsApi) {
+        await _setToken();
+      }
+      final response = useWebHrmsApi
+          ? await webHrmsApiDio().get<Map<String, dynamic>>(
+              '/holidays/employee',
+              queryParameters: {
+                'limit': 100,
+                if (year != null) 'year': year,
+                if (month != null) 'month': month,
+                if (search != null && search.isNotEmpty) 'search': search,
+              },
+            )
+          : await _api.dio.get<Map<String, dynamic>>(
         '/holidays/employee',
         queryParameters: {
           'limit': 100,

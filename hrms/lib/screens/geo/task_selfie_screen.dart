@@ -190,7 +190,7 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
       );
       if (mounted) {
         widget.onSelfieUploaded?.call();
-        SnackBarUtils.showSnackBar(context, '${_title} successful');
+        SnackBarUtils.showSnackBar(context, '$_title successful');
         Navigator.of(context).pop(true);
       }
     } catch (e) {

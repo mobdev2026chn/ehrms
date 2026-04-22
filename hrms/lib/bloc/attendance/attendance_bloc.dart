@@ -1,81 +1,95 @@
 // bloc/attendance/attendance_bloc.dart
-// Business logic and state for attendance. Calls AttendanceRepository only; no HTTP/JSON.
+// Business logic and state for attendance. Calls AttendanceRepository; check-out may call BreakService.
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../repository/attendance_repository.dart';
+import '../../services/break_service.dart';
+import '../../utils/punch_flow_log.dart';
 
 part 'attendance_event.dart';
 part 'attendance_state.dart';
 
 class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
-  AttendanceBloc({AttendanceRepository? repository})
-    : _repo = repository ?? AttendanceRepository(),
-      super(AttendanceInitial()) {
+  AttendanceBloc({
+    AttendanceRepository? repository,
+    BreakService? breakService,
+  }) : _repo = repository ?? AttendanceRepository(),
+       _breakService = breakService ?? BreakService(),
+       super(AttendanceInitial()) {
     on<AttendanceStatusRequested>(_onStatusRequested);
     on<AttendanceCheckInRequested>(_onCheckInRequested);
     on<AttendanceCheckOutRequested>(_onCheckOutRequested);
   }
 
   final AttendanceRepository _repo;
+  final BreakService _breakService;
 
   Future<void> _onStatusRequested(
     AttendanceStatusRequested event,
     Emitter<AttendanceState> emit,
   ) async {
     emit(AttendanceLoadInProgress());
-    final result = await _repo.getAttendanceByDate(event.date);
-    if (result['success'] != true || !result.containsKey('data')) {
+    try {
+      final result = await _repo.getAttendanceByDate(event.date);
+      if (result['success'] != true || !result.containsKey('data')) {
+        emit(
+          AttendanceFailure(
+            message: result['message'] as String? ?? 'Failed to load attendance',
+          ),
+        );
+        return;
+      }
+      final responseBody = result['data'];
+      var data = responseBody;
+      if (responseBody != null &&
+          (responseBody.containsKey('data') ||
+              responseBody.containsKey('branch'))) {
+        data = responseBody['data'];
+      }
+      final now = DateTime.now();
+      final todayStr = now.toIso8601String().split('T')[0];
+      final isToday = event.date == todayStr;
+      bool isCheckedIn = false;
+      bool isCompleted = false;
+      if (data != null && isToday) {
+        if (responseBody is Map && responseBody.containsKey('checkedIn')) {
+          isCheckedIn = responseBody['checkedIn'] == true;
+          isCompleted = responseBody['hasPunchIn'] == true && responseBody['hasPunchOut'] == true;
+        } else {
+          isCheckedIn = data['punchIn'] != null && data['punchOut'] == null;
+          isCompleted = data['punchIn'] != null && data['punchOut'] != null;
+        }
+      } else if (!isToday) {
+        isCompleted = true;
+      }
+      final branch = responseBody is Map ? responseBody['branch'] : null;
+      final halfDay = responseBody is Map ? responseBody['halfDayLeave'] : null;
+      final halfDayMessage = halfDay is Map
+          ? halfDay['message'] as String?
+          : null;
+      final halfDayType = halfDay is Map
+          ? (halfDay['halfDayType'] ?? halfDay['halfDaySession']) as String?
+          : null;
       emit(
-        AttendanceFailure(
-          message: result['message'] as String? ?? 'Failed to load attendance',
+        AttendanceStatusLoaded(
+          branchData: branch is Map<String, dynamic> ? branch : null,
+          checkInAllowed: responseBody['checkInAllowed'] ?? true,
+          checkOutAllowed: responseBody['checkOutAllowed'] ?? true,
+          halfDayLeaveMessage: halfDayMessage,
+          halfDayType: halfDayType,
+          isCheckedIn: isCheckedIn,
+          isCompleted: isCompleted,
+          isToday: isToday,
         ),
       );
-      return;
+    } catch (_) {
+      emit(
+        const AttendanceFailure(
+          message: 'Failed to load attendance. Please try again.',
+        ),
+      );
     }
-    final responseBody = result['data'];
-    var data = responseBody;
-    if (responseBody != null &&
-        (responseBody.containsKey('data') ||
-            responseBody.containsKey('branch'))) {
-      data = responseBody['data'];
-    }
-    final now = DateTime.now();
-    final todayStr = now.toIso8601String().split('T')[0];
-    final isToday = event.date == todayStr;
-    bool isCheckedIn = false;
-    bool isCompleted = false;
-    if (data != null && isToday) {
-      if (responseBody is Map && responseBody.containsKey('checkedIn')) {
-        isCheckedIn = responseBody['checkedIn'] == true;
-        isCompleted = responseBody['hasPunchIn'] == true && responseBody['hasPunchOut'] == true;
-      } else {
-        isCheckedIn = data['punchIn'] != null && data['punchOut'] == null;
-        isCompleted = data['punchIn'] != null && data['punchOut'] != null;
-      }
-    } else if (!isToday) {
-      isCompleted = true;
-    }
-    final branch = responseBody is Map ? responseBody['branch'] : null;
-    final halfDay = responseBody is Map ? responseBody['halfDayLeave'] : null;
-    final halfDayMessage = halfDay is Map
-        ? halfDay['message'] as String?
-        : null;
-    final halfDayType = halfDay is Map
-        ? (halfDay['halfDayType'] ?? halfDay['halfDaySession']) as String?
-        : null;
-    emit(
-      AttendanceStatusLoaded(
-        branchData: branch is Map<String, dynamic> ? branch : null,
-        checkInAllowed: responseBody['checkInAllowed'] ?? true,
-        checkOutAllowed: responseBody['checkOutAllowed'] ?? true,
-        halfDayLeaveMessage: halfDayMessage,
-        halfDayType: halfDayType,
-        isCheckedIn: isCheckedIn,
-        isCompleted: isCompleted,
-        isToday: isToday,
-      ),
-    );
   }
 
   Future<void> _onCheckInRequested(
@@ -83,25 +97,85 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
     Emitter<AttendanceState> emit,
   ) async {
     emit(AttendanceLoadInProgress());
-    final result = await _repo.checkIn(
-      event.lat,
-      event.lng,
-      event.address,
+    try {
+      final result = await _repo.checkIn(
+        event.lat,
+        event.lng,
+        event.address,
+        area: event.area,
+        city: event.city,
+        pincode: event.pincode,
+        selfie: event.selfie,
+        movementType: event.movementType,
+        lateMinutes: event.lateMinutes,
+        earlyMinutes: event.earlyMinutes,
+        fineAmount: event.fineAmount,
+      );
+      if (result['success'] == true) {
+        emit(
+          AttendanceCheckInSuccess(
+            checkInLat: event.lat,
+            checkInLng: event.lng,
+          ),
+        );
+      } else {
+        emit(
+          AttendanceFailure(
+            message: result['message'] as String? ?? 'Check-in failed',
+          ),
+        );
+      }
+    } catch (_) {
+      emit(
+        const AttendanceFailure(message: 'Check-in failed. Please try again.'),
+      );
+    }
+  }
+
+  /// When the server reports an in-progress break, end it using the same
+  /// location/selfie as check-out so an open break cannot carry into the next day.
+  Future<String?> _endOngoingBreakBeforeCheckout(
+    AttendanceCheckOutRequested event,
+  ) async {
+    final breakResult = await _breakService.getCurrentBreak();
+    if (breakResult['success'] != true) {
+      punchFlowLog(
+        '[AttendanceBloc][checkOut] skip auto endBreak: getCurrentBreak success!=true',
+      );
+      return null;
+    }
+    final raw = breakResult['data'];
+    Map<String, dynamic>? active;
+    if (raw is Map<String, dynamic>) {
+      active = raw;
+    } else if (raw is Map) {
+      active = Map<String, dynamic>.from(raw);
+    }
+    final breakId = active?['id']?.toString().trim();
+    if (breakId == null || breakId.isEmpty) {
+      punchFlowLog(
+        '[AttendanceBloc][checkOut] no active break id — proceeding to checkout',
+      );
+      return null;
+    }
+    punchFlowLog(
+      '[AttendanceBloc][checkOut] auto endBreak breakId=$breakId before checkout',
+    );
+    final endResult = await _breakService.endBreak(
+      breakId: breakId,
+      lat: event.lat,
+      lng: event.lng,
+      address: event.address,
       area: event.area,
       city: event.city,
       pincode: event.pincode,
-      selfie: event.selfie,
-      movementType: event.movementType,
+      selfie: event.selfie ?? '',
     );
-    if (result['success'] == true) {
-      emit(AttendanceCheckInSuccess());
-    } else {
-      emit(
-        AttendanceFailure(
-          message: result['message'] as String? ?? 'Check-in failed',
-        ),
-      );
+    if (endResult['success'] == true) {
+      return null;
     }
+    return endResult['message'] as String? ??
+        'Could not end ongoing break before check-out';
   }
 
   Future<void> _onCheckOutRequested(
@@ -109,23 +183,42 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
     Emitter<AttendanceState> emit,
   ) async {
     emit(AttendanceLoadInProgress());
-    final result = await _repo.checkOut(
-      event.lat,
-      event.lng,
-      event.address,
-      area: event.area,
-      city: event.city,
-      pincode: event.pincode,
-      selfie: event.selfie,
-      movementType: event.movementType,
-    );
-    if (result['success'] == true) {
-      emit(AttendanceCheckOutSuccess());
-    } else {
+    try {
+      final breakEndError = await _endOngoingBreakBeforeCheckout(event);
+      if (breakEndError != null) {
+        punchFlowLog(
+          '[AttendanceBloc][checkOut] emit=AttendanceFailure (auto endBreak) '
+          'message=$breakEndError',
+        );
+        emit(AttendanceFailure(message: breakEndError));
+        return;
+      }
+      final result = await _repo.checkOut(
+        event.lat,
+        event.lng,
+        event.address,
+        area: event.area,
+        city: event.city,
+        pincode: event.pincode,
+        selfie: event.selfie,
+        movementType: event.movementType,
+        lateMinutes: event.lateMinutes,
+        earlyMinutes: event.earlyMinutes,
+        fineAmount: event.fineAmount,
+      );
+      if (result['success'] == true) {
+        punchFlowLog('[AttendanceBloc][checkOut] emit=AttendanceCheckOutSuccess');
+        emit(AttendanceCheckOutSuccess());
+      } else {
+        final failMsg = result['message'] as String? ?? 'Check-out failed';
+        punchFlowLog(
+          '[AttendanceBloc][checkOut] emit=AttendanceFailure message=$failMsg',
+        );
+        emit(AttendanceFailure(message: failMsg));
+      }
+    } catch (_) {
       emit(
-        AttendanceFailure(
-          message: result['message'] as String? ?? 'Check-out failed',
-        ),
+        const AttendanceFailure(message: 'Check-out failed. Please try again.'),
       );
     }
   }

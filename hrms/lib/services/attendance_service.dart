@@ -1,16 +1,20 @@
-import 'dart:io';
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+import 'dart:io';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
+import 'package:intl/intl.dart';
 import '../config/constants.dart';
 import '../utils/error_message_utils.dart';
+import '../utils/punch_flow_log.dart';
 import 'api_client.dart';
+import 'web_hrms_api_dio.dart';
 
 class AttendanceService {
   final String baseUrl = AppConstants.baseUrl;
   final ApiClient _api = ApiClient();
   Map<String, dynamic>? attendanceTemplate;
+  static const Duration _punchRequestTimeout = Duration(seconds: 25);
 
   // Shared across all instances so Selfie Check-in (via BLoC) can use cache from Attendance tab.
   static Map<String, dynamic>? _cachedTodayAttendance;
@@ -19,6 +23,10 @@ class AttendanceService {
   // Cache for month attendance: key = "year-month", value = cached data
   final Map<String, Map<String, dynamic>> _cachedMonthAttendance = {};
   final Map<String, DateTime> _lastMonthAttendanceFetch = {};
+
+  /// [SalaryOverviewScreen] only — web HRMS month payload (isolated from geo cache above).
+  final Map<String, Map<String, dynamic>> _cachedWebMonthAttendance = {};
+  final Map<String, DateTime> _lastWebMonthAttendanceFetch = {};
 
   // Simple per-endpoint throttle map (URL -> last call time)
   static final Map<String, DateTime> _lastCallTimestamps = {};
@@ -40,11 +48,15 @@ class AttendanceService {
   /// Call after check-in/check-out so Recent Activity and History never show
   /// cached data. Also call from the attendance screen before a forced refresh.
   /// Clears throttle for today endpoint so the next getAttendanceByDate(today) gets fresh data (e.g. punch out).
-  void clearCachesForRefresh() {
+  void clearCachesForRefresh({bool clearWebHrmsSalaryCaches = false}) {
     AttendanceService._cachedTodayAttendance = null;
     AttendanceService._lastTodayAttendanceFetch = null;
     _cachedMonthAttendance.clear();
     _lastMonthAttendanceFetch.clear();
+    if (clearWebHrmsSalaryCaches) {
+      _cachedWebMonthAttendance.clear();
+      _lastWebMonthAttendanceFetch.clear();
+    }
     // So the next fetch for today is not throttled and the main card gets updated punch out
     final now = DateTime.now();
     final todayStr =
@@ -71,6 +83,10 @@ class AttendanceService {
     String? pincode,
     String? selfie,
     String? movementType,
+    int? lateMinutes,
+    int? earlyMinutes,
+    double? fineAmount,
+    int retryCount = 0,
   }) async {
     try {
       final headers = await _getHeaders();
@@ -88,6 +104,10 @@ class AttendanceService {
         'selfie': selfie,
         'movementType': movementType,
         'source': 'app',
+        'forceAppFine': true,
+        'lateMinutes': lateMinutes,
+        'earlyMinutes': earlyMinutes,
+        'fineAmount': fineAmount,
       };
       if (businessId != null && businessId.isNotEmpty) {
         body['businessId'] = businessId;
@@ -95,11 +115,35 @@ class AttendanceService {
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/attendance/checkin',
         data: body,
+        options: Options(
+          sendTimeout: _punchRequestTimeout,
+          receiveTimeout: _punchRequestTimeout,
+          extra: const {'disable_429_retry': true},
+        ),
       );
       final data = response.data;
       clearCachesForRefresh();
       return {'success': true, 'data': data};
     } on DioException catch (e) {
+      if (e.response == null &&
+          retryCount == 0 &&
+          _isTransientNetworkError(e)) {
+        await Future.delayed(const Duration(milliseconds: 800));
+        return checkIn(
+          lat,
+          lng,
+          address,
+          area: area,
+          city: city,
+          pincode: pincode,
+          selfie: selfie,
+          movementType: movementType,
+          lateMinutes: lateMinutes,
+          earlyMinutes: earlyMinutes,
+          fineAmount: fineAmount,
+          retryCount: 1,
+        );
+      }
       if (e.response != null) {
         final msg = _dioErrorMessage(e);
         return {'success': false, 'message': msg ?? 'Check-in failed'};
@@ -126,11 +170,19 @@ class AttendanceService {
     String? pincode,
     String? selfie,
     String? movementType,
+    int? lateMinutes,
+    int? earlyMinutes,
+    double? fineAmount,
+    int retryCount = 0,
   }) async {
     try {
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
+      final prefs = await SharedPreferences.getInstance();
+      final businessId = prefs.getString('businessId');
+      final appPerDayNetSalary = prefs.getDouble('app_net_per_day_salary');
+      final appPerdayGrossSalary = prefs.getDouble('app_gross_per_day_salary');
       final body = {
         'latitude': lat,
         'longitude': lng,
@@ -141,30 +193,105 @@ class AttendanceService {
         'selfie': selfie,
         'movementType': movementType,
         'source': 'app',
+        'forceAppFine': true,
+        'lateMinutes': lateMinutes,
+        'earlyMinutes': earlyMinutes,
+        'fineAmount': fineAmount,
+        if (businessId != null && businessId.isNotEmpty) 'businessId': businessId,
+        if (appPerDayNetSalary != null && appPerDayNetSalary > 0)
+          'appPerDayNetSalary': appPerDayNetSalary,
+        if (appPerdayGrossSalary != null && appPerdayGrossSalary > 0)
+          'appPerdayGrossSalary': appPerdayGrossSalary,
       };
       final response = await _api.dio.put<Map<String, dynamic>>(
         '/attendance/checkout',
         data: body,
+        options: Options(
+          sendTimeout: _punchRequestTimeout,
+          receiveTimeout: _punchRequestTimeout,
+          extra: const {'disable_429_retry': true},
+        ),
       );
       final data = response.data;
+      punchFlowLog(
+        '[AttendanceService][checkOut] httpOK status=${response.statusCode} '
+        'dataKeys=${data is Map ? (data as Map).keys.join(",") : data.runtimeType}',
+      );
       clearCachesForRefresh();
       return {'success': true, 'data': data};
     } on DioException catch (e) {
-      return {
-        'success': false,
-        'message': _dioErrorMessage(e) ?? 'Check-out failed',
-      };
+      if (e.response == null &&
+          retryCount == 0 &&
+          _isTransientNetworkError(e)) {
+        await Future.delayed(const Duration(milliseconds: 800));
+        return checkOut(
+          lat,
+          lng,
+          address,
+          area: area,
+          city: city,
+          pincode: pincode,
+          selfie: selfie,
+          movementType: movementType,
+          lateMinutes: lateMinutes,
+          earlyMinutes: earlyMinutes,
+          fineAmount: fineAmount,
+          retryCount: 1,
+        );
+      }
+      final errMsg = _dioErrorMessage(e) ?? _handleException(e);
+      punchFlowLog(
+        '[AttendanceService][checkOut] DioException status=${e.response?.statusCode} '
+        'message=$errMsg rawType=${e.response?.data.runtimeType}',
+      );
+      return {'success': false, 'message': errMsg};
     } catch (e) {
+      punchFlowLog(
+        '[AttendanceService][checkOut] catch message=${_handleException(e)}',
+      );
       return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  bool _isTransientNetworkError(DioException e) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.connectionError:
+        return true;
+      default:
+        return false;
     }
   }
 
   Future<Map<String, dynamic>> getTodayAttendance({
     bool forceRefresh = false,
+    String? date,
+    bool useWebHrmsApi = false,
   }) async {
+    if (useWebHrmsApi) {
+      try {
+        final nowStr = date ?? DateFormat('yyyy-MM-dd').format(DateTime.now());
+        final response = await webHrmsApiDio().get<Map<String, dynamic>>(
+          '/attendance/today',
+          queryParameters: {'date': nowStr},
+        );
+        final data = response.data ?? {};
+        return {'success': true, 'data': data};
+      } on DioException catch (e) {
+        return {
+          'success': false,
+          'message': _dioErrorMessage(e) ?? 'Failed to fetch status',
+        };
+      } catch (e) {
+        return {'success': false, 'message': _handleException(e)};
+      }
+    }
     try {
+      final nowStr = date ?? DateFormat('yyyy-MM-dd').format(DateTime.now());
       const endpointPath = '/attendance/today';
-      final url = '$baseUrl$endpointPath';
+      final url = '$baseUrl$endpointPath?date=$nowStr';
 
       // Invalidate cache if it's from a different day
       if (_cachedTodayAttendance != null) {
@@ -179,13 +306,13 @@ class AttendanceService {
       }
 
       // Return cached value if available and not forced to refresh
-      if (!forceRefresh && _cachedTodayAttendance != null) {
+      if (!forceRefresh && date == null && _cachedTodayAttendance != null) {
         return {'success': true, 'data': _cachedTodayAttendance};
       }
 
-      // Throttle repeated calls within a short window
-      if (_isThrottled(url)) {
-        // If we have cache, return it, otherwise surface a friendly message
+      // Throttle repeated calls within a short window. [forceRefresh] skips throttle so
+      // post check-in/out refetches do not hit empty-cache "too many requests".
+      if (date == null && !forceRefresh && _isThrottled(url)) {
         if (_cachedTodayAttendance != null) {
           return {'success': true, 'data': _cachedTodayAttendance};
         }
@@ -194,11 +321,18 @@ class AttendanceService {
           'message': 'Too many requests. Please wait a moment.',
         };
       }
+      if (date == null && forceRefresh) {
+        _lastCallTimestamps[url] = DateTime.now();
+      }
 
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
-      final response = await _api.dio.get<Map<String, dynamic>>(endpointPath);
+// Fetching today's attendance data for the current user
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        endpointPath,
+        queryParameters: {'date': nowStr},
+      );
       final data = response.data ?? {};
 
       if (data['template'] != null) {
@@ -228,8 +362,19 @@ class AttendanceService {
 
   /// Fetches company fine calculation config and payslip settings (company.settings.payroll) using staff's businessId.
   /// Returns { success, data: fineCalculation, payslip: { isPayslipAutoGenerated? } } or { success, message }.
-  Future<Map<String, dynamic>> getFineCalculation() async {
+  Future<Map<String, dynamic>> getFineCalculation({
+    bool useWebHrmsApi = false,
+  }) async {
     try {
+      if (useWebHrmsApi) {
+        final response = await webHrmsApiDio().get<Map<String, dynamic>>(
+          '/attendance/fine-calculation',
+        );
+        final data = response.data ?? {};
+        final fineCalculation = data['data'];
+        final payslip = data['payslip'];
+        return {'success': true, 'data': fineCalculation, 'payslip': payslip};
+      }
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
@@ -381,12 +526,14 @@ class AttendanceService {
     int year,
     int month, {
     bool forceRefresh = false,
+    bool useWebHrmsApi = false,
   }) async {
     return _getMonthAttendanceWithRetry(
       year,
       month,
       forceRefresh: forceRefresh,
       retryCount: 0,
+      useWebHrmsApi: useWebHrmsApi,
     );
   }
 
@@ -396,8 +543,25 @@ class AttendanceService {
     required String endDate,
     int page = 1,
     int limit = 100,
+    bool useWebHrmsApi = false,
   }) async {
     try {
+      if (useWebHrmsApi) {
+        final response = await webHrmsApiDio().get<Map<String, dynamic>>(
+          '/attendance/employee/$employeeId',
+          queryParameters: {
+            'startDate': startDate,
+            'endDate': endDate,
+            'page': page,
+            'limit': limit,
+          },
+        );
+        final data = response.data ?? {};
+        if (data['success'] == true && data['data'] is Map) {
+          return {'success': true, 'data': data['data']};
+        }
+        return {'success': false, 'message': 'Failed to fetch employee attendance'};
+      }
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
@@ -430,24 +594,32 @@ class AttendanceService {
     int month, {
     bool forceRefresh = false,
     int retryCount = 0,
+    bool useWebHrmsApi = false,
   }) async {
     final cacheKey = '$year-$month';
+    final cacheMap =
+        useWebHrmsApi ? _cachedWebMonthAttendance : _cachedMonthAttendance;
+    final fetchMap =
+        useWebHrmsApi ? _lastWebMonthAttendanceFetch : _lastMonthAttendanceFetch;
+    final webBase = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
     try {
-      final url = '$baseUrl/attendance/month?year=$year&month=$month';
+      final url = useWebHrmsApi
+          ? '$webBase/attendance/month?year=$year&month=$month'
+          : '$baseUrl/attendance/month?year=$year&month=$month';
 
       // Check cache first (unless forced refresh — never use cache after check-in/out)
-      if (!forceRefresh && _cachedMonthAttendance.containsKey(cacheKey)) {
-        final lastFetch = _lastMonthAttendanceFetch[cacheKey];
+      if (!forceRefresh && cacheMap.containsKey(cacheKey)) {
+        final lastFetch = fetchMap[cacheKey];
         if (lastFetch != null &&
             DateTime.now().difference(lastFetch) < _cacheValidDuration) {
-          return {'success': true, 'data': _cachedMonthAttendance[cacheKey]};
+          return {'success': true, 'data': cacheMap[cacheKey]};
         }
       }
 
       // Throttle repeated calls — when forceRefresh, never return cached data
       if (_isThrottled(url)) {
-        if (!forceRefresh && _cachedMonthAttendance.containsKey(cacheKey)) {
-          return {'success': true, 'data': _cachedMonthAttendance[cacheKey]};
+        if (!forceRefresh && cacheMap.containsKey(cacheKey)) {
+          return {'success': true, 'data': cacheMap[cacheKey]};
         }
         if (retryCount == 0) {
           await Future.delayed(const Duration(milliseconds: 1500));
@@ -456,6 +628,7 @@ class AttendanceService {
             month,
             forceRefresh: forceRefresh,
             retryCount: 1,
+            useWebHrmsApi: useWebHrmsApi,
           );
         }
         return {
@@ -464,22 +637,31 @@ class AttendanceService {
         };
       }
 
-      final headers = await _getHeaders();
-      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
-      if (token != null) _api.setAuthToken(token);
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/attendance/month',
-        queryParameters: {'year': year, 'month': month},
-      );
-      final data = response.data ?? {};
+      final Map<String, dynamic> data;
+      if (useWebHrmsApi) {
+        final response = await webHrmsApiDio().get<Map<String, dynamic>>(
+          '/attendance/month',
+          queryParameters: {'year': year, 'month': month},
+        );
+        data = response.data ?? {};
+      } else {
+        final headers = await _getHeaders();
+        final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+        if (token != null) _api.setAuthToken(token);
+        final response = await _api.dio.get<Map<String, dynamic>>(
+          '/attendance/month',
+          queryParameters: {'year': year, 'month': month},
+        );
+        data = response.data ?? {};
+      }
       final attendanceData = data['data'] ?? data;
-      _cachedMonthAttendance[cacheKey] = attendanceData;
-      _lastMonthAttendanceFetch[cacheKey] = DateTime.now();
+      cacheMap[cacheKey] = attendanceData;
+      fetchMap[cacheKey] = DateTime.now();
       return {'success': true, 'data': attendanceData};
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
-        if (_cachedMonthAttendance.containsKey(cacheKey)) {
-          return {'success': true, 'data': _cachedMonthAttendance[cacheKey]};
+        if (cacheMap.containsKey(cacheKey)) {
+          return {'success': true, 'data': cacheMap[cacheKey]};
         }
         if (retryCount == 0) {
           await Future.delayed(const Duration(milliseconds: 2000));
@@ -488,6 +670,7 @@ class AttendanceService {
             month,
             forceRefresh: forceRefresh,
             retryCount: 1,
+            useWebHrmsApi: useWebHrmsApi,
           );
         }
         return {
@@ -495,8 +678,18 @@ class AttendanceService {
           'message': 'Too many requests. Please wait a moment.',
         };
       }
-      if (_cachedMonthAttendance.containsKey(cacheKey)) {
-        return {'success': true, 'data': _cachedMonthAttendance[cacheKey]};
+      if (retryCount == 0 && _isTransientNetworkError(e)) {
+        await Future.delayed(const Duration(milliseconds: 1000));
+        return _getMonthAttendanceWithRetry(
+          year,
+          month,
+          forceRefresh: forceRefresh,
+          retryCount: 1,
+          useWebHrmsApi: useWebHrmsApi,
+        );
+      }
+      if (cacheMap.containsKey(cacheKey)) {
+        return {'success': true, 'data': cacheMap[cacheKey]};
       }
       return {
         'success': false,
@@ -504,8 +697,8 @@ class AttendanceService {
       };
     } catch (e) {
       // On exception, return cached data if available
-      if (_cachedMonthAttendance.containsKey(cacheKey)) {
-        return {'success': true, 'data': _cachedMonthAttendance[cacheKey]};
+      if (cacheMap.containsKey(cacheKey)) {
+        return {'success': true, 'data': cacheMap[cacheKey]};
       }
       // If no cache and first retry, wait and retry once
       if (retryCount == 0 && e is TimeoutException) {
@@ -515,6 +708,7 @@ class AttendanceService {
           month,
           forceRefresh: forceRefresh,
           retryCount: 1,
+          useWebHrmsApi: useWebHrmsApi,
         );
       }
       return {'success': false, 'message': _handleException(e)};

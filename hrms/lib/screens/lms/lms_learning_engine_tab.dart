@@ -10,7 +10,6 @@
 // Sections: 3 KPIs, heatmap,
 // Quiz performance card, Recent progress, Upcoming deadlines.
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
@@ -326,8 +325,8 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
   /// Recent progress: sort by completedAt/openedAt descending, take 6 (match web).
   List<Map<String, dynamic>> _recentProgressList(List<dynamic> courses) {
     final list = courses
-        .where((c) => c is Map)
-        .map<Map<String, dynamic>>((c) => Map<String, dynamic>.from(c as Map))
+        .whereType<Map>()
+        .map<Map<String, dynamic>>((c) => Map<String, dynamic>.from(c))
         .toList();
     list.sort((a, b) {
       final ta = _parseDate(a['completedAt'] ?? a['openedAt']);
@@ -702,9 +701,9 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
           ? (h['totalMinutes'] as num).toDouble()
           : 0.0;
       int level = 0;
-      if (score > 60)
+      if (score > 60) {
         level = 4;
-      else if (score > 40)
+      } else if (score > 40)
         level = 3;
       else if (score > 20)
         level = 2;
@@ -910,15 +909,19 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
       final quizzes = point['quizzesAttempted'] ?? 0;
       final assessments = point['assessmentsAttempted'] ?? 0;
       final live = point['liveSessionsAttended'] ?? 0;
-      if (mins > 0) sb.write('\n${mins} min learned');
-      if (lessons > 0)
+      if (mins > 0) sb.write('\n$mins min learned');
+      if (lessons > 0) {
         sb.write('\n$lessons lesson${lessons != 1 ? 's' : ''} completed');
-      if (quizzes > 0)
+      }
+      if (quizzes > 0) {
         sb.write('\n$quizzes quiz${quizzes != 1 ? 'zes' : ''} attempted');
-      if (assessments > 0)
+      }
+      if (assessments > 0) {
         sb.write('\n$assessments assessment${assessments != 1 ? 's' : ''}');
-      if (live > 0)
+      }
+      if (live > 0) {
         sb.write('\n$live live session${live != 1 ? 's' : ''} attended');
+      }
     }
     if (level == 0 && point == null) sb.write('\nNo activity');
     return sb.toString();
@@ -950,17 +953,21 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
       final live = (point['liveSessionsAttended'] is num)
           ? (point['liveSessionsAttended'] as num).toInt()
           : 0;
-      if (mins > 0) lines.add('${mins} min learned');
-      if (lessons > 0)
+      if (mins > 0) lines.add('$mins min learned');
+      if (lessons > 0) {
         lines.add('$lessons lesson${lessons != 1 ? 's' : ''} completed');
-      if (quizzes > 0)
+      }
+      if (quizzes > 0) {
         lines.add('$quizzes quiz${quizzes != 1 ? 'zes' : ''} attempted');
-      if (assessments > 0)
+      }
+      if (assessments > 0) {
         lines.add(
           '$assessments assessment${assessments != 1 ? 's' : ''} attempted',
         );
-      if (live > 0)
+      }
+      if (live > 0) {
         lines.add('$live live session${live != 1 ? 's' : ''} attended');
+      }
     }
     if (lines.isEmpty) lines.add('No activity');
     return lines;

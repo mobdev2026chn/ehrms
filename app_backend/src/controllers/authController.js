@@ -525,7 +525,13 @@ const getProfile = async (req, res) => {
         if (staff) {
             fullStaff = await Staff.findById(staff._id)
                 .populate('branchId')
-                .populate('businessId')
+                // App does not need full company subscription/plan payload in profile.
+                // Keep only settings used by attendance/salary calculations.
+                // Full settings subtree so embedded attendance.shifts[].workHours is not omitted by partial paths.
+                .populate({
+                    path: 'businessId',
+                    select: '_id settings',
+                })
                 .populate('weeklyHolidayTemplateId')
                 .populate('candidateId') // Populate candidate to get education, experience, documents
                 .populate('department') // Assuming department might be a ref or string, populating just in case
@@ -620,7 +626,7 @@ const updateProfile = async (req, res) => {
             const {
                 gender, maritalStatus, dob, bloodGroup, address, bankDetails,
                 employmentIds, uan, pan, aadhaar, pfNumber, esiNumber,
-                designation, department, shiftName, status,
+                designation, department, shiftName, shiftId, status,
                 isGpsEnabled, isGpsAllowed, isEnabledPreciseLocation
             } = req.body;
 
@@ -642,6 +648,7 @@ const updateProfile = async (req, res) => {
             if (designation) updateData.designation = designation;
             if (department) updateData.department = department;
             if (shiftName) updateData.shiftName = shiftName;
+            if (shiftId !== undefined) updateData.shiftId = shiftId || null;
             if (status) updateData.status = status;
             if (typeof isGpsEnabled === 'boolean') {
                 updateData.isGpsEnabled = isGpsEnabled;
@@ -668,10 +675,33 @@ const updateProfile = async (req, res) => {
             if (pfNumber !== undefined) updateData.pfNumber = pfNumber;
             if (esiNumber !== undefined) updateData.esiNumber = esiNumber;
 
-            await Staff.findByIdAndUpdate(req.staff._id, updateData, {
-                runValidators: false,
-                new: true
-            });
+            // App sync: per-day net/gross from web payroll preview (salaryBasis ÷ fullMonth WD) — fines / salary UI parity.
+            const { appPerDayNetSalary, appPerdayGrossSalary } = req.body;
+            if (appPerDayNetSalary !== undefined && appPerDayNetSalary !== null && appPerDayNetSalary !== '') {
+                const v = Number(appPerDayNetSalary);
+                if (Number.isFinite(v) && v >= 0 && v < 1e9) {
+                    updateData.appPerDayNetSalary = Math.round(v * 100) / 100;
+                }
+            }
+            if (appPerdayGrossSalary !== undefined && appPerdayGrossSalary !== null && appPerdayGrossSalary !== '') {
+                const v = Number(appPerdayGrossSalary);
+                if (Number.isFinite(v) && v >= 0 && v < 1e9) {
+                    updateData.appPerdayGrossSalary = Math.round(v * 100) / 100;
+                }
+            }
+            if (Object.keys(updateData).length > 0) {
+                if (updateData.appPerDayNetSalary != null || updateData.appPerdayGrossSalary != null) {
+                    console.log(
+                        '[updateProfile] app per-day from client:',
+                        `appPerDayNetSalary=${updateData.appPerDayNetSalary}`,
+                        `appPerdayGrossSalary=${updateData.appPerdayGrossSalary}`
+                    );
+                }
+                await Staff.findByIdAndUpdate(req.staff._id, updateData, {
+                    runValidators: false,
+                    new: true
+                });
+            }
         }
 
         res.json({

@@ -64,8 +64,14 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
       List<Task> withCustomers = [];
       for (var task in tasks) {
         if (task.customerId != null) {
-          final customer = await _repo.getCustomerById(task.customerId!);
-          withCustomers.add(task.copyWith(customer: customer));
+          try {
+            final customer = await _repo.getCustomerById(task.customerId!);
+            withCustomers.add(task.copyWith(customer: customer));
+          } catch (_) {
+            // If customer is not visible to this staff, still load the task.
+            // UI will show task without customer details.
+            withCustomers.add(task);
+          }
         } else {
           withCustomers.add(task);
         }

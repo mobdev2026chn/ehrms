@@ -20,8 +20,15 @@ const breakSchema = new mongoose.Schema({
     endTime: { type: Date, default: null },
     totalSeconds: { type: Number, default: null },
 <<<<<<< HEAD
+<<<<<<< HEAD
     source: { type: String, default: '' }  // "software" | "web" | "app"
 =======
+=======
+    breakMin: { type: Number, default: 0 },
+    breakCount: { type: Number, default: 0 },
+    breakFineMins: { type: Number, default: 0 },
+    breakFineAmount: { type: Number, default: 0 },
+>>>>>>> development
     source: { type: String, default: '' },  // "software" | "web" | "app"
     breakStartSelfie: { type: String, default: '' },
     breakEndSelfie: { type: String, default: '' },

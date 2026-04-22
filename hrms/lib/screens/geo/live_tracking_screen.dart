@@ -103,8 +103,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     var score = 0;
     if (address.area != null && address.area!.trim().isNotEmpty) score += 2;
     if (address.city != null && address.city!.trim().isNotEmpty) score += 1;
-    if (address.pincode != null && address.pincode!.trim().isNotEmpty)
+    if (address.pincode != null && address.pincode!.trim().isNotEmpty) {
       score += 1;
+    }
     if (RegExp(r'\d').hasMatch(text)) score += 2;
     if (RegExp(
       r'\b(road|rd|street|st|lane|ln|nagar|main)\b',
@@ -1074,11 +1075,12 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           arrivedTask = await TaskService().getTaskById(widget.taskMongoId!);
           _taskState = arrivedTask;
         } catch (_) {}
-        if (mounted)
+        if (mounted) {
           setState(() {
             _reachedLocation = true;
             _arrivedSent = true;
           });
+        }
         await LiveTrackingService().stopTracking();
       } catch (_) {
         if (mounted) setState(() => _submittingArrived = false);
@@ -1095,7 +1097,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           lng,
         ))?.formattedAddress;
       } catch (_) {}
-      arrivalAddr ??= '${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}';
+      arrivalAddr ??= '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}';
     }
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -1792,9 +1794,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   Widget _buildTravelRow(
     IconData icon,
     String label,
-    String value, {
-    String? subtitle,
-  }) {
+    String value) {
     return Row(
       children: [
         Icon(icon, size: 14, color: AppColors.primary),

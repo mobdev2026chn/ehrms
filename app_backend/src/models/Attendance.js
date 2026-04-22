@@ -41,13 +41,37 @@ const attendanceSchema = new mongoose.Schema(
     approvedAt: Date,
     remarks: String,
     workHours: Number,
+    /** Eligible overtime minutes; standard shifts: past shift end minus otBuffer; open shifts: full minutes over required daily hours. */
     overtime: Number,
+    /** Open shift only: sum of full buffer blocks covered by extra time, floor(extra/buffer)*buffer (tracking only; OT is not reduced). */
+    bufferTime: { type: Number, default: 0 },
+    /** Overtime pay in base currency when OT minutes >= shift otBufferMinutes and payroll fine/OT formula applies. */
+    overtimeAmount: { type: Number, default: 0 },
     /** Total fine duration in MINUTES (late + early). Display as hours by dividing by 60. */
     fineHours: Number,
     lateMinutes: Number,
     earlyMinutes: Number,
+    permissionLateMinutes: { type: Number, default: 0 },
+    permissionEarlyMinutes: { type: Number, default: 0 },
+    permissionApprovedMinutes: { type: Number, default: 0 },
+    permissionConsumedMinutes: { type: Number, default: 0 },
+    permissionRemainingMinutes: { type: Number, default: 0 },
     /** Total fine amount in currency (late + early) from payroll fine calculation. */
     fineAmount: Number,
+    break: {
+      totalBreakMin: { type: Number, default: 0 },
+      totalBreakCount: { type: Number, default: 0 },
+      totalBreakFineMins: { type: Number, default: 0 },
+      totalBreakFineAmount: { type: Number, default: 0 },
+      breaks: [{
+        startTime: { type: Date, default: null },
+        endTime: { type: Date, default: null },
+        duration: { type: Number, default: 0 },
+        BreakCount: { type: Number, default: 0 },
+        breakFineMins: { type: Number, default: 0 },
+        breakFineAmount: { type: Number, default: 0 }
+      }]
+    },
     location: {
       latitude: Number,
       longitude: Number,
@@ -88,6 +112,11 @@ const attendanceSchema = new mongoose.Schema(
     compensationType: { type: String, enum: ['paid', 'unpaid', 'weekOff', 'compOff'] },
     alternateWorkDate: Date,
     availableCasualLeaves: Number,
+    /**
+     * Embedded shift _id from company.settings.attendance.shifts resolved for this attendance day.
+     * Preserved so historical attendance keeps correct shift even if assignment changes later.
+     */
+    appliedShiftId: { type: mongoose.Schema.Types.ObjectId },
     isPaidLeave: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

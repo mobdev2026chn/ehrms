@@ -21,10 +21,22 @@ const {
 const { protect } = require('../middleware/authMiddleware');
 const multer = require('multer');
 
-// Rate limiting for auth: 40 req/15min per IP (login, profile, photo, verify-face, etc.)
+// Login limiter only: keep brute-force protection focused on `/auth/login`.
+// `skipSuccessfulRequests` prevents valid users from being penalized after success.
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+    skipSuccessfulRequests: true,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: createRateLimitHandler('Too many authentication attempts. Please try again later.')
+});
+
+// General authenticated auth-routes limiter (profile/photo/verify-face/etc).
+// Keep high so normal app background sync/profile refresh does not get blocked.
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 40,
+    limit: 2000,
     standardHeaders: true,
     legacyHeaders: false,
     handler: createRateLimitHandler('Too many authentication attempts. Please try again later.')
@@ -37,7 +49,7 @@ const upload = multer({
 });
 
 // Public auth routes with stricter limits
-router.post('/login', authLimiter, login);
+router.post('/login', loginLimiter, login);
 router.post('/google-login', authLimiter, googleLogin);
 router.post('/register', authLimiter, register);
 

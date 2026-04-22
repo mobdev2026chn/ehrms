@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_colors.dart';
 import '../../services/auth_service.dart';
 import '../../services/onboarding_service.dart';
+import '../../services/staff_custom_fields_service.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
@@ -36,9 +37,12 @@ class _ProfileScreenState extends State<ProfileScreen>
     with SingleTickerProviderStateMixin {
   final AuthService _authService = AuthService();
   final OnboardingService _onboardingService = OnboardingService();
+  final StaffCustomFieldsService _staffCustomFieldsService =
+      StaffCustomFieldsService();
   Map<String, dynamic>? _userData;
   Map<String, dynamic>? _onboardingData;
   List<dynamic> _documents = [];
+  List<Map<String, dynamic>> _activeStaffCustomFields = [];
   bool _isLoading = true;
   bool _isLoadingDocs = false;
   bool _profileImageError = false;
@@ -70,7 +74,18 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Future<void> _loadProfile() async {
-    final result = await _authService.getProfile();
+    final loaded = await Future.wait<dynamic>([
+      _authService.getProfile(),
+      _authService.getToken(),
+    ]);
+    final result = loaded[0] as Map<String, dynamic>;
+    final token = loaded[1] as String?;
+    List<Map<String, dynamic>> customFields = [];
+    if (token != null && token.trim().isNotEmpty) {
+      customFields = await _staffCustomFieldsService.fetchActiveStaffCustomFields(
+        token: token,
+      );
+    }
     String? cachedUrl;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -88,6 +103,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       setState(() {
         _profileImageError = false;
         _cachedAvatarUrl = cachedUrl;
+        _activeStaffCustomFields = customFields;
         if (result['success']) {
           final data = result['data'];
           if (data is Map) {
@@ -326,6 +342,16 @@ class _ProfileScreenState extends State<ProfileScreen>
           children: [
             _buildHeaderCard(),
             const SizedBox(height: 24),
+            if (_fieldsForCategory('General Information').isNotEmpty) ...[
+              _buildCardSection(
+                icon: Icons.info_outline,
+                title: 'General Information',
+                content: _buildCustomFieldColumnForCard(
+                  _fieldsForCategory('General Information'),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
             _buildPersonalSection(),
             const SizedBox(height: 24),
             _buildIdentityAndBankSection(),
@@ -403,7 +429,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             children: [
               GestureDetector(
                 onTap: () {
-                  if (showPhoto && photoUrlStr != null) {
+                  if (showPhoto) {
                     _showProfilePhotoOptions(
                       photoUrl: photoUrlStr,
                       hasPhoto: true,
@@ -562,6 +588,12 @@ class _ProfileScreenState extends State<ProfileScreen>
                 const SizedBox(height: 8),
               if (dept.isNotEmpty)
                 _buildHeaderInfoRow(Icons.business_outlined, dept, profileValueWhite),
+              if (_fieldsForCategory('Profile Information').isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Divider(color: Colors.white24),
+                const SizedBox(height: 8),
+                _buildHeaderProfileCustomFields(),
+              ],
             ],
           ),
         ],
@@ -610,6 +642,119 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
+  List<Map<String, dynamic>> _fieldsForCategory(String category) {
+    return _activeStaffCustomFields
+        .where((f) => (f['category']?.toString() ?? '') == category)
+        .toList();
+  }
+
+  dynamic _rawCustomFieldValue(String name) {
+    final staff = _staffData;
+    if (staff == null) return null;
+    final nested = staff['customFields'] ?? staff['custom_fields'];
+    if (nested is Map && nested[name] != null) {
+      return nested[name];
+    }
+    return staff[name];
+  }
+
+  String _displayCustomFieldValue(Map<String, dynamic> field) {
+    final name = field['name']?.toString() ?? '';
+    final type = field['type']?.toString() ?? 'text';
+    final raw = _rawCustomFieldValue(name);
+    if (raw == null) return 'N/A';
+    switch (type) {
+      case 'boolean':
+        if (raw == true ||
+            raw == 'true' ||
+            raw == 1 ||
+            raw == '1' ||
+            raw == 'yes' ||
+            raw == 'Yes') {
+          return 'Yes';
+        }
+        if (raw == false ||
+            raw == 'false' ||
+            raw == 0 ||
+            raw == '0' ||
+            raw == 'no' ||
+            raw == 'No') {
+          return 'No';
+        }
+        return raw.toString();
+      case 'date':
+        return _formatDate(raw);
+      case 'number':
+        return raw.toString();
+      default:
+        final s = raw.toString().trim();
+        return s.isEmpty ? 'N/A' : s;
+    }
+  }
+
+  Widget _buildCustomFieldColumnForCard(List<Map<String, dynamic>> fields) {
+    if (fields.isEmpty) return const SizedBox.shrink();
+    final rows = <Widget>[];
+    for (var i = 0; i < fields.length; i += 2) {
+      final left = fields[i];
+      final right = i + 1 < fields.length ? fields[i + 1] : null;
+      rows.add(
+        _buildInfoGrid([
+          _buildInfoItem(
+            left['label']?.toString() ?? left['name']?.toString() ?? '',
+            _displayCustomFieldValue(left),
+          ),
+          if (right != null)
+            _buildInfoItem(
+              right['label']?.toString() ?? right['name']?.toString() ?? '',
+              _displayCustomFieldValue(right),
+            )
+          else
+            const Expanded(child: SizedBox()),
+        ]),
+      );
+      if (i + 2 < fields.length) {
+        rows.add(const SizedBox(height: 20));
+      }
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: rows,
+    );
+  }
+
+  Widget _buildHeaderProfileCustomFields() {
+    final fields = _fieldsForCategory('Profile Information');
+    if (fields.isEmpty) return const SizedBox.shrink();
+    const labelStyle = TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+      color: Colors.white70,
+    );
+    const valueStyle = TextStyle(
+      fontSize: _profileValueSize,
+      fontWeight: FontWeight.w500,
+      color: Colors.white,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final f in fields) ...[
+          Text(
+            f['label']?.toString() ?? f['name']?.toString() ?? '',
+            style: labelStyle,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            _displayCustomFieldValue(f),
+            style: valueStyle,
+          ),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+
   Widget _buildPersonalSection() {
     return _buildCardSection(
       icon: Icons.person_outline,
@@ -654,6 +799,12 @@ class _ProfileScreenState extends State<ProfileScreen>
                 );
               },
             ),
+          if (_fieldsForCategory('Personal Information').isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _buildCustomFieldColumnForCard(
+              _fieldsForCategory('Personal Information'),
+            ),
+          ],
         ],
       ),
     );
@@ -662,6 +813,9 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget _buildIdentityAndBankSection() {
     final empIds = _staffData?['employmentIds'] ?? {};
     final bank = _staffData?['bankDetails'] ?? {};
+    final employmentCustom = _fieldsForCategory('Employment Information');
+    final bankCustom = _fieldsForCategory('Bank Details');
+    final customCategory = _fieldsForCategory('Custom');
 
     return Column(
       children: [
@@ -679,6 +833,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                 _buildInfoItem('Aadhaar Number', empIds['aadhaar']),
                 _buildInfoItem('PF Number', empIds['pfNumber']),
               ]),
+              if (employmentCustom.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                _buildCustomFieldColumnForCard(employmentCustom),
+              ],
             ],
           ),
         ),
@@ -697,9 +855,21 @@ class _ProfileScreenState extends State<ProfileScreen>
                 _buildInfoItem('IFSC Code', bank['ifscCode']),
                 _buildInfoItem('Holder Name', bank['accountHolderName']),
               ]),
+              if (bankCustom.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                _buildCustomFieldColumnForCard(bankCustom),
+              ],
             ],
           ),
         ),
+        if (customCategory.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          _buildCardSection(
+            icon: Icons.tune_outlined,
+            title: 'Custom',
+            content: _buildCustomFieldColumnForCard(customCategory),
+          ),
+        ],
       ],
     );
   }

@@ -81,8 +81,9 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   Color _getStatusColor(String status) {
     if (status == 'completed') return AppColors.success;
     if (status.contains('submitted')) return AppColors.info;
-    if (status.contains('pending') || status == 'draft')
+    if (status.contains('pending') || status == 'draft') {
       return AppColors.warning;
+    }
     return AppColors.textSecondary;
   }
 
