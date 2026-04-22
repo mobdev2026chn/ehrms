@@ -224,7 +224,7 @@ class _BreakScreenState extends State<BreakScreen> {
   }
 
   DateTime? _breakStartTime() {
-    return parseApiDateTimeToLocal(_activeBreak?['startTime']);
+    return breakDisplayStartFromApi(_activeBreak?['startTime']);
   }
 
   Future<void> _submit() async {

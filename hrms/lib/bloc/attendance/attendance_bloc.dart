@@ -1,24 +1,29 @@
 // bloc/attendance/attendance_bloc.dart
-// Business logic and state for attendance. Calls AttendanceRepository only; no HTTP/JSON.
+// Business logic and state for attendance. Calls AttendanceRepository; check-out may call BreakService.
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../repository/attendance_repository.dart';
+import '../../services/break_service.dart';
 import '../../utils/punch_flow_log.dart';
 
 part 'attendance_event.dart';
 part 'attendance_state.dart';
 
 class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
-  AttendanceBloc({AttendanceRepository? repository})
-    : _repo = repository ?? AttendanceRepository(),
-      super(AttendanceInitial()) {
+  AttendanceBloc({
+    AttendanceRepository? repository,
+    BreakService? breakService,
+  }) : _repo = repository ?? AttendanceRepository(),
+       _breakService = breakService ?? BreakService(),
+       super(AttendanceInitial()) {
     on<AttendanceStatusRequested>(_onStatusRequested);
     on<AttendanceCheckInRequested>(_onCheckInRequested);
     on<AttendanceCheckOutRequested>(_onCheckOutRequested);
   }
 
   final AttendanceRepository _repo;
+  final BreakService _breakService;
 
   Future<void> _onStatusRequested(
     AttendanceStatusRequested event,
@@ -127,12 +132,67 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
     }
   }
 
+  /// When the server reports an in-progress break, end it using the same
+  /// location/selfie as check-out so an open break cannot carry into the next day.
+  Future<String?> _endOngoingBreakBeforeCheckout(
+    AttendanceCheckOutRequested event,
+  ) async {
+    final breakResult = await _breakService.getCurrentBreak();
+    if (breakResult['success'] != true) {
+      punchFlowLog(
+        '[AttendanceBloc][checkOut] skip auto endBreak: getCurrentBreak success!=true',
+      );
+      return null;
+    }
+    final raw = breakResult['data'];
+    Map<String, dynamic>? active;
+    if (raw is Map<String, dynamic>) {
+      active = raw;
+    } else if (raw is Map) {
+      active = Map<String, dynamic>.from(raw);
+    }
+    final breakId = active?['id']?.toString().trim();
+    if (breakId == null || breakId.isEmpty) {
+      punchFlowLog(
+        '[AttendanceBloc][checkOut] no active break id — proceeding to checkout',
+      );
+      return null;
+    }
+    punchFlowLog(
+      '[AttendanceBloc][checkOut] auto endBreak breakId=$breakId before checkout',
+    );
+    final endResult = await _breakService.endBreak(
+      breakId: breakId,
+      lat: event.lat,
+      lng: event.lng,
+      address: event.address,
+      area: event.area,
+      city: event.city,
+      pincode: event.pincode,
+      selfie: event.selfie ?? '',
+    );
+    if (endResult['success'] == true) {
+      return null;
+    }
+    return endResult['message'] as String? ??
+        'Could not end ongoing break before check-out';
+  }
+
   Future<void> _onCheckOutRequested(
     AttendanceCheckOutRequested event,
     Emitter<AttendanceState> emit,
   ) async {
     emit(AttendanceLoadInProgress());
     try {
+      final breakEndError = await _endOngoingBreakBeforeCheckout(event);
+      if (breakEndError != null) {
+        punchFlowLog(
+          '[AttendanceBloc][checkOut] emit=AttendanceFailure (auto endBreak) '
+          'message=$breakEndError',
+        );
+        emit(AttendanceFailure(message: breakEndError));
+        return;
+      }
       final result = await _repo.checkOut(
         event.lat,
         event.lng,

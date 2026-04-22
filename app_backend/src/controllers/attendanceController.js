@@ -14,6 +14,7 @@ const { getHolidayTemplateForStaff, getHolidayForDate, getHolidaysForMonth } = r
 const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const digitalOceanService = require('../services/digitalOceanService');
 const { getBranchGeofenceTargets } = require('../utils/branchGeofence');
+const { closeStaleOpenBreaksForStaff } = require('./breakController');
 
 /** Build a single address string from address, area, city, pincode. */
 function buildAddressString(address, area, city, pincode) {
@@ -1557,6 +1558,9 @@ const checkIn = async (req, res) => {
             const response = existing.toObject ? existing.toObject() : existing;
             if (warnings.length > 0) response.warnings = warnings;
             console.log('[Attendance checkIn] success (half-day update)', { staffId: staffId?.toString(), attendanceId: existing._id?.toString() });
+            await closeStaleOpenBreaksForStaff(staff).catch((err) =>
+                console.warn('[Attendance checkIn] closeStaleOpenBreaksForStaff', err?.message)
+            );
             void Promise.allSettled([
                 AttendanceLog.create({
                     attendanceId: existing._id,
@@ -1712,6 +1716,9 @@ const checkIn = async (req, res) => {
         }
 
         console.log('[Attendance checkIn] success', { staffId: staffId?.toString(), attendanceId: response?._id?.toString?.() || response?.id, businessIdStored: response?.businessId?.toString?.() ?? response?.businessId });
+        await closeStaleOpenBreaksForStaff(staff).catch((err) =>
+            console.warn('[Attendance checkIn] closeStaleOpenBreaksForStaff', err?.message)
+        );
         void Promise.allSettled([
             AttendanceLog.create({
                 attendanceId: attendance._id,

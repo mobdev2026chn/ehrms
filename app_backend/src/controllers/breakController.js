@@ -21,6 +21,59 @@ function buildBreakLocation(payload = {}) {
     };
 }
 
+/** Client clocks may skew; ISO may parse oddly. All stored instants are authoritative UTC on server. */
+const MAX_CLIENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+function resolveServerBreakStartTime(clientStartInput) {
+    const nowMs = Date.now();
+    if (clientStartInput == null || clientStartInput === '') {
+        return new Date(nowMs);
+    }
+    const ms = new Date(clientStartInput).getTime();
+    if (!Number.isFinite(ms)) {
+        return new Date(nowMs);
+    }
+    if (ms > nowMs + MAX_CLIENT_CLOCK_SKEW_MS) {
+        console.warn('[Break] startBreak: client startTime in future; using server now');
+        return new Date(nowMs);
+    }
+    if (ms < nowMs - 48 * 60 * 60 * 1000) {
+        console.warn('[Break] startBreak: client startTime too far in past; using server now');
+        return new Date(nowMs);
+    }
+    return new Date(ms);
+}
+
+/**
+ * Never persist endTime < startTime (fixes bad attendance/break rows when client sends wrong instant).
+ * Uses server time when client end is missing, invalid, before start, or too far in the future.
+ */
+function resolveServerBreakEndTime(breakStart, clientEndInput) {
+    const startMs = new Date(breakStart).getTime();
+    const nowMs = Date.now();
+    if (!Number.isFinite(startMs)) {
+        return new Date(nowMs);
+    }
+    let endMs = nowMs;
+    if (clientEndInput != null && clientEndInput !== '') {
+        const parsed = new Date(clientEndInput).getTime();
+        if (Number.isFinite(parsed) && parsed >= startMs && parsed <= nowMs + MAX_CLIENT_CLOCK_SKEW_MS) {
+            endMs = parsed;
+        } else {
+            console.warn('[Break] endBreak: invalid client endTime; using server now', {
+                clientEndInput,
+                startMs,
+                nowMs
+            });
+        }
+    }
+    if (endMs < startMs) {
+        console.warn('[Break] endBreak: end before start after resolve; clamping to max(now, start+1s)');
+        endMs = Math.max(nowMs, startMs + 1000);
+    }
+    return new Date(endMs);
+}
+
 function serializeBreak(doc) {
     if (!doc) return null;
     const startTime = doc.startTime ? new Date(doc.startTime) : null;
@@ -252,6 +305,65 @@ async function uploadBreakSelfie(base64String, req, companyId, employeeName, typ
     }
 }
 
+/** Same UTC calendar day as attendances.date / check-in (midnight UTC). */
+function startOfUtcDay(d = new Date()) {
+    const x = new Date(d);
+    return new Date(Date.UTC(
+        x.getUTCFullYear(),
+        x.getUTCMonth(),
+        x.getUTCDate(),
+        0, 0, 0, 0
+    ));
+}
+
+/**
+ * End any open break rows whose startTime is before today's UTC day start.
+ * Matches attendance check-in day logic so yesterday's unfinished break does not
+ * block startBreak or inflate today's break timer.
+ */
+exports.closeStaleOpenBreaksForStaff = async function closeStaleOpenBreaksForStaff(staff) {
+    if (!staff?._id || !staff.businessId) return { closed: 0 };
+    const dayStart = startOfUtcDay(new Date());
+    const stale = await Break.find({
+        employeeID: staff._id,
+        tenantId: staff.businessId,
+        endTime: null,
+        startTime: { $lt: dayStart }
+    });
+    let closed = 0;
+    for (const doc of stale) {
+        const startMs = new Date(doc.startTime).getTime();
+        if (!Number.isFinite(startMs)) {
+            doc.endTime = dayStart;
+            doc.totalSeconds = 0;
+            await doc.save();
+            closed += 1;
+            continue;
+        }
+        let endMs = dayStart.getTime();
+        if (endMs <= startMs) {
+            endMs = startMs + 1000;
+        }
+        const endBoundary = new Date(endMs);
+        const totalSeconds = Math.max(
+            0,
+            Math.floor((endBoundary.getTime() - startMs) / 1000)
+        );
+        doc.endTime = endBoundary;
+        doc.totalSeconds = totalSeconds;
+        await doc.save();
+        closed += 1;
+    }
+    if (closed > 0) {
+        await Staff.updateOne(
+            { _id: staff._id },
+            { $set: { monitoringStatus: 'active' } }
+        ).catch(() => {});
+        console.log('[Break] closeStaleOpenBreaksForStaff closed=%s staff=%s', closed, staff._id?.toString?.());
+    }
+    return { closed };
+};
+
 async function getActiveBreak(staff) {
     return Break.findOne({
         employeeID: staff._id,
@@ -273,6 +385,7 @@ exports.getCurrentBreak = async (req, res) => {
         if (!staff?.businessId) {
             return res.status(404).json({ success: false, message: 'Staff business not found' });
         }
+        await exports.closeStaleOpenBreaksForStaff(staff);
         const activeBreak = await getActiveBreak(staff);
         return res.status(200).json({
             success: true,
@@ -302,6 +415,7 @@ exports.startBreak = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Staff business not found' });
         }
 
+        await exports.closeStaleOpenBreaksForStaff(staff);
         const activeBreak = await getActiveBreak(staff);
         if (activeBreak) {
             return res.status(409).json({
@@ -319,11 +433,12 @@ exports.startBreak = async (req, res) => {
             'break-start'
         );
 
+        const resolvedStartTime = resolveServerBreakStartTime(startTime);
         const doc = await Break.create({
             employeeID: staff._id,
             deviceId: getAppDeviceId(staff._id),
             tenantId: staff.businessId,
-            startTime: startTime ? new Date(startTime) : new Date(),
+            startTime: resolvedStartTime,
             source: 'app',
             breakStartSelfie: breakStartSelfie || '',
             breakStartLocation: buildBreakLocation(req.body)
@@ -413,7 +528,7 @@ exports.endBreak = async (req, res) => {
             'break-end'
         );
 
-        const resolvedEndTime = endTime ? new Date(endTime) : new Date();
+        const resolvedEndTime = resolveServerBreakEndTime(doc.startTime, endTime);
         const totalSeconds = Math.max(
             0,
             Math.floor((resolvedEndTime.getTime() - new Date(doc.startTime).getTime()) / 1000)

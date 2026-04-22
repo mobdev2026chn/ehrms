@@ -938,7 +938,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   DateTime? _activeBreakStartTime() {
-    return parseApiDateTimeToLocal(_activeBreak?['startTime']);
+    return breakDisplayStartFromApi(_activeBreak?['startTime']);
   }
 
   int _normalizeTabIndex(int index) {

@@ -134,7 +134,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     if (!mounted) return;
     final data = result['data'];
     final parsed = data is Map
-        ? parseApiDateTimeToLocal(data['startTime'])
+        ? breakDisplayStartFromApi(data['startTime'])
         : null;
     setState(() {
       _fetchedBreakStartTime = parsed;
