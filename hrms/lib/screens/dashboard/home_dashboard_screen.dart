@@ -1588,7 +1588,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   Widget _buildWelcomeCard() {
-    final dateStr = DateFormat('d/M, yyyy').format(DateTime.now());
+    final dateStr = DateFormat('dd/MM/yyyy').format(DateTime.now());
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -2499,8 +2499,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ),
         ],
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 48,
@@ -2517,39 +2518,30 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Leave Requests',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
-                  ),
-                ),
-                Text(
-                  'Pending',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 12),
+          Text(
+            'Leave Requests',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1E293B),
+            ),
+          ),
+          Text(
+            'Pending',
+            style: TextStyle(
+              fontSize: 10,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
@@ -2576,8 +2568,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ),
         ],
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 48,
@@ -2588,55 +2581,46 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             ),
             child: const Icon(Icons.trending_up, color: Colors.white, size: 24),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'This Month Net',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    mtdAmount,
-                    style: const TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
-                    ),
-                  ),
-                ),
-                if (monthlyAmount != null && monthlyAmount.isNotEmpty)
-                  Text(
-                    'Total monthly salary $monthlyAmount',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                if (presentDaysSubtitle.isNotEmpty)
-                  Text(
-                    presentDaysSubtitle,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-              ],
+          const SizedBox(height: 12),
+          Text(
+            'This Month Net',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade700,
             ),
           ),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              mtdAmount,
+              style: const TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1E293B),
+              ),
+            ),
+          ),
+          if (monthlyAmount != null && monthlyAmount.isNotEmpty)
+            Text(
+              'Total monthly salary $monthlyAmount',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          if (presentDaysSubtitle.isNotEmpty)
+            Text(
+              presentDaysSubtitle,
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
         ],
       ),
     );

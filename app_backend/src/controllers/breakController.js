@@ -501,7 +501,7 @@ exports.endBreak = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Location coordinates are missing' });
         }
         if (!selfie) {
-            return res.status(400).json({ success: false, message: 'Break end selfie is required' });
+            return res.status(400).json({ success: false, message: 'Kindly End the Break' });
         }
 
         const staff = await Staff.findById(req.staff._id).select('_id businessId name email userId appPerDayNetSalary appPerdayGrossSalary salary joiningDate shiftId shiftName');

@@ -1788,12 +1788,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     String? punchOutSelfieUrl,
   }) {
     DateTime? parseLogEventTime(dynamic value) {
-      if (value == null) return null;
-      try {
-        return DateTime.parse(value.toString()).toLocal();
-      } catch (_) {
-        return null;
-      }
+      return _parseAnyDateTimeToLocal(value);
     }
 
     int logSortMsFrom(dynamic value) {
@@ -1961,7 +1956,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     items.sort((a, b) {
       final aMs = (a['sortMs'] as num?)?.toInt() ?? -1;
       final bMs = (b['sortMs'] as num?)?.toInt() ?? -1;
-      return bMs.compareTo(aMs);
+      return aMs.compareTo(bMs);
     });
 
     return items
@@ -2089,12 +2084,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   String _formatLogTime(dynamic value) {
     if (value == null) return 'N/A';
-    try {
-      final date = DateTime.parse(value.toString()).toLocal();
-      return DateFormat('hh:mm a').format(date);
-    } catch (_) {
-      return value.toString();
-    }
+    final date = _parseAnyDateTimeToLocal(value);
+    if (date == null) return value.toString();
+    return DateFormat('hh:mm a').format(date);
   }
 
   String? _formatBreakDuration(dynamic totalSeconds) {
@@ -2125,12 +2117,33 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   String? _formatLogDateWithTime(dynamic value) {
     if (value == null) return null;
-    try {
-      final date = DateTime.parse(value.toString()).toLocal();
-      return DateFormat('dd MMM, hh:mm a').format(date);
-    } catch (_) {
-      return null;
+    final date = _parseAnyDateTimeToLocal(value);
+    if (date == null) return null;
+    return DateFormat('dd MMM, hh:mm a').format(date);
+  }
+
+  DateTime? _parseAnyDateTimeToLocal(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value.isUtc ? value.toLocal() : value;
+    if (value is Map) {
+      final raw = value[r'$date'] ?? value['date'] ?? value['Date'];
+      if (raw == null) return null;
+      return _parseAnyDateTimeToLocal(raw);
     }
+    if (value is num) {
+      final n = value.round();
+      final abs = n.abs();
+      final ms = abs >= 10000000000 ? n : n * 1000;
+      return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true).toLocal();
+    }
+    final s = value.toString().trim();
+    if (s.isEmpty) return null;
+    if (RegExp(r'^\d{10,16}$').hasMatch(s)) {
+      return _parseAnyDateTimeToLocal(int.tryParse(s));
+    }
+    final d = DateTime.tryParse(s);
+    if (d == null) return null;
+    return d.toLocal();
   }
 
   double? _parseLogNumericValue(dynamic v) {
