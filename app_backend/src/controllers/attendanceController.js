@@ -13,7 +13,10 @@ const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../uti
 const { getHolidayTemplateForStaff, getHolidayForDate, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
 const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const digitalOceanService = require('../services/digitalOceanService');
-const { getBranchGeofenceTargets } = require('../utils/branchGeofence');
+const {
+    getBranchGeofenceTargets,
+    isLatLngInsideBranchGeofence,
+} = require('../utils/branchGeofence');
 const { closeStaleOpenBreaksForStaff } = require('./breakController');
 
 /** Build a single address string from address, area, city, pincode. */
@@ -37,6 +40,31 @@ async function insertAttendanceTracking(
     pincode
 ) {
     try {
+        let resolvedPresenceStatus = presenceStatus;
+        try {
+            const staffDoc = await Staff.findById(staffId)
+                .select('branchId')
+                .populate('branchId', 'geofence branchName latitude longitude radius')
+                .lean();
+            const branch = staffDoc?.branchId;
+            if (branch && typeof branch === 'object') {
+                resolvedPresenceStatus = isLatLngInsideBranchGeofence(
+                    branch,
+                    Number(lat),
+                    Number(lng),
+                    0,
+                )
+                    ? 'in_office'
+                    : 'out_of_office';
+            } else if (!resolvedPresenceStatus) {
+                resolvedPresenceStatus = 'out_of_office';
+            }
+        } catch (_) {
+            if (!resolvedPresenceStatus) {
+                resolvedPresenceStatus = 'out_of_office';
+            }
+        }
+
         let fullAddress = address || '';
         if (!fullAddress && (area || city || pincode)) {
             const parts = [pincode, area, city, address].filter(Boolean);
@@ -61,7 +89,7 @@ async function insertAttendanceTracking(
             timestamp: now,
             time: now,
             status: trackingStatus,
-            presenceStatus,
+            presenceStatus: resolvedPresenceStatus,
             movementType: movementType || undefined,
             address: address || fullAddress || undefined,
             fullAddress: fullAddress || address || undefined,
@@ -76,7 +104,7 @@ async function insertAttendanceTracking(
             staffName: staffName || undefined,
             latitude: doc.latitude,
             longitude: doc.longitude,
-            presenceStatus,
+            presenceStatus: resolvedPresenceStatus,
         });
     } catch (e) {
         console.error('[AttendanceTracking] Insert failed:', e.message);
