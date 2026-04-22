@@ -12,7 +12,6 @@ import 'package:hrms/screens/geo/arrived_screen.dart';
 import 'package:hrms/screens/geo/live_tracking_screen.dart';
 import 'package:hrms/screens/geo/task_history_screen.dart';
 import 'package:hrms/services/customer_service.dart';
-import 'package:hrms/services/geo/directions_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:hrms/services/task_service.dart';
@@ -291,7 +290,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final currentPos = position;
     final dest = destLatLng;
 
-    // Actual GPS path until Arrived (from Tracking) — not straight Directions route
+    // Show only actual GPS path from Tracking collection (no directions route).
     if (task.id != null && task.id!.isNotEmpty) {
       final travelledMaps = await TaskService().getTravelledPathUntilArrived(
         task.id!,
@@ -303,180 +302,85 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             .toList();
         final pathStart = travelledPts.first;
         final pathEnd = travelledPts.last;
-        try {
-          final toDest = await DirectionsService.getRouteBetweenCoordinates(
-            originLat: pathEnd.latitude,
-            originLng: pathEnd.longitude,
-            destLat: dest.latitude,
-            destLng: dest.longitude,
-          );
-          if (!mounted) return;
-          setState(() {
-            _distanceKm = toDest.distanceKm;
-            _durationText = toDest.durationText;
-            _loadingMap = false;
-            _markers = {
-              Marker(
-                markerId: const MarkerId('pathStart'),
-                position: pathStart,
-                icon: BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueAzure,
-                ),
-                infoWindow: const InfoWindow(title: 'Trip start'),
+        final meters = Geolocator.distanceBetween(
+          pathEnd.latitude,
+          pathEnd.longitude,
+          dest.latitude,
+          dest.longitude,
+        );
+        final km = meters / 1000;
+        final min = (km / 30 * 60).round().clamp(0, 999);
+        final eta = min > 60 ? '~${min ~/ 60} h' : '~$min min';
+        if (!mounted) return;
+        setState(() {
+          _distanceKm = km;
+          _durationText = eta;
+          _loadingMap = false;
+          _markers = {
+            Marker(
+              markerId: const MarkerId('pathStart'),
+              position: pathStart,
+              icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueAzure,
               ),
-              Marker(
-                markerId: const MarkerId('pathEnd'),
-                position: pathEnd,
-                icon: BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueRed,
-                ),
-                infoWindow: const InfoWindow(title: 'Arrived here'),
-              ),
-            };
-            _polylines.clear();
-            _polylines.add(
-              Polyline(
-                polylineId: const PolylineId('travelled'),
-                points: travelledPts,
-                color: AppColors.primary,
-                width: 4,
-              ),
-            );
-          });
-        } catch (_) {
-          final meters = Geolocator.distanceBetween(
-            pathEnd.latitude,
-            pathEnd.longitude,
-            dest.latitude,
-            dest.longitude,
-          );
-          final km = meters / 1000;
-          final min = (km / 30 * 60).round().clamp(0, 999);
-          final eta = min > 60 ? '~${min ~/ 60} h' : '~$min min';
-          if (!mounted) return;
-          setState(() {
-            _distanceKm = km;
-            _durationText = eta;
-            _loadingMap = false;
-            _markers = {
-              Marker(
-                markerId: const MarkerId('pathStart'),
-                position: pathStart,
-                icon: BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueAzure,
-                ),
-                infoWindow: const InfoWindow(title: 'Trip start'),
-              ),
-              Marker(
-                markerId: const MarkerId('pathEnd'),
-                position: pathEnd,
-                icon: BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueRed,
-                ),
-                infoWindow: const InfoWindow(title: 'Arrived here'),
-              ),
-            };
-            _polylines.clear();
-            _polylines.add(
-              Polyline(
-                polylineId: const PolylineId('travelled'),
-                points: travelledPts,
-                color: AppColors.primary,
-                width: 4,
-              ),
-            );
-          });
-        }
-        return;
-      }
-    }
-
-    try {
-      final result = await DirectionsService.getRouteBetweenCoordinates(
-        originLat: currentPos.latitude,
-        originLng: currentPos.longitude,
-        destLat: dest.latitude,
-        destLng: dest.longitude,
-      );
-      if (!mounted) return;
-      setState(() {
-        _distanceKm = result.distanceKm;
-        _durationText = result.durationText;
-        _loadingMap = false;
-        _markers = {
-          Marker(
-            markerId: const MarkerId('current'),
-            position: LatLng(currentPos.latitude, currentPos.longitude),
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueAzure,
+              infoWindow: const InfoWindow(title: 'Trip start'),
             ),
-            infoWindow: const InfoWindow(title: 'My Location'),
-          ),
-          Marker(
-            markerId: const MarkerId('destination'),
-            position: dest,
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueRed,
+            Marker(
+              markerId: const MarkerId('pathEnd'),
+              position: pathEnd,
+              icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueRed,
+              ),
+              infoWindow: const InfoWindow(title: 'Arrived here'),
             ),
-            infoWindow: const InfoWindow(title: 'Destination'),
-          ),
-        };
-        _polylines.clear();
-        if (result.points.isNotEmpty) {
+          };
+          _polylines.clear();
           _polylines.add(
             Polyline(
-              polylineId: const PolylineId('route'),
-              points: result.points,
+              polylineId: const PolylineId('travelled'),
+              points: travelledPts,
               color: AppColors.primary,
               width: 4,
             ),
           );
-        }
-      });
-    } catch (_) {
-      final meters = Geolocator.distanceBetween(
-        currentPos.latitude,
-        currentPos.longitude,
-        dest.latitude,
-        dest.longitude,
-      );
-      final km = meters / 1000;
-      final min = (km / 30 * 60).round().clamp(0, 999);
-      final eta = min > 60 ? '~${min ~/ 60} h' : '~$min min';
-      if (!mounted) return;
-      setState(() {
-        _distanceKm = km;
-        _durationText = eta;
-        _loadingMap = false;
-        _markers = {
-          Marker(
-            markerId: const MarkerId('current'),
-            position: LatLng(currentPos.latitude, currentPos.longitude),
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueAzure,
-            ),
-            infoWindow: const InfoWindow(title: 'My Location'),
-          ),
-          Marker(
-            markerId: const MarkerId('destination'),
-            position: dest,
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueRed,
-            ),
-            infoWindow: const InfoWindow(title: 'Destination'),
-          ),
-        };
-        _polylines.clear();
-        _polylines.add(
-          Polyline(
-            polylineId: const PolylineId('route'),
-            points: [LatLng(currentPos.latitude, currentPos.longitude), dest],
-            color: AppColors.primary,
-            width: 4,
-          ),
-        );
-      });
+        });
+        return;
+      }
     }
+    final meters = Geolocator.distanceBetween(
+      currentPos.latitude,
+      currentPos.longitude,
+      dest.latitude,
+      dest.longitude,
+    );
+    final km = meters / 1000;
+    final min = (km / 30 * 60).round().clamp(0, 999);
+    final eta = min > 60 ? '~${min ~/ 60} h' : '~$min min';
+    if (!mounted) return;
+    setState(() {
+      _distanceKm = km;
+      _durationText = eta;
+      _loadingMap = false;
+      _markers = {
+        Marker(
+          markerId: const MarkerId('current'),
+          position: LatLng(currentPos.latitude, currentPos.longitude),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueAzure,
+          ),
+          infoWindow: const InfoWindow(title: 'My Location'),
+        ),
+        Marker(
+          markerId: const MarkerId('destination'),
+          position: dest,
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueRed,
+          ),
+          infoWindow: const InfoWindow(title: 'Destination'),
+        ),
+      };
+      _polylines.clear();
+    });
   }
 
   String _statusLabel(TaskStatus s) {
