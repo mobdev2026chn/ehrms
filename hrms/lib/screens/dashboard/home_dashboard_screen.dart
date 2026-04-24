@@ -1494,15 +1494,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 }
               },
             ),
-            if (_isRefreshingInBackground)
-              const Padding(
-                padding: EdgeInsets.only(right: 8),
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
             if (_liveTrackingActive)
               IconButton(
                 icon: const Icon(Icons.gps_fixed),
@@ -1565,15 +1556,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               }
             },
           ),
-          if (_isRefreshingInBackground)
-            const Padding(
-              padding: EdgeInsets.only(right: 8),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
           if (_liveTrackingActive)
             IconButton(
               icon: const Icon(Icons.gps_fixed),
