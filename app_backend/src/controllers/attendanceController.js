@@ -1475,21 +1475,39 @@ const checkIn = async (req, res) => {
                 shiftEndTime: fineShiftEndTime,
                 gracePeriodMinutes: fineGracePeriod
             };
-            // Always calculate and store fine details on attendance record.
-            const fineResult = await calculateCombinedFine(
-                now,
-                null,
-                startOfDay,
-                fineTemplate,
-                staff,
-                company,
-                activeLeave,
-                {
-                    appPerDayNetSalary: req.body?.appPerDayNetSalary,
-                    appPerdayGrossSalary: req.body?.appPerdayGrossSalary
-                },
-                { attendanceId: existing._id }
-            );
+            const useAppProvidedFine = source === 'app' && forceAppFine === true;
+            // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
+            const fineResult = useAppProvidedFine
+                ? {
+                    lateMinutes: hasExplicitAppFineNumeric(bodyLateMinutes)
+                        ? Math.max(0, Math.round(Number(bodyLateMinutes)))
+                        : 0,
+                    earlyMinutes: hasExplicitAppFineNumeric(bodyEarlyMinutes)
+                        ? Math.max(0, Math.round(Number(bodyEarlyMinutes)))
+                        : 0,
+                    fineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
+                        ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
+                        : 0,
+                    permissionLateMinutes: existing.permissionLateMinutes ?? 0,
+                    permissionEarlyMinutes: existing.permissionEarlyMinutes ?? 0,
+                    permissionApprovedMinutes: existing.permissionApprovedMinutes ?? 0,
+                    permissionConsumedMinutes: existing.permissionConsumedMinutes ?? 0,
+                    permissionRemainingMinutes: existing.permissionRemainingMinutes ?? 0
+                }
+                : await calculateCombinedFine(
+                    now,
+                    null,
+                    startOfDay,
+                    fineTemplate,
+                    staff,
+                    company,
+                    activeLeave,
+                    {
+                        appPerDayNetSalary: req.body?.appPerDayNetSalary,
+                        appPerdayGrossSalary: req.body?.appPerdayGrossSalary
+                    },
+                    { attendanceId: existing._id }
+                );
             existing.punchIn = now;
 
             // Update location using Mongoose set() method for nested paths to avoid validation issues
@@ -1533,6 +1551,7 @@ const checkIn = async (req, res) => {
             existing.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
             // For app punches, prefer app-calculated values so DB matches app formula/logs.
             if (
+                !useAppProvidedFine &&
                 source === 'app' &&
                 forceAppFine === true &&
                 (Number(fineResult.permissionConsumedMinutes) || 0) <= 0
@@ -1647,18 +1666,36 @@ const checkIn = async (req, res) => {
             gracePeriodMinutes: fineGracePeriod
         };
         
-        // Always calculate and store fine details on attendance record.
-        const fineResult = await calculateCombinedFine(
-            now,
-            null,
-            startOfDay,
-            fineTemplate,
-            staff,
-            company,
-            activeLeave,
-            null,
-            null
-        );
+        const useAppProvidedFine = source === 'app' && forceAppFine === true;
+        // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
+        const fineResult = useAppProvidedFine
+            ? {
+                lateMinutes: hasExplicitAppFineNumeric(bodyLateMinutes)
+                    ? Math.max(0, Math.round(Number(bodyLateMinutes)))
+                    : 0,
+                earlyMinutes: hasExplicitAppFineNumeric(bodyEarlyMinutes)
+                    ? Math.max(0, Math.round(Number(bodyEarlyMinutes)))
+                    : 0,
+                fineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
+                    ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
+                    : 0,
+                permissionLateMinutes: 0,
+                permissionEarlyMinutes: 0,
+                permissionApprovedMinutes: 0,
+                permissionConsumedMinutes: 0,
+                permissionRemainingMinutes: 0
+            }
+            : await calculateCombinedFine(
+                now,
+                null,
+                startOfDay,
+                fineTemplate,
+                staff,
+                company,
+                activeLeave,
+                null,
+                null
+            );
         // Create initial attendance record. Store businessId from staff (staffs collection).
         const businessIdToStore = staff.businessId;
         console.log('[Attendance checkIn] storing in attendances: businessId=', businessIdToStore?.toString(), '(from staffs collection; body businessId=', bodyBusinessId ?? 'not sent', ')');
@@ -1690,6 +1727,7 @@ const checkIn = async (req, res) => {
         });
         // For app punches, prefer app-calculated values so DB matches app formula/logs.
         if (
+            !useAppProvidedFine &&
             source === 'app' &&
             forceAppFine === true &&
             (Number(fineResult.permissionConsumedMinutes) || 0) <= 0
@@ -2212,21 +2250,43 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         };
     }
     
-    // Always recalculate and store fine details after punch-out.
-    const fineResult = await calculateCombinedFine(
-        attendance.punchIn,
-        now,
-        attendance.date,
-        fineTemplate,
-        staff,
-        company,
-        leaveForFine,
-        {
-            appPerDayNetSalary: data?.appPerDayNetSalary,
-            appPerdayGrossSalary: data?.appPerdayGrossSalary
-        },
-        { attendanceId: attendance._id }
-    );
+    const useAppProvidedFine = source === 'app' && forceAppFine === true;
+    // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
+    const fineResult = useAppProvidedFine
+        ? {
+            lateMinutes: hasExplicitAppFineNumeric(bodyLateMinutes)
+                ? Math.max(0, Math.round(Number(bodyLateMinutes)))
+                : (attendance.lateMinutes ?? 0),
+            earlyMinutes: hasExplicitAppFineNumeric(bodyEarlyMinutes)
+                ? Math.max(0, Math.round(Number(bodyEarlyMinutes)))
+                : 0,
+            fineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
+                ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
+                : (attendance.fineAmount ?? 0),
+            lateFineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
+                ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
+                : (attendance.fineAmount ?? 0),
+            earlyFineAmount: 0,
+            permissionLateMinutes: attendance.permissionLateMinutes ?? 0,
+            permissionEarlyMinutes: attendance.permissionEarlyMinutes ?? 0,
+            permissionApprovedMinutes: attendance.permissionApprovedMinutes ?? 0,
+            permissionConsumedMinutes: attendance.permissionConsumedMinutes ?? 0,
+            permissionRemainingMinutes: attendance.permissionRemainingMinutes ?? 0
+        }
+        : await calculateCombinedFine(
+            attendance.punchIn,
+            now,
+            attendance.date,
+            fineTemplate,
+            staff,
+            company,
+            leaveForFine,
+            {
+                appPerDayNetSalary: data?.appPerDayNetSalary,
+                appPerdayGrossSalary: data?.appPerdayGrossSalary
+            },
+            { attendanceId: attendance._id }
+        );
     const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
     const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
     const totalFineAmount = lateFineAmount + earlyFineAmount;
@@ -2244,6 +2304,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     attendance.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
     // For app punches, prefer app-calculated values so DB matches app formula/logs.
     if (
+        !useAppProvidedFine &&
         source === 'app' &&
         forceAppFine === true &&
         (Number(fineResult.permissionConsumedMinutes) || 0) <= 0

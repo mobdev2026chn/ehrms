@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/constants.dart';
 
 /// Verbose per-request Dio logs (options, URLs, bodies). Off by default — very chatty.
@@ -69,6 +70,49 @@ class FormDataContentTypeInterceptor extends Interceptor {
   }
 }
 
+/// Handles expired sessions globally: clear stale auth and let UI redirect to login.
+class SessionExpiryInterceptor extends Interceptor {
+  SessionExpiryInterceptor(this.dio);
+  final Dio dio;
+  static bool _handlingExpiry = false;
+
+  bool _isExpiredTokenError(DioException err) {
+    if (err.response?.statusCode != 401) return false;
+    final data = err.response?.data;
+    final message = (data is Map<String, dynamic>)
+        ? '${data['message'] ?? ''} ${data['error'] ?? ''}'.toLowerCase()
+        : (data?.toString().toLowerCase() ?? '');
+    return message.contains('jwt expired') ||
+        message.contains('session expired') ||
+        message.contains('token expired');
+  }
+
+  Future<void> _clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
+    await prefs.remove('user');
+    await prefs.remove('taskSettings');
+    await prefs.remove('businessId');
+    await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
+    dio.options.headers.remove('Authorization');
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    if (_isExpiredTokenError(err) && !_handlingExpiry) {
+      _handlingExpiry = true;
+      try {
+        await _clearSession();
+      } catch (_) {
+        // Ignore local storage cleanup issues; still forward original error.
+      } finally {
+        _handlingExpiry = false;
+      }
+    }
+    handler.next(err);
+  }
+}
+
 /// Central Dio client for the app. Used only by data layer (datasources).
 /// Auth token is set before authenticated requests; interceptors handle retry and logging.
 class DioClient {
@@ -102,6 +146,7 @@ class DioClient {
     }
     dio.interceptors.addAll([
       FormDataContentTypeInterceptor(),
+      SessionExpiryInterceptor(dio),
       RetryOnRateLimitInterceptor(dio),
       if (kDebugMode && _kLogDioTraffic)
         LogInterceptor(

@@ -29,6 +29,7 @@ class DeactivationCheckWrapper extends StatefulWidget {
 class _DeactivationCheckWrapperState extends State<DeactivationCheckWrapper> with WidgetsBindingObserver {
   Timer? _timer;
   static const Duration _checkInterval = Duration(seconds: 5);
+  bool _hadLoggedInSession = false;
 
   @override
   void initState() {
@@ -66,6 +67,7 @@ class _DeactivationCheckWrapperState extends State<DeactivationCheckWrapper> wit
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     if (token == null || token.isEmpty || !mounted) return;
+    _hadLoggedInSession = true;
 
     PresenceTrackingService().markAppForeground();
     LiveTrackingService().markAppForeground();
@@ -84,7 +86,22 @@ class _DeactivationCheckWrapperState extends State<DeactivationCheckWrapper> wit
 
   Future<void> _checkActive() async {
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getString('token') == null || prefs.getString('token')!.isEmpty) return;
+    final token = prefs.getString('token');
+    if (token == null || token.isEmpty) {
+      // Global session-expiry interceptor clears token immediately on 401/jwt-expired.
+      // If this app runtime had a logged-in session, force back to login.
+      if (_hadLoggedInSession && mounted) {
+        _timer?.cancel();
+        _timer = null;
+        context.read<AuthBloc>().add(AuthLogoutRequested());
+        widget.navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (_) => false,
+        );
+      }
+      return;
+    }
+    _hadLoggedInSession = true;
     final active = await AuthService().checkStaffActive();
     if (active == false && mounted) {
       _timer?.cancel();

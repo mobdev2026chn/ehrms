@@ -792,15 +792,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     // Prevent concurrent calls for same operation
     if (_isFetchingMonthAttendance && !forceRefresh) return;
 
+    final requestYear = _selectedMonth.year;
+    final requestMonth = _selectedMonth.month;
     _isFetchingMonthAttendance = true;
     try {
       final result = await _attendanceService.getMonthAttendance(
-        _selectedMonth.year,
-        _selectedMonth.month,
+        requestYear,
+        requestMonth,
         forceRefresh: forceRefresh,
       );
       if (mounted) {
         if (result['success']) {
+          final currentYear = _selectedMonth.year;
+          final currentMonth = _selectedMonth.month;
+          if (currentYear != requestYear || currentMonth != requestMonth) {
+            return;
+          }
           setState(() {
             _monthData = result['data'];
           });
@@ -1719,6 +1726,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               child: _buildMonthAttendanceCard(
                 showHeaderIcon: false,
                 dashboardCompact: false,
+                showViewFullAttendanceButton: false,
               ),
             ),
           ),
@@ -2774,6 +2782,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   Widget _buildMonthAttendanceCard({
     bool showHeaderIcon = true,
     bool dashboardCompact = false,
+    bool showViewFullAttendanceButton = true,
   }) {
     final monthName = DateFormat('MMMM yyyy').format(_selectedMonth);
 
@@ -2877,29 +2886,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           _buildSimpleCalendar(),
           const SizedBox(height: 24),
           _buildStatusLegend(),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                final fn = widget.onNavigate;
-                if (fn != null) fn(4, subTabIndex: 1);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: const Color(0xFF1E293B),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          if (showViewFullAttendanceButton) ...[
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  final fn = widget.onNavigate;
+                  if (fn != null) fn(4, subTabIndex: 1);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: const Color(0xFF1E293B),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
                 ),
-                elevation: 0,
-              ),
-              child: const Text(
-                'View Full Attendance',
-                style: TextStyle(fontWeight: FontWeight.w600),
+                child: const Text(
+                  'View Full Attendance',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -3465,20 +3476,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        IconButton(
-                          icon: const Icon(Icons.chevron_left),
-                          onPressed: () {
-                            setState(() {
-                              _selectedMonth = DateTime(
-                                _selectedMonth.year,
-                                _selectedMonth.month - 1,
-                              );
-                            });
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              _fetchMonthAttendance(forceRefresh: true);
-                            });
-                          },
-                        ),
+                        const SizedBox(width: 48, height: 48),
                         Text(
                           DateFormat('MMMM yyyy').format(_selectedMonth),
                           style: TextStyle(
@@ -3487,20 +3485,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             color: colorScheme.onSurface,
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.chevron_right),
-                          onPressed: () {
-                            setState(() {
-                              _selectedMonth = DateTime(
-                                _selectedMonth.year,
-                                _selectedMonth.month + 1,
-                              );
-                            });
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              _fetchMonthAttendance(forceRefresh: true);
-                            });
-                          },
-                        ),
+                        const SizedBox(width: 48, height: 48),
                       ],
                     ),
                     const SizedBox(height: 12),

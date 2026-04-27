@@ -4239,9 +4239,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   final RequestService _requestService = RequestService();
   DateTime _date = DateTime.now();
   String _type = 'both';
-  final TextEditingController _minutesController = TextEditingController(
-    text: '30',
-  );
+  final TextEditingController _minutesController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
   bool _isSubmitting = false;
 

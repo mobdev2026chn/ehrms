@@ -2473,13 +2473,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           ? null
           : double.tryParse(grossAsString);
       if (grossParsed != null && grossParsed > 0) return grossParsed;
-      final direct = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
-      if (direct != null && direct > 0) return direct;
-      final asString = prefs.getString(kAppNetPerDaySalaryPrefsKey);
-      final parsed = asString == null ? null : double.tryParse(asString);
-      if (parsed != null && parsed > 0) return parsed;
-      final legacyDirect = prefs.getDouble(kAppLegacyPerDaySalaryPrefsKey);
-      if (legacyDirect != null && legacyDirect > 0) return legacyDirect;
     } catch (_) {}
     return null;
   }
@@ -5856,7 +5849,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         '[Fine TEST][Attendance] Refreshed fine rules before alert/fine evaluation',
       );
       debugPrint(
-        '[Fine TEST][Attendance] Loaded netPerDaySalary='
+        '[Fine TEST][Attendance] Loaded grossPerDaySalary='
         '${netPerDaySalary?.toStringAsFixed(2) ?? "null"}',
       );
     }
@@ -5929,7 +5922,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 debugPrint(
                   '[Fine TEST][Attendance][LateIn] start=$shiftStartStr '
                   'graceMin=$gracePeriod lateMin=${fineResult.lateMinutes} '
-                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'grossPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
                   'fineType=${fineLog['fineType']} '
                   'ruleType=${fineLog['ruleType']} '
                   'ruleApplyTo=${fineLog['ruleApplyTo']} '
@@ -6115,7 +6108,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 debugPrint(
                   '[Fine TEST][Attendance][EarlyOut] start=$shiftStartForFine '
                   'end=$shiftEndStr earlyMin=$earlyMinutes '
-                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'grossPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
                   'fineType=${fineLog['fineType']} '
                   'ruleType=${fineLog['ruleType']} '
                   'ruleApplyTo=${fineLog['ruleApplyTo']} '

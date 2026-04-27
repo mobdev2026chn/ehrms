@@ -3792,26 +3792,24 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               Colors.black,
               textColor: Colors.white,
             ),
-            if (1 == 0) ...[
-              _buildStatCard(
-                'Per Day Gross',
-                currencyFormat.format(perDayGrossPast),
-                rateDaysPast > 0
-                    ? 'Gross ÷ $rateDaysPast payable days'
-                    : 'Daily gross estimate',
-                Colors.black,
-                textColor: Colors.white,
-              ),
-              _buildStatCard(
-                'Per Day Salary',
-                currencyFormat.format(perDayNetPast),
-                rateDaysPast > 0
-                    ? 'Net ÷ $rateDaysPast payable days'
-                    : 'Daily net estimate',
-                Colors.black,
-                textColor: Colors.white,
-              ),
-            ],
+            _buildStatCard(
+              'Per Day Gross',
+              currencyFormat.format(perDayGrossPast),
+              rateDaysPast > 0
+                  ? 'Gross ÷ $rateDaysPast payable days'
+                  : 'Daily gross estimate',
+              Colors.black,
+              textColor: Colors.white,
+            ),
+            _buildStatCard(
+              'Per Day Salary',
+              currencyFormat.format(perDayNetPast),
+              rateDaysPast > 0
+                  ? 'Net ÷ $rateDaysPast payable days'
+                  : 'Daily net estimate',
+              Colors.black,
+              textColor: Colors.white,
+            ),
           ];
           return GridView.count(
             crossAxisCount: isWide ? 6 : 2,
@@ -4069,26 +4067,24 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             Colors.black,
             textColor: Colors.white,
           ),
-          if (1 == 0) ...[
-            _buildStatCard(
-              'Per Day Gross',
-              currencyFormat.format(perDayGrossCurrent),
-              rateDaysCurrent > 0
-                  ? 'Gross ÷ $rateDaysCurrent payable days'
-                  : 'Daily gross estimate',
-              Colors.black,
-              textColor: Colors.white,
-            ),
-            _buildStatCard(
-              'Per Day Salary',
-              currencyFormat.format(perDayNetCurrent),
-              rateDaysCurrent > 0
-                  ? 'Net ÷ $rateDaysCurrent payable days'
-                  : 'Daily net estimate',
-              Colors.black,
-              textColor: Colors.white,
-            ),
-          ],
+          _buildStatCard(
+            'Per Day Gross',
+            currencyFormat.format(perDayGrossCurrent),
+            rateDaysCurrent > 0
+                ? 'Gross ÷ $rateDaysCurrent payable days'
+                : 'Daily gross estimate',
+            Colors.black,
+            textColor: Colors.white,
+          ),
+          _buildStatCard(
+            'Per Day Salary',
+            currencyFormat.format(perDayNetCurrent),
+            rateDaysCurrent > 0
+                ? 'Net ÷ $rateDaysCurrent payable days'
+                : 'Daily net estimate',
+            Colors.black,
+            textColor: Colors.white,
+          ),
         ];
 
         return GridView.count(

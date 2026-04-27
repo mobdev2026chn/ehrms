@@ -67,6 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   int _requestsSubTabIndex = 0;
   int _attendanceSubTabIndex = 0;
   bool _isSubmittingFromFingerprint = false;
+  bool _isSubmitAttendanceDialogVisible = false;
   bool _isPunchActionInProgress = false;
   bool _isBreakActionInProgress = false;
 
@@ -123,6 +124,52 @@ class _DashboardScreenState extends State<DashboardScreen>
   void _setPunchActionInProgress(bool value) {
     if (!mounted || _isPunchActionInProgress == value) return;
     setState(() => _isPunchActionInProgress = value);
+  }
+
+  void _showSubmitAttendanceDialog(BuildContext context) {
+    _isSubmitAttendanceDialogVisible = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (ctx) => PopScope(
+        canPop: true,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) return;
+          _handleSubmitAttendanceDialogBack();
+        },
+        child: const AlertDialog(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(width: 16),
+              Text('Submitting attendance...'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _dismissSubmitAttendanceDialogIfVisible(BuildContext context) {
+    if (!_isSubmitAttendanceDialogVisible) return;
+    _isSubmitAttendanceDialogVisible = false;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) navigator.pop();
+  }
+
+  void _handleSubmitAttendanceDialogBack() {
+    if (!_isSubmitAttendanceDialogVisible) return;
+    _isSubmitAttendanceDialogVisible = false;
+    _isSubmittingFromFingerprint = false;
+    _setPunchActionInProgress(false);
+    if (mounted && _currentIndex != 0) {
+      setState(() => _currentIndex = 0);
+    }
   }
 
   @override
@@ -525,13 +572,6 @@ class _DashboardScreenState extends State<DashboardScreen>
           ? null
           : double.tryParse(grossAsString);
       if (grossParsed != null && grossParsed > 0) return grossParsed;
-      final direct = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
-      if (direct != null && direct > 0) return direct;
-      final asString = prefs.getString(kAppNetPerDaySalaryPrefsKey);
-      final parsed = asString == null ? null : double.tryParse(asString);
-      if (parsed != null && parsed > 0) return parsed;
-      final legacyDirect = prefs.getDouble(kAppLegacyPerDaySalaryPrefsKey);
-      if (legacyDirect != null && legacyDirect > 0) return legacyDirect;
     } catch (_) {}
     return null;
   }
@@ -2307,7 +2347,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         '[Fine TEST][Dashboard Punch] Refreshed fine rules before alert/fine evaluation',
       );
       debugPrint(
-        '[Fine TEST][Dashboard Punch] Loaded netPerDaySalary='
+        '[Fine TEST][Dashboard Punch] Loaded grossPerDaySalary='
         '${netPerDaySalary?.toStringAsFixed(2) ?? "null"}',
       );
     }
@@ -2414,7 +2454,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 debugPrint(
                   '[Fine TEST][Dashboard Punch][LateIn] start=$shiftStartStr '
                   'graceMin=$gracePeriod lateMin=$adjustedLateMinutes '
-                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'grossPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
                   'fineType=${fineLog['fineType']} '
                   'ruleType=${fineLog['ruleType']} '
                   'ruleApplyTo=${fineLog['ruleApplyTo']} '
@@ -2647,7 +2687,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   'rawEarlyMin=$rawEarlyMinutes '
                   'consumeEarly=${permissionAdjustment['consumeEarly'] ?? 0} '
                   'now=${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} '
-                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'grossPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
                   'fineType=${fineLog['fineType']} '
                   'ruleType=${fineLog['ruleType']} '
                   'ruleApplyTo=${fineLog['ruleApplyTo']} '
@@ -2758,7 +2798,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!result.valid) {
       _isSubmittingFromFingerprint = false;
       _setPunchActionInProgress(false);
-      Navigator.of(context).pop();
+      _dismissSubmitAttendanceDialogIfVisible(context);
       SnackBarUtils.showSnackBar(
         context,
         result.message ?? 'Please take a selfie with exactly one face visible.',
@@ -2797,7 +2837,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       if (mounted) {
         _isSubmittingFromFingerprint = false;
         _setPunchActionInProgress(false);
-        Navigator.of(context).pop();
+        _dismissSubmitAttendanceDialogIfVisible(context);
         SnackBarUtils.showSnackBar(
           context,
           'Could not get location.',
@@ -2831,7 +2871,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         if (verify['success'] != true || verify['match'] != true) {
           _isSubmittingFromFingerprint = false;
           _setPunchActionInProgress(false);
-          Navigator.of(context).pop();
+          _dismissSubmitAttendanceDialogIfVisible(context);
           SnackBarUtils.showSnackBar(
             context,
             ErrorMessageUtils.sanitizeForDisplay(
@@ -2845,7 +2885,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         if (mounted) {
           _isSubmittingFromFingerprint = false;
           _setPunchActionInProgress(false);
-          Navigator.of(context).pop();
+          _dismissSubmitAttendanceDialogIfVisible(context);
           SnackBarUtils.showSnackBar(
             context,
             'Face verification failed. Please try again.',
@@ -2973,7 +3013,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       if (mounted) {
         _isSubmittingFromFingerprint = false;
         _setPunchActionInProgress(false);
-        Navigator.of(context).pop(); // Dismiss "Submitting attendance..."
+        _dismissSubmitAttendanceDialogIfVisible(context);
         SnackBarUtils.showSnackBar(
           context,
           'Could not get location.',
@@ -3115,7 +3155,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           if (mounted) {
             if (_isSubmittingFromFingerprint) {
               _isSubmittingFromFingerprint = false;
-              Navigator.of(context).pop();
+              _dismissSubmitAttendanceDialogIfVisible(context);
             }
             _setPunchActionInProgress(false);
             setState(() {
@@ -3159,7 +3199,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           if (mounted) {
             if (_isSubmittingFromFingerprint) {
               _isSubmittingFromFingerprint = false;
-              Navigator.of(context).pop();
+              _dismissSubmitAttendanceDialogIfVisible(context);
             }
             _setPunchActionInProgress(false);
             setState(() {
@@ -3196,7 +3236,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           );
           _setPunchActionInProgress(false);
           _isSubmittingFromFingerprint = false;
-          if (mounted) Navigator.of(context).pop();
+          if (mounted) _dismissSubmitAttendanceDialogIfVisible(context);
           if (mounted) {
             SnackBarUtils.showSnackBar(
               context,
@@ -3307,17 +3347,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (ctx) => const AlertDialog(
-                    content: Row(
-                      children: [
-                        SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        SizedBox(width: 16),
-                        Text('Getting location…'),
-                      ],
+                  builder: (ctx) => PopScope(
+                    canPop: false,
+                    child: const AlertDialog(
+                      content: Row(
+                        children: [
+                          SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 16),
+                          Text('Getting location…'),
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -3390,23 +3433,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 }
 
                 _isSubmittingFromFingerprint = true;
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (ctx) => const AlertDialog(
-                    content: Row(
-                      children: [
-                        SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        SizedBox(width: 16),
-                        Text('Submitting attendance…'),
-                      ],
-                    ),
-                  ),
-                );
+                _showSubmitAttendanceDialog(context);
                 final attendanceMap =
                     validationData['attendanceData'] as Map<String, dynamic>?;
                 final precomputedIsCheckedIn = _isAttendancePunchedIn(

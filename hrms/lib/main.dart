@@ -104,19 +104,8 @@ void main() {
         );
       }
 
-      try {
-        final sessionReset = await AuthService().clearSessionIfBaseUrlChanged();
-        if (sessionReset) {
-          debugPrint(
-            '[main] Cleared stale session because baseUrl changed before startup init',
-          );
-        }
-      } catch (e, st) {
-        debugPrint(
-          '[main] clearSessionIfBaseUrlChanged failed (continuing): $e',
-        );
-        if (kDebugMode) debugPrint('[main] clearSessionIfBaseUrlChanged stack: $st');
-      }
+      // Keep user logged in across app restarts until explicit logout.
+      // Do not auto-clear auth session at startup based on baseUrl tracking.
 
       try {
         await AlarmService.initializeTimezone();

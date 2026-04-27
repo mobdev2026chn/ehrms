@@ -237,6 +237,15 @@ class AuthService {
     String Function(int? code, dynamic body)? messageFn,
   ) {
     final code = e.response?.statusCode;
+    if (code == null) {
+      return {
+        'success': false,
+        'message': ErrorMessageUtils.messageFromDioException(
+          e,
+          fallback: defaultMessage,
+        ),
+      };
+    }
     final data = e.response?.data;
     String? bodyStr;
     Map<String, dynamic>? bodyMap;
@@ -602,8 +611,8 @@ class AuthService {
     return prefs.getString('token');
   }
 
-  /// Returns true if staff is still active, false if deactivated (200 + active: false), null on
-  /// network/error or 401 (no logout — 401 is expired/invalid token, not deactivation).
+  /// Returns true if staff is active, false when deactivated or session expired, null on
+  /// transient network errors.
   Future<bool?> checkStaffActive() async {
     final prefs = await SharedPreferences.getInstance();
     String? token = prefs.getString('token');
@@ -615,9 +624,23 @@ class AuthService {
       final data = response.data;
       if (data == null) return null;
       return data['active'] == true;
-    } on DioException catch (_) {
-      // Includes 401 (expired/invalid JWT). Do not map to deactivated — that would clear prefs
-      // and force login on every resume after token issues.
+    } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 401) {
+        // Only force logout when backend clearly indicates token expiry/invalidity.
+        // Some environments may transiently return 401 for reasons unrelated to session.
+        final bodyMessage = _messageFromBody(e.response?.data)?.toLowerCase() ?? '';
+        final raw = e.response?.data?.toString().toLowerCase() ?? '';
+        final combined = '$bodyMessage $raw';
+        final sessionExpired =
+            combined.contains('jwt expired') ||
+            combined.contains('token expired') ||
+            combined.contains('session expired') ||
+            combined.contains('token failed') ||
+            combined.contains('not authorized');
+        if (sessionExpired) return false;
+        return null;
+      }
       return null;
     } catch (_) {
       return null;
