@@ -2,24 +2,27 @@
 class AppConstants {
   /// General app API (attendance, geo, profile, …).
   //static const String baseUrl = 'http://192.168.1.3https://app.ektahr.com/api3:9001/api';
- static const String baseUrl = 'https://ehrms.askeva.net/api';//'http://192.168.1.33:9001/api';
- //'https://ehrms.askeva.net/api';
- //static const String baseUrl = 'https://ehrms.askeva.net/api';
+  static const String baseUrl ='https://ehrms.askeva.net/api';
+  // 'http://192.168.1.33:9001/api';
+  //'https://ehrms.askeva.net/api';
+  //static const String baseUrl = 'https://ehrms.askeva.net/api';
   /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
   static const String webBaseUrl = 'https://hrms.askeva.net/api';
- //static const String webBaseUrl = 'https://my.ektahr.com/api';
+  //static const String webBaseUrl = 'https://my.ektahr.com/api';
 
   /// When **true** (default): Interaction REST + Socket use [webBaseUrl] like the web.
   /// With a different [baseUrl], [AuthService] performs a second `/auth/login` against [webBaseUrl]
   /// and stores `interaction_access_token` so chat works without changing geo login.
   /// When **false**: Interaction uses [baseUrl] (needs TypeScript `backend` with `/api/interaction` on that host).
   static const bool interactionUseWebHost = true;
+
   /// When true, login uses only one network call (`POST /auth/login`) and
   /// skips post-login network side-effects for troubleshooting rate-limits.
   static const bool singleApiLoginMode = false;
 
   /// Prefs key: JWT for [webBaseUrl] when [baseUrl] is another server (set after web login sync).
-  static const String interactionAccessTokenPrefsKey = 'interaction_access_token';
+  static const String interactionAccessTokenPrefsKey =
+      'interaction_access_token';
 
   /// REST base for `/interaction/*` and LMS routes on the same host as the web app.
   static String get interactionApiBaseUrl =>
@@ -68,8 +71,16 @@ class AppConstants {
   }
 
   /// Debug console: presence + live task tracking POSTs (flutter run / debug only).
-  // static const bool logTrackingsToConsole = true;
-  static const bool logTrackingsToConsole = false;
+  static const bool logTrackingsToConsole = true;
+  // static const bool logTrackingsToConsole = false;
+
+  /// Task live-tracking capture interval (used by ride screen periodic upload timer).
+  /// TESTING now: 5 minutes. Set to 900 for 15 minutes in production.
+  static const int taskTrackingCaptureIntervalSeconds = 300;
+
+  /// Presence (non-task) tracking interval in seconds.
+  /// TESTING now: 5 minutes. Set to 900 for 15 minutes in production.
+  static const int presenceTrackingCaptureIntervalSeconds = 300;
 
   /// When true, attendance selfie is verified against profile photo (face matching).
   /// When false, only on-device face detection runs; no server-side face matching.

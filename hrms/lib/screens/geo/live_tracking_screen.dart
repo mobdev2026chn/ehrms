@@ -4,6 +4,7 @@ import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart' as gl;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:hrms/config/constants.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/location_data.dart';
 import 'package:hrms/models/tracking_event.dart';
@@ -185,7 +186,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     final initialDestination = _task?.destinationLocation;
     if (initialDestination != null &&
         (initialDestination.lat != 0 || initialDestination.lng != 0)) {
-      _dropoffLatLngState = LatLng(initialDestination.lat, initialDestination.lng);
+      _dropoffLatLngState = LatLng(
+        initialDestination.lat,
+        initialDestination.lng,
+      );
     }
     _dropoffAddress =
         _task?.destinationLocation?.displayAddress ??
@@ -275,12 +279,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     _tripStartUtc = resolved;
     if (mounted) setState(() {});
 
-    // Send first point after 2 sec, then every 15 sec.
+    // Send first point after 2 sec, then periodically by configured capture interval.
     Future.delayed(const Duration(seconds: 2), () {
       _sendLocationToDb();
       _syncPendingDestinationIfAny();
     });
-    _locationUploadTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+    final captureInterval = Duration(
+      seconds: AppConstants.taskTrackingCaptureIntervalSeconds,
+    );
+    _locationUploadTimer = Timer.periodic(captureInterval, (_) {
       if (!mounted) return;
       _sendLocationToDb();
     });
@@ -619,7 +626,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     );
 
     final resolvedAddress = resolveAddress
-        ? await _resolveDropoffAddress(newPosition.latitude, newPosition.longitude)
+        ? await _resolveDropoffAddress(
+            newPosition.latitude,
+            newPosition.longitude,
+          )
         : initialAddress;
     if (!mounted) return;
     setState(() {
@@ -918,7 +928,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       final fromLng =
           _lastLocation?.longitude ?? widget.pickupLocation.longitude;
       _fetchRoadRoute(fromLat, fromLng);
-      setState(() {}); // Refresh wall-clock elapsed immediately when returning from background.
+      setState(
+        () {},
+      ); // Refresh wall-clock elapsed immediately when returning from background.
     }
   }
 
@@ -1107,7 +1119,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           taskId: widget.taskId,
           task: arrivedTask,
           totalDuration: Duration(
-            seconds: arrivedTask?.tripDurationSeconds ?? _elapsedDuration.inSeconds,
+            seconds:
+                arrivedTask?.tripDurationSeconds ?? _elapsedDuration.inSeconds,
           ),
           totalDistanceKm: arrivedTask?.tripDistanceKm ?? totalKm,
           isWithinGeofence: _isInsideGeofence,
@@ -1319,8 +1332,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                     _task!.customer!.customerNumber!.trim().isNotEmpty)
                   IconButton(
                     onPressed: () async {
-                      final number = _task!.customer!.customerNumber!
-                          .trim();
+                      final number = _task!.customer!.customerNumber!.trim();
                       final uri = Uri.parse('tel:$number');
                       if (await canLaunchUrl(uri)) {
                         await launchUrl(uri);
@@ -1791,10 +1803,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     );
   }
 
-  Widget _buildTravelRow(
-    IconData icon,
-    String label,
-    String value) {
+  Widget _buildTravelRow(IconData icon, String label, String value) {
     return Row(
       children: [
         Icon(icon, size: 14, color: AppColors.primary),

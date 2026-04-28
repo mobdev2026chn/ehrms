@@ -45,6 +45,37 @@ class AttendanceService {
     return false;
   }
 
+  int _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  void _logPermissionConsumption(String action, dynamic responseData) {
+    if (responseData is! Map) return;
+    final data = responseData['data'];
+    final payload = data is Map ? data : responseData;
+    if (payload is! Map) return;
+
+    final consumed = _asInt(payload['permissionConsumedMinutes']);
+    final approved = _asInt(payload['permissionApprovedMinutes']);
+    final lateUsed = _asInt(payload['permissionLateMinutes']);
+    final earlyUsed = _asInt(payload['permissionEarlyMinutes']);
+    final remaining = _asInt(payload['permissionRemainingMinutes']);
+
+    if (consumed > 0) {
+      punchFlowLog(
+        '[Permission][$action][Consumed] consumed=$consumed approved=$approved '
+        'lateUsed=$lateUsed earlyUsed=$earlyUsed remaining=$remaining',
+      );
+    } else if (approved > 0) {
+      punchFlowLog(
+        '[Permission][$action][ApprovedNoConsume] approved=$approved '
+        'consumed=$consumed remaining=$remaining',
+      );
+    }
+  }
+
   /// Call after check-in/check-out so Recent Activity and History never show
   /// cached data. Also call from the attendance screen before a forced refresh.
   /// Clears throttle for today endpoint so the next getAttendanceByDate(today) gets fresh data (e.g. punch out).
@@ -122,6 +153,7 @@ class AttendanceService {
         ),
       );
       final data = response.data;
+      _logPermissionConsumption('checkIn', data);
       clearCachesForRefresh();
       return {'success': true, 'data': data};
     } on DioException catch (e) {
@@ -213,6 +245,7 @@ class AttendanceService {
         ),
       );
       final data = response.data;
+      _logPermissionConsumption('checkOut', data);
       punchFlowLog(
         '[AttendanceService][checkOut] httpOK status=${response.statusCode} '
         'dataKeys=${data is Map ? (data as Map).keys.join(",") : data.runtimeType}',

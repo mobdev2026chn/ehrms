@@ -2067,12 +2067,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     if (onNavigate != null) {
       buttons.addAll([
         _buildQuickActionButton(
-          icon: Icons.calendar_today,
-          label: 'Apply Leave',
-          color: accent,
-          onTap: () => onNavigate(1, subTabIndex: 0),
-        ),
-        _buildQuickActionButton(
           icon: Icons.fact_check_outlined,
           label: 'Request Permission',
           color: accent,
@@ -2090,6 +2084,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           color: accent,
           onTap: () => onNavigate(1, subTabIndex: 2),
         ),
+        _buildQuickActionButton(
+          icon: Icons.calendar_today,
+          label: 'Apply Leave',
+          color: accent,
+          onTap: () => onNavigate(1, subTabIndex: 0),
+        ),
       ]);
     }
 
@@ -2100,17 +2100,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final buttons = <Widget>[];
     final onNavigate = widget.onNavigate;
     final accent = AppColors.primary;
-
-    if (onNavigate != null && !_isCandidate) {
-      buttons.add(
-        _buildQuickActionButton(
-          icon: Icons.fact_check_outlined,
-          label: 'Attendance',
-          color: accent,
-          onTap: () => onNavigate(4, subTabIndex: 0),
-        ),
-      );
-    }
 
     if (onNavigate != null && !_isCandidate && widget.hasSalaryOverviewAccess) {
       buttons.add(
@@ -2147,6 +2136,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           label: 'Request Payslip',
           color: accent,
           onTap: () => onNavigate(1, subTabIndex: 4),
+        ),
+      );
+    }
+
+    if (onNavigate != null && !_isCandidate) {
+      buttons.add(
+        _buildQuickActionButton(
+          icon: Icons.fact_check_outlined,
+          label: 'Attendance',
+          color: accent,
+          onTap: () => onNavigate(4, subTabIndex: 0),
         ),
       );
     }

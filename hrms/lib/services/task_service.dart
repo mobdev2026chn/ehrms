@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hrms/config/constants.dart';
@@ -10,11 +12,226 @@ import 'api_client.dart';
 
 class TaskService {
   final ApiClient _api = ApiClient();
+  static const String _offlineTrackingQueueKey =
+      'task_tracking_offline_queue_v1';
+  static const int _syncBatchSizeDefault = 20;
+  static const int _syncBatchSizeFallback = 10;
+  static Timer? _offlineSyncTimer;
+  static bool _syncInProgress = false;
+  static int _nextSyncBatchSize = _syncBatchSizeDefault;
+  static int _offlineSendingCount = 0;
+  static int _localOfflineInsertCount = 0;
 
   Future<void> _setToken() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     if (token != null) _api.setAuthToken(token);
+  }
+
+  static Future<List<Map<String, dynamic>>> _loadOfflineQueue() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_offlineTrackingQueueKey);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> _saveOfflineQueue(List<Map<String, dynamic>> list) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (list.isEmpty) {
+      await prefs.remove(_offlineTrackingQueueKey);
+      return;
+    }
+    await prefs.setString(_offlineTrackingQueueKey, jsonEncode(list));
+  }
+
+  static Future<bool> _hasInternetConnection() async {
+    try {
+      final probe = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 5),
+        ),
+      );
+      final url = AppConstants.baseUrl.replaceAll(RegExp(r'/$'), '');
+      await probe.get<dynamic>(url);
+      return true;
+    } on DioException catch (e) {
+      final type = e.type;
+      if (type == DioExceptionType.connectionError ||
+          type == DioExceptionType.connectionTimeout ||
+          type == DioExceptionType.receiveTimeout ||
+          type == DioExceptionType.sendTimeout) {
+        return false;
+      }
+      // Any HTTP response (401/404/etc.) still means internet is reachable.
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> _startOfflineSyncTimerIfNeeded() async {
+    final queue = await _loadOfflineQueue();
+    if (queue.isEmpty) {
+      _offlineSyncTimer?.cancel();
+      _offlineSyncTimer = null;
+      return;
+    }
+    if (_offlineSyncTimer != null) return;
+    if (kDebugMode && AppConstants.logTrackingsToConsole) {
+      debugPrint(
+        '[Trackings] offline_sync timer_started pending=${queue.length} interval=1m',
+      );
+    }
+    _offlineSyncTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      _syncOfflineQueueBatch();
+    });
+  }
+
+  static Future<void> _enqueueOfflineTracking(Map<String, dynamic> body) async {
+    final queue = await _loadOfflineQueue();
+    final previousCount = queue.length;
+    final offlineItem = <String, dynamic>{
+      ...body,
+      'status': 'offline',
+      '_offlineId':
+          '${DateTime.now().millisecondsSinceEpoch}_${body['taskId']}_${body['lat']}_${body['lng']}',
+      '_queuedAt': DateTime.now().toUtc().toIso8601String(),
+    };
+    if (kDebugMode && AppConstants.logTrackingsToConsole) {
+      final lat = (body['lat'] as num?)?.toDouble();
+      final lng = (body['lng'] as num?)?.toDouble();
+      debugPrint(
+        '[Trackings] offline_store local_insert_prepare '
+        'taskId=${body['taskId']} '
+        'lat=${lat?.toStringAsFixed(6) ?? "-"} '
+        'lng=${lng?.toStringAsFixed(6) ?? "-"} '
+        'timestamp=${body['timestamp'] ?? "-"} '
+        'queue_before=$previousCount',
+      );
+    }
+    queue.add(offlineItem);
+    await _saveOfflineQueue(queue);
+    if (kDebugMode && AppConstants.logTrackingsToConsole) {
+      debugPrint(
+        '[Trackings] offline_store local_insert_done '
+        'taskId=${body['taskId']} '
+        'offlineId=${offlineItem['_offlineId']} '
+        'queue_after=${queue.length}',
+      );
+      _localOfflineInsertCount += 1;
+      debugPrint('****LOCAL-OFFLINE INSERT $_localOfflineInsertCount');
+    }
+    await _startOfflineSyncTimerIfNeeded();
+  }
+
+  static Future<void> _syncOfflineQueueBatch() async {
+    if (_syncInProgress) return;
+    _syncInProgress = true;
+    try {
+      final hasInternet = await _hasInternetConnection();
+      if (!hasInternet) {
+        if (kDebugMode && AppConstants.logTrackingsToConsole) {
+          debugPrint('[Trackings] offline_sync skipped internet=off');
+        }
+        return;
+      }
+
+      final queue = await _loadOfflineQueue();
+      if (queue.isEmpty) {
+        _offlineSyncTimer?.cancel();
+        _offlineSyncTimer = null;
+        if (kDebugMode && AppConstants.logTrackingsToConsole) {
+          debugPrint('[Trackings] offline_sync timer_stopped pending=0');
+        }
+        return;
+      }
+
+      final batchSize = _nextSyncBatchSize;
+      final batch = queue.take(batchSize).toList();
+      if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        debugPrint(
+          '[Trackings] offline_sync cycle_start internet=on pending=${queue.length} batch_size=$batchSize sending=${batch.length}',
+        );
+      }
+      final sender = TaskService();
+      await sender._setToken();
+      final syncedIds = <String>{};
+      var hadNetworkFailure = false;
+
+      for (final record in batch) {
+        try {
+          final taskId = record['taskId'];
+          final lat = (record['lat'] as num?)?.toDouble();
+          final lng = (record['lng'] as num?)?.toDouble();
+          if (kDebugMode && AppConstants.logTrackingsToConsole) {
+            debugPrint(
+              '[Trackings] offline_sync sending taskId=$taskId lat=${lat?.toStringAsFixed(6) ?? "-"} lng=${lng?.toStringAsFixed(6) ?? "-"} ts=${record['timestamp'] ?? "-"}',
+            );
+          }
+          await sender._api.dio.post<dynamic>('/tracking/store', data: record);
+          final id = record['_offlineId']?.toString();
+          if (id != null && id.isNotEmpty) syncedIds.add(id);
+          if (kDebugMode && AppConstants.logTrackingsToConsole) {
+            debugPrint('[Trackings] offline_sync sent_ok taskId=$taskId');
+            _offlineSendingCount += 1;
+            debugPrint('****COUNT OFFLINE-SENDING-$_offlineSendingCount');
+          }
+        } on DioException catch (e) {
+          final type = e.type;
+          if (type == DioExceptionType.connectionError ||
+              type == DioExceptionType.connectionTimeout ||
+              type == DioExceptionType.receiveTimeout ||
+              type == DioExceptionType.sendTimeout) {
+            hadNetworkFailure = true;
+          }
+          if (kDebugMode && AppConstants.logTrackingsToConsole) {
+            debugPrint(
+              '[Trackings] offline_sync sent_fail taskId=${record['taskId']} status=${e.response?.statusCode} type=${e.type}',
+            );
+          }
+        } catch (_) {}
+      }
+
+      if (syncedIds.isNotEmpty) {
+        final remaining = queue.where((item) {
+          final id = item['_offlineId']?.toString();
+          return id == null || !syncedIds.contains(id);
+        }).toList();
+        await _saveOfflineQueue(remaining);
+        if (kDebugMode && AppConstants.logTrackingsToConsole) {
+          debugPrint(
+            '[Trackings] offline_sync cycle_done sent=${syncedIds.length} remaining=${remaining.length}',
+          );
+        }
+        if (remaining.isEmpty) {
+          _offlineSyncTimer?.cancel();
+          _offlineSyncTimer = null;
+          if (kDebugMode && AppConstants.logTrackingsToConsole) {
+            debugPrint('[Trackings] offline_sync timer_stopped pending=0');
+          }
+        }
+      } else if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        debugPrint(
+          '[Trackings] offline_sync cycle_done sent=0 remaining=${queue.length}',
+        );
+      }
+
+      _nextSyncBatchSize = hadNetworkFailure
+          ? _syncBatchSizeFallback
+          : _syncBatchSizeDefault;
+    } finally {
+      _syncInProgress = false;
+    }
   }
 
   /// Create task via existing backend API. assignedTo = staffId.
@@ -123,15 +340,15 @@ class TaskService {
   }) async {
     try {
       await _setToken();
-      final query = <String, dynamic>{
-        'page': page,
-        'limit': limit,
-      };
+      final query = <String, dynamic>{'page': page, 'limit': limit};
       final q = (search ?? '').trim();
       if (q.isNotEmpty) query['search'] = q;
       if (startDate != null) {
-        query['startDate'] =
-            DateTime(startDate.year, startDate.month, startDate.day).toUtc().toIso8601String();
+        query['startDate'] = DateTime(
+          startDate.year,
+          startDate.month,
+          startDate.day,
+        ).toUtc().toIso8601String();
       }
       if (endDate != null) {
         query['endDate'] = DateTime(
@@ -154,7 +371,8 @@ class TaskService {
       );
       final body = response.data ?? const <String, dynamic>{};
       final rawList = (body['data'] as List?) ?? const [];
-      final pagination = body['pagination'] as Map<String, dynamic>? ?? const {};
+      final pagination =
+          body['pagination'] as Map<String, dynamic>? ?? const {};
       final tasks = rawList
           .whereType<Map>()
           .map((j) => Task.fromJson(Map<String, dynamic>.from(j)))
@@ -428,14 +646,20 @@ class TaskService {
     if (area != null && area.isNotEmpty) body['area'] = area;
     if (pincode != null && pincode.isNotEmpty) body['pincode'] = pincode;
     try {
+      await _startOfflineSyncTimerIfNeeded();
       await _api.dio.post<dynamic>('/tracking/store', data: body);
-      await LiveTrackingService.persistStoredTrackingPoint(taskMongoId, lat, lng);
+      await LiveTrackingService.persistStoredTrackingPoint(
+        taskMongoId,
+        lat,
+        lng,
+      );
       await LiveTrackingService.persistLastSentPosition(
         lat,
         lng,
         movementType: resolvedMovementType,
-        consecutiveLowSpeed:
-            resolvedMovementType == kMovementStop ? consecutiveLowSpeed : 0,
+        consecutiveLowSpeed: resolvedMovementType == kMovementStop
+            ? consecutiveLowSpeed
+            : 0,
       );
       await TrackingOutlierFilterService.rememberValidRecord(
         scope: TrackingOutlierFilterService.taskScope(taskMongoId),
@@ -455,13 +679,14 @@ class TaskService {
       }
       return true;
     } on DioException catch (e) {
+      await _enqueueOfflineTracking(body);
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
-          '[Trackings] task_store FAIL (fg) taskId=$taskMongoId '
+          '[Trackings] task_store FAIL (fg) queued_offline taskId=$taskMongoId '
           '${e.response?.statusCode} ${e.response?.data}',
         );
       }
-      rethrow;
+      return false;
     }
   }
 

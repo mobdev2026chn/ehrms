@@ -481,6 +481,32 @@ async function getConsumedPermissionMinutesForMonth({
     return Math.max(0, Number(agg?.[0]?.total || 0));
 }
 
+async function resolveMonthlyPermissionQuotaMinutes(businessId) {
+    if (!businessId) return 0;
+    try {
+        const Company = require('../models/Company');
+        const company = await Company.findById(businessId)
+            .select('settings.attendance.shifts.permissionPolicy.monthlyQuotaMinutes')
+            .lean();
+        const shifts = company?.settings?.attendance?.shifts || [];
+        let maxQuota = 0;
+        for (const shift of shifts) {
+            const value = Math.max(
+                0,
+                Number(shift?.permissionPolicy?.monthlyQuotaMinutes || 0)
+            );
+            if (value > maxQuota) maxQuota = value;
+        }
+        return maxQuota;
+    } catch (err) {
+        console.warn(
+            '[Permission][Quota Resolve] failed:',
+            err?.message || err
+        );
+        return 0;
+    }
+}
+
 async function applyPermissionQuotaAdjustment({
     employeeId,
     businessId,
@@ -493,6 +519,8 @@ async function applyPermissionQuotaAdjustment({
     lateMinutes,
     earlyMinutes
 }) {
+    const attendanceIso = new Date(attendanceDate).toISOString();
+    const attendanceIdStr = attendanceId ? attendanceId?.toString?.() || String(attendanceId) : null;
     const zero = {
         adjustedLateMinutes: Math.max(0, Number(lateMinutes) || 0),
         adjustedEarlyMinutes: Math.max(0, Number(earlyMinutes) || 0),
@@ -505,6 +533,20 @@ async function applyPermissionQuotaAdjustment({
     const policy = shiftPermissionPolicy || {};
     let enabled = policy.enabled === true;
     let monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
+    if (monthlyQuotaMinutes <= 0) {
+        const resolvedMonthlyQuota = await resolveMonthlyPermissionQuotaMinutes(
+            businessId
+        );
+        if (resolvedMonthlyQuota > 0) {
+            monthlyQuotaMinutes = resolvedMonthlyQuota;
+            console.log('[Permission][Quota Resolve]', {
+                employeeId: employeeId?.toString?.() || String(employeeId || ''),
+                businessId: businessId?.toString?.() || String(businessId || ''),
+                attendanceDate: attendanceIso,
+                resolvedMonthlyQuota
+            });
+        }
+    }
     const applyTo = ['lateArrival', 'earlyExit', 'both'].includes(String(policy.applyTo || 'both'))
         ? String(policy.applyTo || 'both')
         : 'both';
@@ -548,7 +590,7 @@ async function applyPermissionQuotaAdjustment({
         // approved permission exists for the day. Keeps permission usage fields
         // consistent with approved request minutes.
         enabled = true;
-        monthlyQuotaMinutes = approvedMinutesForDay;
+        monthlyQuotaMinutes = Math.max(monthlyQuotaMinutes, approvedMinutesForDay);
         console.log('[Permission][Fallback]', {
             reason: !policy.enabled ? 'policy_disabled' : 'monthly_quota_zero',
             employeeId: employeeId?.toString?.() || String(employeeId || ''),
@@ -647,7 +689,32 @@ async function applyPermissionQuotaAdjustment({
         excludeAttendanceId: attendanceId
     });
     let remainingBefore = Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent);
+    console.log('[Permission][Consumption Check]', {
+        employeeId: employeeId?.toString?.() || String(employeeId || ''),
+        businessId: businessId?.toString?.() || String(businessId || ''),
+        attendanceDate: attendanceIso,
+        attendanceId: attendanceIdStr,
+        isCheckout: !!isCheckout,
+        isOpenShiftDay: !!isOpenShiftDay,
+        applyTo,
+        approvedMinutesForDay,
+        approvedEligibleForDay,
+        eligibleLate,
+        eligibleEarly,
+        consumedSoFarNoCurrent,
+        monthlyQuotaMinutes,
+        remainingBefore
+    });
     if (remainingBefore <= 0) {
+        console.log('[Permission][Consumption Skip]', {
+            reason: 'monthly_quota_exhausted',
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            attendanceDate: attendanceIso,
+            attendanceId: attendanceIdStr,
+            approvedMinutesForDay,
+            consumedSoFarNoCurrent,
+            monthlyQuotaMinutes
+        });
         return {
             ...zero,
             permissionApprovedMinutes: approvedMinutesForDay
@@ -660,6 +727,33 @@ async function applyPermissionQuotaAdjustment({
     const consumeEarly = Math.min(eligibleEarly, remainingBefore);
     const consumed = consumeLate + consumeEarly;
     const remainingAfter = Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent - consumed);
+    if (consumed > 0) {
+        console.log('[Permission][Consumed]', {
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            businessId: businessId?.toString?.() || String(businessId || ''),
+            attendanceDate: attendanceIso,
+            attendanceId: attendanceIdStr,
+            isCheckout: !!isCheckout,
+            consumed,
+            consumeLate,
+            consumeEarly,
+            approvedMinutesForDay,
+            consumedSoFarNoCurrent,
+            remainingAfter
+        });
+    } else {
+        console.log('[Permission][Consumption Noop]', {
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            attendanceDate: attendanceIso,
+            attendanceId: attendanceIdStr,
+            isCheckout: !!isCheckout,
+            eligibleLate,
+            eligibleEarly,
+            approvedMinutesForDay,
+            consumedSoFarNoCurrent,
+            remainingBefore
+        });
+    }
 
     return {
         adjustedLateMinutes: Math.max(0, actualLate - consumeLate),
@@ -1476,6 +1570,27 @@ const checkIn = async (req, res) => {
                 gracePeriodMinutes: fineGracePeriod
             };
             const useAppProvidedFine = source === 'app' && forceAppFine === true;
+            let permissionFromServer = null;
+            if (useAppProvidedFine) {
+                try {
+                    permissionFromServer = await calculateCombinedFine(
+                        now,
+                        null,
+                        startOfDay,
+                        fineTemplate,
+                        staff,
+                        company,
+                        activeLeave,
+                        {
+                            appPerDayNetSalary: req.body?.appPerDayNetSalary,
+                            appPerdayGrossSalary: req.body?.appPerdayGrossSalary
+                        },
+                        { attendanceId: existing._id }
+                    );
+                } catch (permErr) {
+                    console.error('[Permission][CHECK-IN][HALF-DAY][APP] calculateCombinedFine failed:', permErr?.message);
+                }
+            }
             // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
             const fineResult = useAppProvidedFine
                 ? {
@@ -1488,11 +1603,11 @@ const checkIn = async (req, res) => {
                     fineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
                         ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
                         : 0,
-                    permissionLateMinutes: existing.permissionLateMinutes ?? 0,
-                    permissionEarlyMinutes: existing.permissionEarlyMinutes ?? 0,
-                    permissionApprovedMinutes: existing.permissionApprovedMinutes ?? 0,
-                    permissionConsumedMinutes: existing.permissionConsumedMinutes ?? 0,
-                    permissionRemainingMinutes: existing.permissionRemainingMinutes ?? 0
+                    permissionLateMinutes: permissionFromServer?.permissionLateMinutes ?? existing.permissionLateMinutes ?? 0,
+                    permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? existing.permissionEarlyMinutes ?? 0,
+                    permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? existing.permissionApprovedMinutes ?? 0,
+                    permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? existing.permissionConsumedMinutes ?? 0,
+                    permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? existing.permissionRemainingMinutes ?? 0
                 }
                 : await calculateCombinedFine(
                     now,
@@ -1667,6 +1782,27 @@ const checkIn = async (req, res) => {
         };
         
         const useAppProvidedFine = source === 'app' && forceAppFine === true;
+        let permissionFromServer = null;
+        if (useAppProvidedFine) {
+            try {
+                permissionFromServer = await calculateCombinedFine(
+                    now,
+                    null,
+                    startOfDay,
+                    fineTemplate,
+                    staff,
+                    company,
+                    activeLeave,
+                    {
+                        appPerDayNetSalary: req.body?.appPerDayNetSalary,
+                        appPerdayGrossSalary: req.body?.appPerdayGrossSalary
+                    },
+                    null
+                );
+            } catch (permErr) {
+                console.error('[Permission][CHECK-IN][CREATE][APP] calculateCombinedFine failed:', permErr?.message);
+            }
+        }
         // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
         const fineResult = useAppProvidedFine
             ? {
@@ -1679,11 +1815,11 @@ const checkIn = async (req, res) => {
                 fineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
                     ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
                     : 0,
-                permissionLateMinutes: 0,
-                permissionEarlyMinutes: 0,
-                permissionApprovedMinutes: 0,
-                permissionConsumedMinutes: 0,
-                permissionRemainingMinutes: 0
+                permissionLateMinutes: permissionFromServer?.permissionLateMinutes ?? 0,
+                permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? 0,
+                permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? 0,
+                permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? 0,
+                permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? 0
             }
             : await calculateCombinedFine(
                 now,
@@ -2251,6 +2387,27 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     }
     
     const useAppProvidedFine = source === 'app' && forceAppFine === true;
+    let permissionFromServer = null;
+    if (useAppProvidedFine) {
+        try {
+            permissionFromServer = await calculateCombinedFine(
+                attendance.punchIn,
+                now,
+                attendance.date,
+                fineTemplate,
+                staff,
+                company,
+                leaveForFine,
+                {
+                    appPerDayNetSalary: data?.appPerDayNetSalary,
+                    appPerdayGrossSalary: data?.appPerdayGrossSalary
+                },
+                { attendanceId: attendance._id }
+            );
+        } catch (permErr) {
+            console.error('[Permission][CHECK-OUT][APP] calculateCombinedFine failed:', permErr?.message);
+        }
+    }
     // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
     const fineResult = useAppProvidedFine
         ? {
@@ -2267,11 +2424,11 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
                 ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
                 : (attendance.fineAmount ?? 0),
             earlyFineAmount: 0,
-            permissionLateMinutes: attendance.permissionLateMinutes ?? 0,
-            permissionEarlyMinutes: attendance.permissionEarlyMinutes ?? 0,
-            permissionApprovedMinutes: attendance.permissionApprovedMinutes ?? 0,
-            permissionConsumedMinutes: attendance.permissionConsumedMinutes ?? 0,
-            permissionRemainingMinutes: attendance.permissionRemainingMinutes ?? 0
+            permissionLateMinutes: permissionFromServer?.permissionLateMinutes ?? attendance.permissionLateMinutes ?? 0,
+            permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? attendance.permissionEarlyMinutes ?? 0,
+            permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? attendance.permissionApprovedMinutes ?? 0,
+            permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? attendance.permissionConsumedMinutes ?? 0,
+            permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? attendance.permissionRemainingMinutes ?? 0
         }
         : await calculateCombinedFine(
             attendance.punchIn,

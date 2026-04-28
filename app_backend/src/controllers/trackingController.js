@@ -17,6 +17,7 @@ const { parseTimestamp } = require('../utils/dateUtils');
 const { resolveBusinessTimezone, computeDailyTaskCountForStaff } = require('../utils/trackingTaskCount');
 const { isLatLngInsideBranchGeofence, getBranchGeofenceTargets } = require('../utils/branchGeofence');
 const { logTrackingWrite, shouldLogTrackings } = require('../utils/trackingLogger');
+let offlineInsertDbCount = 0;
 
 /** Build location object per spec: { lat, lng, address?, pincode?, recordedAt } */
 function buildLocationObject(lat, lng, address, pincode) {
@@ -456,6 +457,7 @@ exports.storePresenceTracking = async (req, res) => {
       : validAppStatuses.includes(normalizedClientStatus)
         ? normalizedClientStatus
         : 'active';
+    const statusValue = normalizedClientStatus === 'offline' ? 'offline' : 'active';
     const normalizedMovementType = await normalizePresenceMovementType({
       staffId,
       lat: Number(lat),
@@ -471,7 +473,7 @@ exports.storePresenceTracking = async (req, res) => {
       longitude: Number(lng),
       presenceStatus: resolvedPresenceStatus,
       timestamp: now,
-      status: 'active',
+      status: statusValue,
       appStatus: appStatusValue,
       time: now,
       batteryPercent: batteryPercent != null ? Number(batteryPercent) : undefined,
@@ -485,6 +487,37 @@ exports.storePresenceTracking = async (req, res) => {
     };
 
     const saved = await Tracking.create(doc);
+    if (doc.status === 'offline') {
+      offlineInsertDbCount += 1;
+      console.log(`***OFFLINE INSERT DB COUNT ${offlineInsertDbCount}`);
+      console.log(
+        '[PresenceTracking][OfflineReplay] presence_store_saved:',
+        JSON.stringify({
+          _id: String(saved._id),
+          staffId: String(staffId),
+          staffName: doc.staffName,
+          latitude: doc.latitude,
+          longitude: doc.longitude,
+          status: doc.status,
+          appStatus: doc.appStatus,
+          presenceStatus: doc.presenceStatus,
+          movementType: doc.movementType,
+          timestamp: doc.timestamp,
+        }),
+      );
+    }
+    logTrackingWrite('presence_store_saved', {
+      _id: String(saved._id),
+      staffId: String(staffId),
+      staffName: doc.staffName,
+      latitude: doc.latitude,
+      longitude: doc.longitude,
+      presenceStatus: doc.presenceStatus,
+      appStatus: doc.appStatus,
+      movementType: doc.movementType,
+      timestamp: doc.timestamp,
+      address: doc.address,
+    });
 
     if (resolvedPresenceStatus === 'in_office') {
       console.log(
@@ -616,6 +649,7 @@ exports.storeTracking = async (req, res) => {
       lat,
       lng,
       timestamp,
+      status,
       batteryPercent,
       movementType,
       destinationLat,
@@ -659,6 +693,7 @@ exports.storeTracking = async (req, res) => {
       ? clientAddress
       : buildAddressSnapshot(geo);
     const atTime = parseTimestamp(timestamp);
+    const normalizedStatus = String(status || '').trim().toLowerCase();
     const bizTz = await resolveBusinessTimezone(req.staff);
     const taskCount = await computeDailyTaskCountForStaff({
       staffId: staffIdObj || staffId,
@@ -674,6 +709,7 @@ exports.storeTracking = async (req, res) => {
       longitude: Number(lng),
       presenceStatus,
       timestamp: atTime,
+      status: normalizedStatus === 'offline' ? 'offline' : undefined,
       batteryPercent: batteryPercent != null ? Number(batteryPercent) : undefined,
       movementType: movementType || undefined,
       destinationLat: destinationLat != null ? Number(destinationLat) : undefined,
@@ -686,6 +722,25 @@ exports.storeTracking = async (req, res) => {
       taskCount,
     };
     const saved = await Tracking.create(trackingDoc);
+    if (trackingDoc.status === 'offline') {
+      offlineInsertDbCount += 1;
+      console.log(`***OFFLINE INSERT DB COUNT ${offlineInsertDbCount}`);
+      console.log(
+        '[Tracking][OfflineReplay] task_store_saved:',
+        JSON.stringify({
+          _id: String(saved._id),
+          taskId: String(task._id),
+          taskIdDisplay: task.taskId,
+          staffId: String(trackingDoc.staffId),
+          staffName: trackingDoc.staffName,
+          latitude: trackingDoc.latitude,
+          longitude: trackingDoc.longitude,
+          status: trackingDoc.status,
+          movementType: trackingDoc.movementType,
+          timestamp: trackingDoc.timestamp,
+        }),
+      );
+    }
     logTrackingWrite('task_store_saved', {
       _id: String(saved._id),
       taskId: String(task._id),
