@@ -2,8 +2,9 @@
 class AppConstants {
   /// General app API (attendance, geo, profile, …).
   //static const String baseUrl = 'http://192.168.1.3https://app.ektahr.com/api3:9001/api';
-  static const String baseUrl ='https://ehrms.askeva.net/api';
-  // 'http://192.168.1.33:9001/api';
+  static const String baseUrl ='https://ehrms.askeva.net/api';//'http://10.104.131.36:9001/api';//
+  //'https://app.ektahr.com/api';//
+  // 'http://19B2.168.1.33:9001/api';
   //'https://ehrms.askeva.net/api';
   //static const String baseUrl = 'https://ehrms.askeva.net/api';
   /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
@@ -23,6 +24,9 @@ class AppConstants {
   /// Prefs key: JWT for [webBaseUrl] when [baseUrl] is another server (set after web login sync).
   static const String interactionAccessTokenPrefsKey =
       'interaction_access_token';
+
+  /// Prefs key: long-lived refresh JWT for `POST /auth/refresh` (main API host).
+  static const String refreshTokenPrefsKey = 'refresh_token';
 
   /// REST base for `/interaction/*` and LMS routes on the same host as the web app.
   static String get interactionApiBaseUrl =>

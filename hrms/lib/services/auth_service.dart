@@ -160,6 +160,14 @@ class AuthService {
       if (accessToken != null) {
         await prefs.setString('token', accessToken);
       }
+      if (data != null) {
+        final rt = (data is Map) ? data['refreshToken']?.toString() : null;
+        if (rt != null && rt.trim().isNotEmpty) {
+          await prefs.setString(AppConstants.refreshTokenPrefsKey, rt.trim());
+        } else {
+          await prefs.remove(AppConstants.refreshTokenPrefsKey);
+        }
+      }
       dynamic userData;
       if (data != null && data['user'] != null) {
         userData = data['user'];
@@ -254,9 +262,8 @@ class AuthService {
       if (bodyStr.trim().startsWith('<')) {
         return {
           'success': false,
-          'message': code != null
-              ? 'Server error ($code). The backend server is not responding. Please try again later.'
-              : defaultMessage,
+          'message':
+              'Server error ($code). The backend server is not responding. Please try again later.',
         };
       }
       try {
@@ -330,6 +337,7 @@ class AuthService {
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
     await prefs.remove('token');
+    await prefs.remove(AppConstants.refreshTokenPrefsKey);
     await prefs.remove('user');
     await prefs.remove('staff');
     await prefs.remove('taskSettings');
@@ -397,6 +405,14 @@ class AuthService {
       final prefs = await SharedPreferences.getInstance();
       if (data != null && data['accessToken'] != null) {
         await prefs.setString('token', data['accessToken']);
+      }
+      if (data != null) {
+        final rt = data['refreshToken']?.toString();
+        if (rt != null && rt.trim().isNotEmpty) {
+          await prefs.setString(AppConstants.refreshTokenPrefsKey, rt.trim());
+        } else {
+          await prefs.remove(AppConstants.refreshTokenPrefsKey);
+        }
       }
       if (data != null && data['user'] != null) {
         await prefs.setString('user', jsonEncode(data['user']));
