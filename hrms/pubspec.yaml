@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -49,7 +51,7 @@ dependencies:
   background_location_tracker: ^1.6.1
   battery_plus: ^6.0.2
   google_fonts: ^6.1.0
-  intl: ^0.19.0 
+  intl: ^0.20.2
   image_picker: ^1.0.7
   camerawesome: ^2.5.0
   google_sign_in: ^6.2.2
@@ -78,6 +80,7 @@ dependencies:
   # 6.x pulls record_linux 1.x compatible with record_platform_interface (5.x was broken on Linux/desktop resolve).
   record: ^6.0.0
   just_audio: ^0.10.5
+  country_code_picker: ^3.4.1
 
 dev_dependencies:
   flutter_test:

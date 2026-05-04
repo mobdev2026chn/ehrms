@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/constants.dart';
 import '../../services/interaction_service.dart';
+import '../../utils/error_message_utils.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 
 class AnnouncementDetailScreen extends StatefulWidget {
@@ -429,10 +430,8 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Could not send message right now. Please try again shortly.',
-          ),
+        SnackBar(
+          content: Text(ErrorMessageUtils.toUserFriendlyMessage(e)),
         ),
       );
     } finally {

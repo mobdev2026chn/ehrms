@@ -147,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
               SizedBox(width: 16),
-              Text('Submitting attendance...'),
+              Text('submitting attendance please wait..'),
             ],
           ),
         ),
@@ -2793,6 +2793,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     /// inside submit — faster and avoids redundant network during face/API steps.
     bool? precomputedIsCheckedIn,
   }) async {
+    // Overlap today's attendance fetch with face detection + template/location.
+    final todayFuture = _attendanceService.getTodayAttendance(forceRefresh: true);
     final result = await FaceDetectionHelper.detectFromFile(file);
     if (!mounted) return;
     if (!result.valid) {
@@ -2844,19 +2846,15 @@ class _DashboardScreenState extends State<DashboardScreen>
           isError: true,
         );
       }
+      await todayFuture;
       return;
     }
 
-    final bool isCheckedIn;
-    if (precomputedIsCheckedIn != null) {
-      isCheckedIn = precomputedIsCheckedIn;
-    } else {
-      final todayRes = await _attendanceService.getTodayAttendance(
-        forceRefresh: true,
-      );
-      final todayData = todayRes['data'] as Map<String, dynamic>?;
-      isCheckedIn = _isAttendancePunchedIn(_extractAttendanceRecord(todayData));
-    }
+    final todayRes = await todayFuture;
+    final todayData = todayRes['data'] as Map<String, dynamic>?;
+    final bool isCheckedIn = precomputedIsCheckedIn != null
+        ? precomputedIsCheckedIn!
+        : _isAttendancePunchedIn(_extractAttendanceRecord(todayData));
 
     List<int> imageBytes = await file.readAsBytes();
     String base64Image = base64Encode(imageBytes);
@@ -2899,10 +2897,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!mounted) return;
     final lat = usePosition?.latitude ?? 0.0;
     final lng = usePosition?.longitude ?? 0.0;
-    final todayRes = await _attendanceService.getTodayAttendance(
-      forceRefresh: true,
-    );
-    final todayData = todayRes['data'] as Map<String, dynamic>?;
     final attendanceData =
         flattenTodayAttendancePayload(todayData) ??
         _extractAttendanceRecord(todayData) ??
@@ -2978,7 +2972,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     String? city,
     String? pincode,
 
-    /// When set, skips an extra GET /attendance/today inside submit.
+    /// When set, avoids deriving check-in state from [todayData] (still one GET for fines/template).
     bool? precomputedIsCheckedIn,
   }) async {
     // Use pre-fetched location if provided; otherwise fetch now (only when needed).
@@ -2987,6 +2981,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     String? useArea = area;
     String? useCity = city;
     String? usePincode = pincode;
+
+    // One GET /attendance/today overlaps template + optional location (avoids a
+    // second sequential fetch when precomputedIsCheckedIn was null).
+    final todayFuture = _attendanceService.getTodayAttendance(forceRefresh: true);
 
     final stored = await AttendanceTemplateStore.loadTemplateDetails();
     final template = stored != null && stored['template'] != null
@@ -3020,27 +3018,19 @@ class _DashboardScreenState extends State<DashboardScreen>
           isError: true,
         );
       }
+      await todayFuture;
       return;
     }
 
-    final bool isCheckedIn;
-    if (precomputedIsCheckedIn != null) {
-      isCheckedIn = precomputedIsCheckedIn;
-    } else {
-      final todayRes = await _attendanceService.getTodayAttendance(
-        forceRefresh: true,
-      );
-      final todayData = todayRes['data'] as Map<String, dynamic>?;
-      isCheckedIn = _isAttendancePunchedIn(_extractAttendanceRecord(todayData));
-    }
+    final todayRes = await todayFuture;
+    final todayData = todayRes['data'] as Map<String, dynamic>?;
+    final bool isCheckedIn = precomputedIsCheckedIn != null
+        ? precomputedIsCheckedIn!
+        : _isAttendancePunchedIn(_extractAttendanceRecord(todayData));
 
     final lat = usePosition?.latitude ?? 0.0;
     final lng = usePosition?.longitude ?? 0.0;
 
-    final todayRes = await _attendanceService.getTodayAttendance(
-      forceRefresh: true,
-    );
-    final todayData = todayRes['data'] as Map<String, dynamic>?;
     final attendanceData =
         flattenTodayAttendancePayload(todayData) ??
         _extractAttendanceRecord(todayData) ??

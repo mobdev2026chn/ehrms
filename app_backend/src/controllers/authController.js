@@ -176,6 +176,24 @@ const login = async (req, res) => {
                 staff = await Staff.findOne({ userId: user._id })
                     .populate('branchId')
                     .populate('businessId');
+                // Same email as User but staff.userId never set (imports / manual fixes) — link and continue.
+                if (!staff) {
+                    const staffByEmail = await Staff.findOne({ email: emailRegex })
+                        .select('+password')
+                        .populate('branchId')
+                        .populate('businessId');
+                    if (staffByEmail) {
+                        const linkedId = staffByEmail.userId ? String(staffByEmail.userId) : '';
+                        const okToLink = !linkedId || linkedId === String(user._id);
+                        if (okToLink) {
+                            if (!staffByEmail.userId) {
+                                staffByEmail.userId = user._id;
+                                await staffByEmail.save();
+                            }
+                            staff = staffByEmail;
+                        }
+                    }
+                }
             } else {
                 return res.status(401).json({ success: false, error: { message: 'Invalid credentials' } });
             }
@@ -214,8 +232,27 @@ const login = async (req, res) => {
                     // Staff has password, check it
                     const staffPasswordMatch = await staff.matchPassword(password);
                     if (staffPasswordMatch) {
-                        user = await User.findById(staff.userId);
+                        if (staff.userId) {
+                            user = await User.findById(staff.userId).select('+password');
+                        } else {
+                            user = null;
+                        }
                         user = await populateRoleIfPresent(user);
+                        // Staff rows may exist without userId (or with a stale id). JWT and
+                        // middleware expect a User — align with findOrCreateUserByEmail.
+                        if (!user) {
+                            user = await findOrCreateUserByEmail(staff.email || emailNorm);
+                            if (user) {
+                                const sid = staff._id;
+                                if (!staff.userId || String(staff.userId) !== String(user._id)) {
+                                    await Staff.updateOne({ _id: sid }, { $set: { userId: user._id } });
+                                }
+                                const staffFresh = await Staff.findById(sid)
+                                    .populate('branchId')
+                                    .populate('businessId');
+                                if (staffFresh) staff = staffFresh;
+                            }
+                        }
                     } else {
                         return res.status(401).json({ success: false, error: { message: 'Invalid credentials' } });
                     }

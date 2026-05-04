@@ -157,8 +157,14 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: () async {
-          await FcmService.handleNotificationTap(data);
-          if (context.mounted) Navigator.of(context).pop();
+          final navigated = await FcmService.handleNotificationTap(
+            data,
+            title: title,
+            body: body,
+          );
+          if (context.mounted && navigated) {
+            Navigator.of(context).pop();
+          }
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(

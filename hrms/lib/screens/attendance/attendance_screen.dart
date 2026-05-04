@@ -1561,14 +1561,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                             if (permissionLateMinutes != null &&
                                 permissionLateMinutes > 0)
                               _buildDayDetailRow(
-                                'Permission Late',
+                                'Permission Late Arrival',
                                 '${permissionLateMinutes.toInt()} mins',
                                 valueColor: Colors.deepOrange.shade700,
                               ),
                             if (permissionEarlyMinutes != null &&
                                 permissionEarlyMinutes > 0)
                               _buildDayDetailRow(
-                                'Permission Early',
+                                'Permission Early Exit',
                                 '${permissionEarlyMinutes.toInt()} mins',
                                 valueColor: Colors.deepOrange.shade700,
                               ),
@@ -4677,7 +4677,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     );
   }
 
-  /// Header bar: Left check-in icon | Center date | Right calendar icon
+  /// Header bar: centered month / date (history calendar view).
   Widget _buildAttendanceHeaderBar() {
     final colorScheme = Theme.of(context).colorScheme;
     final now = _showHistoryView ? _focusedDay : DateTime.now();
@@ -4685,33 +4685,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () {
-              final today = DateTime.now();
-              final todayNorm = DateTime(today.year, today.month, today.day);
-              setState(() {
-                _showHistoryView = true;
-                _selectedDay = todayNorm;
-                _focusedDay = todayNorm;
-              });
-              _fetchAttendanceStatus(date: todayNorm);
-              _fetchMonthData(todayNorm.year, todayNorm.month);
-            },
-            child: Container(
-              width: 44,
-              height: 44,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                Icons.login_rounded,
-                color: AppColors.primary,
-                size: 24,
-              ),
-            ),
-          ),
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -4737,7 +4710,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               ],
             ),
           ),
-          const SizedBox(width: 44, height: 44),
         ],
       ),
     );

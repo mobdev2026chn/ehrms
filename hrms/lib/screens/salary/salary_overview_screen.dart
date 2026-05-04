@@ -1861,7 +1861,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             IconButton(
               tooltip: 'Salary structure',
               icon: Icon(
-                Icons.account_balance_wallet_outlined,
+                Icons.account_tree_outlined,
                 color: Theme.of(context).colorScheme.primary,
               ),
               onPressed: () {

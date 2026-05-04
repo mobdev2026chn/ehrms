@@ -1,23 +1,35 @@
-// Cron: long-running process. Every 5 seconds: FCM for approved/rejected (leave, expense, payslip, loan, attendance).
-// Every run: performance deadline reminders, deactivated staff FCM cleanup.
-// Attendance auto-mark is handled by the web; attendance approval/rejection notifications are sent here.
-// Run: npm run cron. Only sends to staff with fcmToken. EXCLUDES LMS.
+// Cron (this script): birthday + work-anniversary wish FCM only, once per day at 6:00 AM (CELEBRATION_CRON_TZ, 24h clock — override with CELEBRATION_CRON_*).
+// Other FCM — run your separate cron; legacy kept commented below.
+// Run: npm run cron (process stays idle between daily runs; no polling loop).
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const connectDB = require('../config/db');
 const fcmService = require('../services/fcmService');
-const Leave = require('../models/Leave');
+// const Leave = require('../models/Leave');
 const Staff = require('../models/Staff');
-const Expense = require('../models/Expense');
-const Reimbursement = require('../models/Reimbursement');
-const PayslipRequest = require('../models/PayslipRequest');
-const Loan = require('../models/Loan');
-const Attendance = require('../models/Attendance');
-const PerformanceReview = require('../models/PerformanceReview');
-const ReviewCycle = require('../models/ReviewCycle');
-const User = require('../models/User');
+// const Expense = require('../models/Expense');
+// const Reimbursement = require('../models/Reimbursement');
+// const PayslipRequest = require('../models/PayslipRequest');
+// const Loan = require('../models/Loan');
+// const Attendance = require('../models/Attendance');
+// const PerformanceReview = require('../models/PerformanceReview');
+// const ReviewCycle = require('../models/ReviewCycle');
+// const User = require('../models/User');
+const Company = require('../models/Company');
+const { formatCalendarDayInTimezone } = require('../utils/dateUtils');
+const {
+    getCelebrationWishFlags,
+    getBusinessTimezone,
+    getHourMinuteInTimezone,
+} = require('../utils/celebrationWishHelper');
 
-const INTERVAL_MS = 5 * 1000;
+/** IANA TZ for the single daily clock (when this process fires the job). Default India. */
+const CELEBRATION_CRON_TZ = (process.env.CELEBRATION_CRON_TZ || 'Asia/Kolkata').trim();
+/** 24-hour clock: 6 = 6:00 AM, 18 = 6:00 PM */
+const CELEBRATION_CRON_HOUR = Math.min(23, Math.max(0, parseInt(process.env.CELEBRATION_CRON_HOUR || '6', 10)));
+const CELEBRATION_CRON_MINUTE = Math.min(59, Math.max(0, parseInt(process.env.CELEBRATION_CRON_MINUTE || '0', 10)));
+
+/* OTHER FCM CRON — disabled here (separate worker). Remove this wrapper to restore.
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 async function runPerformanceDeadlineReminders() {
@@ -158,7 +170,7 @@ async function runOnce() {
             { status: { $regex: /^deactivated$/i }, fcmToken: { $exists: true, $ne: null } },
             { $unset: { fcmToken: 1 } }
         );
-        if (deactivatedResult.modifiedCount > 0) { /* cleared FCM token for deactivated staff */ }
+        if (deactivatedResult.modifiedCount > 0) { void 0; }
 
         let totalSent = 0;
 
@@ -233,7 +245,7 @@ async function runOnce() {
             reimbursementApproved.length + reimbursementRejected.length +
             payslipApproved.length + payslipRejected.length + loanApproved.length + loanRejected.length +
             attApproved.length + attRejected.length + attStatusChange.length;
-        if (pendingCount > 0) { /* pending FCM */ }
+        if (pendingCount > 0) { void 0; }
 
         for (const leave of pendingApproved) {
             if (await sendToStaff(leave.employeeId, fcmService.sendLeaveApprovedNotification, leave, (id) =>
@@ -337,18 +349,118 @@ async function runOnce() {
         const perfSent = await runPerformanceDeadlineReminders();
         totalSent += perfSent;
 
-        if (totalSent > 0) { /* FCM sent */ }
+        const celebrationSent = await runCelebrationWishNotificationsThrottled();
+        totalSent += celebrationSent;
+
+        if (totalSent > 0) { void 0; }
     } catch (e) {
         console.error('[Cron] Error:', e.message);
     }
 }
+*/
+
+/** Milliseconds until the next strictly-future CELEBRATION_CRON_HOUR:MINUTE in CELEBRATION_CRON_TZ (step 1s, max ~49h). */
+function msUntilNextCronFire(fromMs = Date.now()) {
+    const start = fromMs;
+    for (let delta = 1000; delta < 49 * 60 * 60 * 1000; delta += 1000) {
+        const t = start + delta;
+        const hm = getHourMinuteInTimezone(new Date(t), CELEBRATION_CRON_TZ);
+        if (hm.hour === CELEBRATION_CRON_HOUR && hm.minute === CELEBRATION_CRON_MINUTE) return delta;
+    }
+    return 24 * 60 * 60 * 1000;
+}
+
+function scheduleCelebrationCron() {
+    const delay = msUntilNextCronFire();
+    console.log(
+        '[Cron] Next celebration wishes at',
+        `${String(CELEBRATION_CRON_HOUR).padStart(2, '0')}:${String(CELEBRATION_CRON_MINUTE).padStart(2, '0')}`,
+        CELEBRATION_CRON_TZ,
+        '(in ~' + Math.round(delay / 60000) + ' min)',
+    );
+    setTimeout(async () => {
+        try {
+            await runCelebrationWishNotifications();
+        } catch (e) {
+            console.error('[Cron] celebration wishes:', e.message);
+        }
+        scheduleCelebrationCron();
+    }, delay);
+}
+
+/** Birthday / work anniversary wish push once per calendar day (company TZ). FCM only to that staff row’s fcmToken (the person celebrating). */
+async function runCelebrationWishNotifications() {
+    const now = new Date();
+    let sent = 0;
+    try {
+        const staffList = await Staff.find({
+            status: { $regex: /^active$/i },
+            businessId: { $exists: true, $ne: null },
+            fcmToken: { $exists: true, $ne: null, $nin: [null, ''] },
+            $or: [
+                { dob: { $exists: true, $ne: null } },
+                { joiningDate: { $exists: true, $ne: null } },
+            ],
+        })
+            .select('dob joiningDate businessId fcmToken fcmBirthdayWishSentDateKey fcmAnniversaryWishSentDateKey')
+            .lean();
+
+        const rawBiz = staffList.map((s) => s.businessId).filter(Boolean);
+        const uniqueBizStr = [...new Set(rawBiz.map((id) => String(id)))];
+        const tzByBiz = new Map();
+        if (uniqueBizStr.length > 0) {
+            const companies = await Company.find({ _id: { $in: uniqueBizStr } })
+                .select('settings.business.timezone settings.attendance.timezone timezone')
+                .lean();
+            for (const c of companies) {
+                tzByBiz.set(String(c._id), getBusinessTimezone(c));
+            }
+        }
+
+        for (const s of staffList) {
+            const token = s.fcmToken && String(s.fcmToken).trim();
+            if (!token) continue;
+            const bizId = s.businessId ? String(s.businessId) : '';
+            if (!bizId) continue;
+            const tz = tzByBiz.get(bizId) || 'Asia/Kolkata';
+
+            const todayKey = formatCalendarDayInTimezone(now, tz);
+            const flags = getCelebrationWishFlags(s, now, tz);
+
+            if (flags.isBirthdayToday && s.fcmBirthdayWishSentDateKey !== todayKey) {
+                const res = await fcmService.sendCelebrationWishNotification(s._id, 'birthday', todayKey);
+                if (res.success) {
+                    await Staff.findByIdAndUpdate(s._id, { fcmBirthdayWishSentDateKey: todayKey });
+                    sent++;
+                } else if (res.invalidToken) {
+                    await Staff.findByIdAndUpdate(s._id, { $unset: { fcmToken: 1 } });
+                }
+            }
+            if (flags.isWorkAnniversaryToday && s.fcmAnniversaryWishSentDateKey !== todayKey) {
+                const res = await fcmService.sendCelebrationWishNotification(s._id, 'anniversary', todayKey);
+                if (res.success) {
+                    await Staff.findByIdAndUpdate(s._id, { fcmAnniversaryWishSentDateKey: todayKey });
+                    sent++;
+                } else if (res.invalidToken) {
+                    await Staff.findByIdAndUpdate(s._id, { $unset: { fcmToken: 1 } });
+                }
+            }
+        }
+    } catch (e) {
+        console.error('[Cron] celebration wishes:', e.message);
+    }
+    return sent;
+}
 
 async function start() {
-    console.log('[Cron] Started.');
+    console.log(
+        '[Cron] Started — daily celebration wishes at',
+        `${String(CELEBRATION_CRON_HOUR).padStart(2, '0')}:${String(CELEBRATION_CRON_MINUTE).padStart(2, '0')}`,
+        CELEBRATION_CRON_TZ,
+    );
     await connectDB();
     fcmService.init();
-    await runOnce();
-    setInterval(runOnce, INTERVAL_MS);
+    scheduleCelebrationCron();
 }
 
 start().catch((e) => {

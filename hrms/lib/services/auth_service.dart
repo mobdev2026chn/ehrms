@@ -226,6 +226,7 @@ class AuthService {
       _authLog(
         'login DioException status=${e.response?.statusCode} path=${e.requestOptions.path}',
       );
+      _authLog('login error body=${e.response?.data}');
       return _handleDioError(e, 'Login failed', (code, body) {
         if (code != null && code >= 500) {
           return 'Server error ($code). The backend server is not responding. Please try again later.';

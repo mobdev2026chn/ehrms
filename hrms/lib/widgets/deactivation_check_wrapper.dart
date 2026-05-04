@@ -91,13 +91,19 @@ class _DeactivationCheckWrapperState extends State<DeactivationCheckWrapper> wit
       // Global session-expiry interceptor clears token immediately on 401/jwt-expired.
       // If this app runtime had a logged-in session, force back to login.
       if (_hadLoggedInSession && mounted) {
-        _timer?.cancel();
-        _timer = null;
-        context.read<AuthBloc>().add(AuthLogoutRequested());
-        widget.navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (_) => false,
-        );
+        // Drawer (or other) logout may already have cleared the stack to [LoginScreen].
+        // A second pushAndRemoveUntil remounts Login and replays entrance animations.
+        context.read<AuthBloc>().add(const AuthLogoutRequested());
+        final nav = widget.navigatorKey.currentState;
+        if (nav != null && nav.canPop()) {
+          _timer?.cancel();
+          _timer = null;
+          nav.pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (_) => false,
+          );
+        }
+        _hadLoggedInSession = false;
       }
       return;
     }

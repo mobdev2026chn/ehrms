@@ -22,6 +22,7 @@ import '../../services/attendance_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/salary_service.dart';
+import '../../services/interaction_service.dart';
 import '../salary/staff_salary_structure_screen.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../utils/salary_fine_summary.dart';
@@ -209,6 +210,39 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
 
     return true;
+  }
+
+  /// Geo [getDashboardData] `todayAnnouncements` can be empty while web HRMS
+  /// `/interaction/announcements` has items — same source as [AnnouncementsScreen].
+  Future<List<dynamic>> _tryLoadAnnouncementsFromInteractionApi() async {
+    try {
+      final res = await InteractionService.instance.getAnnouncements();
+      if (res['success'] != true) return [];
+      final raw = res['data'] is List
+          ? res['data']
+          : res['announcements'];
+      if (raw is! List) return [];
+      final out = <dynamic>[];
+      for (final e in raw) {
+        if (e is! Map) continue;
+        final m = Map<String, dynamic>.from(e);
+        if (!_isDashboardAnnouncementNotExpired(m)) continue;
+        out.add(m);
+      }
+      if (kDebugMode) {
+        debugPrint(
+          '[DashboardLoad] interaction announcements fallback count=${out.length}',
+        );
+      }
+      return out;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint(
+          '[DashboardLoad] interaction announcements fallback error: $e',
+        );
+      }
+      return [];
+    }
   }
 
   Future<void> _openLiveTracking() async {
@@ -412,17 +446,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           final loansList = activeLoansList is List
               ? activeLoansList
               : <dynamic>[];
+          var announcementsList = data['todayAnnouncements'] is List
+              ? (data['todayAnnouncements'] as List)
+                    .where(_isDashboardAnnouncementNotExpired)
+                    .toList()
+              : <dynamic>[];
+          if (announcementsList.isEmpty) {
+            announcementsList =
+                await _tryLoadAnnouncementsFromInteractionApi();
+          }
+          if (!mounted) return;
           setState(() {
             _stats = stats;
             _recentLeaves = data['recentLeaves'] ?? [];
             _activeLoans = loansList;
             _activeLoansCount = loansList.length;
             _todayAttendance = liveTodayAttendance ?? stats?['attendanceToday'];
-            _todayAnnouncements = data['todayAnnouncements'] is List
-                ? (data['todayAnnouncements'] as List)
-                      .where(_isDashboardAnnouncementNotExpired)
-                      .toList()
-                : [];
+            _todayAnnouncements = announcementsList;
             _todayCelebrations = data['todayCelebrations'] is List
                 ? data['todayCelebrations'] as List
                 : [];
@@ -1781,12 +1821,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   Widget _buildTodayAnnouncementsCard() {
+    void openAnnouncements() {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const AnnouncementsScreen(),
+        ),
+      );
+    }
+
     return Container(
       width: double.infinity,
       constraints: const BoxConstraints(minWidth: 0),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        color: const Color(0xFF2D2D2D),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.2),
@@ -1795,55 +1842,52 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ),
         ],
       ),
-      child: ClipRRect(
+      child: Material(
+        color: const Color(0xFF2D2D2D),
         borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.campaign, color: AppColors.primary, size: 18),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Announcements',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (_todayCelebrations.isNotEmpty)
-                    Icon(Icons.celebration, color: AppColors.primary, size: 14),
-                ],
-              ),
-              const SizedBox(height: 8),
-              if (_todayAnnouncements.isEmpty)
-                Text(
-                  'No announcements',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-                )
-              else
-                ..._todayAnnouncements
-                    .take(3)
-                    .map((a) => _buildDashboardAnnouncementTile(a, 0)),
-              if (_todayAnnouncements.length > 3)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: GestureDetector(
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const AnnouncementsScreen(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: openAnnouncements,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.campaign, color: AppColors.primary, size: 18),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Announcements',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
                         ),
-                      );
-                    },
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (_todayCelebrations.isNotEmpty)
+                      Icon(Icons.celebration, color: AppColors.primary, size: 14),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (_todayAnnouncements.isEmpty)
+                  Text(
+                    'No announcements',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  )
+                else
+                  ..._todayAnnouncements
+                      .take(3)
+                      .map((a) => _buildDashboardAnnouncementTile(a, 0)),
+                if (_todayAnnouncements.length > 3)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       'View all',
                       style: TextStyle(
@@ -1853,8 +1897,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -2115,7 +2159,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     if (!_isCandidate) {
       buttons.add(
         _buildQuickActionButton(
-          icon: Icons.account_balance_wallet_outlined,
+          icon: Icons.account_tree_outlined,
           label: 'Salary Structure',
           color: accent,
           onTap: () {

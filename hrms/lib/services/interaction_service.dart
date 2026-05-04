@@ -331,39 +331,86 @@ class InteractionService {
   }
 
   /// Web-style announcement engagement message send.
-  /// Uses same route as web: POST /interaction/announcements/:id/reply
+  /// Tries web-compatible POST paths and body shapes; does not throw — returns `success: false` + `message`.
   Future<Map<String, dynamic>> sendAnnouncementEngagementMessage(
     String announcementId, {
     required String message,
   }) async {
-    const pathSuffix = '/reply';
-    final payloads = <Map<String, dynamic>>[
-      {'replyText': message},
-      {'message': message},
-      {'reply': message},
+    final id = announcementId.trim();
+    if (id.isEmpty) {
+      return {'success': false, 'message': 'Missing announcement id.'};
+    }
+    final attempts = <(String, Map<String, dynamic>)>[
+      ('/interaction/announcements/$id/reply', {'replyText': message}),
+      ('/interaction/announcements/$id/reply', {'message': message}),
+      ('/interaction/announcements/$id/engagement', {'replyText': message}),
+      ('/interaction/announcements/$id/engagement', {'message': message}),
+      ('/interaction/announcements/$id/engagement', {'text': message}),
     ];
     DioException? lastError;
-    for (final payload in payloads) {
+    for (final attempt in attempts) {
+      final path = attempt.$1;
+      final body = attempt.$2;
       try {
         final res = await _client().post<Map<String, dynamic>>(
-          '/interaction/announcements/$announcementId$pathSuffix',
-          data: payload,
+          path,
+          data: body,
         );
-        return res.data ?? {'success': true};
+        final raw = res.data;
+        if (raw is Map) {
+          final map = Map<String, dynamic>.from(raw as Map);
+          if (map['success'] == false) {
+            final msg = map['message']?.toString().trim();
+            return {
+              'success': false,
+              'message': (msg != null && msg.isNotEmpty)
+                  ? msg
+                  : 'Unable to send this message.',
+            };
+          }
+          return map;
+        }
+        return {'success': true};
       } on DioException catch (e) {
-        final code = e.response?.statusCode ?? 0;
         lastError = e;
-        if (code == 400 || code == 422) continue;
-        rethrow;
+        final code = e.response?.statusCode ?? 0;
+        if (code == 400 || code == 422 || code == 404 || code == 405) {
+          continue;
+        }
+        if (code == 401 || code == 403) {
+          final main = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
+          final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
+          if (AppConstants.interactionUseWebHost && main != web) {
+            return {
+              'success': false,
+              'message':
+                  'Announcement messages use the main HRMS server. Log out and log in again so your session syncs, then try sending.',
+            };
+          }
+          return {
+            'success': false,
+            'message': ErrorMessageUtils.messageFromDioException(
+              e,
+              fallback: 'Unable to send engagement message',
+            ),
+          };
+        }
+        return {
+          'success': false,
+          'message': ErrorMessageUtils.messageFromDioException(
+            e,
+            fallback: 'Unable to send engagement message',
+          ),
+        };
       }
     }
     if (lastError != null) {
       final code = lastError.response?.statusCode ?? 0;
-      if (code == 404) {
+      if (code == 404 || code == 405) {
         return {
           'success': false,
           'message':
-              'Engagement send API is not available on this server route yet. Please try again later.',
+              'Sending replies is not available on this HRMS server version. Ask your admin or try again later.',
         };
       }
       return {

@@ -102,6 +102,10 @@ const staffSchema = new mongoose.Schema({
 
     // FCM token for push notifications (set by app via POST /api/notifications/fcm-token)
     fcmToken: { type: String },
+    /** yyyy-MM-dd (company TZ) — last day cron sent daily birthday wish FCM */
+    fcmBirthdayWishSentDateKey: { type: String, default: null },
+    /** yyyy-MM-dd (company TZ) — last day cron sent daily work-anniversary wish FCM */
+    fcmAnniversaryWishSentDateKey: { type: String, default: null },
 
     // Desktop monitoring agent status - must match Device.status in monitoringdevices
     monitoringStatus: {

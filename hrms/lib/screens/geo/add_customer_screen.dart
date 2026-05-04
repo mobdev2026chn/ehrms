@@ -1,3 +1,4 @@
+import 'package:country_code_picker/country_code_picker.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:hrms/config/app_colors.dart';
@@ -7,12 +8,6 @@ import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-
-class _DialOption {
-  final String title;
-  final String dialDigits;
-  const _DialOption(this.title, this.dialDigits);
-}
 
 class AddCustomerScreen extends StatefulWidget {
   const AddCustomerScreen({super.key});
@@ -32,14 +27,11 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   final _pincodeController = TextEditingController();
   bool _submitting = false;
 
-  static const List<_DialOption> _dialOptions = [
-    _DialOption('IN +91', '91'),
-    _DialOption('US +1', '1'),
-    _DialOption('AE +971', '971'),
-    _DialOption('GB +44', '44'),
-  ];
+  /// E.164 digits only (no leading +), for API `countryCode`.
+  String _dialDigits = '91';
 
-  _DialOption _selectedDial = _dialOptions.first;
+  static String _digitsOnlyDial(String dial) =>
+      dial.replaceAll(RegExp(r'\D'), '');
 
   @override
   void dispose() {
@@ -78,7 +70,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   String? _validateMobile(String? v) {
     if (v == null || v.trim().isEmpty) return 'Required';
     final digits = v.replaceAll(RegExp(r'\D'), '');
-    if (_selectedDial.dialDigits == '91') {
+    if (_dialDigits == '91') {
       if (digits.length != 10) return 'Enter 10-digit mobile number';
     } else if (digits.length < 6) {
       return 'Enter a valid number';
@@ -100,7 +92,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
         address: _addressController.text.trim(),
         city: _cityController.text.trim(),
         pincode: _pincodeController.text.trim(),
-        countryCode: _selectedDial.dialDigits,
+        countryCode: _dialDigits,
       );
 
       await CustomerService().createCustomer(customer);
@@ -176,16 +168,36 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         SizedBox(
-                          width: 132,
-                          child: DropdownButtonFormField<_DialOption>(
-                            initialValue: _selectedDial,
-                            isExpanded: true,
-                            decoration: InputDecoration(
-                              labelText: 'Code',
-                              labelStyle: const TextStyle(
-                                color: Colors.black,
-                                fontSize: 13,
-                              ),
+                          width: 148,
+                          child: IgnorePointer(
+                            ignoring: _submitting,
+                            child: CountryCodePicker(
+                            initialSelection: 'IN',
+                            favorite: const ['IN', 'US', 'AE', 'GB'],
+                            pickerStyle: PickerStyle.bottomSheet,
+                            showFlag: false,
+                            showFlagDialog: true,
+                            showDropDownButton: true,
+                            enabled: !_submitting,
+                            hideSearch: false,
+                            onInit: (cc) {
+                              final dial = cc?.dialCode;
+                              if (dial != null) {
+                                _dialDigits = _digitsOnlyDial(dial);
+                              }
+                            },
+                            onChanged: (cc) {
+                              final dial = cc.dialCode;
+                              if (dial == null) return;
+                              setState(() {
+                                _dialDigits = _digitsOnlyDial(dial);
+                              });
+                            },
+                            searchDecoration: InputDecoration(
+                              labelText: 'Search',
+                              hintText: 'Country name, code, or +dial',
+                              floatingLabelBehavior: FloatingLabelBehavior.auto,
+                              isDense: true,
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
                                 borderSide: BorderSide(color: Colors.grey.shade300),
@@ -201,30 +213,56 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                                   width: 2,
                                 ),
                               ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 12,
-                              ),
                             ),
-                            items: _dialOptions
-                                .map(
-                                  (o) => DropdownMenuItem(
-                                    value: o,
-                                    child: Text(
-                                      o.title,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 13),
+                            builder: (cc) {
+                              final code = cc?.code;
+                              final dial = cc?.dialCode;
+                              final label = (code != null && dial != null)
+                                  ? '$code $dial'
+                                  : 'Code';
+                              return InputDecorator(
+                                decoration: InputDecoration(
+                                  labelText: 'Code',
+                                  labelStyle: const TextStyle(
+                                    color: Colors.black,
+                                    fontSize: 13,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide(color: Colors.grey.shade300),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide(color: Colors.grey.shade300),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide(
+                                      color: AppColors.primary,
+                                      width: 2,
                                     ),
                                   ),
-                                )
-                                .toList(),
-                            onChanged: _submitting
-                                ? null
-                                : (v) {
-                                    if (v != null) {
-                                      setState(() => _selectedDial = v);
-                                    }
-                                  },
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 12,
+                                  ),
+                                  suffixIcon: const Icon(
+                                    Icons.arrow_drop_down,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    label,
+                                    style: const TextStyle(fontSize: 13),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -234,7 +272,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                             decoration: _inputDecoration(
                               'Customer Number (mobile) *',
                               Icons.phone_rounded,
-                              hint: _selectedDial.dialDigits == '91'
+                              hint: _dialDigits == '91'
                                   ? '10 digits'
                                   : null,
                             ),
