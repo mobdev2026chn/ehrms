@@ -2,7 +2,7 @@
 class AppConstants {
   /// General app API (attendance, geo, profile, …).
   //static const String baseUrl = 'http://192.168.1.3https://app.ektahr.com/api3:9001/api';
-  static const String baseUrl ='http://10.164.138.36:9001/api';//'https://ehrms.askeva.net/api';//
+  static const String baseUrl ='https://ehrms.askeva.net/api';//
   //'https://app.ektahr.com/api';//
   // 'http://19B2.168.1.33:9001/api';
   //'https://ehrms.askeva.net/api';
