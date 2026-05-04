@@ -75,8 +75,7 @@ async function sendToToken(token, { title, body, data = {}, ...options } = {}) {
             data: dataObj,
             android: {
                 priority: 'high',
-                // Required so data-only messages are delivered when app is in background or killed.
-                ...(androidTag ? { notification: { tag: androidTag } } : {}),
+                // Data-only: do not set android.notification (even { tag }) — on some devices it shows an empty tray notification; tag is applied in Flutter local notification.
             },
             // Optional: help delivery when app is in background (iOS).
             apns: {
@@ -375,6 +374,44 @@ const PERFORMANCE_REVIEW_STATUS_LABELS = {
     'cancelled': 'Cancelled',
 };
 
+const CELEBRATION_BIRTHDAY_TITLE = 'Happy Birthday';
+const CELEBRATION_BIRTHDAY_BODY = 'Happy Birthday Wishing you joy and success!!';
+const CELEBRATION_ANNIVERSARY_TITLE = 'Work Anniversary';
+const CELEBRATION_ANNIVERSARY_BODY = 'Cheers to another year of excellence!';
+
+/**
+ * Morning celebration wish (cron at 9:00+ in company TZ). Data type matches app reaction handling.
+ * @param {string} employeeId — staff _id
+ * @param {'birthday'|'anniversary'} kind
+ * @param {string} calendarDayKey — yyyy-MM-dd for androidTag dedupe
+ */
+async function sendCelebrationWishNotification(employeeId, kind, calendarDayKey) {
+    const Staff = require('../models/Staff');
+    const staff = await Staff.findById(employeeId).select('fcmToken _id').lean();
+    if (!staff) return { success: false, error: 'Staff not found' };
+    if (!staff.fcmToken || typeof staff.fcmToken !== 'string' || !staff.fcmToken.trim()) {
+        return { success: false, error: 'No FCM token for employee' };
+    }
+    const isBirthday = kind === 'birthday';
+    const title = isBirthday ? CELEBRATION_BIRTHDAY_TITLE : CELEBRATION_ANNIVERSARY_TITLE;
+    const body = isBirthday ? CELEBRATION_BIRTHDAY_BODY : CELEBRATION_ANNIVERSARY_BODY;
+    const type = isBirthday ? 'birthday' : 'anniversary';
+    const staffIdStr = String(employeeId);
+    const dayKey = String(calendarDayKey || '').trim() || 'unknown';
+    const androidTag = `celebration_${type}_${staffIdStr}_${dayKey}`;
+    return sendToToken(staff.fcmToken.trim(), {
+        title,
+        body,
+        data: {
+            module: 'celebration',
+            type,
+            celebrationWish: '1',
+            staffId: staffIdStr,
+        },
+        androidTag,
+    });
+}
+
 async function sendPerformanceReviewStatusChangeNotification(reviewDoc, staff = null) {
     const employeeId = reviewDoc.employeeId && reviewDoc.employeeId._id ? reviewDoc.employeeId._id : reviewDoc.employeeId;
     if (!employeeId) return { success: false, error: 'No employeeId' };
@@ -409,5 +446,6 @@ module.exports = {
     sendAttendanceStatusChangeNotification,
     sendPerformanceDeadlineNotification,
     sendPerformanceReviewStatusChangeNotification,
+    sendCelebrationWishNotification,
     sendNotification,
 };

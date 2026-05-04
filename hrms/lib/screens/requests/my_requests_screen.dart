@@ -1068,6 +1068,15 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary, width: 2),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -1087,7 +1096,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
+                          border: Border.all(color: AppColors.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1120,7 +1129,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
+                          border: Border.all(color: AppColors.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
@@ -1860,9 +1869,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
     'All Status',
     'Pending',
     'Approved',
-    'Active',
     'Rejected',
-    'Closed',
   ];
 
   Timer? _debounce;
@@ -2255,6 +2262,15 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary, width: 2),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -2274,7 +2290,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
+                          border: Border.all(color: AppColors.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -2307,7 +2323,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
+                          border: Border.all(color: AppColors.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
@@ -3249,6 +3265,15 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary, width: 2),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -3263,7 +3288,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
+                          border: Border.all(color: AppColors.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -3297,7 +3322,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
+                          border: Border.all(color: AppColors.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
@@ -4009,7 +4034,11 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
     final quota = (_balance?['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
     final consumed = (_balance?['consumedMinutes'] as num?)?.toDouble() ?? 0;
     final remain = (_balance?['remainingMinutes'] as num?)?.toDouble() ?? 0;
-    final hours = (double v) => (v / 60).toStringAsFixed(2);
+    String hoursAndMinutes(double minutes) {
+      final normalized = minutes < 0 ? 0 : minutes;
+      final hrs = (normalized / 60).toStringAsFixed(2);
+      return '$hrs h\n${normalized.toInt()} min';
+    }
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -4048,11 +4077,11 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
           const SizedBox(height: 8),
           Row(
             children: [
-              _balanceTile('Quota', '${hours(quota)} h'),
+              _balanceTile('Quota', hoursAndMinutes(quota)),
               const SizedBox(width: 8),
-              _balanceTile('Used', '${hours(consumed)} h'),
+              _balanceTile('Consumed', hoursAndMinutes(consumed)),
               const SizedBox(width: 8),
-              _balanceTile('Left', '${hours(remain)} h'),
+              _balanceTile('Remaining', hoursAndMinutes(remain)),
             ],
           ),
           const SizedBox(height: 12),
@@ -4181,8 +4210,11 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
       case 'quota':
         icon = Icons.inventory_2_outlined;
         break;
-      case 'used':
+      case 'consumed':
         icon = Icons.timelapse_outlined;
+        break;
+      case 'remaining':
+        icon = Icons.check_circle_outline;
         break;
       default:
         icon = Icons.check_circle_outline;
@@ -4198,22 +4230,28 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, size: 18, color: AppColors.primary),
-            const SizedBox(height: 6),
-            Text(
-              title,
-              style: TextStyle(
-                color: AppColors.primary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
+            Row(
+              children: [
+                Icon(icon, size: 14, color: AppColors.primary),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      color: AppColors.primary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(
               value,
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 16,
+                fontSize: 14,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -4239,11 +4277,54 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   final RequestService _requestService = RequestService();
   DateTime _date = DateTime.now();
   String _type = 'both';
-  final TextEditingController _minutesController = TextEditingController(
-    text: '30',
-  );
+  final TextEditingController _minutesController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
   bool _isSubmitting = false;
+
+  DateTime? _permissionDateOnly(dynamic value) {
+    if (value == null) return null;
+    try {
+      final parsed = DateTime.parse(value.toString()).toLocal();
+      return DateTime(parsed.year, parsed.month, parsed.day);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _isActivePermissionStatus(dynamic statusValue) {
+    final status = (statusValue ?? '').toString().trim().toLowerCase();
+    if (status.isEmpty) return true;
+    return status != 'rejected' &&
+        status != 'cancelled' &&
+        status != 'canceled';
+  }
+
+  Future<bool> _hasExistingPermissionForDate(DateTime date) async {
+    final target = DateTime(date.year, date.month, date.day);
+    final result = await _requestService.getPermissionRequests(
+      month: target.month,
+      year: target.year,
+    );
+    if (result['success'] != true) return false;
+
+    final data = result['data'];
+    final List<dynamic> permissions = data is Map
+        ? (data['permissions'] as List? ?? <dynamic>[])
+        : (data is List ? data : <dynamic>[]);
+
+    for (final raw in permissions) {
+      if (raw is! Map) continue;
+      final req = raw is Map<String, dynamic>
+          ? raw
+          : Map<String, dynamic>.from(raw);
+      if (!_isActivePermissionStatus(req['status'])) continue;
+      final reqDate = _permissionDateOnly(req['date']);
+      if (reqDate == null) continue;
+      if (reqDate == target) return true;
+    }
+
+    return false;
+  }
 
   @override
   void dispose() {
@@ -4279,6 +4360,17 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     }
     if (reason.isEmpty) {
       SnackBarUtils.showSnackBar(context, 'Reason is required', isError: true);
+      return;
+    }
+
+    final alreadyExists = await _hasExistingPermissionForDate(_date);
+    if (!mounted) return;
+    if (alreadyExists) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Permission request already exists for this date',
+        isError: true,
+      );
       return;
     }
 
@@ -5317,6 +5409,15 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppColors.primary, width: 2),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -5336,7 +5437,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
+                          border: Border.all(color: AppColors.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -5369,7 +5470,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
+                          border: Border.all(color: AppColors.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(

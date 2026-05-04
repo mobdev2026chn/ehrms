@@ -56,6 +56,29 @@ class ErrorMessageUtils {
       if (backendMsg != null && !_isTechnical(backendMsg)) {
         return backendMsg;
       }
+      if (code == null) {
+        // No HTTP response reached app (DNS/socket/timeout/TLS/cancel).
+        switch (error.type) {
+          case DioExceptionType.connectionTimeout:
+          case DioExceptionType.sendTimeout:
+          case DioExceptionType.receiveTimeout:
+            return 'Request timed out. Please check your internet and try again.';
+          case DioExceptionType.connectionError:
+            return 'Unable to reach server. Please check your internet or server status.';
+          case DioExceptionType.badCertificate:
+            return 'Secure connection failed. Please try again later.';
+          case DioExceptionType.cancel:
+            return 'Request cancelled.';
+          default:
+            final lower = (error.message ?? '').toLowerCase();
+            if (lower.contains('failed host lookup') ||
+                lower.contains('name resolution') ||
+                lower.contains('connection refused')) {
+              return 'Unable to reach server. Please check your internet or server status.';
+            }
+            return _genericMessage;
+        }
+      }
       if (code != null && code >= 500) {
         return 'Server error. Please try again later.';
       }
@@ -119,10 +142,36 @@ class ErrorMessageUtils {
     DioException e, {
     String fallback = 'Request failed',
   }) {
-    if (e.response?.statusCode == 429) {
+    final code = e.response?.statusCode;
+    if (code == 429) {
       return 'Too many requests. Please wait a moment.';
     }
-    return messageFromResponseData(e.response?.data) ?? fallback;
+    if (code == 401) {
+      return 'Session expired. Please log in again.';
+    }
+    if (code != null && code >= 500) {
+      return 'Server error. Please try again later.';
+    }
+    final fromBody = messageFromResponseData(e.response?.data);
+    if (fromBody != null && fromBody.trim().isNotEmpty) return fromBody;
+
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return 'Request timed out. Please check your internet and try again.';
+      case DioExceptionType.connectionError:
+        return 'Connection error. Please check your internet and try again.';
+      case DioExceptionType.badCertificate:
+        return 'Secure connection failed. Please try again later.';
+      case DioExceptionType.cancel:
+        return 'Request cancelled.';
+      default:
+        break;
+    }
+    return fallback == 'Request failed'
+        ? 'Something went wrong. Please try again.'
+        : fallback;
   }
 
   /// True if string looks like a technical error – don't show to user.

@@ -108,6 +108,390 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     }
   }
 
+  bool _canShiftCalendarMonth(int deltaMonths) {
+    final next = DateTime(
+      _focusedDay.year,
+      _focusedDay.month + deltaMonths,
+      1,
+    );
+    final minBound = DateTime(_years.first, 1, 1);
+    final maxBound = DateTime(_years.last, 12, 1);
+    return !next.isBefore(minBound) && !next.isAfter(maxBound);
+  }
+
+  void _goToCalendarMonth(DateTime monthStart) {
+    final y = monthStart.year;
+    final m = monthStart.month;
+    if (y != _selectedYear) {
+      setState(() {
+        _selectedYear = y;
+        _focusedDay = DateTime(y, m, 1);
+        _selectedDay = _focusedDay;
+      });
+      _fetchHolidays();
+    } else {
+      setState(() {
+        _focusedDay = DateTime(y, m, 1);
+        _selectedDay = _focusedDay;
+      });
+    }
+  }
+
+  void _shiftCalendarMonth(int deltaMonths) {
+    if (!_canShiftCalendarMonth(deltaMonths)) return;
+    final next = DateTime(
+      _focusedDay.year,
+      _focusedDay.month + deltaMonths,
+      1,
+    );
+    _goToCalendarMonth(next);
+  }
+
+  Future<void> _showMonthPickerSheet(BuildContext context) async {
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.12),
+                blurRadius: 24,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Select month · $_selectedYear',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+                ...List.generate(12, (index) {
+                  final m = index + 1;
+                  final selected = m == _focusedDay.month &&
+                      _selectedYear == _focusedDay.year;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 2,
+                    ),
+                    child: Material(
+                      color: selected
+                          ? AppColors.primary.withOpacity(0.12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => Navigator.pop(ctx, m),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                selected
+                                    ? Icons.check_circle_rounded
+                                    : Icons.circle_outlined,
+                                color: selected
+                                    ? AppColors.primary
+                                    : AppColors.textSecondary,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 14),
+                              Text(
+                                DateFormat('MMMM')
+                                    .format(DateTime(_selectedYear, m)),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: selected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked != null) {
+      _goToCalendarMonth(DateTime(_selectedYear, picked, 1));
+    }
+  }
+
+  Future<void> _showYearPickerSheet(BuildContext context) async {
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.12),
+                blurRadius: 24,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Select year',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+                ..._years.map((y) {
+                  final selected = y == _selectedYear;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                    child: Material(
+                      color: selected
+                          ? AppColors.primary.withOpacity(0.12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => Navigator.pop(ctx, y),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                selected
+                                    ? Icons.check_circle_rounded
+                                    : Icons.circle_outlined,
+                                color: selected
+                                    ? AppColors.primary
+                                    : AppColors.textSecondary,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 14),
+                              Text(
+                                '$y',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: selected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked != null) _onYearChanged(picked);
+  }
+
+  Widget _buildYearSelectorPill(BuildContext context) {
+    return Material(
+      color: AppColors.background,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: AppColors.primary.withOpacity(0.28)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _showYearPickerSheet(context),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.calendar_month_rounded,
+                size: 20,
+                color: AppColors.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '$_selectedYear',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: AppColors.primary,
+                size: 22,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMonthSelectorPill(BuildContext context) {
+    final label = DateFormat('MMMM').format(_focusedDay);
+    return Material(
+      color: AppColors.background,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: AppColors.primary.withOpacity(0.28)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _showMonthPickerSheet(context),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.event_rounded,
+                size: 20,
+                color: AppColors.primary,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: AppColors.primary,
+                size: 22,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMonthWiseFilterBar(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border(
+          bottom: BorderSide(color: AppColors.divider.withOpacity(0.6)),
+        ),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: _canShiftCalendarMonth(-1)
+                ? () => _shiftCalendarMonth(-1)
+                : null,
+            icon: const Icon(Icons.chevron_left_rounded, size: 28),
+            style: IconButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              disabledForegroundColor:
+                  AppColors.textSecondary.withOpacity(0.35),
+            ),
+          ),
+          Expanded(
+            flex: 5,
+            child: _buildMonthSelectorPill(context),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 4,
+            child: _buildYearSelectorPill(context),
+          ),
+          IconButton(
+            onPressed: _canShiftCalendarMonth(1)
+                ? () => _shiftCalendarMonth(1)
+                : null,
+            icon: const Icon(Icons.chevron_right_rounded, size: 28),
+            style: IconButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              disabledForegroundColor:
+                  AppColors.textSecondary.withOpacity(0.35),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<Holiday> _getHolidaysForMonth(int month) {
     return _holidays
         .where((h) => h.date.year == _selectedYear && h.date.month == month)
@@ -235,33 +619,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
           const SizedBox(width: 12),
           Expanded(
             flex: 2,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<int>(
-                  value: _selectedYear,
-                  isExpanded: true,
-                  icon: Icon(
-                    Icons.keyboard_arrow_down,
-                    color: AppColors.primary,
-                  ),
-                  items: _years.map((year) {
-                    return DropdownMenuItem(
-                      value: year,
-                      child: Text(
-                        year.toString(),
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: _onYearChanged,
-                ),
-              ),
-            ),
+            child: _buildYearSelectorPill(context),
           ),
         ],
       ),
@@ -273,45 +631,22 @@ class _HolidaysScreenState extends State<HolidaysScreen>
 
     return Column(
       children: [
-        // Year selection
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Select Year:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.divider),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int>(
-                    value: _selectedYear,
-                    items: _years.map((year) {
-                      return DropdownMenuItem(
-                        value: year,
-                        child: Text(year.toString()),
-                      );
-                    }).toList(),
-                    onChanged: _onYearChanged,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        _buildMonthWiseFilterBar(context),
 
-        // Calendar
+        // Calendar (header hidden — month/year live in filter bar above)
         TableCalendar(
-          firstDay: DateTime(_selectedYear, 1, 1),
-          lastDay: DateTime(_selectedYear, 12, 31),
+          firstDay: DateTime(_years.first, 1, 1),
+          lastDay: DateTime(_years.last, 12, 31),
           focusedDay: _focusedDay,
+          headerVisible: false,
+          onPageChanged: (focusedDay) {
+            final yChanged = focusedDay.year != _selectedYear;
+            setState(() {
+              _focusedDay = focusedDay;
+              if (yChanged) _selectedYear = focusedDay.year;
+            });
+            if (yChanged) _fetchHolidays();
+          },
           selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
           onDaySelected: (selectedDay, focusedDay) {
             setState(() {
@@ -366,10 +701,6 @@ class _HolidaysScreenState extends State<HolidaysScreen>
               }
               return null;
             },
-          ),
-          headerStyle: const HeaderStyle(
-            formatButtonVisible: false,
-            titleCentered: true,
           ),
         ),
 

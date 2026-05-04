@@ -1,16 +1,31 @@
+const mongoose = require('mongoose');
 const HolidayTemplate = require('../models/HolidayTemplate');
 
 async function getHolidayTemplateForStaff(staff) {
     if (!staff) return null;
 
-    const assignedTemplate = staff.holidayTemplateId;
-    if (assignedTemplate) {
-        if (typeof assignedTemplate === 'object' && assignedTemplate._id != null) {
-            if (assignedTemplate.isActive !== false) {
-                return assignedTemplate;
-            }
-        } else {
-            const template = await HolidayTemplate.findById(assignedTemplate).lean();
+    const ref = staff.holidayTemplateId;
+    if (ref) {
+        // Mongoose ObjectId has a truthy ._id (points to itself), so a bare
+        // holidayTemplateId was incorrectly returned as the "template" with no
+        // .holidays — only resolve populated docs that actually carry holidays.
+        const bareId =
+            ref instanceof mongoose.Types.ObjectId ||
+            (typeof ref === 'string' && mongoose.Types.ObjectId.isValid(ref));
+
+        const populatedDoc =
+            typeof ref === 'object' &&
+            ref != null &&
+            !(ref instanceof mongoose.Types.ObjectId) &&
+            Array.isArray(ref.holidays);
+
+        if (populatedDoc && ref.isActive !== false) {
+            return ref;
+        }
+
+        const templateId = bareId ? ref : ref._id;
+        if (templateId) {
+            const template = await HolidayTemplate.findById(templateId).lean();
             if (template && template.isActive !== false) {
                 return template;
             }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
@@ -14,13 +15,23 @@ import '../config/app_colors.dart';
 import '../screens/requests/my_requests_screen.dart';
 import '../screens/attendance/attendance_screen.dart';
 import '../screens/performance/performance_module_screen.dart';
+import '../screens/announcements/announcements_screen.dart';
+import '../screens/announcements/announcement_detail_screen.dart';
 import '../widgets/notification_reaction_overlay.dart';
+import 'interaction_service.dart';
 
 /// Channel ID for FCM notifications. Must match Android default channel when using data-only messages.
 const String kFcmNotificationChannelId = 'hrms_fcm_channel';
 
+/// Non-null, non-blank string; otherwise null (FCM often sends [RemoteNotification] with empty strings — `??` would not fall through to [data]).
+String? _fcmNonBlank(String? s) {
+  final t = s?.trim();
+  if (t == null || t.isEmpty) return null;
+  return t;
+}
+
 /// Top-level handler for FCM messages received in background or when app is closed.
-/// Stores every message so it appears in the in-app Notifications screen even if the user never taps the notification.
+/// When the payload has no title and no body, nothing is stored or shown. Otherwise stores and shows a tray notification.
 /// IMPORTANT: This handler is only invoked for DATA-ONLY messages (no top-level "notification" payload).
 /// If the backend sends notification+data, the OS shows the notification but does NOT call this handler,
 /// so it will not be stored. Backend must send data-only with title/body inside the "data" payload.
@@ -44,15 +55,13 @@ Future<void> firebaseBackgroundMessageHandler(RemoteMessage message) async {
     debugPrint('[FCM] backgroundHandler: Firebase.initializeApp FAILED $e');
   }
   final data = Map<String, dynamic>.from(message.data);
-  String title =
-      message.notification?.title ??
-      data['title']?.toString() ??
-      'Notification';
-  String body =
-      message.notification?.body ??
-      data['body']?.toString() ??
-      data['message']?.toString() ??
-      '';
+  if (!FcmService.hasDisplayableRemoteNotification(message)) {
+    debugPrint(
+      '[FCM] backgroundHandler: skip — no title or body in notification or data',
+    );
+    return;
+  }
+  final (:title, :body) = FcmService.displayStringsFromRemoteMessage(message);
   debugPrint(
     '[FCM] backgroundHandler: title="$title" body=${body.length > 40 ? "${body.substring(0, 40)}..." : body}',
   );
@@ -178,6 +187,56 @@ class FcmService {
     return '${module}_${type}_$id';
   }
 
+  /// Raw title from notification or [data] keys only (no default). Null if absent/blank.
+  static String? rawTitleFromRemoteMessage(RemoteMessage message) {
+    final data = message.data;
+    final fromN = _fcmNonBlank(message.notification?.title);
+    if (fromN != null) return fromN;
+    for (final key in ['title', 'Title', 'subject', 'Subject']) {
+      final v = _fcmNonBlank(data[key]?.toString());
+      if (v != null) return v;
+    }
+    return null;
+  }
+
+  /// Raw body from notification or [data] keys only (no default). Null if absent/blank.
+  static String? rawBodyFromRemoteMessage(RemoteMessage message) {
+    final data = message.data;
+    final fromN = _fcmNonBlank(message.notification?.body);
+    if (fromN != null) return fromN;
+    for (final key in ['body', 'Body', 'message', 'Message', 'text', 'alert']) {
+      final v = _fcmNonBlank(data[key]?.toString());
+      if (v != null) return v;
+    }
+    return null;
+  }
+
+  static bool hasDisplayableRemoteNotification(RemoteMessage message) {
+    return rawTitleFromRemoteMessage(message) != null ||
+        rawBodyFromRemoteMessage(message) != null;
+  }
+
+  /// Title/body for tray and storage when [hasDisplayableRemoteNotification] is true.
+  static ({String title, String body}) displayStringsFromRemoteMessage(
+    RemoteMessage message,
+  ) {
+    final rt = rawTitleFromRemoteMessage(message);
+    final rb = rawBodyFromRemoteMessage(message);
+    if (rt != null && rb != null) return (title: rt, body: rb);
+    if (rt != null) return (title: rt, body: rt);
+    return (title: 'HRMS', body: rb!);
+  }
+
+  /// Prefer non-blank [RemoteMessage.notification] fields; otherwise read common [data] keys.
+  /// Avoids empty `notification.title` blocking real title in `data` (Dart `??` does not skip `''`).
+  static String visibleTitleFromRemoteMessage(RemoteMessage message) {
+    return rawTitleFromRemoteMessage(message) ?? 'HRMS';
+  }
+
+  static String visibleBodyFromRemoteMessage(RemoteMessage message) {
+    return rawBodyFromRemoteMessage(message) ?? '';
+  }
+
   static GlobalKey<NavigatorState>? navigatorKey;
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
@@ -264,21 +323,23 @@ class FcmService {
 
     final initialMessage = await _messaging.getInitialMessage();
     if (initialMessage != null) {
-      _logAlways(
-        'getInitialMessage: app opened from terminated via notification tap – storing and navigating',
-      );
-      final data = Map<String, dynamic>.from(initialMessage.data);
-      final title =
-          initialMessage.notification?.title ??
-          data['title']?.toString() ??
-          'Notification';
-      final body =
-          initialMessage.notification?.body ??
-          data['body']?.toString() ??
-          data['message']?.toString() ??
-          '';
-      await storeNotification(title: title, body: body, data: data);
-      _handleNotificationData(initialMessage.data);
+      if (!hasDisplayableRemoteNotification(initialMessage)) {
+        _logAlways(
+          'getInitialMessage: skip — no title or body in payload',
+        );
+      } else {
+        _logAlways(
+          'getInitialMessage: app opened from terminated via notification tap – storing and navigating',
+        );
+        final data = Map<String, dynamic>.from(initialMessage.data);
+        final (:title, :body) = displayStringsFromRemoteMessage(initialMessage);
+        await storeNotification(title: title, body: body, data: data);
+        await _handleNotificationData(
+          initialMessage.data,
+          notificationTitle: title,
+          notificationBody: body,
+        );
+      }
     } else {
       _log('getInitialMessage: none (normal launch)');
     }
@@ -305,7 +366,9 @@ class FcmService {
         if (response.payload != null && response.payload!.isNotEmpty) {
           try {
             final data = jsonDecode(response.payload!) as Map<String, dynamic>?;
-            if (data != null) _handleNotificationData(data);
+            if (data != null) {
+              unawaited(_handleNotificationData(data));
+            }
           } catch (_) {}
         }
       },
@@ -403,15 +466,13 @@ class FcmService {
       '[FCM] FOREGROUND message received – storing (app was in foreground)',
     );
     final data = Map<String, dynamic>.from(message.data);
-    final title =
-        message.notification?.title ??
-        data['title']?.toString() ??
-        'Notification';
-    final body =
-        message.notification?.body ??
-        data['body']?.toString() ??
-        data['message']?.toString() ??
-        '';
+    if (!hasDisplayableRemoteNotification(message)) {
+      _logAlways(
+        '[FCM] FOREGROUND message skipped — no title or body in payload',
+      );
+      return;
+    }
+    final (:title, :body) = displayStringsFromRemoteMessage(message);
 
     _logAlways(
       'foreground message: title=$title body=${body.length > 60 ? "${body.substring(0, 60)}..." : body}',
@@ -790,27 +851,73 @@ class FcmService {
       'onMessageOpenedApp: notification tap (app was background) – storing and navigating',
     );
     _log('notification opened (background/terminated): data=${message.data}');
+    if (!hasDisplayableRemoteNotification(message)) {
+      _logAlways('onMessageOpenedApp: skip — no title or body in payload');
+      return;
+    }
     final data = Map<String, dynamic>.from(message.data);
-    final title =
-        message.notification?.title ??
-        data['title']?.toString() ??
-        'Notification';
-    final body =
-        message.notification?.body ??
-        data['body']?.toString() ??
-        data['message']?.toString() ??
-        '';
+    final (:title, :body) = displayStringsFromRemoteMessage(message);
     await storeNotification(title: title, body: body, data: data);
-    _handleNotificationData(message.data);
+    await _handleNotificationData(
+      message.data,
+      notificationTitle: title,
+      notificationBody: body,
+    );
   }
 
-  static Future<void> _handleNotificationData(Map<String, dynamic> data) async {
+  static String? _announcementIdFromData(Map<String, dynamic> data) {
+    for (final key in [
+      'announcementId',
+      'announcement_id',
+      'announcementMongoId',
+      'mongoId',
+      '_id',
+      'id',
+    ]) {
+      final v = data[key]?.toString().trim();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    return null;
+  }
+
+  static bool _isAnnouncementNotification(
+    Map<String, dynamic> data, {
+    String? notificationTitle,
+    String? notificationBody,
+  }) {
+    final module = (data['module'] ?? '').toString().toLowerCase();
+    final type = (data['type'] ?? '').toString().toLowerCase();
+    final text =
+        '${notificationTitle ?? ''} ${notificationBody ?? ''}'.toLowerCase();
+    if (type == 'announcement' ||
+        module == 'announcement' ||
+        module == 'announcements') {
+      return true;
+    }
+    if (text.contains('announcement')) return true;
+    for (final key in [
+      'announcementId',
+      'announcement_id',
+      'announcementMongoId',
+    ]) {
+      final v = data[key]?.toString().trim();
+      if (v != null && v.isNotEmpty) return true;
+    }
+    return false;
+  }
+
+  /// Returns `true` if a route was pushed (so callers can pop overlays, e.g. NotificationsScreen).
+  static Future<bool> _handleNotificationData(
+    Map<String, dynamic> data, {
+    String? notificationTitle,
+    String? notificationBody,
+  }) async {
     _log(
       'handleNotificationData: module=${data['module']} type=${data['type']} data=$data',
     );
     if (navigatorKey?.currentContext == null) {
       _log('handleNotificationData: no navigator context, skip navigation');
-      return;
+      return false;
     }
 
     final module = data['module']?.toString() ?? data['type']?.toString() ?? '';
@@ -838,11 +945,11 @@ class FcmService {
         _log(
           'handleNotificationData: ignoring – notification is for staffId=$payloadStaffId, current staffId=$currentStaffId',
         );
-        return;
+        return false;
       }
     }
 
-    if (!navigatorKey!.currentContext!.mounted) return;
+    if (!navigatorKey!.currentContext!.mounted) return false;
 
     // Leave: My Requests, tab 0
     if (module == 'leave' ||
@@ -858,7 +965,7 @@ class FcmService {
           builder: (_) => MyRequestsScreen(initialTabIndex: 0),
         ),
       );
-      return;
+      return true;
     }
     // Loan: My Requests, tab 1
     if (module == 'loan' ||
@@ -872,7 +979,7 @@ class FcmService {
           builder: (_) => MyRequestsScreen(initialTabIndex: 1),
         ),
       );
-      return;
+      return true;
     }
     // Expense: My Requests, tab 2
     if (module == 'expense' ||
@@ -886,7 +993,7 @@ class FcmService {
           builder: (_) => MyRequestsScreen(initialTabIndex: 2),
         ),
       );
-      return;
+      return true;
     }
     // Payslip: My Requests, tab 4
     if (module == 'payslip' ||
@@ -900,7 +1007,7 @@ class FcmService {
           builder: (_) => MyRequestsScreen(initialTabIndex: 4),
         ),
       );
-      return;
+      return true;
     }
     // Permission: My Requests, tab 3
     if (module == 'permission' ||
@@ -914,7 +1021,7 @@ class FcmService {
           builder: (_) => MyRequestsScreen(initialTabIndex: 3),
         ),
       );
-      return;
+      return true;
     }
     // Attendance: Attendance screen
     if (module == 'attendance' ||
@@ -924,7 +1031,7 @@ class FcmService {
       navigatorKey?.currentState?.push(
         MaterialPageRoute<void>(builder: (_) => AttendanceScreen()),
       );
-      return;
+      return true;
     }
     // Performance: Performance module
     if (module == 'performance' ||
@@ -935,14 +1042,68 @@ class FcmService {
       navigatorKey?.currentState?.push(
         MaterialPageRoute<void>(builder: (_) => PerformanceModuleScreen()),
       );
-      return;
+      return true;
+    }
+    // Announcements (FCM data may be empty; use stored title/body from NotificationsScreen).
+    if (_isAnnouncementNotification(
+      data,
+      notificationTitle: notificationTitle,
+      notificationBody: notificationBody,
+    )) {
+      final announcementId = _announcementIdFromData(data);
+      if (announcementId != null && announcementId.isNotEmpty) {
+        try {
+          final res =
+              await InteractionService.instance.getAnnouncementById(announcementId);
+          if (!navigatorKey!.currentContext!.mounted) return false;
+          Map<String, dynamic>? ann;
+          final raw = res['data'];
+          if (raw is Map<String, dynamic>) {
+            ann = Map<String, dynamic>.from(raw);
+          } else if (raw is Map) {
+            ann = Map<String, dynamic>.from(raw);
+          }
+          if (ann != null && ann.isNotEmpty) {
+            final announcementMap = Map<String, dynamic>.from(ann);
+            navigatorKey?.currentState?.push(
+              MaterialPageRoute<void>(
+                builder: (_) => AnnouncementDetailScreen(
+                  announcement: announcementMap,
+                  accent: AppColors.primary,
+                ),
+              ),
+            );
+            _log(
+              'handleNotificationData: navigating to AnnouncementDetailScreen id=$announcementId',
+            );
+            return true;
+          }
+        } catch (e) {
+          _log('handleNotificationData: announcement detail fetch failed: $e');
+        }
+      }
+      if (!navigatorKey!.currentContext!.mounted) return false;
+      navigatorKey?.currentState?.push(
+        MaterialPageRoute<void>(builder: (_) => const AnnouncementsScreen()),
+      );
+      _log('handleNotificationData: navigating to AnnouncementsScreen');
+      return true;
     }
     _log('handleNotificationData: no route matched module=$module type=$type');
+    return false;
   }
 
   /// Call when user taps a stored notification (e.g. from NotificationsScreen). Navigates by module/type.
-  static Future<void> handleNotificationTap(Map<String, dynamic> data) async {
-    await _handleNotificationData(data);
+  static Future<bool> handleNotificationTap(
+    Map<String, dynamic> data, {
+    String? title,
+    String? body,
+  }) {
+    return _handleNotificationData(
+      data,
+      notificationTitle: title,
+      notificationBody: body,
+    );
   }
 
   /// Call this to get the current FCM token (e.g. after login, to send to backend).

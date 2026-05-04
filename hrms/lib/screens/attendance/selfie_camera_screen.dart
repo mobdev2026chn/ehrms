@@ -183,12 +183,6 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen> {
                 }
               },
             ),
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 91,
-              child: _buildLocationBar(),
-            ),
             if (_showTimeoutOverlay) _buildTimeoutOverlay(),
           ],
         ),
@@ -271,40 +265,48 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen> {
   }
 
   Widget _buildBottomActions(BuildContext context, CameraState state) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Container(
+      width: double.infinity,
+      color: Colors.black54,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 30),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          TextButton(
-            onPressed: _handleBackPressed,
-            child: const Text('Cancel', style: TextStyle(color: Colors.white)),
-          ),
-          state.when(
-            onPhotoMode: (PhotoCameraState photoState) => GestureDetector(
-              onTap: () => photoState.takePhoto(),
-              child: Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.secondary,
-                  border: Border.all(color: Colors.white, width: 2.5),
-                ),
+          _buildLocationBar(),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              TextButton(
+                onPressed: _handleBackPressed,
+                child: const Text('Cancel', style: TextStyle(color: Colors.white)),
               ),
-            ),
-            onPreparingCamera: (_) => const SizedBox(width: 56, height: 56),
-            onVideoMode: (_) => const SizedBox(width: 56, height: 56),
-            onVideoRecordingMode: (_) => const SizedBox(width: 56, height: 56),
-            onPreviewMode: (_) => const SizedBox(width: 56, height: 56),
-            onAnalysisOnlyMode: (_) => const SizedBox(width: 56, height: 56),
+              state.when(
+                onPhotoMode: (PhotoCameraState photoState) => GestureDetector(
+                  onTap: () => photoState.takePhoto(),
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.secondary,
+                      border: Border.all(color: Colors.white, width: 2.5),
+                    ),
+                  ),
+                ),
+                onPreparingCamera: (_) => const SizedBox(width: 56, height: 56),
+                onVideoMode: (_) => const SizedBox(width: 56, height: 56),
+                onVideoRecordingMode: (_) => const SizedBox(width: 56, height: 56),
+                onPreviewMode: (_) => const SizedBox(width: 56, height: 56),
+                onAnalysisOnlyMode: (_) => const SizedBox(width: 56, height: 56),
+              ),
+              const SizedBox(width: 48),
+            ],
           ),
-          const SizedBox(width: 48),
         ],
       ),
     );
   }
-
   Widget _buildTimeoutOverlay() {
     return Material(
       color: Colors.black87,

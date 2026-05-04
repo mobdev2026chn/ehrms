@@ -160,6 +160,14 @@ class AuthService {
       if (accessToken != null) {
         await prefs.setString('token', accessToken);
       }
+      if (data != null) {
+        final rt = (data is Map) ? data['refreshToken']?.toString() : null;
+        if (rt != null && rt.trim().isNotEmpty) {
+          await prefs.setString(AppConstants.refreshTokenPrefsKey, rt.trim());
+        } else {
+          await prefs.remove(AppConstants.refreshTokenPrefsKey);
+        }
+      }
       dynamic userData;
       if (data != null && data['user'] != null) {
         userData = data['user'];
@@ -218,6 +226,7 @@ class AuthService {
       _authLog(
         'login DioException status=${e.response?.statusCode} path=${e.requestOptions.path}',
       );
+      _authLog('login error body=${e.response?.data}');
       return _handleDioError(e, 'Login failed', (code, body) {
         if (code != null && code >= 500) {
           return 'Server error ($code). The backend server is not responding. Please try again later.';
@@ -237,6 +246,15 @@ class AuthService {
     String Function(int? code, dynamic body)? messageFn,
   ) {
     final code = e.response?.statusCode;
+    if (code == null) {
+      return {
+        'success': false,
+        'message': ErrorMessageUtils.messageFromDioException(
+          e,
+          fallback: defaultMessage,
+        ),
+      };
+    }
     final data = e.response?.data;
     String? bodyStr;
     Map<String, dynamic>? bodyMap;
@@ -245,9 +263,8 @@ class AuthService {
       if (bodyStr.trim().startsWith('<')) {
         return {
           'success': false,
-          'message': code != null
-              ? 'Server error ($code). The backend server is not responding. Please try again later.'
-              : defaultMessage,
+          'message':
+              'Server error ($code). The backend server is not responding. Please try again later.',
         };
       }
       try {
@@ -321,6 +338,7 @@ class AuthService {
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
     await prefs.remove('token');
+    await prefs.remove(AppConstants.refreshTokenPrefsKey);
     await prefs.remove('user');
     await prefs.remove('staff');
     await prefs.remove('taskSettings');
@@ -388,6 +406,14 @@ class AuthService {
       final prefs = await SharedPreferences.getInstance();
       if (data != null && data['accessToken'] != null) {
         await prefs.setString('token', data['accessToken']);
+      }
+      if (data != null) {
+        final rt = data['refreshToken']?.toString();
+        if (rt != null && rt.trim().isNotEmpty) {
+          await prefs.setString(AppConstants.refreshTokenPrefsKey, rt.trim());
+        } else {
+          await prefs.remove(AppConstants.refreshTokenPrefsKey);
+        }
       }
       if (data != null && data['user'] != null) {
         await prefs.setString('user', jsonEncode(data['user']));
@@ -602,8 +628,8 @@ class AuthService {
     return prefs.getString('token');
   }
 
-  /// Returns true if staff is still active, false if deactivated (200 + active: false), null on
-  /// network/error or 401 (no logout — 401 is expired/invalid token, not deactivation).
+  /// Returns true if staff is active, false when deactivated or session expired, null on
+  /// transient network errors.
   Future<bool?> checkStaffActive() async {
     final prefs = await SharedPreferences.getInstance();
     String? token = prefs.getString('token');
@@ -615,9 +641,23 @@ class AuthService {
       final data = response.data;
       if (data == null) return null;
       return data['active'] == true;
-    } on DioException catch (_) {
-      // Includes 401 (expired/invalid JWT). Do not map to deactivated — that would clear prefs
-      // and force login on every resume after token issues.
+    } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 401) {
+        // Only force logout when backend clearly indicates token expiry/invalidity.
+        // Some environments may transiently return 401 for reasons unrelated to session.
+        final bodyMessage = _messageFromBody(e.response?.data)?.toLowerCase() ?? '';
+        final raw = e.response?.data?.toString().toLowerCase() ?? '';
+        final combined = '$bodyMessage $raw';
+        final sessionExpired =
+            combined.contains('jwt expired') ||
+            combined.contains('token expired') ||
+            combined.contains('session expired') ||
+            combined.contains('token failed') ||
+            combined.contains('not authorized');
+        if (sessionExpired) return false;
+        return null;
+      }
       return null;
     } catch (_) {
       return null;

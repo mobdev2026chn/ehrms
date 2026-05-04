@@ -255,7 +255,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         SnackBarUtils.showSnackBar(
           context,
           'Starting download...',
-          backgroundColor: AppColors.info,
+          backgroundColor: AppColors.primary,
         );
       }
 

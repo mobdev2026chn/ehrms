@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
 import '../config/constants.dart';
+import '../utils/attendance_selfie_compress.dart';
 import '../utils/error_message_utils.dart';
 import '../utils/punch_flow_log.dart';
 import 'api_client.dart';
@@ -14,7 +17,36 @@ class AttendanceService {
   final String baseUrl = AppConstants.baseUrl;
   final ApiClient _api = ApiClient();
   Map<String, dynamic>? attendanceTemplate;
-  static const Duration _punchRequestTimeout = Duration(seconds: 25);
+  /// Punch sends large payloads (selfie); allow headroom vs default Dio (45s) and cloud upload latency.
+  static const Duration _punchRequestTimeout = Duration(seconds: 60);
+
+  Options _punchDioOptions() => Options(
+        sendTimeout: _punchRequestTimeout,
+        receiveTimeout: _punchRequestTimeout,
+        connectTimeout: _punchRequestTimeout,
+        extra: const {'disable_429_retry': true},
+      );
+
+  Uint8List _selfieDataUrlToJpegBytes(String dataUrl) {
+    final comma = dataUrl.indexOf(',');
+    final b64 = comma >= 0 ? dataUrl.substring(comma + 1) : dataUrl;
+    return Uint8List.fromList(base64Decode(b64));
+  }
+
+  Map<String, dynamic> _stringifyPunchFormFields(Map<String, dynamic> src) {
+    final out = <String, dynamic>{};
+    src.forEach((k, v) {
+      if (v == null) return;
+      if (v is bool) {
+        out[k] = v ? 'true' : 'false';
+      } else if (v is num) {
+        out[k] = v.toString();
+      } else {
+        out[k] = v.toString();
+      }
+    });
+    return out;
+  }
 
   // Shared across all instances so Selfie Check-in (via BLoC) can use cache from Attendance tab.
   static Map<String, dynamic>? _cachedTodayAttendance;
@@ -43,6 +75,37 @@ class AttendanceService {
     }
     _lastCallTimestamps[url] = now;
     return false;
+  }
+
+  int _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  void _logPermissionConsumption(String action, dynamic responseData) {
+    if (responseData is! Map) return;
+    final data = responseData['data'];
+    final Map<dynamic, dynamic> payload =
+        data is Map ? data as Map : responseData as Map;
+
+    final consumed = _asInt(payload['permissionConsumedMinutes']);
+    final approved = _asInt(payload['permissionApprovedMinutes']);
+    final lateUsed = _asInt(payload['permissionLateMinutes']);
+    final earlyUsed = _asInt(payload['permissionEarlyMinutes']);
+    final remaining = _asInt(payload['permissionRemainingMinutes']);
+
+    if (consumed > 0) {
+      punchFlowLog(
+        '[Permission][$action][Consumed] consumed=$consumed approved=$approved '
+        'lateUsed=$lateUsed earlyUsed=$earlyUsed remaining=$remaining',
+      );
+    } else if (approved > 0) {
+      punchFlowLog(
+        '[Permission][$action][ApprovedNoConsume] approved=$approved '
+        'consumed=$consumed remaining=$remaining',
+      );
+    }
   }
 
   /// Call after check-in/check-out so Recent Activity and History never show
@@ -94,14 +157,19 @@ class AttendanceService {
       if (token != null) _api.setAuthToken(token);
       final prefs = await SharedPreferences.getInstance();
       final businessId = prefs.getString('businessId');
-      final body = <String, dynamic>{
+      String? selfiePayload = selfie;
+      if (selfiePayload != null && selfiePayload.isNotEmpty) {
+        selfiePayload =
+            await AttendanceSelfieCompress.compressDataUrlForPunch(selfiePayload);
+      }
+
+      final jsonFields = <String, dynamic>{
         'latitude': lat,
         'longitude': lng,
         'address': address,
         'area': area,
         'city': city,
         'pincode': pincode,
-        'selfie': selfie,
         'movementType': movementType,
         'source': 'app',
         'forceAppFine': true,
@@ -110,18 +178,33 @@ class AttendanceService {
         'fineAmount': fineAmount,
       };
       if (businessId != null && businessId.isNotEmpty) {
-        body['businessId'] = businessId;
+        jsonFields['businessId'] = businessId;
       }
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/attendance/checkin',
-        data: body,
-        options: Options(
-          sendTimeout: _punchRequestTimeout,
-          receiveTimeout: _punchRequestTimeout,
-          extra: const {'disable_429_retry': true},
-        ),
-      );
+
+      final Response<Map<String, dynamic>> response;
+      if (selfiePayload != null && selfiePayload.isNotEmpty) {
+        final bytes = _selfieDataUrlToJpegBytes(selfiePayload);
+        final formMap = <String, dynamic>{
+          ..._stringifyPunchFormFields(jsonFields),
+          'selfie': MultipartFile.fromBytes(
+            bytes,
+            filename: 'attendance_selfie.jpg',
+          ),
+        };
+        response = await _api.dio.post<Map<String, dynamic>>(
+          '/attendance/checkin',
+          data: FormData.fromMap(formMap),
+          options: _punchDioOptions(),
+        );
+      } else {
+        response = await _api.dio.post<Map<String, dynamic>>(
+          '/attendance/checkin',
+          data: <String, dynamic>{...jsonFields, 'selfie': selfiePayload},
+          options: _punchDioOptions(),
+        );
+      }
       final data = response.data;
+      _logPermissionConsumption('checkIn', data);
       clearCachesForRefresh();
       return {'success': true, 'data': data};
     } on DioException catch (e) {
@@ -183,14 +266,19 @@ class AttendanceService {
       final businessId = prefs.getString('businessId');
       final appPerDayNetSalary = prefs.getDouble('app_net_per_day_salary');
       final appPerdayGrossSalary = prefs.getDouble('app_gross_per_day_salary');
-      final body = {
+      String? selfiePayload = selfie;
+      if (selfiePayload != null && selfiePayload.isNotEmpty) {
+        selfiePayload =
+            await AttendanceSelfieCompress.compressDataUrlForPunch(selfiePayload);
+      }
+
+      final jsonFields = <String, dynamic>{
         'latitude': lat,
         'longitude': lng,
         'address': address,
         'area': area,
         'city': city,
         'pincode': pincode,
-        'selfie': selfie,
         'movementType': movementType,
         'source': 'app',
         'forceAppFine': true,
@@ -203,16 +291,31 @@ class AttendanceService {
         if (appPerdayGrossSalary != null && appPerdayGrossSalary > 0)
           'appPerdayGrossSalary': appPerdayGrossSalary,
       };
-      final response = await _api.dio.put<Map<String, dynamic>>(
-        '/attendance/checkout',
-        data: body,
-        options: Options(
-          sendTimeout: _punchRequestTimeout,
-          receiveTimeout: _punchRequestTimeout,
-          extra: const {'disable_429_retry': true},
-        ),
-      );
+
+      final Response<Map<String, dynamic>> response;
+      if (selfiePayload != null && selfiePayload.isNotEmpty) {
+        final bytes = _selfieDataUrlToJpegBytes(selfiePayload);
+        final formMap = <String, dynamic>{
+          ..._stringifyPunchFormFields(jsonFields),
+          'selfie': MultipartFile.fromBytes(
+            bytes,
+            filename: 'attendance_selfie.jpg',
+          ),
+        };
+        response = await _api.dio.put<Map<String, dynamic>>(
+          '/attendance/checkout',
+          data: FormData.fromMap(formMap),
+          options: _punchDioOptions(),
+        );
+      } else {
+        response = await _api.dio.put<Map<String, dynamic>>(
+          '/attendance/checkout',
+          data: <String, dynamic>{...jsonFields, 'selfie': selfiePayload},
+          options: _punchDioOptions(),
+        );
+      }
       final data = response.data;
+      _logPermissionConsumption('checkOut', data);
       punchFlowLog(
         '[AttendanceService][checkOut] httpOK status=${response.statusCode} '
         'dataKeys=${data is Map ? (data as Map).keys.join(",") : data.runtimeType}',

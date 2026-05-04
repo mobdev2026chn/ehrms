@@ -1,7 +1,9 @@
 // hrms/lib/widgets/app_drawer.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../bloc/auth/auth_bloc.dart';
 import '../config/app_colors.dart';
 import '../services/auth_service.dart';
 import '../services/presence_tracking_service.dart';
@@ -81,6 +83,15 @@ class _AppDrawerState extends State<AppDrawer> {
     Future.microtask(() {
       if (callback != null) {
         callback(index);
+        // Drawer may be hosted on a route pushed above Dashboard (e.g. Shifts /
+        // Attendance Calendar). Switching tabs only updates IndexedStack under
+        // Dashboard; pop overlays so the selected tab is actually visible.
+        if (mounted && context.mounted) {
+          final nav = Navigator.of(context);
+          if (nav.canPop()) {
+            nav.popUntil((route) => route.isFirst);
+          }
+        }
       } else if (mounted && context.mounted) {
         _navigateAndClearStack(DashboardScreen(initialIndex: index));
       }
@@ -102,6 +113,7 @@ class _AppDrawerState extends State<AppDrawer> {
     // Clear token, prefs, and sign out from Google/Firebase (must complete before navigating).
     await AuthService().logout();
     if (!context.mounted) return;
+    context.read<AuthBloc>().add(const AuthLogoutRequested());
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (route) => false,

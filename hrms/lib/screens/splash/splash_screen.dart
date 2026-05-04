@@ -55,17 +55,9 @@ class _SplashScreenState extends State<SplashScreen> {
     await Future.delayed(const Duration(seconds: 2));
 
     final prefs = await SharedPreferences.getInstance();
-    final sessionReset = await AuthService().clearSessionIfBaseUrlChanged();
     final token = prefs.getString('token');
 
     if (!mounted) return;
-
-    if (sessionReset) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
-      return;
-    }
 
     if (token != null && token.isNotEmpty) {
       final activeInfo = await LiveTrackingService().getActiveTaskInfo();

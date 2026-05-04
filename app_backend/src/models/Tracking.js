@@ -27,7 +27,7 @@ const trackingSchema = new mongoose.Schema({
   // Arrived / app session
   status: {
     type: String,
-    enum: ['arrived', 'app_background', 'app_closed', 'in_progress', 'active', 'inactive', 'checked_in', 'checked_out'],
+    enum: ['arrived', 'app_background', 'app_closed', 'in_progress', 'active', 'inactive', 'checked_in', 'checked_out', 'offline'],
   },
   appStatus: {
     type: String,

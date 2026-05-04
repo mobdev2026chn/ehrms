@@ -143,7 +143,7 @@ class _StaffSalaryStructureScreenState extends State<StaffSalaryStructureScreen>
                       style: TextStyle(color: AppColors.textSecondary),
                     ),
                     const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: const Text('Retry')),
+                    FilledButton(onPressed: _load, child: const Text('okk')),
                   ],
                 ),
               ),

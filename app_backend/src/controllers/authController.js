@@ -30,6 +30,12 @@ const generateToken = (id) => {
     });
 };
 
+/** Long-lived token for POST /auth/refresh (must outlive access token). */
+const issueRefreshToken = (userId) => {
+    const secret = process.env.JWT_SECRET || 'secret';
+    return jwt.sign({ id: userId }, secret, { expiresIn: '60d' });
+};
+
 // Helper to safely build case-insensitive regex
 const buildEmailRegex = (email) => {
     const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -170,6 +176,24 @@ const login = async (req, res) => {
                 staff = await Staff.findOne({ userId: user._id })
                     .populate('branchId')
                     .populate('businessId');
+                // Same email as User but staff.userId never set (imports / manual fixes) — link and continue.
+                if (!staff) {
+                    const staffByEmail = await Staff.findOne({ email: emailRegex })
+                        .select('+password')
+                        .populate('branchId')
+                        .populate('businessId');
+                    if (staffByEmail) {
+                        const linkedId = staffByEmail.userId ? String(staffByEmail.userId) : '';
+                        const okToLink = !linkedId || linkedId === String(user._id);
+                        if (okToLink) {
+                            if (!staffByEmail.userId) {
+                                staffByEmail.userId = user._id;
+                                await staffByEmail.save();
+                            }
+                            staff = staffByEmail;
+                        }
+                    }
+                }
             } else {
                 return res.status(401).json({ success: false, error: { message: 'Invalid credentials' } });
             }
@@ -208,8 +232,27 @@ const login = async (req, res) => {
                     // Staff has password, check it
                     const staffPasswordMatch = await staff.matchPassword(password);
                     if (staffPasswordMatch) {
-                        user = await User.findById(staff.userId);
+                        if (staff.userId) {
+                            user = await User.findById(staff.userId).select('+password');
+                        } else {
+                            user = null;
+                        }
                         user = await populateRoleIfPresent(user);
+                        // Staff rows may exist without userId (or with a stale id). JWT and
+                        // middleware expect a User — align with findOrCreateUserByEmail.
+                        if (!user) {
+                            user = await findOrCreateUserByEmail(staff.email || emailNorm);
+                            if (user) {
+                                const sid = staff._id;
+                                if (!staff.userId || String(staff.userId) !== String(user._id)) {
+                                    await Staff.updateOne({ _id: sid }, { $set: { userId: user._id } });
+                                }
+                                const staffFresh = await Staff.findById(sid)
+                                    .populate('branchId')
+                                    .populate('businessId');
+                                if (staffFresh) staff = staffFresh;
+                            }
+                        }
                     } else {
                         return res.status(401).json({ success: false, error: { message: 'Invalid credentials' } });
                     }
@@ -350,16 +393,14 @@ const login = async (req, res) => {
             branchName: staff?.branchId?.branchName ?? undefined,
         };
 
-        // Create a refresh token (if needed by frontend, though Flutter usually uses access token for now)
-        // For parity with Web Backend, we can generate one
-        const refreshToken = jwt.sign({ id: user._id }, secret, { expiresIn: '7d' });
+        const refreshToken = issueRefreshToken(user._id);
 
         // Set refresh token as httpOnly cookie (standard practice from Web Backend)
         res.cookie('refreshToken', refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            maxAge: 60 * 24 * 60 * 60 * 1000, // 60 days (matches JWT expiry)
             path: '/'
         });
 
@@ -428,6 +469,7 @@ const googleLogin = async (req, res) => {
         }
 
         const accessToken = generateToken(user._id);
+        const refreshToken = issueRefreshToken(user._id);
 
         let company = staff?.businessId || user.companyId;
         const formattedPermissions = user.roleId?.permissions || [];
@@ -469,13 +511,64 @@ const googleLogin = async (req, res) => {
             success: true,
             data: {
                 user: userResponse,
-                accessToken
+                accessToken,
+                refreshToken
             }
         });
 
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, error: { message: error.message } });
+    }
+};
+
+/**
+ * POST /auth/refresh — public. Body: { refreshToken } → new access + refresh JWTs.
+ */
+const refreshAccessToken = async (req, res) => {
+    try {
+        const raw = req.body?.refreshToken;
+        if (!raw || typeof raw !== 'string') {
+            return res.status(400).json({ success: false, message: 'Refresh token required' });
+        }
+        const refreshToken = raw.trim().replace(/^"|"$/g, '');
+        const secret = process.env.JWT_SECRET || 'secret';
+        let decoded;
+        try {
+            decoded = jwt.verify(refreshToken, secret);
+        } catch (e) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid or expired refresh token',
+                error: e.message
+            });
+        }
+        const user = await User.findById(decoded.id).select('-password');
+        if (!user) {
+            return res.status(401).json({ success: false, message: 'Not authorized, user not found' });
+        }
+        const staff = await Staff.findOne({ userId: user._id });
+        if (staff && (staff.status || '').toString().toLowerCase() === 'deactivated') {
+            return res.status(401).json({
+                success: false,
+                message: 'Your account has been deactivated. Please contact HR.'
+            });
+        }
+        if (user.role && user.role.toString().toLowerCase() === 'candidate') {
+            return res.status(401).json({ success: false, message: 'Not authorized' });
+        }
+        const accessToken = generateToken(user._id);
+        const newRefreshToken = issueRefreshToken(user._id);
+        res.json({
+            success: true,
+            data: {
+                accessToken,
+                refreshToken: newRefreshToken
+            }
+        });
+    } catch (error) {
+        console.error('[authController] refreshAccessToken:', error);
+        res.status(500).json({ success: false, message: error.message });
     }
 };
 
@@ -1409,6 +1502,7 @@ const checkActive = async (req, res) => {
 module.exports = {
     login,
     googleLogin,
+    refreshAccessToken,
     register,
     getProfile,
     updateProfile,

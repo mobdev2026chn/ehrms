@@ -25,6 +25,7 @@ import 'package:hrms/utils/error_message_utils.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MyTasksScreen extends StatefulWidget {
@@ -426,8 +427,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         .where((t) => ids.contains(t.id ?? t.taskId))
         .toList();
     if (toExport.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select at least one task to export')),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Select at least one task to export',
+        isError: true,
       );
       return;
     }
@@ -567,17 +570,18 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           _selectedTaskIds.clear();
           _exporting = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Exported ${toExport.length} task(s) to Excel'),
-          ),
+        SnackBarUtils.showSnackBar(
+          context,
+          'Exported ${toExport.length} task(s) to Excel',
         );
       }
     } catch (e) {
       if (mounted) {
         setState(() => _exporting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.toUserFriendlyMessage(e),
+          isError: true,
         );
       }
     }
@@ -1060,12 +1064,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                           _exportSelectedToExcel();
                         } else {
                           setState(() => _isSelectionMode = true);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Select tasks to export, then tap Export again.',
-                              ),
-                            ),
+                          SnackBarUtils.showSnackBar(
+                            context,
+                            'Select tasks to export, then tap Export again.',
                           );
                         }
                       },

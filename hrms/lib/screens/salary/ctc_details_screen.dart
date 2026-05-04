@@ -37,6 +37,8 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
 
     final templateEarningsAnnual = m.grossSalary * 12;
     final deductionsAnnual = m.totalMonthlyDeductions * 12;
+    final fillPrimaryLight = AppColors.primary.withOpacity(0.12);
+    final fillWhite = AppColors.surface;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -133,7 +135,7 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
               monthly: m.grossSalary,
               yearly: m.grossSalary * 12,
               currency: currency,
-              background: Colors.blue.shade50,
+              background: fillPrimaryLight,
             ),
             const Divider(height: 24),
           ],
@@ -169,7 +171,7 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
               monthly: m.totalMonthlyDeductions,
               yearly: m.totalMonthlyDeductions * 12,
               currency: currency,
-              background: Colors.red.shade50,
+              background: fillWhite,
             ),
             const Divider(height: 24),
           ],
@@ -179,7 +181,7 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
             monthly: m.grossSalary,
             annually: m.grossSalary * 12,
             currency: currency,
-            background: const Color(0xFFE3F2FD),
+            background: fillPrimaryLight,
           ),
           const SizedBox(height: 12),
           _SummaryCard(
@@ -187,7 +189,7 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
             monthly: m.netMonthlySalary,
             annually: calc.yearly.annualNetSalary,
             currency: currency,
-            background: const Color(0xFFE8F5E9),
+            background: fillWhite,
           ),
           const SizedBox(height: 12),
           _SummaryCard(
@@ -195,7 +197,7 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
             monthly: calc.totalCTC / 12,
             annually: calc.totalCTC,
             currency: currency,
-            background: const Color(0xFFEDE7F6),
+            background: fillPrimaryLight,
             footnote:
                 'Gratuity, statutory bonus, allowances and incentives included where applicable.',
           ),
@@ -466,6 +468,7 @@ class _SummaryCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.divider),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

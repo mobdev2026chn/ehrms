@@ -45,8 +45,8 @@ class SnackBarUtils {
       builder: (context) => _TopSnackBarWidget(
         message: message,
         backgroundColor: isError
-            ? const Color(0xFF9CA3AF) // light grey for failure
-            : (backgroundColor ?? AppColors.primary), // primary for success
+            ? Colors.black
+            : (backgroundColor ?? AppColors.primary),
         isError: isError,
         onDismissed: () => _removeCurrentSnackBarSync(),
       ),
@@ -212,7 +212,7 @@ class _TopSnackBarWidgetState extends State<_TopSnackBarWidget>
                             : (widget.message.toLowerCase().contains('waiting')
                                   ? Icons.timer_outlined
                                   : Icons.check_circle_outline),
-                        color: widget.isError ? const Color(0xFF374151) : Colors.white,
+                        color: Colors.white,
                         size: 22,
                       ),
                     ),
@@ -224,7 +224,7 @@ class _TopSnackBarWidgetState extends State<_TopSnackBarWidget>
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: widget.isError ? const Color(0xFF374151) : Colors.white,
+                          color: Colors.white,
                           fontWeight: FontWeight.w600,
                           fontSize: 13,
                           letterSpacing: 0.1,

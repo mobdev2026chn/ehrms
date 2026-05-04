@@ -226,15 +226,19 @@ class _LoginScreenState extends State<LoginScreen>
 
   @override
   Widget build(BuildContext context) {
-    return BlocConsumer<AuthBloc, AuthState>(
+    // Use [context.select] so the screen does not rebuild on every auth emission,
+    // only when loading actually toggles. [MediaQuery.sizeOf] avoids subscribing
+    // to the full MediaQuery (keyboard viewInsets would rebuild the header on each key).
+    final isLoading =
+        context.select<AuthBloc, bool>((b) => b.state is AuthLoadInProgress) ||
+        _loginSubmitLocked;
+    return BlocListener<AuthBloc, AuthState>(
       listener: _onAuthStateChanged,
-      builder: (context, state) {
-        final isLoading = state is AuthLoadInProgress || _loginSubmitLocked;
-        return Scaffold(
-          resizeToAvoidBottomInset: false,
-          backgroundColor: const Color(0xFF1A1A1A),
-          body: Stack(
-            children: [
+      child: Scaffold(
+        resizeToAvoidBottomInset: false,
+        backgroundColor: const Color(0xFF1A1A1A),
+        body: Stack(
+          children: [
               // Animated background
               AnimatedBuilder(
                 animation: _entranceController,
@@ -245,7 +249,7 @@ class _LoginScreenState extends State<LoginScreen>
                       scale: _bgScale.value,
                       alignment: Alignment.center,
                       child: Container(
-                        height: MediaQuery.of(context).size.height * 0.45,
+                        height: MediaQuery.sizeOf(context).height * 0.45,
                         width: double.infinity,
                         decoration: const BoxDecoration(
                           image: DecorationImage(
@@ -319,12 +323,11 @@ class _LoginScreenState extends State<LoginScreen>
                 ),
               ),
 
-              // Success overlay with celebration
-              if (_showSuccessOverlay) _buildSuccessOverlay(),
-            ],
-          ),
-        );
-      },
+            // Success overlay with celebration
+            if (_showSuccessOverlay) _buildSuccessOverlay(),
+          ],
+        ),
+      ),
     );
   }
 

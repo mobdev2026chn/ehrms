@@ -63,6 +63,8 @@ class _SalaryStructureDetailScreenState
   @override
   Widget build(BuildContext context) {
     final currencyFormat = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
+    final fillPrimaryLight = AppColors.primary.withOpacity(0.12);
+    final fillWhite = AppColors.surface;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -265,7 +267,7 @@ class _SalaryStructureDetailScreenState
                               _salaryStructure!.yearly.annualGrossSalary,
                               currencyFormat,
                               isTotal: true,
-                              backgroundColor: Colors.blue.shade50,
+                              backgroundColor: fillPrimaryLight,
                             ),
                           ),
                           // Variables Section
@@ -310,7 +312,7 @@ class _SalaryStructureDetailScreenState
                               _salaryStructure!.yearly.totalAnnualBenefits,
                               currencyFormat,
                               isTotal: true,
-                              backgroundColor: Colors.blue.shade50,
+                              backgroundColor: fillPrimaryLight,
                               showDash: true,
                             ),
                           ),
@@ -355,7 +357,7 @@ class _SalaryStructureDetailScreenState
                                   12,
                               currencyFormat,
                               isTotal: true,
-                              backgroundColor: Colors.red.shade50,
+                              backgroundColor: fillWhite,
                             ),
                           ),
                         ],
@@ -367,10 +369,15 @@ class _SalaryStructureDetailScreenState
                       _salaryStructure!.monthly.netMonthlySalary,
                       _salaryStructure!.yearly.annualNetSalary,
                       currencyFormat,
+                      fillPrimaryLight,
                     ),
                     const SizedBox(height: 12),
                     // Total CTC Section
-                    _buildCTCCard(_salaryStructure!.totalCTC, currencyFormat),
+                    _buildCTCCard(
+                      _salaryStructure!.totalCTC,
+                      currencyFormat,
+                      fillPrimaryLight,
+                    ),
                   ],
                 ),
               ),
@@ -482,6 +489,7 @@ class _SalaryStructureDetailScreenState
     double monthlyNet,
     double yearlyNet,
     NumberFormat format,
+    Color bodyBackground,
   ) {
     return Container(
       decoration: BoxDecoration(
@@ -506,7 +514,7 @@ class _SalaryStructureDetailScreenState
             ),
           ),
           Container(
-            color: Colors.green.shade50,
+            color: bodyBackground,
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -520,7 +528,7 @@ class _SalaryStructureDetailScreenState
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        color: Colors.green[700],
+                        color: AppColors.textPrimary,
                       ),
                     ),
                   ),
@@ -536,7 +544,7 @@ class _SalaryStructureDetailScreenState
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        color: Colors.green[700],
+                        color: AppColors.textPrimary,
                       ),
                     ),
                   ),
@@ -552,7 +560,7 @@ class _SalaryStructureDetailScreenState
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        color: Colors.green[700],
+                        color: AppColors.textPrimary,
                       ),
                     ),
                   ),
@@ -565,7 +573,11 @@ class _SalaryStructureDetailScreenState
     );
   }
 
-  Widget _buildCTCCard(double ctc, NumberFormat format) {
+  Widget _buildCTCCard(
+    double ctc,
+    NumberFormat format,
+    Color bodyBackground,
+  ) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -589,7 +601,7 @@ class _SalaryStructureDetailScreenState
             ),
           ),
           Container(
-            color: Colors.blue.shade100,
+            color: bodyBackground,
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -603,7 +615,7 @@ class _SalaryStructureDetailScreenState
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
-                        color: AppColors.primary,
+                        color: AppColors.textPrimary,
                       ),
                     ),
                   ),

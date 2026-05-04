@@ -25,6 +25,7 @@ Dio webHrmsApiDio() {
     ),
   );
   dio.interceptors.add(FormDataContentTypeInterceptor());
+  dio.interceptors.add(SessionExpiryInterceptor(dio));
   dio.interceptors.add(RetryOnRateLimitInterceptor(dio));
   dio.interceptors.add(
     InterceptorsWrapper(

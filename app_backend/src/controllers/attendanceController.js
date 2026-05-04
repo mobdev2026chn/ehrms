@@ -148,6 +148,11 @@ function hasExplicitAppFineNumeric(value) {
     return Number.isFinite(Number(value));
 }
 
+/** Multer / form fields send booleans as strings; JSON body may send real booleans. */
+function isTruthyRequestBool(value) {
+    return value === true || value === 'true' || String(value).toLowerCase() === 'true';
+}
+
 function staffShiftAssignmentKey(staff) {
     if (!staff) return '';
     const rawSid = staff.shiftId;
@@ -220,17 +225,25 @@ function normalizeTemplate(templateDoc) {
     };
 }
 
-/** Upload attendance selfie to Digital Ocean S3. Returns public URL or null. */
-async function uploadAttendanceSelfie(base64String, req, companyId, employeeName, type) {
+/** Upload attendance selfie to Digital Ocean S3. Returns public URL or null. [imageInput] may be a Buffer or a base64 / data-URL string. */
+async function uploadAttendanceSelfie(imageInput, req, companyId, employeeName, type) {
     try {
-        if (!base64String) return null;
-        let base64Data = base64String;
-        if (base64String.startsWith('data:image')) {
-            base64Data = base64String.replace(/^data:image\/\w+;base64,/, '');
-        } else if (!base64String.startsWith('/9j/') && !base64String.startsWith('iVBOR')) {
-            base64Data = base64String;
+        if (!imageInput) return null;
+        let buffer;
+        if (Buffer.isBuffer(imageInput)) {
+            buffer = imageInput;
+        } else if (typeof imageInput === 'string') {
+            let base64Data = imageInput;
+            if (imageInput.startsWith('data:image')) {
+                base64Data = imageInput.replace(/^data:image\/\w+;base64,/, '');
+            } else if (!imageInput.startsWith('/9j/') && !imageInput.startsWith('iVBOR')) {
+                base64Data = imageInput;
+            }
+            buffer = Buffer.from(base64Data, 'base64');
+        } else {
+            return null;
         }
-        const buffer = Buffer.from(base64Data, 'base64');
+        if (!buffer || buffer.length === 0) return null;
         const result = await digitalOceanService.uploadAttendanceImage(
             buffer,
             req,
@@ -243,6 +256,34 @@ async function uploadAttendanceSelfie(base64String, req, companyId, employeeName
         console.error('[Attendance] Selfie upload error:', error.message);
         return null;
     }
+}
+
+/**
+ * Upload punch selfie after HTTP response so the client is not blocked on Spaces latency.
+ * Updates attendances.[fieldKey] when upload succeeds (punchInSelfie | punchOutSelfie).
+ */
+function scheduleDeferredAttendanceSelfieUpload(attendanceId, imageInput, req, companyId, employeeName, fieldKey) {
+    const id = attendanceId;
+    const punchType = fieldKey === 'punchOutSelfie' ? 'punch-out' : 'punch-in';
+    setImmediate(() => {
+        void (async () => {
+            const t0 = Date.now();
+            try {
+                const url = await uploadAttendanceSelfie(imageInput, req, companyId, employeeName, punchType);
+                if (url) {
+                    await Attendance.findByIdAndUpdate(id, { [fieldKey]: url });
+                }
+                console.log('[Attendance] deferred selfie upload', {
+                    attendanceId: String(id),
+                    fieldKey,
+                    ms: Date.now() - t0,
+                    ok: Boolean(url),
+                });
+            } catch (e) {
+                console.error('[Attendance] deferred selfie upload failed', String(id), fieldKey, e?.message);
+            }
+        })();
+    });
 }
 
 // Helper function to calculate salary structure
@@ -481,6 +522,32 @@ async function getConsumedPermissionMinutesForMonth({
     return Math.max(0, Number(agg?.[0]?.total || 0));
 }
 
+async function resolveMonthlyPermissionQuotaMinutes(businessId) {
+    if (!businessId) return 0;
+    try {
+        const Company = require('../models/Company');
+        const company = await Company.findById(businessId)
+            .select('settings.attendance.shifts.permissionPolicy.monthlyQuotaMinutes')
+            .lean();
+        const shifts = company?.settings?.attendance?.shifts || [];
+        let maxQuota = 0;
+        for (const shift of shifts) {
+            const value = Math.max(
+                0,
+                Number(shift?.permissionPolicy?.monthlyQuotaMinutes || 0)
+            );
+            if (value > maxQuota) maxQuota = value;
+        }
+        return maxQuota;
+    } catch (err) {
+        console.warn(
+            '[Permission][Quota Resolve] failed:',
+            err?.message || err
+        );
+        return 0;
+    }
+}
+
 async function applyPermissionQuotaAdjustment({
     employeeId,
     businessId,
@@ -493,6 +560,8 @@ async function applyPermissionQuotaAdjustment({
     lateMinutes,
     earlyMinutes
 }) {
+    const attendanceIso = new Date(attendanceDate).toISOString();
+    const attendanceIdStr = attendanceId ? attendanceId?.toString?.() || String(attendanceId) : null;
     const zero = {
         adjustedLateMinutes: Math.max(0, Number(lateMinutes) || 0),
         adjustedEarlyMinutes: Math.max(0, Number(earlyMinutes) || 0),
@@ -505,6 +574,20 @@ async function applyPermissionQuotaAdjustment({
     const policy = shiftPermissionPolicy || {};
     let enabled = policy.enabled === true;
     let monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
+    if (monthlyQuotaMinutes <= 0) {
+        const resolvedMonthlyQuota = await resolveMonthlyPermissionQuotaMinutes(
+            businessId
+        );
+        if (resolvedMonthlyQuota > 0) {
+            monthlyQuotaMinutes = resolvedMonthlyQuota;
+            console.log('[Permission][Quota Resolve]', {
+                employeeId: employeeId?.toString?.() || String(employeeId || ''),
+                businessId: businessId?.toString?.() || String(businessId || ''),
+                attendanceDate: attendanceIso,
+                resolvedMonthlyQuota
+            });
+        }
+    }
     const applyTo = ['lateArrival', 'earlyExit', 'both'].includes(String(policy.applyTo || 'both'))
         ? String(policy.applyTo || 'both')
         : 'both';
@@ -548,7 +631,7 @@ async function applyPermissionQuotaAdjustment({
         // approved permission exists for the day. Keeps permission usage fields
         // consistent with approved request minutes.
         enabled = true;
-        monthlyQuotaMinutes = approvedMinutesForDay;
+        monthlyQuotaMinutes = Math.max(monthlyQuotaMinutes, approvedMinutesForDay);
         console.log('[Permission][Fallback]', {
             reason: !policy.enabled ? 'policy_disabled' : 'monthly_quota_zero',
             employeeId: employeeId?.toString?.() || String(employeeId || ''),
@@ -647,7 +730,32 @@ async function applyPermissionQuotaAdjustment({
         excludeAttendanceId: attendanceId
     });
     let remainingBefore = Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent);
+    console.log('[Permission][Consumption Check]', {
+        employeeId: employeeId?.toString?.() || String(employeeId || ''),
+        businessId: businessId?.toString?.() || String(businessId || ''),
+        attendanceDate: attendanceIso,
+        attendanceId: attendanceIdStr,
+        isCheckout: !!isCheckout,
+        isOpenShiftDay: !!isOpenShiftDay,
+        applyTo,
+        approvedMinutesForDay,
+        approvedEligibleForDay,
+        eligibleLate,
+        eligibleEarly,
+        consumedSoFarNoCurrent,
+        monthlyQuotaMinutes,
+        remainingBefore
+    });
     if (remainingBefore <= 0) {
+        console.log('[Permission][Consumption Skip]', {
+            reason: 'monthly_quota_exhausted',
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            attendanceDate: attendanceIso,
+            attendanceId: attendanceIdStr,
+            approvedMinutesForDay,
+            consumedSoFarNoCurrent,
+            monthlyQuotaMinutes
+        });
         return {
             ...zero,
             permissionApprovedMinutes: approvedMinutesForDay
@@ -660,6 +768,33 @@ async function applyPermissionQuotaAdjustment({
     const consumeEarly = Math.min(eligibleEarly, remainingBefore);
     const consumed = consumeLate + consumeEarly;
     const remainingAfter = Math.max(0, monthlyQuotaMinutes - consumedSoFarNoCurrent - consumed);
+    if (consumed > 0) {
+        console.log('[Permission][Consumed]', {
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            businessId: businessId?.toString?.() || String(businessId || ''),
+            attendanceDate: attendanceIso,
+            attendanceId: attendanceIdStr,
+            isCheckout: !!isCheckout,
+            consumed,
+            consumeLate,
+            consumeEarly,
+            approvedMinutesForDay,
+            consumedSoFarNoCurrent,
+            remainingAfter
+        });
+    } else {
+        console.log('[Permission][Consumption Noop]', {
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            attendanceDate: attendanceIso,
+            attendanceId: attendanceIdStr,
+            isCheckout: !!isCheckout,
+            eligibleLate,
+            eligibleEarly,
+            approvedMinutesForDay,
+            consumedSoFarNoCurrent,
+            remainingBefore
+        });
+    }
 
     return {
         adjustedLateMinutes: Math.max(0, actualLate - consumeLate),
@@ -1242,6 +1377,11 @@ const checkIn = async (req, res) => {
         source: bodySource
     } = req.body;
 
+    let selfieInput = selfie;
+    if (req.file && req.file.buffer && req.file.buffer.length > 0) {
+        selfieInput = req.file.buffer;
+    }
+
     const VALID_SOURCES = ['app', 'software', 'webemp', 'webadmin'];
     const source = (bodySource && VALID_SOURCES.includes(String(bodySource).toLowerCase()))
         ? String(bodySource).toLowerCase()
@@ -1273,6 +1413,7 @@ const checkIn = async (req, res) => {
     const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
 
     try {
+        const checkInT0 = Date.now();
         // Re-fetch staff (keep attendanceTemplateId as ObjectId; resolve template via collection lookup)
         const staff = await Staff.findById(staffId)
             .populate('branchId')
@@ -1286,6 +1427,22 @@ const checkIn = async (req, res) => {
             templateName: template?.name ?? null,
             requireSelfie: template?.requireSelfie,
             requireGeolocation: template?.requireGeolocation
+        });
+
+        const hasSelfiePayload = Boolean(
+            selfieInput &&
+            (Buffer.isBuffer(selfieInput)
+                ? selfieInput.length > 0
+                : String(selfieInput).trim().length > 0)
+        );
+        if (template.requireSelfie !== false && !hasSelfiePayload) {
+            return res.status(400).json({ message: 'Selfie is required for check-in.' });
+        }
+        console.log('[Attendance checkIn] start', {
+            staffId: staffId?.toString(),
+            contentLength: req.headers['content-length'],
+            hasSelfie: hasSelfiePayload,
+            selfieMultipart: Boolean(req.file && req.file.buffer && req.file.buffer.length > 0),
         });
 
         // Salary must be configured to allow check-in (required for fine/late/early storage and payroll)
@@ -1356,6 +1513,8 @@ const checkIn = async (req, res) => {
             }
         }
 
+        const warnings = [];
+
         // 4. Check Late Entry - Always allow, but add warning if not allowed in settings
         const shiftTiming = company ? shiftForCheckIn : null;
         const appliedShiftId = getAppliedShiftIdFromShiftTiming(shiftTiming);
@@ -1390,8 +1549,6 @@ const checkIn = async (req, res) => {
                 }
             }
         }
-        
-        const warnings = [];
 
         // Geofence Logic (supports multiple sub-locations via geofence.locations[])
         let activeBranch = null;
@@ -1462,10 +1619,7 @@ const checkIn = async (req, res) => {
 
         if (existing && isHalfDayDay) {
             // Update existing Half Day record with punchIn (do not create new, do not return "Already checked in")
-            let selfieUrl = null;
-            if (selfie && template.requireSelfie !== false) {
-                selfieUrl = await uploadAttendanceSelfie(selfie, req, staff.businessId ? String(staff.businessId) : undefined, staff.name, 'punch-in');
-            }
+            const deferHalfDaySelfie = Boolean(selfieInput && template.requireSelfie !== false);
             const fineShiftStartTime = shiftTiming?.startTime || template.shiftStartTime || '09:30';
             const fineShiftEndTime = shiftTiming?.endTime || template.shiftEndTime || '18:30';
             const fineGracePeriod = shiftTiming?.gracePeriodMinutes ?? template.gracePeriodMinutes ?? 0;
@@ -1475,21 +1629,60 @@ const checkIn = async (req, res) => {
                 shiftEndTime: fineShiftEndTime,
                 gracePeriodMinutes: fineGracePeriod
             };
-            // Always calculate and store fine details on attendance record.
-            const fineResult = await calculateCombinedFine(
-                now,
-                null,
-                startOfDay,
-                fineTemplate,
-                staff,
-                company,
-                activeLeave,
-                {
-                    appPerDayNetSalary: req.body?.appPerDayNetSalary,
-                    appPerdayGrossSalary: req.body?.appPerdayGrossSalary
-                },
-                { attendanceId: existing._id }
-            );
+            const useAppProvidedFine = source === 'app' && isTruthyRequestBool(forceAppFine);
+            let permissionFromServer = null;
+            if (useAppProvidedFine) {
+                try {
+                    permissionFromServer = await calculateCombinedFine(
+                        now,
+                        null,
+                        startOfDay,
+                        fineTemplate,
+                        staff,
+                        company,
+                        activeLeave,
+                        {
+                            appPerDayNetSalary: req.body?.appPerDayNetSalary,
+                            appPerdayGrossSalary: req.body?.appPerdayGrossSalary
+                        },
+                        { attendanceId: existing._id }
+                    );
+                } catch (permErr) {
+                    console.error('[Permission][CHECK-IN][HALF-DAY][APP] calculateCombinedFine failed:', permErr?.message);
+                }
+            }
+            // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
+            const fineResult = useAppProvidedFine
+                ? {
+                    lateMinutes: hasExplicitAppFineNumeric(bodyLateMinutes)
+                        ? Math.max(0, Math.round(Number(bodyLateMinutes)))
+                        : 0,
+                    earlyMinutes: hasExplicitAppFineNumeric(bodyEarlyMinutes)
+                        ? Math.max(0, Math.round(Number(bodyEarlyMinutes)))
+                        : 0,
+                    fineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
+                        ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
+                        : 0,
+                    permissionLateMinutes: permissionFromServer?.permissionLateMinutes ?? existing.permissionLateMinutes ?? 0,
+                    permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? existing.permissionEarlyMinutes ?? 0,
+                    permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? existing.permissionApprovedMinutes ?? 0,
+                    permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? existing.permissionConsumedMinutes ?? 0,
+                    permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? existing.permissionRemainingMinutes ?? 0
+                }
+                : await calculateCombinedFine(
+                    now,
+                    null,
+                    startOfDay,
+                    fineTemplate,
+                    staff,
+                    company,
+                    activeLeave,
+                    {
+                        appPerDayNetSalary: req.body?.appPerDayNetSalary,
+                        appPerdayGrossSalary: req.body?.appPerdayGrossSalary
+                    },
+                    { attendanceId: existing._id }
+                );
             existing.punchIn = now;
 
             // Update location using Mongoose set() method for nested paths to avoid validation issues
@@ -1512,7 +1705,7 @@ const checkIn = async (req, res) => {
             // punchOut is NOT set - Mongoose will preserve existing value or leave it undefined
             // This avoids the "Cast to Object failed" error
             
-            existing.punchInSelfie = selfieUrl;
+            existing.punchInSelfie = null;
             existing.punchInIpAddress = req.ip || req.connection.remoteAddress;
             existing.ipAddress = req.ip || req.connection.remoteAddress;
             if (staff.businessId != null) {
@@ -1533,8 +1726,9 @@ const checkIn = async (req, res) => {
             existing.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
             // For app punches, prefer app-calculated values so DB matches app formula/logs.
             if (
+                !useAppProvidedFine &&
                 source === 'app' &&
-                forceAppFine === true &&
+                isTruthyRequestBool(forceAppFine) &&
                 (Number(fineResult.permissionConsumedMinutes) || 0) <= 0
             ) {
                 // If it's an open shift day, explicitly set lateMinutes and fineAmount to 0
@@ -1585,10 +1779,24 @@ const checkIn = async (req, res) => {
             await existing.save();
             const response = existing.toObject ? existing.toObject() : existing;
             if (warnings.length > 0) response.warnings = warnings;
-            console.log('[Attendance checkIn] success (half-day update)', { staffId: staffId?.toString(), attendanceId: existing._id?.toString() });
+            console.log('[Attendance checkIn] success (half-day update)', {
+                staffId: staffId?.toString(),
+                attendanceId: existing._id?.toString(),
+                ms: Date.now() - checkInT0,
+            });
             await closeStaleOpenBreaksForStaff(staff).catch((err) =>
                 console.warn('[Attendance checkIn] closeStaleOpenBreaksForStaff', err?.message)
             );
+            if (deferHalfDaySelfie) {
+                scheduleDeferredAttendanceSelfieUpload(
+                    existing._id,
+                    selfieInput,
+                    req,
+                    staff.businessId ? String(staff.businessId) : undefined,
+                    staff.name,
+                    'punchInSelfie',
+                );
+            }
             void Promise.allSettled([
                 AttendanceLog.create({
                     attendanceId: existing._id,
@@ -1596,7 +1804,7 @@ const checkIn = async (req, res) => {
                     performedBy: staffId,
                     performedByName: staff.name || undefined,
                     performedByEmail: staff.email || undefined,
-                    selfieUrl: selfieUrl || undefined,
+                    selfieUrl: undefined,
                     punchInDateTime: now,
                     punchInAddress: buildAddressString(address, area, city, pincode) || undefined,
                     timestamp: now
@@ -1610,11 +1818,7 @@ const checkIn = async (req, res) => {
             return res.status(400).json({ message: 'Already checked in today' });
         }
 
-        // Upload Selfie to S3 (attendance folder)
-        let selfieUrl = null;
-        if (selfie && template.requireSelfie !== false) {
-            selfieUrl = await uploadAttendanceSelfie(selfie, req, staff.businessId ? String(staff.businessId) : undefined, staff.name, 'punch-in');
-        }
+        const deferCreateSelfie = Boolean(selfieInput && template.requireSelfie !== false);
 
         const locationData = {
             latitude: userLat,
@@ -1647,18 +1851,57 @@ const checkIn = async (req, res) => {
             gracePeriodMinutes: fineGracePeriod
         };
         
-        // Always calculate and store fine details on attendance record.
-        const fineResult = await calculateCombinedFine(
-            now,
-            null,
-            startOfDay,
-            fineTemplate,
-            staff,
-            company,
-            activeLeave,
-            null,
-            null
-        );
+        const useAppProvidedFine = source === 'app' && isTruthyRequestBool(forceAppFine);
+        let permissionFromServer = null;
+        if (useAppProvidedFine) {
+            try {
+                permissionFromServer = await calculateCombinedFine(
+                    now,
+                    null,
+                    startOfDay,
+                    fineTemplate,
+                    staff,
+                    company,
+                    activeLeave,
+                    {
+                        appPerDayNetSalary: req.body?.appPerDayNetSalary,
+                        appPerdayGrossSalary: req.body?.appPerdayGrossSalary
+                    },
+                    null
+                );
+            } catch (permErr) {
+                console.error('[Permission][CHECK-IN][CREATE][APP] calculateCombinedFine failed:', permErr?.message);
+            }
+        }
+        // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
+        const fineResult = useAppProvidedFine
+            ? {
+                lateMinutes: hasExplicitAppFineNumeric(bodyLateMinutes)
+                    ? Math.max(0, Math.round(Number(bodyLateMinutes)))
+                    : 0,
+                earlyMinutes: hasExplicitAppFineNumeric(bodyEarlyMinutes)
+                    ? Math.max(0, Math.round(Number(bodyEarlyMinutes)))
+                    : 0,
+                fineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
+                    ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
+                    : 0,
+                permissionLateMinutes: permissionFromServer?.permissionLateMinutes ?? 0,
+                permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? 0,
+                permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? 0,
+                permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? 0,
+                permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? 0
+            }
+            : await calculateCombinedFine(
+                now,
+                null,
+                startOfDay,
+                fineTemplate,
+                staff,
+                company,
+                activeLeave,
+                null,
+                null
+            );
         // Create initial attendance record. Store businessId from staff (staffs collection).
         const businessIdToStore = staff.businessId;
         console.log('[Attendance checkIn] storing in attendances: businessId=', businessIdToStore?.toString(), '(from staffs collection; body businessId=', bodyBusinessId ?? 'not sent', ')');
@@ -1672,7 +1915,7 @@ const checkIn = async (req, res) => {
             status: (isHoliday || isWeeklyOff) ? 'Present' : 'Pending',
             isPaidLeave: false,  // check-in attendance: default false
             location: locationData,
-            punchInSelfie: selfieUrl,
+            punchInSelfie: null,
             ipAddress: req.ip || req.connection.remoteAddress,
             punchInIpAddress: req.ip || req.connection.remoteAddress,
             ...(source && { source }),
@@ -1690,8 +1933,9 @@ const checkIn = async (req, res) => {
         });
         // For app punches, prefer app-calculated values so DB matches app formula/logs.
         if (
+            !useAppProvidedFine &&
             source === 'app' &&
-            forceAppFine === true &&
+            isTruthyRequestBool(forceAppFine) &&
             (Number(fineResult.permissionConsumedMinutes) || 0) <= 0
         ) {
             // If it's an open shift day, explicitly set lateMinutes and fineAmount to 0
@@ -1743,10 +1987,25 @@ const checkIn = async (req, res) => {
             response.warnings = warnings;
         }
 
-        console.log('[Attendance checkIn] success', { staffId: staffId?.toString(), attendanceId: response?._id?.toString?.() || response?.id, businessIdStored: response?.businessId?.toString?.() ?? response?.businessId });
+        console.log('[Attendance checkIn] success', {
+            staffId: staffId?.toString(),
+            attendanceId: response?._id?.toString?.() || response?.id,
+            businessIdStored: response?.businessId?.toString?.() ?? response?.businessId,
+            ms: Date.now() - checkInT0,
+        });
         await closeStaleOpenBreaksForStaff(staff).catch((err) =>
             console.warn('[Attendance checkIn] closeStaleOpenBreaksForStaff', err?.message)
         );
+        if (deferCreateSelfie) {
+            scheduleDeferredAttendanceSelfieUpload(
+                attendance._id,
+                selfieInput,
+                req,
+                staff.businessId ? String(staff.businessId) : undefined,
+                staff.name,
+                'punchInSelfie',
+            );
+        }
         void Promise.allSettled([
             AttendanceLog.create({
                 attendanceId: attendance._id,
@@ -1754,7 +2013,7 @@ const checkIn = async (req, res) => {
                 performedBy: staffId,
                 performedByName: staff.name || undefined,
                 performedByEmail: staff.email || undefined,
-                selfieUrl: selfieUrl || undefined,
+                selfieUrl: undefined,
                 punchInDateTime: now,
                 punchInAddress: buildAddressString(address, area, city, pincode) || undefined,
                 timestamp: now
@@ -1789,6 +2048,11 @@ const checkOut = async (req, res) => {
         source: bodySource
     } = req.body;
 
+    let selfieInput = selfie;
+    if (req.file && req.file.buffer && req.file.buffer.length > 0) {
+        selfieInput = req.file.buffer;
+    }
+
     const VALID_SOURCES = ['app', 'software', 'webemp', 'webadmin'];
     const source = (bodySource && VALID_SOURCES.includes(String(bodySource).toLowerCase()))
         ? String(bodySource).toLowerCase()
@@ -1799,7 +2063,11 @@ const checkOut = async (req, res) => {
     }
     const staffId = req.staff._id;
     const now = new Date();
-    console.log('[Attendance checkOut] request', { staffId: staffId?.toString(), date: now.toISOString?.()?.slice(0, 10) });
+    console.log('[Attendance checkOut] request', {
+        staffId: staffId?.toString(),
+        date: now.toISOString?.()?.slice(0, 10),
+        contentLength: req.headers['content-length'],
+    });
 
     // Create Date object for start/end of day in UTC to ensure MongoDB ISODate format
     const year = now.getUTCFullYear();
@@ -1855,7 +2123,7 @@ const checkOut = async (req, res) => {
                     area,
                     city,
                     pincode,
-                    selfie,
+                    selfie: selfieInput,
                     movementType,
                     source,
                     forceAppFine,
@@ -1880,7 +2148,7 @@ const checkOut = async (req, res) => {
                 area,
                 city,
                 pincode,
-                selfie,
+                selfie: selfieInput,
                 movementType,
                 source,
                 forceAppFine,
@@ -1913,6 +2181,20 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         earlyMinutes: bodyEarlyMinutes,
         fineAmount: bodyFineAmount
     } = data;
+
+    const checkoutT0 = Date.now();
+    console.log('[Attendance processCheckOut] start', {
+        contentLength: req.headers['content-length'],
+        attendanceId: attendance._id?.toString(),
+    });
+
+    const hasCheckOutSelfiePayload = Boolean(
+        selfie &&
+        (Buffer.isBuffer(selfie) ? selfie.length > 0 : String(selfie).trim().length > 0)
+    );
+    if (template.requireSelfie !== false && !hasCheckOutSelfiePayload) {
+        return res.status(400).json({ message: 'Selfie is required for check-out.' });
+    }
 
     // Half Day: allow updating punchOut even if already set (update existing record)
     const isHalfDayStatus = attendance && String(attendance.status || '').trim().toLowerCase() === 'half day';
@@ -2098,11 +2380,10 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         }
     }
 
-    // Upload Selfie to S3 (attendance folder)
-    if (selfie && template.requireSelfie !== false) {
-        const companyId = staff.businessId ? String(staff.businessId) : undefined;
-        const selfieUrl = await uploadAttendanceSelfie(selfie, req, companyId, staff.name, 'punch-out');
-        attendance.punchOutSelfie = selfieUrl;
+    const deferCheckoutSelfie = Boolean(selfie && template.requireSelfie !== false);
+    const companyIdForDefer = staff.businessId ? String(staff.businessId) : undefined;
+    if (deferCheckoutSelfie) {
+        attendance.punchOutSelfie = null;
     }
 
     // Update Fields
@@ -2212,21 +2493,64 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         };
     }
     
-    // Always recalculate and store fine details after punch-out.
-    const fineResult = await calculateCombinedFine(
-        attendance.punchIn,
-        now,
-        attendance.date,
-        fineTemplate,
-        staff,
-        company,
-        leaveForFine,
-        {
-            appPerDayNetSalary: data?.appPerDayNetSalary,
-            appPerdayGrossSalary: data?.appPerdayGrossSalary
-        },
-        { attendanceId: attendance._id }
-    );
+    const useAppProvidedFine = source === 'app' && isTruthyRequestBool(forceAppFine);
+    let permissionFromServer = null;
+    if (useAppProvidedFine) {
+        try {
+            permissionFromServer = await calculateCombinedFine(
+                attendance.punchIn,
+                now,
+                attendance.date,
+                fineTemplate,
+                staff,
+                company,
+                leaveForFine,
+                {
+                    appPerDayNetSalary: data?.appPerDayNetSalary,
+                    appPerdayGrossSalary: data?.appPerdayGrossSalary
+                },
+                { attendanceId: attendance._id }
+            );
+        } catch (permErr) {
+            console.error('[Permission][CHECK-OUT][APP] calculateCombinedFine failed:', permErr?.message);
+        }
+    }
+    // For app punches with forceAppFine=true, trust app fine payload and skip backend fine recomputation.
+    const fineResult = useAppProvidedFine
+        ? {
+            lateMinutes: hasExplicitAppFineNumeric(bodyLateMinutes)
+                ? Math.max(0, Math.round(Number(bodyLateMinutes)))
+                : (attendance.lateMinutes ?? 0),
+            earlyMinutes: hasExplicitAppFineNumeric(bodyEarlyMinutes)
+                ? Math.max(0, Math.round(Number(bodyEarlyMinutes)))
+                : 0,
+            fineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
+                ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
+                : (attendance.fineAmount ?? 0),
+            lateFineAmount: hasExplicitAppFineNumeric(bodyFineAmount)
+                ? Math.max(0, Math.round(Number(bodyFineAmount) * 100) / 100)
+                : (attendance.fineAmount ?? 0),
+            earlyFineAmount: 0,
+            permissionLateMinutes: permissionFromServer?.permissionLateMinutes ?? attendance.permissionLateMinutes ?? 0,
+            permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? attendance.permissionEarlyMinutes ?? 0,
+            permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? attendance.permissionApprovedMinutes ?? 0,
+            permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? attendance.permissionConsumedMinutes ?? 0,
+            permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? attendance.permissionRemainingMinutes ?? 0
+        }
+        : await calculateCombinedFine(
+            attendance.punchIn,
+            now,
+            attendance.date,
+            fineTemplate,
+            staff,
+            company,
+            leaveForFine,
+            {
+                appPerDayNetSalary: data?.appPerDayNetSalary,
+                appPerdayGrossSalary: data?.appPerdayGrossSalary
+            },
+            { attendanceId: attendance._id }
+        );
     const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
     const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
     const totalFineAmount = lateFineAmount + earlyFineAmount;
@@ -2244,8 +2568,9 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     attendance.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
     // For app punches, prefer app-calculated values so DB matches app formula/logs.
     if (
+        !useAppProvidedFine &&
         source === 'app' &&
-        forceAppFine === true &&
+        isTruthyRequestBool(forceAppFine) &&
         (Number(fineResult.permissionConsumedMinutes) || 0) <= 0
     ) {
         if (hasExplicitAppFineNumeric(bodyLateMinutes)) {
@@ -2282,6 +2607,17 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
 
     await attendance.save();
 
+    if (deferCheckoutSelfie) {
+        scheduleDeferredAttendanceSelfieUpload(
+            attendance._id,
+            selfie,
+            req,
+            companyIdForDefer,
+            staff.name,
+            'punchOutSelfie',
+        );
+    }
+
     console.log('[Attendance CHECK-OUT] saved:', {
         staffId: staff._id?.toString(),
         attendanceId: attendance._id?.toString(),
@@ -2305,7 +2641,13 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         response.warnings = warnings;
     }
 
-    console.log('[Attendance checkOut] success', { staffId: staff._id?.toString(), attendanceId: attendance._id?.toString(), punchIn: attendance.punchIn, punchOut: attendance.punchOut });
+    console.log('[Attendance checkOut] success', {
+        staffId: staff._id?.toString(),
+        attendanceId: attendance._id?.toString(),
+        punchIn: attendance.punchIn,
+        punchOut: attendance.punchOut,
+        ms: Date.now() - checkoutT0,
+    });
     const userLat = latitude != null ? parseFloat(latitude) : (attendance.location?.punchOut?.latitude ?? attendance.location?.punchIn?.latitude ?? 0);
     const userLng = longitude != null ? parseFloat(longitude) : (attendance.location?.punchOut?.longitude ?? attendance.location?.punchIn?.longitude ?? 0);
     void Promise.allSettled([
@@ -2326,6 +2668,10 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
             ? insertAttendanceTracking(staff._id, staff.name, userLat, userLng, 'out_of_office', 'checked_out', movementType, address, area, city, pincode)
             : Promise.resolve()
     ]);
+    console.log('[Attendance processCheckOut] done', {
+        ms: Date.now() - checkoutT0,
+        attendanceId: attendance._id?.toString(),
+    });
     res.json(response);
 }
 

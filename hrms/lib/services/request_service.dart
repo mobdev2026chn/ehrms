@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/error_message_utils.dart';
+import '../utils/punch_flow_log.dart';
 import 'api_client.dart';
 
 class RequestService {
@@ -565,13 +566,24 @@ class RequestService {
         queryParameters: q,
       );
       final body = response.data;
+      punchFlowLog(
+        '[Permission][App][getPermissionRequests] status=${response.statusCode} '
+        'query=$q raw=$body',
+      );
       if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
       }
       return {'success': true, 'data': body};
     } on DioException catch (e) {
+      punchFlowLog(
+        '[Permission][App][getPermissionRequests] DioException '
+        'status=${e.response?.statusCode} data=${e.response?.data}',
+      );
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
+      punchFlowLog(
+        '[Permission][App][getPermissionRequests] error=$e',
+      );
       return {'success': false, 'message': _handleException(e)};
     }
   }
@@ -594,6 +606,11 @@ class RequestService {
         },
       );
       final body = response.data;
+      punchFlowLog(
+        '[Permission][App][createPermissionRequest] status=${response.statusCode} '
+        'date=${date.toIso8601String()} type=$type requestedMinutes=$requestedMinutes '
+        'raw=$body',
+      );
       if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
       }
@@ -602,8 +619,15 @@ class RequestService {
         'message': 'Failed to submit permission request',
       };
     } on DioException catch (e) {
+      punchFlowLog(
+        '[Permission][App][createPermissionRequest] DioException '
+        'status=${e.response?.statusCode} data=${e.response?.data}',
+      );
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
+      punchFlowLog(
+        '[Permission][App][createPermissionRequest] error=$e',
+      );
       return {'success': false, 'message': _handleException(e)};
     }
   }
@@ -615,6 +639,10 @@ class RequestService {
         '/requests/permission/$requestId/cancel',
       );
       final body = response.data;
+      punchFlowLog(
+        '[Permission][App][cancelPermissionRequest] status=${response.statusCode} '
+        'requestId=$requestId raw=$body',
+      );
       if (body != null && body['success'] == true) {
         return {'success': true, 'data': body['data'] ?? body};
       }
@@ -623,8 +651,15 @@ class RequestService {
         'message': 'Failed to cancel permission request',
       };
     } on DioException catch (e) {
+      punchFlowLog(
+        '[Permission][App][cancelPermissionRequest] DioException '
+        'status=${e.response?.statusCode} data=${e.response?.data}',
+      );
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
+      punchFlowLog(
+        '[Permission][App][cancelPermissionRequest] error=$e',
+      );
       return {'success': false, 'message': _handleException(e)};
     }
   }
@@ -642,6 +677,7 @@ class RequestService {
       };
 
       Map<String, dynamic>? balanceBody;
+      String sourceEndpoint = '/permissions/balance';
       try {
         // Web parity: primary endpoint.
         final res = await _api.dio.get<Map<String, dynamic>>(
@@ -651,6 +687,7 @@ class RequestService {
         balanceBody = res.data;
       } on DioException {
         // Fallback for older backend route.
+        sourceEndpoint = '/requests/permission/balance';
         final res = await _api.dio.get<Map<String, dynamic>>(
           '/requests/permission/balance',
           queryParameters: q,
@@ -675,6 +712,13 @@ class RequestService {
       dataMap['monthlyQuotaMinutes'] = quota;
       dataMap['consumedMinutes'] = consumed;
       dataMap['remainingMinutes'] = remaining;
+
+      punchFlowLog(
+        '[PermissionBalance][App] source=$sourceEndpoint '
+        'month=${q['month']} year=${q['year']} '
+        'quota=$quota consumed=$consumed remaining=$remaining '
+        'raw=${balanceBody?['data']}',
+      );
 
       return {'success': true, 'data': dataMap};
     } on DioException catch (e) {

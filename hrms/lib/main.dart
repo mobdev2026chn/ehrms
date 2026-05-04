@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'package:battery_plus/battery_plus.dart';
+import 'package:country_code_picker/country_code_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:background_location_tracker/background_location_tracker.dart';
 import 'services/alarm_service.dart';
-import 'services/auth_service.dart';
 import 'services/fcm_service.dart';
 import 'config/app_route_observer.dart';
 import 'services/geo/live_tracking_service.dart';
@@ -104,19 +105,8 @@ void main() {
         );
       }
 
-      try {
-        final sessionReset = await AuthService().clearSessionIfBaseUrlChanged();
-        if (sessionReset) {
-          debugPrint(
-            '[main] Cleared stale session because baseUrl changed before startup init',
-          );
-        }
-      } catch (e, st) {
-        debugPrint(
-          '[main] clearSessionIfBaseUrlChanged failed (continuing): $e',
-        );
-        if (kDebugMode) debugPrint('[main] clearSessionIfBaseUrlChanged stack: $st');
-      }
+      // Keep user logged in across app restarts until explicit logout.
+      // Do not auto-clear auth session at startup based on baseUrl tracking.
 
       try {
         await AlarmService.initializeTimezone();
@@ -242,6 +232,14 @@ class MyApp extends StatelessWidget {
           navigatorObservers: [appRouteObserver],
           title: 'ektaHr',
           debugShowCheckedModeBanner: false,
+          // Lets country_code_picker resolve English (etc.) country names so the
+          // picker search matches typed country names, not only ISO/dial codes.
+          localizationsDelegates: const [
+            CountryLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           theme: lightTheme,
           darkTheme: darkTheme,
           themeMode: themeProvider.themeMode,

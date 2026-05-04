@@ -37,8 +37,10 @@ const String _kPresenceLastBackgroundAttemptTime =
     'presence_last_background_attempt_time';
 const String _kPresenceLastMovementType = 'presence_last_movement_type';
 const String _kPresenceConsecutiveLowSpeed = 'presence_consecutive_low_speed';
+
 /// JSON: { id, latitude, longitude, radius } — sub-zone from branch.geofence.locations hit at check-in.
-const String _kPresencePinnedGeofenceLocation = 'presence_pinned_geofence_location_json';
+const String _kPresencePinnedGeofenceLocation =
+    'presence_pinned_geofence_location_json';
 const int _maxPendingPresence = 80;
 
 enum _PresenceSendResult { sent, skipped, failed }
@@ -51,7 +53,9 @@ typedef _PresenceSendOutcome = ({
 class PresenceTrackingService {
   static bool _looksLikeMissingPlugin(Object error) {
     return error is MissingPluginException ||
-        error.toString().contains('No implementation found for method initialized');
+        error.toString().contains(
+          'No implementation found for method initialized',
+        );
   }
 
   static final PresenceTrackingService _instance =
@@ -67,10 +71,14 @@ class PresenceTrackingService {
   bool _taskInProgress = false;
   bool _sendingAppClosed = false;
   bool _periodicTickInProgress = false;
+  static int _offlineSendingCount = 0;
+  static int _localOfflineInsertCount = 0;
 
   /// Interval for inserting presence tracking into DB (trackings collection).
   /// Applied to both foreground timer and native Android background tracker.
-  static const Duration trackingInterval = Duration(minutes: 1);
+  static const Duration trackingInterval = Duration(
+    seconds: AppConstants.presenceTrackingCaptureIntervalSeconds,
+  );
   static const double _duplicateLocationThresholdMeters = 10;
 
   static const double defaultOfficeRadiusMeters = 200;
@@ -97,6 +105,31 @@ class PresenceTrackingService {
     if (token != null) _api.setAuthToken(token);
   }
 
+  Future<bool> _hasInternetConnection() async {
+    try {
+      final probe = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 5),
+        ),
+      );
+      final url = AppConstants.baseUrl.replaceAll(RegExp(r'/$'), '');
+      await probe.get<dynamic>(url);
+      return true;
+    } on DioException catch (e) {
+      final type = e.type;
+      if (type == DioExceptionType.connectionError ||
+          type == DioExceptionType.connectionTimeout ||
+          type == DioExceptionType.receiveTimeout ||
+          type == DioExceptionType.sendTimeout) {
+        return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Suppresses bursty duplicate uploads when the fix is almost the same, but still allows
   /// one row per [trackingInterval] while checked in (otherwise background/foreground never
   /// writes when you stay near the last point — typical at a desk or small GPS drift).
@@ -115,8 +148,7 @@ class PresenceTrackingService {
 
     final lastSentMs = prefs.getInt(_kPresenceLastSentTime);
     if (lastSentMs == null || lastSentMs <= 0) return false;
-    final elapsedMs =
-        DateTime.now().millisecondsSinceEpoch - lastSentMs;
+    final elapsedMs = DateTime.now().millisecondsSinceEpoch - lastSentMs;
     if (elapsedMs >= trackingInterval.inMilliseconds) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
@@ -201,7 +233,10 @@ class PresenceTrackingService {
 
   /// Pins one geofence zone from [AttendanceTemplateStore] branch data using check-in coordinates.
   /// Later presence pings compare only this zone (not every location every time).
-  Future<void> pinOfficeZoneAtCheckIn(double checkInLat, double checkInLng) async {
+  Future<void> pinOfficeZoneAtCheckIn(
+    double checkInLat,
+    double checkInLng,
+  ) async {
     if (checkInLat == 0 && checkInLng == 0) {
       await _clearPinnedOfficeZone();
       return;
@@ -372,8 +407,7 @@ class PresenceTrackingService {
       final m = Map<String, dynamic>.from(decoded);
       final plat = (m['latitude'] as num?)?.toDouble();
       final plng = (m['longitude'] as num?)?.toDouble();
-      final r =
-          (m['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
+      final r = (m['radius'] as num?)?.toDouble() ?? defaultOfficeRadiusMeters;
       if (plat == null || plng == null) return null;
       final distM = gl.Geolocator.distanceBetween(lat, lng, plat, plng);
       return distM <= r ? 'in_office' : 'out_of_office';
@@ -435,7 +469,11 @@ class PresenceTrackingService {
       return;
     }
     await prefs.setInt(_kPresenceLastBackgroundAttemptTime, nowMs);
-    if (await self._shouldSkipPresenceSend(lat, lng, logLabel: 'presence_store_bg')) {
+    if (await self._shouldSkipPresenceSend(
+      lat,
+      lng,
+      logLabel: 'presence_store_bg',
+    )) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
           '[Trackings] presence_store_bg SKIP duplicate '
@@ -495,6 +533,19 @@ class PresenceTrackingService {
         ? movement.consecutiveLowSpeed
         : 0;
     body['movementType'] = resolvedMovementType;
+    Future<void> enqueueBackgroundFailure() async {
+      await self._enqueueFailedPeriodicPresence(
+        lat: lat,
+        lng: lng,
+        presenceStatus: (body['presenceStatus'] as String?) ?? 'out_of_office',
+        status: 'offline',
+        appStatus: 'offline',
+        movementType: resolvedMovementType,
+        accuracy: accuracyM,
+        batteryPercent: batteryPercent,
+        capturedAtUtc: capturedAt,
+      );
+    }
 
     try {
       final response = await http.post(
@@ -506,12 +557,17 @@ class PresenceTrackingService {
         body: jsonEncode(body),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        await enqueueBackgroundFailure();
         if (kDebugMode && AppConstants.logTrackingsToConsole) {
           debugPrint(
             '[Trackings] presence_store_bg FAIL ${response.statusCode} '
             'lat=$lat lng=$lng status=${body['status']} '
             'appStatus=${body['appStatus']} movement=${body['movementType']} '
             'body=${response.body}',
+          );
+          debugPrint(
+            '[Trackings] presence_store_bg queued_offline '
+            'lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)}',
           );
         }
       } else if (kDebugMode && AppConstants.logTrackingsToConsole) {
@@ -538,12 +594,19 @@ class PresenceTrackingService {
           movementType: resolvedMovementType,
           accuracyM: accuracyM,
         );
+        // Internet just recovered in background: immediately flush older queued rows.
+        await self.flushPendingPresenceQueue();
       }
     } catch (e) {
+      await enqueueBackgroundFailure();
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
           '[Trackings] presence_store_bg error status=${body['status']} '
           'appStatus=${body['appStatus']} movement=${body['movementType']}: $e',
+        );
+        debugPrint(
+          '[Trackings] presence_store_bg queued_offline '
+          'lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)}',
         );
       }
     }
@@ -598,7 +661,8 @@ class PresenceTrackingService {
       var gf = d['branchGeofence'] as Map<String, dynamic>?;
       // Web / admin check-in: no SharedPreferences pin; geofence still comes from API.
       // If API payload is missing, use cached attendance template branch (dashboard loads it).
-      if (d['canTrack'] == true && (gf == null || !_branchGeofenceHasTargets(gf))) {
+      if (d['canTrack'] == true &&
+          (gf == null || !_branchGeofenceHasTargets(gf))) {
         final fromTemplate = await _branchGeofenceFromTemplate();
         if (fromTemplate != null) gf = fromTemplate;
       }
@@ -626,7 +690,9 @@ class PresenceTrackingService {
   }
 
   /// Mirrors server `getBranchGeofenceTargets`: `locations[]`, single circle, or legacy branch lat/lng.
-  Map<String, dynamic>? _geofencePayloadFromBranchMap(Map<String, dynamic> branch) {
+  Map<String, dynamic>? _geofencePayloadFromBranchMap(
+    Map<String, dynamic> branch,
+  ) {
     final geofenceRaw = branch['geofence'];
     Map<String, dynamic>? legacyFromTopLevel() {
       final legacyLat = (branch['latitude'] as num?)?.toDouble();
@@ -637,11 +703,7 @@ class PresenceTrackingService {
       return {
         'enabled': true,
         'targets': [
-          {
-            'latitude': legacyLat,
-            'longitude': legacyLng,
-            'radius': legacyR,
-          },
+          {'latitude': legacyLat, 'longitude': legacyLng, 'radius': legacyR},
         ],
         'latitude': legacyLat,
         'longitude': legacyLng,
@@ -667,8 +729,7 @@ class PresenceTrackingService {
         final loc = Map<String, dynamic>.from(item);
         final plat = (loc['latitude'] as num?)?.toDouble();
         final plng = (loc['longitude'] as num?)?.toDouble();
-        final r =
-            (loc['radius'] as num?)?.toDouble() ?? fallbackR;
+        final r = (loc['radius'] as num?)?.toDouble() ?? fallbackR;
         if (plat == null || plng == null) continue;
         targets.add({'latitude': plat, 'longitude': plng, 'radius': r});
       }
@@ -742,7 +803,10 @@ class PresenceTrackingService {
       return lastMovement;
     }
 
-    if (lastLat == null || lastLng == null || lastTimeMs == null || lastTimeMs <= 0) {
+    if (lastLat == null ||
+        lastLng == null ||
+        lastTimeMs == null ||
+        lastTimeMs <= 0) {
       return MovementClassificationService().classifyFromPosition(position);
     }
 
@@ -777,10 +841,9 @@ class PresenceTrackingService {
       distanceM: distanceM,
       elapsedSeconds: elapsedSec,
       lastMovementType: lastMovement,
-      sensorSpeedKmh:
-          (position.speed.isFinite && position.speed >= 0)
-              ? position.speed * 3.6
-              : null,
+      sensorSpeedKmh: (position.speed.isFinite && position.speed >= 0)
+          ? position.speed * 3.6
+          : null,
     );
 
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
@@ -809,8 +872,7 @@ class PresenceTrackingService {
   }) async {
     final lastMovement =
         prefs.getString(_kPresenceLastMovementType) ?? kMovementStop;
-    final consecutiveLow =
-        prefs.getInt(_kPresenceConsecutiveLowSpeed) ?? 0;
+    final consecutiveLow = prefs.getInt(_kPresenceConsecutiveLowSpeed) ?? 0;
     final lastLat = prefs.getDouble(_kPresenceLastSentLat);
     final lastLng = prefs.getDouble(_kPresenceLastSentLng);
     final lastTimeMs = prefs.getInt(_kPresenceLastSentTime);
@@ -822,19 +884,21 @@ class PresenceTrackingService {
         lastTimeMs != null &&
         lastTimeMs > 0) {
       distanceM = gl.Geolocator.distanceBetween(lastLat, lastLng, lat, lng);
-      elapsedSec = (DateTime.now().millisecondsSinceEpoch - lastTimeMs) / 1000.0;
+      elapsedSec =
+          (DateTime.now().millisecondsSinceEpoch - lastTimeMs) / 1000.0;
     }
 
     final speedKmhFromSensor =
         (speedMps != null && speedMps.isFinite && speedMps >= 0)
-            ? speedMps * 3.6
-            : 0.0;
+        ? speedMps * 3.6
+        : 0.0;
 
     if (accuracyM != null && accuracyM > kMaxAccuracyM) {
       return (
         movementType: lastMovement,
-        consecutiveLowSpeed:
-            lastMovement == kMovementStop ? (consecutiveLow + 1) : 0,
+        consecutiveLowSpeed: lastMovement == kMovementStop
+            ? (consecutiveLow + 1)
+            : 0,
       );
     }
 
@@ -845,8 +909,9 @@ class PresenceTrackingService {
         elapsedSec < kMovementHoldDuration.inSeconds) {
       return (
         movementType: lastMovement,
-        consecutiveLowSpeed:
-            lastMovement == kMovementStop ? (consecutiveLow + 1) : 0,
+        consecutiveLowSpeed: lastMovement == kMovementStop
+            ? (consecutiveLow + 1)
+            : 0,
       );
     }
 
@@ -854,17 +919,19 @@ class PresenceTrackingService {
       distanceM: distanceM,
       elapsedSeconds: elapsedSec,
     );
-    final movementType = MovementClassificationService.classifyFromTrackingSignals(
-      distanceM: distanceM,
-      elapsedSeconds: elapsedSec,
-      lastMovementType: lastMovement,
-      sensorSpeedKmh:
-          (speedMps != null && speedMps.isFinite && speedMps >= 0)
+    final movementType =
+        MovementClassificationService.classifyFromTrackingSignals(
+          distanceM: distanceM,
+          elapsedSeconds: elapsedSec,
+          lastMovementType: lastMovement,
+          sensorSpeedKmh:
+              (speedMps != null && speedMps.isFinite && speedMps >= 0)
               ? speedMps * 3.6
               : null,
-    );
-    final nextConsecutive =
-        movementType == kMovementStop ? (consecutiveLow + 1) : 0;
+        );
+    final nextConsecutive = movementType == kMovementStop
+        ? (consecutiveLow + 1)
+        : 0;
 
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
@@ -880,10 +947,7 @@ class PresenceTrackingService {
       );
     }
 
-    return (
-      movementType: movementType,
-      consecutiveLowSpeed: nextConsecutive,
-    );
+    return (movementType: movementType, consecutiveLowSpeed: nextConsecutive);
   }
 
   Future<_PresenceSendOutcome> _sendPresence({
@@ -929,7 +993,11 @@ class PresenceTrackingService {
       );
     }
     final resolvedMovementType = outlierDecision.movementType;
-    if (await _shouldSkipPresenceSend(lat, lng, logLabel: 'presence_store')) {
+    final hasInternet = await _hasInternetConnection();
+    final shouldBypassDuplicateCheck =
+        !hasInternet || status == 'offline' || appStatus == 'offline';
+    if (!shouldBypassDuplicateCheck &&
+        await _shouldSkipPresenceSend(lat, lng, logLabel: 'presence_store')) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
           '[Trackings] presence_store SKIP duplicate '
@@ -942,6 +1010,15 @@ class PresenceTrackingService {
         movementType: resolvedMovementType,
       );
     }
+    if (shouldBypassDuplicateCheck &&
+        kDebugMode &&
+        AppConstants.logTrackingsToConsole) {
+      debugPrint(
+        '[Trackings] presence_store duplicate_check bypassed '
+        'internet=${hasInternet ? "on" : "off"} '
+        'status=${status ?? "-"} appStatus=${appStatus ?? "-"}',
+      );
+    }
     try {
       final body = <String, dynamic>{
         'lat': lat,
@@ -949,7 +1026,7 @@ class PresenceTrackingService {
         'presenceStatus': presenceStatus,
         'timestamp': capturedAt.toIso8601String(),
       };
-      if (status == 'active' || status == 'inactive') {
+      if (status == 'active' || status == 'inactive' || status == 'offline') {
         body['status'] = status;
       }
       if (appStatus == 'app_closed' ||
@@ -970,7 +1047,15 @@ class PresenceTrackingService {
       if (area != null && area.isNotEmpty) body['area'] = area;
       if (pincode != null && pincode.isNotEmpty) body['pincode'] = pincode;
 
-      await _api.dio.post<dynamic>('/tracking/presence/store', data: body);
+      final response = await _api.dio.post<dynamic>(
+        '/tracking/presence/store',
+        data: body,
+      );
+      final savedId = response.data is Map
+          ? ((response.data as Map)['data'] is Map
+                ? ((response.data as Map)['data'] as Map)['_id']
+                : null)
+          : null;
       await TrackingOutlierFilterService.rememberValidRecord(
         scope: TrackingOutlierFilterService.presenceScope,
         lat: lat,
@@ -985,10 +1070,14 @@ class PresenceTrackingService {
           'lng=${lng.toStringAsFixed(6)} presence=$presenceStatus '
           'status=${status ?? "—"} appStatus=${appStatus ?? "—"} '
           'movement=$resolvedMovementType '
-          'acc=${accuracy?.toStringAsFixed(1) ?? "—"}m',
+          'acc=${accuracy?.toStringAsFixed(1) ?? "—"}m '
+          'savedId=${savedId ?? "-"}',
         );
       }
-      return (result: _PresenceSendResult.sent, movementType: resolvedMovementType);
+      return (
+        result: _PresenceSendResult.sent,
+        movementType: resolvedMovementType,
+      );
     } on DioException catch (e) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
@@ -1004,10 +1093,16 @@ class PresenceTrackingService {
           '[PresenceTracking] store ${e.response?.statusCode}: ${e.response?.data}',
         );
       }
-      return (result: _PresenceSendResult.failed, movementType: resolvedMovementType);
+      return (
+        result: _PresenceSendResult.failed,
+        movementType: resolvedMovementType,
+      );
     } catch (e) {
       if (kDebugMode) debugPrint('[PresenceTracking] store error: $e');
-      return (result: _PresenceSendResult.failed, movementType: resolvedMovementType);
+      return (
+        result: _PresenceSendResult.failed,
+        movementType: resolvedMovementType,
+      );
     }
   }
 
@@ -1021,9 +1116,11 @@ class PresenceTrackingService {
       final out = <Map<String, dynamic>>[];
       for (final e in decoded) {
         if (e is Map) {
-          out.add(Map<String, dynamic>.from(
-            e.map((k, v) => MapEntry(k.toString(), v)),
-          ));
+          out.add(
+            Map<String, dynamic>.from(
+              e.map((k, v) => MapEntry(k.toString(), v)),
+            ),
+          );
         }
       }
       return out;
@@ -1058,18 +1155,28 @@ class PresenceTrackingService {
     required DateTime capturedAtUtc,
   }) async {
     var list = await _loadPendingQueue();
+    final queueBefore = list.length;
+    if (kDebugMode && AppConstants.logTrackingsToConsole) {
+      debugPrint(
+        '[Trackings] presence_offline local_insert_prepare '
+        'lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)} '
+        'presence=$presenceStatus appStatus=${appStatus ?? "-"} '
+        'queue_before=$queueBefore',
+      );
+    }
     list.add({
       'lat': lat,
       'lng': lng,
       'presenceStatus': presenceStatus,
-      if (status != null && status.isNotEmpty) 'status': status,
+      'status': 'offline',
       if (appStatus != null && appStatus.isNotEmpty) 'appStatus': appStatus,
       if (movementType != null && movementType.isNotEmpty)
         'movementType': movementType,
       if (accuracy != null) 'accuracy': accuracy,
       if (batteryPercent != null) 'batteryPercent': batteryPercent,
       if (address != null && address.isNotEmpty) 'address': address,
-      if (fullAddress != null && fullAddress.isNotEmpty) 'fullAddress': fullAddress,
+      if (fullAddress != null && fullAddress.isNotEmpty)
+        'fullAddress': fullAddress,
       if (city != null && city.isNotEmpty) 'city': city,
       if (area != null && area.isNotEmpty) 'area': area,
       if (pincode != null && pincode.isNotEmpty) 'pincode': pincode,
@@ -1079,10 +1186,13 @@ class PresenceTrackingService {
       list = list.sublist(list.length - _maxPendingPresence);
     }
     await _savePendingQueue(list);
-    if (kDebugMode) {
+    if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
-        '[PresenceTracking] queued failed send (queue size=${list.length})',
+        '[Trackings] presence_offline local_insert_done '
+        'queue_after=${list.length}',
       );
+      _localOfflineInsertCount += 1;
+      debugPrint('****LOCAL-OFFLINE INSERT $_localOfflineInsertCount');
     }
   }
 
@@ -1093,6 +1203,11 @@ class PresenceTrackingService {
 
     var list = await _loadPendingQueue();
     if (list.isEmpty) return;
+    if (kDebugMode && AppConstants.logTrackingsToConsole) {
+      debugPrint(
+        '[Trackings] presence_offline flush_start pending=${list.length}',
+      );
+    }
 
     final remaining = <Map<String, dynamic>>[];
     for (final m in list) {
@@ -1125,6 +1240,21 @@ class PresenceTrackingService {
         pincode: m['pincode'] as String?,
         timestampUtc: t,
       );
+      if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        final resultLabel = outcome.result == _PresenceSendResult.sent
+            ? 'sent_ok'
+            : outcome.result == _PresenceSendResult.skipped
+            ? 'sent_skip'
+            : 'sent_fail';
+        debugPrint(
+          '[Trackings] presence_offline flush_item $resultLabel '
+          'lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)}',
+        );
+        if (outcome.result == _PresenceSendResult.sent) {
+          _offlineSendingCount += 1;
+          debugPrint('****COUNT OFFLINE-SENDING-$_offlineSendingCount');
+        }
+      }
       if (outcome.result == _PresenceSendResult.failed) remaining.add(m);
     }
     await _savePendingQueue(remaining);
@@ -1209,8 +1339,8 @@ class PresenceTrackingService {
     final movementType = await _classifyForegroundMovement(position);
 
     final effectiveGf = await _effectiveOfficeGeofence(gf);
-    final presenceStatus = _isInsideOffice(lat, lng, effectiveGf,
-            accuracyM: accuracy,)
+    final presenceStatus =
+        _isInsideOffice(lat, lng, effectiveGf, accuracyM: accuracy)
         ? 'in_office'
         : 'out_of_office';
     final appStatus = await _getAppStatusForCurrentLifecycle();
@@ -1253,7 +1383,11 @@ class PresenceTrackingService {
     if (kDebugMode) {
       debugPrint(
         '[PresenceTracking] tick presence=$presenceStatus movement=${outcome.movementType} '
-        'result=${outcome.result == _PresenceSendResult.sent ? "ok" : outcome.result == _PresenceSendResult.skipped ? "skip" : "fail"}',
+        'result=${outcome.result == _PresenceSendResult.sent
+            ? "ok"
+            : outcome.result == _PresenceSendResult.skipped
+            ? "skip"
+            : "fail"}',
       );
     }
     if (outcome.result == _PresenceSendResult.sent) {
@@ -1261,12 +1395,13 @@ class PresenceTrackingService {
         lat,
         lng,
         movementType: outcome.movementType,
-        consecutiveLowSpeed:
-            outcome.movementType == kMovementStop
-                ? MovementClassificationService().consecutiveLowSpeedCount
-                : 0,
+        consecutiveLowSpeed: outcome.movementType == kMovementStop
+            ? MovementClassificationService().consecutiveLowSpeedCount
+            : 0,
         recordedAt: capturedAt,
       );
+      // If internet just recovered, flush older offline rows immediately.
+      await flushPendingPresenceQueue();
     }
   }
 
@@ -1279,6 +1414,8 @@ class PresenceTrackingService {
     }
     _periodicTickInProgress = true;
     try {
+      // Keep replaying pending offline rows every minute while tracking is active.
+      await flushPendingPresenceQueue();
       final status = await getPresenceStatus();
       final gf = status['branchGeofence'] as Map<String, dynamic>?;
       await _tick(gf);
@@ -1308,7 +1445,9 @@ class PresenceTrackingService {
       _periodicTick();
     });
     if (kDebugMode) {
-      debugPrint('[PresenceTracking] timer started (interval: ${trackingInterval.inMinutes} min)');
+      debugPrint(
+        '[PresenceTracking] timer started (interval: ${trackingInterval.inMinutes} min)',
+      );
     }
   }
 
@@ -1332,7 +1471,8 @@ class PresenceTrackingService {
       final presenceState = await getPresenceStatus();
       final apiGf = presenceState['branchGeofence'] as Map<String, dynamic>?;
       final effectiveGf = await _effectiveOfficeGeofence(apiGf);
-      final presenceStatus = _isInsideOffice(
+      final presenceStatus =
+          _isInsideOffice(
             position.latitude,
             position.longitude,
             effectiveGf,
@@ -1359,7 +1499,11 @@ class PresenceTrackingService {
       if (kDebugMode) {
         debugPrint(
           '[PresenceTracking] recordAppOpened: active, presence=$presenceStatus '
-          'result=${outcome.result == _PresenceSendResult.sent ? "ok" : outcome.result == _PresenceSendResult.skipped ? "skip" : "fail"} '
+          'result=${outcome.result == _PresenceSendResult.sent
+              ? "ok"
+              : outcome.result == _PresenceSendResult.skipped
+              ? "skip"
+              : "fail"} '
           'movement=${outcome.movementType}',
         );
       }
@@ -1368,14 +1512,14 @@ class PresenceTrackingService {
           position.latitude,
           position.longitude,
           movementType: outcome.movementType,
-          consecutiveLowSpeed:
-              outcome.movementType == kMovementStop
-                  ? MovementClassificationService().consecutiveLowSpeedCount
-                  : 0,
+          consecutiveLowSpeed: outcome.movementType == kMovementStop
+              ? MovementClassificationService().consecutiveLowSpeedCount
+              : 0,
         );
       }
     } catch (e) {
-      if (kDebugMode) debugPrint('[PresenceTracking] recordAppOpened failed: $e');
+      if (kDebugMode)
+        debugPrint('[PresenceTracking] recordAppOpened failed: $e');
     }
   }
 
@@ -1399,12 +1543,13 @@ class PresenceTrackingService {
         position.latitude,
         position.longitude,
       );
-      final presenceStatus = _isInsideOffice(
-        position.latitude,
-        position.longitude,
-        effectiveGf,
-        accuracyM: position.accuracy,
-      )
+      final presenceStatus =
+          _isInsideOffice(
+            position.latitude,
+            position.longitude,
+            effectiveGf,
+            accuracyM: position.accuracy,
+          )
           ? 'in_office'
           : 'out_of_office';
       final movementType = await _classifyForegroundMovement(position);
@@ -1430,10 +1575,9 @@ class PresenceTrackingService {
           position.latitude,
           position.longitude,
           movementType: outcome.movementType,
-          consecutiveLowSpeed:
-              outcome.movementType == kMovementStop
-                  ? MovementClassificationService().consecutiveLowSpeedCount
-                  : 0,
+          consecutiveLowSpeed: outcome.movementType == kMovementStop
+              ? MovementClassificationService().consecutiveLowSpeedCount
+              : 0,
         );
       }
     } catch (_) {

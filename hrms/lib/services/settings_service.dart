@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import '../config/constants.dart';
 import 'auth_service.dart';
 import 'api_client.dart';
 import '../utils/error_message_utils.dart';
@@ -18,10 +19,14 @@ class SettingsService {
   /// Web: `GET /settings/business` — EmployeeSalaryOverview uses this for weekly-off fallback.
   Future<Map<String, dynamic>> getBusiness({bool useWebHrmsApi = false}) async {
     try {
-      if (!useWebHrmsApi) {
+      final normalizedBase = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
+      final normalizedWeb = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
+      final shouldUseWebApi = useWebHrmsApi || normalizedBase != normalizedWeb;
+
+      if (!shouldUseWebApi) {
         await _setToken();
       }
-      final response = useWebHrmsApi
+      final response = shouldUseWebApi
           ? await webHrmsApiDio().get<Map<String, dynamic>>(
               '/settings/business',
             )

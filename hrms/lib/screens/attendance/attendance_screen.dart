@@ -1333,6 +1333,29 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         (fineHours != null && fineHours > 0) ||
         (fineAmount != null && fineAmount > 0);
 
+    // Permission usage details (stored in attendance collection for this date)
+    final permissionLateMinutes = _parseLogNumericValue(
+      record['permissionLateMinutes'],
+    );
+    final permissionEarlyMinutes = _parseLogNumericValue(
+      record['permissionEarlyMinutes'],
+    );
+    final permissionApprovedMinutes = _parseLogNumericValue(
+      record['permissionApprovedMinutes'],
+    );
+    final permissionConsumedMinutes = _parseLogNumericValue(
+      record['permissionConsumedMinutes'],
+    );
+    final permissionRemainingMinutes = _parseLogNumericValue(
+      record['permissionRemainingMinutes'] ?? record['permissionRemainingMinute'],
+    );
+    final hasPermissionInfo =
+        (permissionApprovedMinutes != null && permissionApprovedMinutes > 0) ||
+        (permissionConsumedMinutes != null && permissionConsumedMinutes > 0) ||
+        (permissionRemainingMinutes != null && permissionRemainingMinutes > 0) ||
+        (permissionLateMinutes != null && permissionLateMinutes > 0) ||
+        (permissionEarlyMinutes != null && permissionEarlyMinutes > 0);
+
     // Extract location details
     String? punchInAddress;
     String? punchOutAddress;
@@ -1516,6 +1539,41 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                               isBold: true,
                             ),
                         ]),
+                      ],
+                      if (hasPermissionInfo) ...[
+                        const SizedBox(height: 20),
+                        _buildDayDetailSection(
+                          'Permission Details',
+                          Icons.fact_check_outlined,
+                          [
+                            if (permissionApprovedMinutes != null)
+                              _buildDayDetailRow(
+                                'Permission Approved',
+                                '${permissionApprovedMinutes.toInt()} mins',
+                                valueColor: Colors.blueGrey.shade700,
+                              ),
+                            if (permissionRemainingMinutes != null)
+                              _buildDayDetailRow(
+                                'Permission Remaining',
+                                '${permissionRemainingMinutes.toInt()} mins',
+                                valueColor: Colors.green.shade700,
+                              ),
+                            if (permissionLateMinutes != null &&
+                                permissionLateMinutes > 0)
+                              _buildDayDetailRow(
+                                'Permission Late Arrival',
+                                '${permissionLateMinutes.toInt()} mins',
+                                valueColor: Colors.deepOrange.shade700,
+                              ),
+                            if (permissionEarlyMinutes != null &&
+                                permissionEarlyMinutes > 0)
+                              _buildDayDetailRow(
+                                'Permission Early Exit',
+                                '${permissionEarlyMinutes.toInt()} mins',
+                                valueColor: Colors.deepOrange.shade700,
+                              ),
+                          ],
+                        ),
                       ],
                       if (logs.isNotEmpty ||
                           punchIn != null ||
@@ -2473,13 +2531,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           ? null
           : double.tryParse(grossAsString);
       if (grossParsed != null && grossParsed > 0) return grossParsed;
-      final direct = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
-      if (direct != null && direct > 0) return direct;
-      final asString = prefs.getString(kAppNetPerDaySalaryPrefsKey);
-      final parsed = asString == null ? null : double.tryParse(asString);
-      if (parsed != null && parsed > 0) return parsed;
-      final legacyDirect = prefs.getDouble(kAppLegacyPerDaySalaryPrefsKey);
-      if (legacyDirect != null && legacyDirect > 0) return legacyDirect;
     } catch (_) {}
     return null;
   }
@@ -4626,7 +4677,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     );
   }
 
-  /// Header bar: Left check-in icon | Center date | Right calendar icon
+  /// Header bar: centered month / date (history calendar view).
   Widget _buildAttendanceHeaderBar() {
     final colorScheme = Theme.of(context).colorScheme;
     final now = _showHistoryView ? _focusedDay : DateTime.now();
@@ -4634,33 +4685,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () {
-              final today = DateTime.now();
-              final todayNorm = DateTime(today.year, today.month, today.day);
-              setState(() {
-                _showHistoryView = true;
-                _selectedDay = todayNorm;
-                _focusedDay = todayNorm;
-              });
-              _fetchAttendanceStatus(date: todayNorm);
-              _fetchMonthData(todayNorm.year, todayNorm.month);
-            },
-            child: Container(
-              width: 44,
-              height: 44,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                Icons.login_rounded,
-                color: AppColors.primary,
-                size: 24,
-              ),
-            ),
-          ),
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -4686,7 +4710,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               ],
             ),
           ),
-          const SizedBox(width: 44, height: 44),
         ],
       ),
     );
@@ -4825,7 +4848,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             ),
             const SizedBox(height: 8),
             _buildHistoryList(),
-            if (_totalPages > 1 &&
+            if (_effectiveHistoryTotalPages() > 1 &&
                 _activeFilter != 'All' &&
                 _activeFilter != 'This Month' &&
                 _activeFilter != 'This Week') ...[
@@ -4947,6 +4970,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   Widget _buildPaginationControls() {
     final colorScheme = Theme.of(context).colorScheme;
+    final useMonthData = _isMonthDataHistoryFilter();
+    final effectivePages = _effectiveHistoryTotalPages();
+    final safePage = _page.clamp(1, effectivePages);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
       decoration: BoxDecoration(
@@ -4960,8 +4986,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           // Previous button
           IconButton(
             icon: const Icon(Icons.chevron_left),
-            onPressed: _page > 1 ? () => _fetchHistory(page: _page - 1) : null,
-            color: _page > 1
+            onPressed: safePage > 1
+                ? () {
+                    if (useMonthData) {
+                      setState(() => _page = safePage - 1);
+                    } else {
+                      _fetchHistory(page: safePage - 1);
+                    }
+                  }
+                : null,
+            color: safePage > 1
                 ? colorScheme.primary
                 : Colors.black,
           ),
@@ -4970,12 +5004,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           Row(
             mainAxisSize: MainAxisSize.min,
             children: List.generate(
-              _totalPages.clamp(0, 10), // Show max 10 pages
+              effectivePages.clamp(0, 10), // Show max 10 pages
               (index) {
                 final pageNum = index + 1;
-                final isCurrentPage = pageNum == _page;
+                final isCurrentPage = pageNum == safePage;
                 return GestureDetector(
-                  onTap: () => _fetchHistory(page: pageNum),
+                  onTap: () {
+                    if (useMonthData) {
+                      setState(() => _page = pageNum);
+                    } else {
+                      _fetchHistory(page: pageNum);
+                    }
+                  },
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 4),
                     padding: const EdgeInsets.symmetric(
@@ -5014,10 +5054,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           // Next button
           IconButton(
             icon: const Icon(Icons.chevron_right),
-            onPressed: _page < _totalPages
-                ? () => _fetchHistory(page: _page + 1)
+            onPressed: safePage < effectivePages
+                ? () {
+                    if (useMonthData) {
+                      setState(() => _page = safePage + 1);
+                    } else {
+                      _fetchHistory(page: safePage + 1);
+                    }
+                  }
                 : null,
-            color: _page < _totalPages
+            color: safePage < effectivePages
                 ? colorScheme.primary
                 : Colors.black,
           ),
@@ -5269,6 +5315,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                     onSelected: (value) {
                       setState(() {
                         _activeFilter = value;
+                        _page = 1;
                       });
                       if (value == 'All' ||
                           value == 'Late' ||
@@ -5856,7 +5903,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         '[Fine TEST][Attendance] Refreshed fine rules before alert/fine evaluation',
       );
       debugPrint(
-        '[Fine TEST][Attendance] Loaded netPerDaySalary='
+        '[Fine TEST][Attendance] Loaded grossPerDaySalary='
         '${netPerDaySalary?.toStringAsFixed(2) ?? "null"}',
       );
     }
@@ -5929,7 +5976,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 debugPrint(
                   '[Fine TEST][Attendance][LateIn] start=$shiftStartStr '
                   'graceMin=$gracePeriod lateMin=${fineResult.lateMinutes} '
-                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'grossPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
                   'fineType=${fineLog['fineType']} '
                   'ruleType=${fineLog['ruleType']} '
                   'ruleApplyTo=${fineLog['ruleApplyTo']} '
@@ -6115,7 +6162,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 debugPrint(
                   '[Fine TEST][Attendance][EarlyOut] start=$shiftStartForFine '
                   'end=$shiftEndStr earlyMin=$earlyMinutes '
-                  'netPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'grossPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
                   'fineType=${fineLog['fineType']} '
                   'ruleType=${fineLog['ruleType']} '
                   'ruleApplyTo=${fineLog['ruleApplyTo']} '
@@ -6958,52 +7005,22 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return _buildHistoryList(limit: 6, forceDisplayList: _recentActivityList);
   }
 
-  Widget _buildHistoryList({int? limit, List<dynamic>? forceDisplayList}) {
-    // When forceDisplayList is set (e.g. for Recent Activity), use it and skip filter logic.
-    if (forceDisplayList != null) {
-      final displayList = limit != null
-          ? forceDisplayList.take(limit).toList()
-          : List<dynamic>.from(forceDisplayList);
-      return _buildHistoryListBody(displayList);
-    }
-
-    // Use month data for All, This Month, This Week, Late, and Low Hours
-    // (if month data is available, it's more complete than paginated data)
-    final bool useMonthData =
-        _activeFilter == 'All' ||
+  bool _isMonthDataHistoryFilter() {
+    return _activeFilter == 'All' ||
         _activeFilter == 'This Month' ||
         _activeFilter == 'This Week' ||
         _activeFilter == 'Late' ||
         _activeFilter == 'Low Hours';
+  }
 
-    // For month-based view: show loader until month data is loaded (avoids Jan→Feb flicker)
-    if (useMonthData && _monthData == null) {
-      if (_isLoadingMonthData || _isLoadingHistory) {
-        return const Center(
-          child: Padding(padding: EdgeInsets.all(24.0), child: AppTabLoader()),
-        );
-      }
-      // Month fetch failed or not started: show empty
-    }
-
-    if (!useMonthData && _isLoadingHistory && _historyList.isEmpty) {
-      return const Center(
-        child: Padding(padding: EdgeInsets.all(24.0), child: AppTabLoader()),
-      );
-    }
-
-    // Determine which list to display based on filter
-    List<dynamic> displayList;
-
+  List<dynamic> _filteredHistoryRecords({required bool useMonthData}) {
     if (useMonthData) {
       List<dynamic> combined = _getCombinedMonthHistory();
-
       final now = DateTime.now();
       final currentMonth = DateTime(now.year, now.month);
       final nextMonth = DateTime(now.year, now.month + 1);
 
       if (_activeFilter == 'This Month') {
-        // Filter to show only current month's records
         combined = combined.where((r) {
           try {
             final d = _extractDateOnly(r['date']);
@@ -7028,9 +7045,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           }
         }).toList();
       } else if (_activeFilter == 'Late') {
-        // Filter for late check-in OR late check-out
         combined = combined.where((r) {
-          // Skip non-attendance records (Absent, Holiday, Weekend, On Leave)
           if (r['status'] != null &&
               (r['status'] == 'Absent' ||
                   r['status'] == 'Holiday' ||
@@ -7038,14 +7053,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   r['status'] == 'On Leave')) {
             return false;
           }
-          // Check for late check-in OR late check-out (pass record for half-day timings)
           return _isLateCheckIn(r['punchIn'], record: r) ||
               _isLateCheckOut(r['punchOut'], record: r);
         }).toList();
       } else if (_activeFilter == 'Low Hours') {
-        // Filter for low work hours
         combined = combined.where((r) {
-          // Skip non-attendance records (Absent, Holiday, Weekend, On Leave)
           if (r['status'] != null &&
               (r['status'] == 'Absent' ||
                   r['status'] == 'Holiday' ||
@@ -7056,30 +7068,77 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           return _shouldShowLowWorkHours(r);
         }).toList();
       }
-      // For 'All', show all combined data (already filtered to today)
-
-      displayList = combined;
-      // Month/Week/Late/Low Hours history is derived from loaded month data
-    } else {
-      // Fallback: filters work on the paginated _historyList (if month data not available)
-      displayList = _historyList.where((r) {
-        if (_activeFilter == 'Late Check-in' || _activeFilter == 'Late') {
-          // Check for late check-in OR late check-out (pass record for half-day timings)
-          return _isLateCheckIn(r['punchIn'], record: r) ||
-              _isLateCheckOut(r['punchOut'], record: r);
-        } else if (_activeFilter == 'Late Check-out' ||
-            _activeFilter == 'Late Out') {
-          return _isLateCheckOut(r['punchOut'], record: r);
-        } else if (_activeFilter == 'Low Work Hours' ||
-            _activeFilter == 'Low Hours') {
-          return _shouldShowLowWorkHours(r);
-        }
-        return true;
-      }).toList();
+      return combined;
     }
+
+    return _historyList.where((r) {
+      if (_activeFilter == 'Late Check-in' || _activeFilter == 'Late') {
+        return _isLateCheckIn(r['punchIn'], record: r) ||
+            _isLateCheckOut(r['punchOut'], record: r);
+      } else if (_activeFilter == 'Late Check-out' ||
+          _activeFilter == 'Late Out') {
+        return _isLateCheckOut(r['punchOut'], record: r);
+      } else if (_activeFilter == 'Low Work Hours' ||
+          _activeFilter == 'Low Hours') {
+        return _shouldShowLowWorkHours(r);
+      }
+      return true;
+    }).toList();
+  }
+
+  int _effectiveHistoryTotalPages() {
+    if (_isMonthDataHistoryFilter()) {
+      final total = _filteredHistoryRecords(useMonthData: true).length;
+      return ((total / _limit).ceil()).clamp(1, 99999);
+    }
+    return _totalPages.clamp(1, 99999);
+  }
+
+  Widget _buildHistoryList({int? limit, List<dynamic>? forceDisplayList}) {
+    // When forceDisplayList is set (e.g. for Recent Activity), use it and skip filter logic.
+    if (forceDisplayList != null) {
+      final displayList = limit != null
+          ? forceDisplayList.take(limit).toList()
+          : List<dynamic>.from(forceDisplayList);
+      return _buildHistoryListBody(displayList);
+    }
+
+    // Use month data for All, This Month, This Week, Late, and Low Hours
+    // (if month data is available, it's more complete than paginated data)
+    final bool useMonthData = _isMonthDataHistoryFilter();
+
+    // For month-based view: show loader until month data is loaded (avoids Jan→Feb flicker)
+    if (useMonthData && _monthData == null) {
+      if (_isLoadingMonthData || _isLoadingHistory) {
+        return const Center(
+          child: Padding(padding: EdgeInsets.all(24.0), child: AppTabLoader()),
+        );
+      }
+      // Month fetch failed or not started: show empty
+    }
+
+    if (!useMonthData && _isLoadingHistory && _historyList.isEmpty) {
+      return const Center(
+        child: Padding(padding: EdgeInsets.all(24.0), child: AppTabLoader()),
+      );
+    }
+
+    List<dynamic> displayList = _filteredHistoryRecords(
+      useMonthData: useMonthData,
+    );
 
     if (limit != null) {
       displayList = displayList.take(limit).toList();
+    } else if (useMonthData) {
+      final effectivePages = _effectiveHistoryTotalPages();
+      final safePage = _page.clamp(1, effectivePages);
+      final start = (safePage - 1) * _limit;
+      final end = (start + _limit).clamp(0, displayList.length);
+      if (start < displayList.length) {
+        displayList = displayList.sublist(start, end);
+      } else {
+        displayList = [];
+      }
     }
 
     return _buildHistoryListBody(displayList);

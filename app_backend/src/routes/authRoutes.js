@@ -5,6 +5,7 @@ const router = express.Router();
 const {
     login,
     googleLogin,
+    refreshAccessToken,
     register,
     getProfile,
     updateProfile,
@@ -51,6 +52,7 @@ const upload = multer({
 // Public auth routes with stricter limits
 router.post('/login', loginLimiter, login);
 router.post('/google-login', authLimiter, googleLogin);
+router.post('/refresh', authLimiter, refreshAccessToken);
 router.post('/register', authLimiter, register);
 
 // Password reset with OTP flow (also behind stricter limits)

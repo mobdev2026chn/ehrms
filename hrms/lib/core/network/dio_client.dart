@@ -5,7 +5,20 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/constants.dart';
+
+/// Clears persisted auth tokens + user snapshot and default Dio Authorization header.
+Future<void> clearStoredAuthSession() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove('token');
+  await prefs.remove(AppConstants.refreshTokenPrefsKey);
+  await prefs.remove('user');
+  await prefs.remove('taskSettings');
+  await prefs.remove('businessId');
+  await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
+  DioClient().clearAuthToken();
+}
 
 /// Verbose per-request Dio logs (options, URLs, bodies). Off by default — very chatty.
 const _kLogDioTraffic = false;
@@ -69,6 +82,147 @@ class FormDataContentTypeInterceptor extends Interceptor {
   }
 }
 
+/// On 401, exchanges [AppConstants.refreshTokenPrefsKey] for new access token and retries once.
+class TokenRefreshInterceptor extends Interceptor {
+  TokenRefreshInterceptor(this._dio);
+  final Dio _dio;
+  static Future<String?>? _ongoingRefresh;
+
+  bool _shouldAttemptRefresh(DioException err) {
+    if (err.response?.statusCode != 401) return false;
+    final ro = err.requestOptions;
+    if (ro.extra['_skip_token_refresh'] == true) return false;
+    if (ro.extra['_retried_after_refresh'] == true) return false;
+    final p = ro.path;
+    if (p.endsWith('/auth/login') || p.endsWith('/auth/refresh')) return false;
+    return true;
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    if (!_shouldAttemptRefresh(err)) {
+      return handler.next(err);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    var rt = prefs.getString(AppConstants.refreshTokenPrefsKey);
+    if (rt == null || rt.isEmpty) {
+      return handler.next(err);
+    }
+    if (rt.startsWith('"') || rt.endsWith('"')) {
+      rt = rt.replaceAll('"', '');
+    }
+    try {
+      final newAccess = await _refreshOrJoin(rt);
+      if (newAccess == null || newAccess.isEmpty) {
+        return handler.next(err);
+      }
+      DioClient().setAuthToken(newAccess);
+      final opts = err.requestOptions;
+      final newHeaders = Map<String, dynamic>.from(opts.headers);
+      newHeaders['Authorization'] = 'Bearer $newAccess';
+      final newExtra = Map<String, dynamic>.from(opts.extra);
+      newExtra['_retried_after_refresh'] = true;
+      final clone = opts.copyWith(headers: newHeaders, extra: newExtra);
+      final response = await _dio.fetch(clone);
+      return handler.resolve(response);
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[TokenRefreshInterceptor] retry failed: $e $st');
+      }
+      return handler.next(err);
+    }
+  }
+
+  static Future<String?> _refreshOrJoin(String refreshToken) {
+    _ongoingRefresh ??= _doRefresh(refreshToken).whenComplete(() {
+      _ongoingRefresh = null;
+    });
+    return _ongoingRefresh!;
+  }
+
+  static Future<String?> _doRefresh(String refreshToken) async {
+    final base = AppConstants.baseUrl;
+    final baseUrl = base.endsWith('/')
+        ? base.substring(0, base.length - 1)
+        : base;
+    final plain = Dio(
+      BaseOptions(
+        baseUrl: baseUrl,
+        connectTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(seconds: 20),
+        sendTimeout: const Duration(seconds: 20),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-Storage-Environment': AppConstants.storageEnvironment,
+        },
+      ),
+    );
+    try {
+      final res = await plain.post<Map<String, dynamic>>(
+        '/auth/refresh',
+        data: {'refreshToken': refreshToken},
+      );
+      final body = res.data;
+      if (body == null || body['success'] != true) return null;
+      final data = body['data'];
+      if (data is! Map) return null;
+      final access = data['accessToken']?.toString();
+      final newRt = data['refreshToken']?.toString();
+      final prefs = await SharedPreferences.getInstance();
+      if (access != null && access.isNotEmpty) {
+        await prefs.setString('token', access);
+      }
+      if (newRt != null && newRt.isNotEmpty) {
+        await prefs.setString(AppConstants.refreshTokenPrefsKey, newRt);
+      }
+      return access;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) {
+        await clearStoredAuthSession();
+      }
+      return null;
+    }
+  }
+}
+
+/// Handles expired sessions globally: clear stale auth and let UI redirect to login.
+class SessionExpiryInterceptor extends Interceptor {
+  SessionExpiryInterceptor(this.dio);
+  final Dio dio;
+  static bool _handlingExpiry = false;
+
+  bool _isExpiredTokenError(DioException err) {
+    if (err.response?.statusCode != 401) return false;
+    final data = err.response?.data;
+    final message = (data is Map<String, dynamic>)
+        ? '${data['message'] ?? ''} ${data['error'] ?? ''}'.toLowerCase()
+        : (data?.toString().toLowerCase() ?? '');
+    return message.contains('jwt expired') ||
+        message.contains('session expired') ||
+        message.contains('token expired');
+  }
+
+  Future<void> _clearSession() async {
+    await clearStoredAuthSession();
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    if (_isExpiredTokenError(err) && !_handlingExpiry) {
+      _handlingExpiry = true;
+      try {
+        await _clearSession();
+      } catch (_) {
+        // Ignore local storage cleanup issues; still forward original error.
+      } finally {
+        _handlingExpiry = false;
+      }
+    }
+    handler.next(err);
+  }
+}
+
 /// Central Dio client for the app. Used only by data layer (datasources).
 /// Auth token is set before authenticated requests; interceptors handle retry and logging.
 class DioClient {
@@ -102,6 +256,8 @@ class DioClient {
     }
     dio.interceptors.addAll([
       FormDataContentTypeInterceptor(),
+      TokenRefreshInterceptor(dio),
+      SessionExpiryInterceptor(dio),
       RetryOnRateLimitInterceptor(dio),
       if (kDebugMode && _kLogDioTraffic)
         LogInterceptor(
