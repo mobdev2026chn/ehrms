@@ -207,7 +207,31 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
     if (widget.embeddedInShell) {
       return Column(
         children: [
-          SizedBox(height: 40, child: Container(color: AppColors.surface, child: tabBar)),
+          // Dashboard header — mirrors web /lms/employee/dashboard
+          Container(
+            width: double.infinity,
+            color: AppColors.surface,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  'My Learning Dashboard',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Track your progress, resume courses, and achieve your learning goals.',
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: 44, child: Container(color: AppColors.surface, child: tabBar)),
           Expanded(child: body),
         ],
       );
@@ -326,25 +350,38 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
             ),
           ),
           if (filtered.isEmpty)
-            SliverFillRemaining(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.school_outlined,
-                      size: 64,
-                      color: Colors.grey[400],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      _searchTerm.isNotEmpty || _categoryFilter != null
-                          ? 'No matches found in your library.'
-                          : 'No courses assigned yet. Visit the library to enroll!',
-                      style: TextStyle(color: Colors.grey[600]),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 56, horizontal: 20),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.divider),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.inbox_outlined,
+                        size: 56,
+                        color: AppColors.textHint,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _searchTerm.isNotEmpty || _categoryFilter != null
+                            ? 'No matches found in your library.'
+                            : 'No courses assigned yet. Contact your administrator to get assigned to courses.',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textSecondary,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             )

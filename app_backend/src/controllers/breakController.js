@@ -305,6 +305,34 @@ async function uploadBreakSelfie(base64String, req, companyId, employeeName, typ
     }
 }
 
+/**
+ * Upload a break selfie to Spaces AFTER the HTTP response so the user is not blocked
+ * on S3 latency. Back-fills breakStartSelfie / breakEndSelfie on the Break doc once
+ * the upload succeeds (mirrors the deferred attendance-selfie path).
+ */
+function scheduleDeferredBreakSelfieUpload(breakId, base64String, req, companyId, employeeName, type, fieldKey) {
+    if (!base64String) return;
+    setImmediate(() => {
+        void (async () => {
+            const t0 = Date.now();
+            try {
+                const url = await uploadBreakSelfie(base64String, req, companyId, employeeName, type);
+                if (url) {
+                    await Break.findByIdAndUpdate(breakId, { [fieldKey]: url });
+                }
+                console.log('[Break] deferred selfie upload', {
+                    breakId: String(breakId),
+                    fieldKey,
+                    ms: Date.now() - t0,
+                    ok: Boolean(url)
+                });
+            } catch (e) {
+                console.error('[Break] deferred selfie upload failed', String(breakId), fieldKey, e?.message);
+            }
+        })();
+    });
+}
+
 /** Same UTC calendar day as attendances.date / check-in (midnight UTC). */
 function startOfUtcDay(d = new Date()) {
     const x = new Date(d);
@@ -425,24 +453,24 @@ exports.startBreak = async (req, res) => {
             });
         }
 
-        const breakStartSelfie = await uploadBreakSelfie(
-            selfie,
-            req,
-            String(staff.businessId),
-            staff.name,
-            'break-start'
-        );
-
+        // Selfie goes to Spaces AFTER we respond (see deferred upload below), so the
+        // user is not blocked on S3 latency. The Break doc starts with an empty selfie
+        // and is back-filled once the upload finishes.
         const resolvedStartTime = resolveServerBreakStartTime(startTime);
-        const doc = await Break.create({
-            employeeID: staff._id,
-            deviceId: getAppDeviceId(staff._id),
-            tenantId: staff.businessId,
-            startTime: resolvedStartTime,
-            source: 'app',
-            breakStartSelfie: breakStartSelfie || '',
-            breakStartLocation: buildBreakLocation(req.body)
-        });
+        // Creating the break row and looking up today's attendance id are independent
+        // (both keyed only off resolvedStartTime), so run them concurrently.
+        const [doc, attendanceId] = await Promise.all([
+            Break.create({
+                employeeID: staff._id,
+                deviceId: getAppDeviceId(staff._id),
+                tenantId: staff.businessId,
+                startTime: resolvedStartTime,
+                source: 'app',
+                breakStartSelfie: '',
+                breakStartLocation: buildBreakLocation(req.body)
+            }),
+            getAttendanceIdForDate(staff._id, resolvedStartTime)
+        ]);
 
         const breakStartAddress = buildAddressString(
             doc.breakStartLocation?.address,
@@ -450,7 +478,6 @@ exports.startBreak = async (req, res) => {
             doc.breakStartLocation?.city,
             doc.breakStartLocation?.pincode
         );
-        const attendanceId = await getAttendanceIdForDate(staff._id, doc.startTime);
         await createBreakLog({
             attendanceId,
             breakDoc: doc,
@@ -458,7 +485,7 @@ exports.startBreak = async (req, res) => {
             performedBy: req.user?._id || staff.userId || staff._id,
             performedByName: req.user?.name || staff.name,
             performedByEmail: req.user?.email || staff.email,
-            selfieUrl: breakStartSelfie,
+            selfieUrl: undefined,
             timestamp: doc.startTime,
             startAddress: breakStartAddress,
             startLocation: doc.breakStartLocation || {},
@@ -479,6 +506,17 @@ exports.startBreak = async (req, res) => {
         });
 
         await Staff.updateOne({ _id: staff._id }, { $set: { monitoringStatus: 'break' } });
+
+        // Upload the selfie to Spaces off the request path; back-fill it on the Break doc.
+        scheduleDeferredBreakSelfieUpload(
+            doc._id,
+            selfie,
+            req,
+            String(staff.businessId),
+            staff.name,
+            'break-start',
+            'breakStartSelfie'
+        );
 
         return res.status(201).json({
             success: true,
@@ -520,14 +558,6 @@ exports.endBreak = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Break not found or already ended' });
         }
 
-        const breakEndSelfie = await uploadBreakSelfie(
-            selfie,
-            req,
-            String(staff.businessId),
-            staff.name,
-            'break-end'
-        );
-
         const resolvedEndTime = resolveServerBreakEndTime(doc.startTime, endTime);
         const totalSeconds = Math.max(
             0,
@@ -536,9 +566,10 @@ exports.endBreak = async (req, res) => {
 
         doc.endTime = resolvedEndTime;
         doc.totalSeconds = totalSeconds;
-        doc.breakEndSelfie = breakEndSelfie || '';
+        // Selfie is uploaded to Spaces after the response and back-filled on the doc.
+        doc.breakEndSelfie = '';
         doc.breakEndLocation = buildBreakLocation(req.body);
-        await doc.save();
+        // (single doc.save() below, after break-fine fields are computed)
 
         const dayStart = new Date(Date.UTC(
             resolvedEndTime.getUTCFullYear(),
@@ -547,10 +578,16 @@ exports.endBreak = async (req, res) => {
         ));
         const dayEnd = new Date(dayStart);
         dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
-        const attendanceDoc = await Attendance.findOne({
-            employeeId: staff._id,
-            date: { $gte: dayStart, $lt: dayEnd }
-        }).select('break').lean();
+
+        // Today's attendance row and the break-fine context (Company lookup + shift
+        // resolution) are independent reads — fetch them concurrently.
+        const [attendanceDoc, fineCtx] = await Promise.all([
+            Attendance.findOne({
+                employeeId: staff._id,
+                date: { $gte: dayStart, $lt: dayEnd }
+            }).select('break').lean(),
+            getBreakFineContext(staff, resolvedEndTime)
+        ]);
 
         const previousTotalBreakMin = Number(attendanceDoc?.break?.totalBreakMin) || 0;
         const previousTotalFineAmount =
@@ -564,7 +601,6 @@ exports.endBreak = async (req, res) => {
         const previousTotalBreakCount = Number(attendanceDoc?.break?.totalBreakCount) || 0;
         const currentBreakMin = resolveBreakDurationMinutes(doc);
 
-        const fineCtx = await getBreakFineContext(staff, resolvedEndTime);
         const totalBreakAfterCurrent = previousTotalBreakMin + currentBreakMin;
         const totalFineMinsAfterCurrent = Math.max(0, totalBreakAfterCurrent - fineCtx.allowedBreakMin);
         const currentBreakFineMins = Math.max(0, totalFineMinsAfterCurrent - Math.max(0, previousTotalFineMins));
@@ -602,34 +638,6 @@ exports.endBreak = async (req, res) => {
         doc.breakCount = previousTotalBreakCount + 1;
         doc.breakFineMins = currentBreakFineMins;
         doc.breakFineAmount = currentBreakFineAmount;
-        await doc.save();
-        await Attendance.updateOne(
-            {
-                employeeId: staff._id,
-                date: { $gte: dayStart, $lt: dayEnd }
-            },
-            {
-                $set: {
-                    break: {
-                        totalBreakMin: totalBreakAfterCurrent,
-                        totalBreakCount: previousTotalBreakCount + 1,
-                        totalBreakFineMins: totalFineMinsAfterCurrent,
-                        totalBreakFineAmount: totalFineAmountAfterCurrent,
-                        breaks: [
-                            ...((attendanceDoc?.break?.breaks && Array.isArray(attendanceDoc.break.breaks)) ? attendanceDoc.break.breaks : []),
-                            {
-                                startTime: doc.startTime || null,
-                                endTime: doc.endTime || null,
-                                duration: currentBreakMin,
-                                BreakCount: previousTotalBreakCount + 1,
-                                breakFineMins: currentBreakFineMins,
-                                breakFineAmount: currentBreakFineAmount
-                            }
-                        ]
-                    }
-                }
-            }
-        );
 
         const breakEndAddress = buildAddressString(
             doc.breakEndLocation?.address,
@@ -643,7 +651,40 @@ exports.endBreak = async (req, res) => {
             doc.breakStartLocation?.city,
             doc.breakStartLocation?.pincode
         );
-        const attendanceId = await getAttendanceIdForDate(staff._id, doc.endTime || resolvedEndTime);
+
+        // Persist the break row, roll up today's attendance break totals, and resolve
+        // the attendance id for the log — all independent, so run them concurrently.
+        const [, , attendanceId] = await Promise.all([
+            doc.save(),
+            Attendance.updateOne(
+                {
+                    employeeId: staff._id,
+                    date: { $gte: dayStart, $lt: dayEnd }
+                },
+                {
+                    $set: {
+                        break: {
+                            totalBreakMin: totalBreakAfterCurrent,
+                            totalBreakCount: previousTotalBreakCount + 1,
+                            totalBreakFineMins: totalFineMinsAfterCurrent,
+                            totalBreakFineAmount: totalFineAmountAfterCurrent,
+                            breaks: [
+                                ...((attendanceDoc?.break?.breaks && Array.isArray(attendanceDoc.break.breaks)) ? attendanceDoc.break.breaks : []),
+                                {
+                                    startTime: doc.startTime || null,
+                                    endTime: doc.endTime || null,
+                                    duration: currentBreakMin,
+                                    BreakCount: previousTotalBreakCount + 1,
+                                    breakFineMins: currentBreakFineMins,
+                                    breakFineAmount: currentBreakFineAmount
+                                }
+                            ]
+                        }
+                    }
+                }
+            ),
+            getAttendanceIdForDate(staff._id, doc.endTime || resolvedEndTime)
+        ]);
         await createBreakLog({
             attendanceId,
             breakDoc: doc,
@@ -651,7 +692,7 @@ exports.endBreak = async (req, res) => {
             performedBy: req.user?._id || staff.userId || staff._id,
             performedByName: req.user?.name || staff.name,
             performedByEmail: req.user?.email || staff.email,
-            selfieUrl: breakEndSelfie,
+            selfieUrl: undefined,
             timestamp: doc.endTime,
             startAddress: breakStartAddress,
             endAddress: breakEndAddress,
@@ -690,13 +731,27 @@ exports.endBreak = async (req, res) => {
             }
         });
 
-        await Staff.updateOne({ _id: staff._id }, { $set: { monitoringStatus: 'active' } });
-        if (doc.deviceId) {
-            await Device.updateOne(
-                { deviceId: doc.deviceId },
-                { $set: { status: 'active', lastSeenAt: new Date() } }
-            );
-        }
+        // Staff and Device status updates are independent — run concurrently.
+        await Promise.all([
+            Staff.updateOne({ _id: staff._id }, { $set: { monitoringStatus: 'active' } }),
+            doc.deviceId
+                ? Device.updateOne(
+                    { deviceId: doc.deviceId },
+                    { $set: { status: 'active', lastSeenAt: new Date() } }
+                )
+                : Promise.resolve()
+        ]);
+
+        // Upload the end selfie to Spaces off the request path; back-fill it on the doc.
+        scheduleDeferredBreakSelfieUpload(
+            doc._id,
+            selfie,
+            req,
+            String(staff.businessId),
+            staff.name,
+            'break-end',
+            'breakEndSelfie'
+        );
 
         return res.status(200).json({
             success: true,

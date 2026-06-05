@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -10,6 +9,7 @@ import 'selfie_camera_screen.dart'
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../services/auth_service.dart';
 import '../../services/attendance_template_store.dart';
@@ -22,7 +22,9 @@ import '../../bloc/attendance/attendance_bloc.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../utils/request_guard.dart';
 import '../../utils/snackbar_utils.dart';
+import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/error_message_utils.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/attendance_success_overlay.dart';
 
@@ -628,9 +630,12 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     // Convert image to Base64
     String? selfiePayload;
     if (_imageFile != null) {
-      List<int> imageBytes = await _imageFile!.readAsBytes();
-      String base64Image = base64Encode(imageBytes);
-      selfiePayload = 'data:image/jpeg;base64,$base64Image';
+      final imageBytes = await _imageFile!.readAsBytes();
+      // Compress + encode off the UI isolate so the submit spinner doesn't
+      // freeze on a large (2-5 MB) selfie, and so the verify request below is
+      // sent at the reduced size (it previously uploaded full-res).
+      selfiePayload =
+          await AttendanceSelfieCompress.compressRawBytesToDataUrl(imageBytes);
     }
 
     // Verify selfie against profile photo when selfie is required (face matching disabled via constant)
@@ -785,27 +790,15 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     required ColorScheme colorScheme,
   }) {
     final primary = colorScheme.primary;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colorScheme.outline),
-        boxShadow: [
-          BoxShadow(
-            color: colorScheme.shadow.withOpacity(0.06),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+    return AppCard(
+      border: Border.all(color: colorScheme.outline),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: primary.withOpacity(0.15),
+              color: primary.withValues(alpha: 0.15),
               shape: BoxShape.circle,
             ),
             child: Icon(icon, size: 20, color: primary),
@@ -813,16 +806,12 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           const SizedBox(height: 12),
           Text(
             time,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface,
-            ),
+            style: AppTextStyles.headingLarge.copyWith(color: colorScheme.onSurface),
           ),
           const SizedBox(height: 4),
           Text(
             label,
-            style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
+            style: AppTextStyles.bodySmall.copyWith(color: colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -988,14 +977,10 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
 
                     // Branch Info Card (compact)
                     if (_branchData != null) ...[
-                      Container(
+                      AppCard(
                         margin: const EdgeInsets.only(bottom: 16),
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: colorScheme.outline),
-                        ),
+                        boxShadow: const [],
+                        border: Border.all(color: colorScheme.outline),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -1008,8 +993,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                                 const SizedBox(width: 8),
                                 Text(
                                   'Assigned Office',
-                                  style: TextStyle(
-                                    fontSize: 14,
+                                  style: AppTextStyles.label.copyWith(
                                     fontWeight: FontWeight.bold,
                                     color: colorScheme.onSurfaceVariant,
                                   ),
@@ -1060,17 +1044,14 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                             const SizedBox(height: 8),
                             Text(
                               _branchData!['name'] ?? 'Main Branch',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                              style: AppTextStyles.headingMedium.copyWith(
                                 color: colorScheme.onSurface,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
                               _branchData!['address'] ?? '',
-                              style: TextStyle(
-                                fontSize: 13,
+                              style: AppTextStyles.bodySmall.copyWith(
                                 color: colorScheme.onSurfaceVariant,
                               ),
                             ),
@@ -1082,13 +1063,11 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
 
                     // Location Info
                     if (_template?['requireGeolocation'] ?? true) ...[
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerLowest,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: colorScheme.outline),
-                        ),
+                      AppCard(
+                        color: colorScheme.surfaceContainerLowest,
+                        radius: 12,
+                        boxShadow: const [],
+                        border: Border.all(color: colorScheme.outline),
                         child: Row(
                           children: [
                             Icon(Icons.location_on, color: AppColors.primary),
@@ -1232,7 +1211,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Icon(
-                                    _isCheckedIn ? Icons.logout : Icons.login,
+                                    _isCheckedIn ? Icons.fingerprint : Icons.fingerprint,
                                   ),
                                   const SizedBox(width: 8),
                                   Text(

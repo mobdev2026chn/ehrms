@@ -1420,7 +1420,27 @@ const checkIn = async (req, res) => {
             .populate('weeklyHolidayTemplateId')
             .populate('holidayTemplateId');
         console.log('[Attendance checkIn] Fetched Staff Details: _id=', staff._id?.toString(), 'shiftName=', staff.shiftName);
-        const templateDoc = await loadAttendanceTemplateForStaff(staff);
+
+        // Punch-in is hit en masse at shift start. These reads are independent once we
+        // have `staff`, so fan them out concurrently instead of paying ~5 serial Mongo
+        // round-trips. Validation order below is unchanged — only the fetching moved up.
+        const Company = require('../models/Company');
+        const Leave = require('../models/Leave');
+        const [templateDoc, company, activeLeave, holidayTemplate, existingByEmployee] = await Promise.all([
+            loadAttendanceTemplateForStaff(staff),
+            Company.findById(staff.businessId),
+            Leave.findOne({
+                employeeId: staffId,
+                status: { $regex: /^approved$/i },
+                startDate: { $lte: endOfDay },
+                endDate: { $gte: startOfDay }
+            }),
+            getHolidayTemplateForStaff(staff),
+            Attendance.findOne({
+                employeeId: staffId,
+                date: { $gte: startOfDay, $lte: endOfDay }
+            })
+        ]);
         const template = normalizeTemplate(templateDoc);
         console.log('[Attendance checkIn] template flags', {
             staffId: staffId?.toString(),
@@ -1452,22 +1472,14 @@ const checkIn = async (req, res) => {
             return res.status(400).json({ message: 'Salary not configured. Contact HR.' });
         }
 
-        const Company = require('../models/Company');
-        const company = await Company.findById(staff.businessId);
         if (!isShiftAssignedForStaff(company, staff, templateDoc)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
         // PRIORITY 1: Check if On Approved Leave (highest priority - blocks all other rules)
-        const Leave = require('../models/Leave');
+        // `company`, `activeLeave` already fetched in the concurrent batch above.
         const { canCheckInWithHalfDayLeave, getShiftTimings, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
         const shiftForCheckIn = getShiftTimings(company, staff, startOfDay, staff?.joiningDate, templateDoc);
         const businessTimezone = getBusinessTimezone(company);
-        const activeLeave = await Leave.findOne({
-            employeeId: staffId,
-            status: { $regex: /^approved$/i },
-            startDate: { $lte: endOfDay },
-            endDate: { $gte: startOfDay }
-        });
         if (activeLeave) {
             if (activeLeave.leaveType === 'Half Day') {
                 const checkInResult = canCheckInWithHalfDayLeave(
@@ -1487,8 +1499,7 @@ const checkIn = async (req, res) => {
             }
         }
 
-        // 2. Check for Holiday
-        const holidayTemplate = await getHolidayTemplateForStaff(staff);
+        // 2. Check for Holiday (holidayTemplate already fetched in the concurrent batch above)
         const isHoliday = !!getHolidayForDate(holidayTemplate, now);
         if (isHoliday && template.allowAttendanceOnHolidays === false) {
             return res.status(403).json({ message: 'Today is a Holiday. Check-in not allowed.' });
@@ -1599,11 +1610,10 @@ const checkIn = async (req, res) => {
         }
 
         // Check for existing attendance - check both employeeId and user fields
-        // to find records created from web or app
-        let existing = await Attendance.findOne({
-            employeeId: staffId,
-            date: { $gte: startOfDay, $lte: endOfDay }
-        });
+        // to find records created from web or app. The employeeId lookup was already
+        // run in the concurrent batch above; only fall back to the legacy `user`
+        // field when that returned nothing.
+        let existing = existingByEmployee;
 
         if (!existing) {
             existing = await Attendance.findOne({
@@ -2081,9 +2091,18 @@ const checkOut = async (req, res) => {
             .populate('branchId')
             .populate('weeklyHolidayTemplateId')
             .populate('holidayTemplateId');
-        const templateDoc = await loadAttendanceTemplateForStaff(staff);
+
+        // Independent of each other once `staff` is known — fan out concurrently to
+        // cut serial Mongo round-trips. `company` is reused by processCheckOut below.
         const Company = require('../models/Company');
-        const company = await Company.findById(staff.businessId);
+        const [templateDoc, company, attendanceByEmployee] = await Promise.all([
+            loadAttendanceTemplateForStaff(staff),
+            Company.findById(staff.businessId),
+            Attendance.findOne({
+                employeeId: staffId,
+                date: { $gte: startOfDay, $lte: endOfDay }
+            })
+        ]);
         if (!isShiftAssignedForStaff(company, staff, templateDoc)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
@@ -2095,11 +2114,8 @@ const checkOut = async (req, res) => {
             requireGeolocation: template?.requireGeolocation
         });
 
-        // Find today's attendance
-        const attendance = await Attendance.findOne({
-            employeeId: staffId,
-            date: { $gte: startOfDay, $lte: endOfDay }
-        });
+        // Find today's attendance (employeeId lookup already done in the batch above)
+        const attendance = attendanceByEmployee;
 
         if (!attendance) {
             const legacyAttendance = await Attendance.findOne({
@@ -2131,7 +2147,8 @@ const checkOut = async (req, res) => {
                     earlyMinutes: bodyEarlyMinutes,
                     fineAmount: bodyFineAmount
                 },
-                template
+                template,
+                company
             );
         }
 
@@ -2156,7 +2173,8 @@ const checkOut = async (req, res) => {
                 earlyMinutes: bodyEarlyMinutes,
                 fineAmount: bodyFineAmount
             },
-            template
+            template,
+            company
         );
 
     } catch (error) {
@@ -2165,7 +2183,7 @@ const checkOut = async (req, res) => {
     }
 };
 
-async function processCheckOut(attendance, req, res, staff, now, data, template = {}) {
+async function processCheckOut(attendance, req, res, staff, now, data, template = {}, companyPrefetched = null) {
     const {
         latitude,
         longitude,
@@ -2209,7 +2227,21 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
 
     const Company = require('../models/Company');
-    const company = await Company.findById(staff.businessId);
+    const Leave = require('../models/Leave');
+    // Reuse company fetched by the checkOut wrapper; fall back to a fetch only if
+    // this function is ever called without it. Leave lookup is independent, so run
+    // the (possible) company fetch and the leave fetch concurrently.
+    const [company, activeLeave] = await Promise.all([
+        companyPrefetched != null
+            ? Promise.resolve(companyPrefetched)
+            : Company.findById(staff.businessId),
+        Leave.findOne({
+            employeeId: staff._id,
+            status: { $regex: /^approved$/i },
+            startDate: { $lte: endOfDay },
+            endDate: { $gte: startOfDay }
+        })
+    ]);
 
     const shiftDay = attendance.date ? new Date(attendance.date) : startOfDay;
     const {
@@ -2222,14 +2254,6 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     const shiftResolved = company
         ? getShiftTimings(company, staff, shiftDay, staff?.joiningDate, template)
         : null;
-
-    const Leave = require('../models/Leave');
-    const activeLeave = await Leave.findOne({
-        employeeId: staff._id,
-        status: { $regex: /^approved$/i },
-        startDate: { $lte: endOfDay },
-        endDate: { $gte: startOfDay }
-    });
     if (activeLeave) {
         if (activeLeave.leaveType === 'Half Day') {
             const shiftForLeave = shiftResolved;

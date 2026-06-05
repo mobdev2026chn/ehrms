@@ -829,7 +829,7 @@ class AttendanceService {
         case DioExceptionType.receiveTimeout:
           return 'Connection timed out. The server is taking too long to respond. Please try again.';
         case DioExceptionType.connectionError:
-          return 'Connection error. Please check your internet connection and try again.';
+          return 'Connection error2. Please check your internet connection and try again.';
         default:
           break;
       }
@@ -846,7 +846,7 @@ class AttendanceService {
           errorMsg.contains('connection reset')) {
         return 'Server is not responding. Please try again in a moment or contact support.';
       } else {
-        return 'Connection error. Please check your internet connection and try again.';
+        return 'Connection error3. Please check your internet connection and try again.';
       }
     } else if (error is TimeoutException) {
       return 'Connection timed out. The server is taking too long to respond. Please try again.';

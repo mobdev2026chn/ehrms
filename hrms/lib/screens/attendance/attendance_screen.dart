@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -9,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
@@ -19,6 +19,7 @@ import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
 import '../../services/presence_tracking_service.dart';
 import '../../utils/attendance_display_util.dart';
+import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/attendance_template_util.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../bloc/attendance/attendance_bloc.dart';
@@ -303,27 +304,30 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     try {
       debugPrint('[Attendance] Fetching template details...');
       _attendanceService.clearCachesForRefresh();
-      // 1. Fresh profile (shift key snapshot for template reconciliation).
-      final profileResult = await _withTimeoutRetry(
-        _authService.getProfile,
-        tag: 'Profile fetch',
-      );
+      // Profile and today attendance are independent network calls; fetch them
+      // in parallel (was sequential) to save one round-trip on every open, then
+      // process profile first since today's template flags depend on it.
+      final todayStr =
+          '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
+      debugPrint('[Attendance] Fetching profile + today attendance: $todayStr');
+      final fetched = await Future.wait<Map<String, dynamic>>([
+        // 1. Fresh profile (shift key snapshot for template reconciliation).
+        _withTimeoutRetry(_authService.getProfile, tag: 'Profile fetch'),
+        // 2. Fresh today attendance (template, branch, shift, holiday, etc.)
+        _withTimeoutRetry(
+          () => _attendanceService.getAttendanceByDate(todayStr),
+          tag: 'Today attendance fetch',
+        ),
+      ]);
       if (!mounted) return;
+      final profileResult = fetched[0];
+      final result = fetched[1];
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
       _profileAttendanceTemplateId = staffData?['attendanceTemplateId'];
       _syncShiftCalendarContextFromStaff(staffData);
       debugPrint(
         '[Attendance] Profile fetched: profileTemplateRef=$_profileAttendanceTemplateId',
-      );
-
-      // 2. Fresh today attendance (template, branch, shift, holiday, etc.)
-      final todayStr =
-          '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
-      debugPrint('[Attendance] Fetching today attendance: $todayStr');
-      final result = await _withTimeoutRetry(
-        () => _attendanceService.getAttendanceByDate(todayStr),
-        tag: 'Today attendance fetch',
       );
       if (!mounted) return;
 
@@ -3985,7 +3989,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
       // 1. Present with leaveType → Green background with CL/SL/HA
       if (isPresentStatus && hasLeaveType) {
-        bgColor = const Color(0xFFDCFCE7); // Present - Light Green
+        bgColor = const Color(0xFFFCEFD2); // Present - Light Amber (Figma)
       }
       // 2. Half Day status → On Leave blue background with "HA"
       else if (isHalfDayStatus) {
@@ -3993,7 +3997,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
       // 3. Holiday
       else if (isHoliday) {
-        bgColor = const Color(0xFFFEF3C7); // Holiday - Light yellow
+        bgColor = const Color(0xFFEEF0FF); // Holiday - Light Indigo (Figma)
       }
       // 3.5. Alternate Working Day (compensation week-off day when employee can check-in)
       else if (_alternateWorkDatesInMonth.contains(dateStr)) {
@@ -4001,7 +4005,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
       // 4. Week Off
       else if (isWeekOff) {
-        bgColor = const Color(0xFFE9D5FF); // Week Off - Light purple
+        bgColor = const Color(0xFFEDEFF2); // Week Off - Light Grey (Figma)
       }
       // 5. Leave date but no attendance → Blue with "L"
       else if (_leaveDateSet.contains(dateStr)) {
@@ -4009,7 +4013,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
       // 6. Present without leaveType → Green
       else if (isPresentStatus) {
-        bgColor = const Color(0xFFDCFCE7); // Present - Light Green
+        bgColor = const Color(0xFFFCEFD2); // Present - Light Amber (Figma)
       }
       // 7. Other attendance statuses (Pending treated as Absent). Show red when status is Absent in attendances collection.
       else if (_dayStatusByDate.containsKey(dateStr)) {
@@ -4167,97 +4171,52 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   Widget _buildCalendarHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.primary, AppColors.primaryDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
+    // Figma "Attendance History": "Attendance" + subtitle on the left, a
+    // "< MMM yyyy >" pill on the right. Month nav still calls _fetchMonthData
+    // (logic unchanged) so the calendar/holiday/weekend data stays in sync.
+    void shiftMonth(int delta) {
+      final nd = DateTime(_focusedDay.year, _focusedDay.month + delta, 1);
+      setState(() {
+        _focusedDay = nd;
+        _selectedDay = nd;
+      });
+      _fetchMonthData(nd.year, nd.month);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 6, 4, 10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            children: [
-              const SizedBox(width: 8),
-              Text(
-                DateFormat('MMMM yyyy').format(_focusedDay),
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Colors.white,
-                ),
-              ),
-            ],
+          Text(
+            DateFormat('MMMM yyyy').format(_focusedDay),
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
           ),
           Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              DropdownButton<int>(
-                value: _focusedDay.month,
-                underline: const SizedBox(),
-                dropdownColor: AppColors.primaryDark,
-                iconEnabledColor: Colors.white,
-                iconDisabledColor: Colors.white70,
-                items: List.generate(12, (i) => i + 1).map((m) {
-                  return DropdownMenuItem(
-                    value: m,
-                    child: Text(
-                      DateFormat('MMM').format(DateTime(2024, m)),
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  );
-                }).toList(),
-                onChanged: (m) {
-                  if (m != null) {
-                    // Allow navigation to future months to see holidays/weekends
-                    final newFocusedDay = DateTime(_focusedDay.year, m, 1);
-                    setState(() {
-                      _focusedDay = newFocusedDay;
-                      _selectedDay = newFocusedDay;
-                    });
-                    // Immediately fetch month data for the new month (includes future holidays/weekends)
-                    _fetchMonthData(newFocusedDay.year, m);
-                  }
-                },
+              InkWell(
+                onTap: () => shiftMonth(-1),
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(Icons.chevron_left_rounded,
+                      size: 22, color: AppColors.textSecondary),
+                ),
               ),
-              const SizedBox(width: 8),
-              DropdownButton<int>(
-                value: _focusedDay.year,
-                underline: const SizedBox(),
-                dropdownColor: AppColors.primaryDark,
-                iconEnabledColor: Colors.white,
-                iconDisabledColor: Colors.white70,
-                items: List.generate(11, (i) => 2020 + i).map((y) {
-                  return DropdownMenuItem(
-                    value: y,
-                    child: Text(
-                      '$y',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  );
-                }).toList(),
-                onChanged: (y) {
-                  if (y != null) {
-                    // Allow navigation to future months to see holidays/weekends
-                    final newFocusedDay = DateTime(y, _focusedDay.month, 1);
-                    setState(() {
-                      _focusedDay = newFocusedDay;
-                      _selectedDay = newFocusedDay;
-                    });
-                    // Immediately fetch month data for the new year/month (includes future holidays/weekends)
-                    _fetchMonthData(y, _focusedDay.month);
-                  }
-                },
+              const SizedBox(width: 6),
+              InkWell(
+                onTap: () => shiftMonth(1),
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(Icons.chevron_right_rounded,
+                      size: 22, color: AppColors.textSecondary),
+                ),
               ),
             ],
           ),
@@ -4724,21 +4683,26 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildAttendanceHeaderBar(),
-            const SizedBox(height: 16),
-            _buildCalendarHeader(),
-            const SizedBox(height: 16),
             Builder(
               builder: (context) {
                 final colorScheme = Theme.of(context).colorScheme;
                 return Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
                   decoration: BoxDecoration(
                     color: colorScheme.surface,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: colorScheme.outline),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x0D000000),
+                        blurRadius: 10,
+                        offset: Offset(0, 3),
+                      ),
+                    ],
                   ),
-                  child: TableCalendar(
+                  child: Column(
+                    children: [
+                      _buildCalendarHeader(),
+                      TableCalendar(
                     key: ValueKey(
                       '${_focusedDay.year}-${_focusedDay.month}',
                     ), // Force rebuild when month/year changes
@@ -4822,11 +4786,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       _fetchMonthData(focusedDay.year, focusedDay.month);
                     },
                   ),
+                      const SizedBox(height: 8),
+                      Divider(height: 1, color: colorScheme.outline),
+                      const SizedBox(height: 12),
+                      _buildStatusLegend(),
+                      const SizedBox(height: 4),
+                    ],
+                  ),
                 );
               },
             ),
-            const SizedBox(height: 12),
-            _buildStatusLegend(),
             const SizedBox(height: 16),
             Builder(
               builder: (context) {
@@ -4835,11 +4804,31 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Attendance History',
+                      'Attendance Logs',
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: cs.onSurface,
+                      ),
+                    ),
+                    // Figma Attendance-1: amber "View All" link → existing "All" filter.
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () {
+                        setState(() { _activeFilter = 'All'; _page = 1; });
+                        final now = DateTime.now();
+                        _fetchMonthData(now.year, now.month);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                        child: Text(
+                          'View All',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -5073,45 +5062,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   Widget _buildStatusLegend() {
+    // Figma Attendance-1: solid dots — Present(amber) · Absent(red) ·
+    // Holiday(indigo) · Weekend(grey). Extra statuses kept for parity.
     return Wrap(
-      spacing: 12,
-      runSpacing: 8,
+      spacing: 16,
+      runSpacing: 10,
       children: [
-        _legendItem(const Color(0xFFDCFCE7), 'Present'),
-        // Use light red circle for Absent, matching cell background
-        _legendItem(const Color(0xFFFEE2E2), 'Absent'),
-        // Use the same soft yellow as the calendar cell background for Holiday
-        _legendItem(const Color(0xFFFEF3C7), 'Holiday'),
-        _legendItem(const Color(0xFFE8D5C4), 'Working Day'),
-        _legendItem(const Color(0xFFE9D5FF), 'Weekend'),
-        _legendItem(const Color(0xFFBFDBFE), 'On Leave'),
-        // No need Pending / Not Marked labels in History legend
-        // Low Work Hours with red dot
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(
-                color: const Color(0xFFDCFCE7), // Present background
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Text('Low Work Hours', style: TextStyle(fontSize: 10)),
-          ],
-        ),
+        _legendItem(AppColors.primary, 'Present'),
+        _legendItem(AppColors.error, 'Absent'),
+        _legendItem(AppColors.indigo, 'Holiday'),
+        _legendItem(const Color(0xFF9CA3AF), 'Weekend'),
+        _legendItem(const Color(0xFF8D6E63), 'Working Day'),
+        _legendItem(AppColors.info, 'On Leave'),
+        _legendItem(AppColors.warning, 'Low Work Hours'),
       ],
     );
   }
@@ -5121,16 +5084,21 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 12,
-          height: 12,
+          width: 8,
+          height: 8,
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
-        const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontSize: 10)),
+        const SizedBox(width: 6),
+        Text(label,
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textPrimary)),
       ],
     );
   }
 
+  // ignore: unused_element
   Widget _historyTimeColumn(
     String label,
     String value,
@@ -5304,38 +5272,33 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       child: Stack(
         children: [
           Scaffold(
-            backgroundColor: colorScheme.surfaceContainerHighest,
+            backgroundColor: AppColors.background,
             appBar: AppBar(
               leading: const MenuIconButton(),
-              title: Text('Attendance'),
+              title: const Text('Attendance', style: AppTextStyles.headingMedium),
+              centerTitle: false,
+              elevation: 0,
+              backgroundColor: AppColors.background,
+              foregroundColor: AppColors.textPrimary,
+              surfaceTintColor: Colors.transparent,
               actions: [
                 if (_showHistoryView)
                   PopupMenuButton<String>(
-                    icon: const Icon(Icons.filter_list),
+                    icon: Icon(Icons.filter_list, color: AppColors.textPrimary),
                     onSelected: (value) {
-                      setState(() {
-                        _activeFilter = value;
-                        _page = 1;
-                      });
-                      if (value == 'All' ||
-                          value == 'Late' ||
-                          value == 'Low Hours') {
+                      setState(() { _activeFilter = value; _page = 1; });
+                      if (value == 'All' || value == 'Late' || value == 'Low Hours') {
                         final now = DateTime.now();
                         _fetchMonthData(now.year, now.month);
                       }
                     },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(value: 'All', child: Text('All')),
-                      const PopupMenuItem(
-                        value: 'Late',
-                        child: Text('Late login / Early exit'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'Low Hours',
-                        child: Text('Late hours'),
-                      ),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'All',       child: Text('All')),
+                      PopupMenuItem(value: 'Late',      child: Text('Late / Early exit')),
+                      PopupMenuItem(value: 'Low Hours', child: Text('Low hours')),
                     ],
                   ),
+                const SizedBox(width: 8),
               ],
             ),
             drawer: AppDrawer(
@@ -5505,9 +5468,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       );
       return;
     }
-    List<int> imageBytes = await file.readAsBytes();
-    String base64Image = base64Encode(imageBytes);
-    final selfiePayload = 'data:image/jpeg;base64,$base64Image';
+    // Compress once, off the UI isolate, and reuse the same payload for face
+    // verification and the punch upload (verify previously sent full-res).
+    final imageBytes = await file.readAsBytes();
+    final selfiePayload =
+        await AttendanceSelfieCompress.compressRawBytesToDataUrl(imageBytes);
+    if (!mounted) return;
 
     if (AppConstants.enableAttendanceFaceMatching &&
         requireSelfie &&
@@ -7195,42 +7161,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     String displayStatus = AttendanceDisplayUtil.getHistoryCardDisplayStatus(
       recordForDisplay,
     );
-    Color statusColor = Colors.green;
-
-    // Week-off by template should always show as Week Off, not Leave (even if record is On Leave for that date)
+    // Week-off by template should show as WF
     final dateStr = _dateKey(record);
     if (dateStr.isNotEmpty &&
         _weekOffDateSet.contains(dateStr) &&
         !_alternateWorkDatesInMonth.contains(dateStr) &&
         (status.toString().toLowerCase() == 'on leave')) {
       displayStatus = 'WF';
-      statusColor = Colors.deepPurple;
     }
-
-    if (status == 'Pending' && punchIn != null) {
-      displayStatus = 'Waiting for Approval';
-      statusColor = Colors.orange;
-    } else if (status == 'Absent' || status == 'Rejected') {
-      statusColor = Colors.red;
-    } else if (status == 'On Leave') {
-      statusColor = Colors.blue;
-    } else if (status == 'Half Day') {
-      statusColor = Colors.purple;
-    } else if (status == 'Weekend') {
-      statusColor = Colors.deepPurple;
-    } else if (status == 'Holiday') {
-      statusColor = Colors.amber;
-    }
-
-    final punchInSelfieUrl = record['punchInSelfie'];
-    final bool hasPunchInSelfie =
-        punchInSelfieUrl != null &&
-        punchInSelfieUrl.toString().startsWith('http');
-
-    final punchOutSelfieUrl = record['punchOutSelfie'];
-    final bool hasPunchOutSelfie =
-        punchOutSelfieUrl != null &&
-        punchOutSelfieUrl.toString().startsWith('http');
+    if (status == 'Pending' && punchIn != null) displayStatus = 'Waiting';
 
     String? locationAddress;
     if (record['location'] != null && record['location']['punchIn'] != null) {
@@ -7240,15 +7179,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
     }
 
-    final colorScheme = Theme.of(context).colorScheme;
     DateTime? parsedDate;
     try {
       parsedDate = _extractDateOnly(record['date'] ?? '');
     } catch (_) {}
-    final dateNum = parsedDate != null ? '${parsedDate.day}' : '--';
-    final dayAbbrev = parsedDate != null
-        ? DateFormat('EEE').format(parsedDate)
-        : '---';
+    final dateText = parsedDate != null
+        ? DateFormat('MMM d, EEE').format(parsedDate)
+        : '--';
     num? workHoursVal = workHours;
     if (workHoursVal == null &&
         record['punchIn'] != null &&
@@ -7262,192 +7199,114 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final totalHoursStr = _formatWorkHoursAsHHmm(
       workHoursVal is num ? workHoursVal : null,
     );
-    final otLine = _formatOvertimeForDisplay(record['overtime']);
-    final bufferLine = _formatOpenShiftBufferForDisplay(record['bufferTime']);
+    // Figma: white card, amber date badge, time range, status pill on right
+    final isToday = parsedDate != null &&
+        parsedDate.year == DateTime.now().year &&
+        parsedDate.month == DateTime.now().month &&
+        parsedDate.day == DateTime.now().day;
+
+    final dateBgColor = isToday
+        ? AppColors.primary
+        : AppColors.primary.withValues(alpha: 0.12);
+    final dateTextColor = isToday ? Colors.white : AppColors.primary;
+
+    // Build time range string like "08:52 AM - 06:02 PM"
+    final inStr  = _formatTimeShort(punchIn);
+    final outStr = _formatTimeShort(punchOut);
+    final timeRange = (inStr != '--:--' && outStr != '--:--')
+        ? '$inStr - $outStr'
+        : (inStr != '--:--' ? inStr : 'N/A');
+    // Figma Attendance-1: amber login/logout icon tile + "MMM d, EEE" + time range.
+    final displayTime = timeRange == 'N/A' ? 'Not applicable' : timeRange;
+    IconData statusIcon;
+    switch (status.toString().toLowerCase()) {
+      case 'absent':
+      case 'rejected':
+      case 'pending':
+        statusIcon = Icons.do_not_disturb_alt_rounded;
+        break;
+      case 'holiday':
+        statusIcon = Icons.celebration_rounded;
+        break;
+      case 'on leave':
+        statusIcon = Icons.event_busy_rounded;
+        break;
+      case 'weekend':
+        statusIcon = Icons.weekend_rounded;
+        break;
+      default:
+        statusIcon = Icons.login_rounded;
+    }
+
+    // Status style from AppColors
+    final st = AppColors.statusStyle(status.toLowerCase());
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: colorScheme.outline),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2)),
+        ],
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // Amber login/logout icon tile
           Container(
-            width: 56,
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppColors.primary.withOpacity(0.3)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  dateNum,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  dayAbbrev,
-                  style: TextStyle(fontSize: 11, color: Colors.white),
-                ),
-              ],
-            ),
+            width: 48, height: 48,
+            decoration: BoxDecoration(color: dateBgColor, borderRadius: BorderRadius.circular(14)),
+            child: Icon(statusIcon, color: dateTextColor, size: 22),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
+          // Middle content: date + time range
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _historyTimeColumn(
-                      'Check In',
-                      _formatTimeShort(punchIn),
-                      colorScheme,
-                      selfieUrl: hasPunchInSelfie ? punchInSelfieUrl : null,
-                      onSelfieTap: hasPunchInSelfie
-                          ? () => _showSelfieDialog(
-                              punchInSelfieUrl,
-                              "Check-in Selfie",
-                            )
-                          : null,
-                    ),
-                    _historyTimeColumn(
-                      'Check out',
-                      _formatTimeShort(punchOut),
-                      colorScheme,
-                      selfieUrl: hasPunchOutSelfie ? punchOutSelfieUrl : null,
-                      onSelfieTap: hasPunchOutSelfie
-                          ? () => _showSelfieDialog(
-                              punchOutSelfieUrl,
-                              "Check-out Selfie",
-                            )
-                          : null,
-                    ),
-                    _historyTimeColumn(
-                      'Total Hours',
-                      totalHoursStr,
-                      colorScheme,
-                    ),
-                  ],
-                ),
-                if (otLine != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    'OT: $otLine',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.teal.shade700,
-                    ),
-                  ),
-                ],
-                if (bufferLine != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'Buffer (tracked): $bufferLine',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.blueGrey.shade700,
-                    ),
-                  ),
-                ],
+                Text(dateText,
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                const SizedBox(height: 3),
+                Text(displayTime,
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textSecondary)),
                 if (locationAddress != null) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.location_on,
-                        size: 14,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          locationAddress,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  const SizedBox(height: 2),
+                  Text(locationAddress,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                ] else if (totalHoursStr.isNotEmpty && totalHoursStr != '--:--') ...[
+                  const SizedBox(height: 2),
+                  Text(totalHoursStr,
+                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                 ],
-                if (displayStatus.isNotEmpty || tags.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          displayStatus,
-                          style: TextStyle(
-                            color: statusColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      ...tags.map((tag) {
-                        Color tagColor;
-                        if (tag == 'Late In' || tag == 'Late Out') {
-                          tagColor = Colors.orange;
-                        } else if (tag == 'Early Exit') {
-                          tagColor = const Color(0xFF0EA5E9);
-                        } else if (tag == 'Low Hrs') {
-                          tagColor = Colors.red;
-                        } else {
-                          tagColor = Colors.orange;
-                        }
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: tagColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            tag,
-                            style: TextStyle(
-                              color: tagColor,
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
+                if (tags.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Wrap(spacing: 4, children: tags.map((t) {
+                    final c = t == 'Late In' || t == 'Late Out' ? Colors.orange
+                        : t == 'Early Exit' ? Colors.blue : Colors.red;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: c.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(6)),
+                      child: Text(t, style: TextStyle(fontSize: 9, color: c, fontWeight: FontWeight.w700)),
+                    );
+                  }).toList()),
                 ],
               ],
             ),
           ),
+          // Status badge on right
+          if (displayStatus.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: st.bg,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(displayStatus.toUpperCase(),
+                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: st.fg)),
+            ),
         ],
       ),
     );

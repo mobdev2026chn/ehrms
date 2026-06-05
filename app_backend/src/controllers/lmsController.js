@@ -156,6 +156,7 @@ const getCourseDetails = async (req, res) => {
             progress = await CourseProgress.findOne({ courseId: id, ...userFilter });
         }
 
+        
         res.json({ success: true, data: { course, progress } });
     } catch (err) {
         if (err.name === 'CastError') {

@@ -85,7 +85,7 @@ class HolidayService {
       if (msg.contains('connection refused') || msg.contains('connection reset')) {
         return 'Server is not responding. Please try again in a moment or contact support.';
       }
-      return 'Connection error. Please check your internet connection and try again.';
+      return 'Connection error4. Please check your internet connection and try again.';
     }
     if (error is TimeoutException) {
       return 'Connection timed out. The server is taking too long to respond. Please try again.';

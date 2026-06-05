@@ -104,7 +104,17 @@ const HOST = process.env.HOST || '0.0.0.0';
 const startServer = async () => {
     try {
         await connectDB();
-        startPresenceTrackingStatusMonitor();
+        // Under the PM2 load balancer (exec_mode: 'cluster') every worker runs this
+        // file, so the background presence monitor would otherwise run once PER worker
+        // — duplicating its periodic scan and racing on the same writes. PM2 numbers
+        // workers via NODE_APP_INSTANCE (0,1,2,...); run the singleton monitor only on
+        // worker 0. In fork mode / plain `node index.js` the var is unset, so it runs.
+        const workerInstance = process.env.NODE_APP_INSTANCE;
+        if (workerInstance === undefined || workerInstance === '0') {
+            startPresenceTrackingStatusMonitor();
+        } else {
+            console.log(`[Server] Worker ${workerInstance}: skipping presence monitor (runs on worker 0 only)`);
+        }
         app.listen(PORT, HOST, () => {
             console.log(`Server running on http://${HOST}:${PORT}`);
         });

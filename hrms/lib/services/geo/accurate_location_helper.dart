@@ -32,6 +32,17 @@ Future<Position> getPositionForTrackings({
   }
 
   final samples = <Position>[initial];
+
+  // If the very first fix is already accurate enough, return immediately
+  // instead of waiting out the whole sample window — this is the common case
+  // outdoors and removes several seconds of "Getting location…" on every punch.
+  final initialAcc = initial.accuracy;
+  if (initialAcc.isFinite &&
+      initialAcc > 0 &&
+      initialAcc <= stopEarlyWhenAccuracyMeters) {
+    return initial;
+  }
+
   StreamSubscription<Position>? sub;
 
   try {

@@ -390,19 +390,70 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 16),
-                // Success icon
+                // Success hero — glowing orange circle check with floating accents
                 Center(
-                  child: Container(
-                    width: 88,
-                    height: 88,
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryDark,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.check_rounded,
-                      color: Colors.white,
-                      size: 48,
+                  child: SizedBox(
+                    width: 160,
+                    height: 130,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      clipBehavior: Clip.none,
+                      children: [
+                        // Soft glow
+                        Container(
+                          width: 130,
+                          height: 130,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              colors: [
+                                AppColors.primary.withValues(alpha: 0.25),
+                                AppColors.primary.withValues(alpha: 0.0),
+                              ],
+                            ),
+                          ),
+                        ),
+                        // Main circle
+                        Container(
+                          width: 96,
+                          height: 96,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withValues(alpha: 0.4),
+                                blurRadius: 18,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            Icons.check_rounded,
+                            color: AppColors.surfaceDark,
+                            size: 52,
+                          ),
+                        ),
+                        // Floating accent badges
+                        Positioned(
+                          top: 6,
+                          right: 18,
+                          child: _accentBadge(
+                            Icons.rocket_launch_rounded,
+                            AppColors.indigoBg,
+                            AppColors.indigo,
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 10,
+                          left: 22,
+                          child: _accentBadge(
+                            Icons.auto_awesome_rounded,
+                            AppColors.primaryLight,
+                            AppColors.primary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -650,6 +701,25 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _accentBadge(IconData icon, Color bg, Color fg) {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: bg,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Icon(icon, size: 18, color: fg),
     );
   }
 

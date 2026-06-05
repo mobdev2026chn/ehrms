@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:hrms/screens/holidays/holidays_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../bloc/auth/auth_bloc.dart';
 import '../config/app_colors.dart';
@@ -17,12 +18,11 @@ import '../screens/performance/performance_module_screen.dart';
 import '../screens/announcements/announcements_screen.dart';
 import '../screens/grievance/grievance_shell_screen.dart';
 import '../screens/interaction/interaction_shell_screen.dart';
+import '../screens/lms/lms_shell_screen.dart';
+import '../screens/lms_admin/lms_admin_shell_screen.dart';
 
 class AppDrawer extends StatefulWidget {
-  /// Current tab index when used from Dashboard (0=Dashboard, 1=Requests, 2=Salary, 3=Holidays, 4=Attendance).
   final int? currentIndex;
-
-  /// Called when user selects a main tab; closes drawer and switches tab.
   final void Function(int index)? onNavigateToIndex;
 
   const AppDrawer({super.key, this.currentIndex, this.onNavigateToIndex});
@@ -47,7 +47,6 @@ class _AppDrawerState extends State<AppDrawer> {
       final data = jsonDecode(userString) as Map<String, dynamic>;
       setState(() => _userData = data);
 
-      // Fallback: fetch profile to fill locationAccess and/or branchName if missing
       final needsLocationAccess = !data.containsKey('locationAccess');
       final needsBranchName = !data.containsKey('branchName') || data['branchName'] == null;
       if (needsLocationAccess || needsBranchName) {
@@ -56,18 +55,11 @@ class _AppDrawerState extends State<AppDrawer> {
           if (result['success'] == true && mounted) {
             final profileData = result['data'] as Map<String, dynamic>?;
             final staffData = profileData?['staffData'] as Map<String, dynamic>?;
-            if (needsLocationAccess) {
-              final locationAccess = staffData?['locationAccess'] == true;
-              data['locationAccess'] = locationAccess;
-            }
+            if (needsLocationAccess) data['locationAccess'] = staffData?['locationAccess'] == true;
             if (needsBranchName) {
-              final branchName = profileData?['branchName']?.toString() ??
-                  (staffData?['branchId'] is Map
-                      ? (staffData!['branchId'] as Map)['branchName']?.toString()
-                      : null);
-              if (branchName != null && branchName.isNotEmpty) {
-                data['branchName'] = branchName;
-              }
+              final bn = profileData?['branchName']?.toString() ??
+                  (staffData?['branchId'] is Map ? (staffData!['branchId'] as Map)['branchName']?.toString() : null);
+              if (bn != null && bn.isNotEmpty) data['branchName'] = bn;
             }
             await prefs.setString('user', jsonEncode(data));
             if (mounted) setState(() => _userData = data);
@@ -77,327 +69,138 @@ class _AppDrawerState extends State<AppDrawer> {
     }
   }
 
+  /// Admin-like roles that can access the LMS admin console.
+  bool get _isAdminLike {
+    final role = (_userData?['role'] ?? '').toString().toLowerCase().trim();
+    return role == 'admin' ||
+        role == 'super admin' ||
+        role == 'superadmin' ||
+        role == 'hr' ||
+        role == 'senior hr';
+  }
+
   void _navigateToTab(int index) {
     final callback = widget.onNavigateToIndex;
     Navigator.pop(context);
     Future.microtask(() {
       if (callback != null) {
         callback(index);
-        // Drawer may be hosted on a route pushed above Dashboard (e.g. Shifts /
-        // Attendance Calendar). Switching tabs only updates IndexedStack under
-        // Dashboard; pop overlays so the selected tab is actually visible.
         if (mounted && context.mounted) {
           final nav = Navigator.of(context);
-          if (nav.canPop()) {
-            nav.popUntil((route) => route.isFirst);
-          }
+          if (nav.canPop()) nav.popUntil((r) => r.isFirst);
         }
       } else if (mounted && context.mounted) {
-        _navigateAndClearStack(DashboardScreen(initialIndex: index));
+        _push(DashboardScreen(initialIndex: index));
       }
     });
   }
 
-  /// Navigate to a screen and clear the stack so back does not return to ride/task screens.
-  void _navigateAndClearStack(Widget screen) {
+  void _push(Widget screen) {
     if (!mounted || !context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => screen),
-      (route) => route.isFirst,
+      (r) => r.isFirst,
     );
   }
 
   Future<void> _logout(BuildContext context) async {
-    // Stop presence tracking before clearing auth.
     await PresenceTrackingService().stopTracking();
-    // Clear token, prefs, and sign out from Google/Firebase (must complete before navigating).
     await AuthService().logout();
     if (!context.mounted) return;
     context.read<AuthBloc>().add(const AuthLogoutRequested());
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (route) => false,
+      (_) => false,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Drawer(
-      backgroundColor: colorScheme.surface,
-      child: Column(
-        children: [
-          _buildHeader(),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.person_rounded,
-                  title: 'Profile',
-                  onTap: () {
-                    Navigator.pop(context);
-                    Future.microtask(
-                      () => _navigateAndClearStack(
-                        const ProfileScreen(dashboardTabIndex: 3),
-                      ),
-                    );
-                  },
-                ),
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.access_time_rounded,
-                  title: 'Attendance',
-                  onTap: () => _navigateToTab(4),
-                ),
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.calendar_today_rounded,
-                  title: 'Holidays',
-                  onTap: () => _navigateToTab(3),
-                ),
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.inventory_2_rounded,
-                  title: 'My Assets',
-                  onTap: () {
-                    Navigator.pop(context);
-                    Future.microtask(
-                      () => _navigateAndClearStack(const AssetsListingScreen()),
-                    );
-                  },
-                ),
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.trending_up_rounded,
-                  title: 'Performance',
-                  onTap: () {
-                    Navigator.pop(context);
-                    Future.microtask(
-                      () => _navigateAndClearStack(
-                        const PerformanceModuleScreen(),
-                      ),
-                    );
-                  },
-                ),
-                if (1 == 1)
-                  _buildDrawerItem(
-                    context: context,
-                    icon: Icons.assignment_rounded,
-                    title: 'Tasks',
-                    onTap: () {
-                      Navigator.pop(context);
-                      Future.microtask(
-                        () => _navigateAndClearStack(
-                          const MyTasksScreen(dashboardTabIndex: 1),
-                        ),
-                      );
-                    },
-                  ),
-                // My Learning and Live Sessions hidden from drawer
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.forum_outlined,
-                  title: 'Interaction',
-                  onTap: () {
-                    Navigator.pop(context);
-                    Future.microtask(
-                      () => _navigateAndClearStack(const InteractionShellScreen()),
-                    );
-                  },
-                ),
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.campaign_rounded,
-                  title: 'Announcements',
-                  onTap: () {
-                    Navigator.pop(context);
-                    Future.microtask(
-                      () => _navigateAndClearStack(const AnnouncementsScreen()),
-                    );
-                  },
-                ),
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.report_problem_rounded,
-                  title: 'Grievance',
-                  onTap: () {
-                    Navigator.pop(context);
-                    Future.microtask(
-                      () => _navigateAndClearStack(const GrievanceShellScreen()),
-                    );
-                  },
-                ),
-                _buildDrawerItem(
-                  context: context,
-                  icon: Icons.settings_rounded,
-                  title: 'Settings',
-                  onTap: () {
-                    Navigator.pop(context);
-                    Future.microtask(
-                      () => _navigateAndClearStack(const SettingsScreen()),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          _buildDrawerItem(
-            context: context,
-            icon: Icons.logout_rounded,
-            title: 'Logout',
-            textColor: AppColors.error,
-            iconColor: AppColors.error,
-            onTap: () => _logout(context),
-          ),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    final colorScheme = Theme.of(context).colorScheme;
-    final name = _userData?['name'] ?? 'Employee';
-    final email = _userData?['email'] ?? '';
-    final role = _userData?['role'] ?? 'N/A';
-    final branch = _userData?['branchName'] ?? 'Main Office';
-    final company = _userData?['companyName'] ?? 'HRMS Corp';
-
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'U';
-    final avatarUrl = _userData?['avatar'] ?? _userData?['photoUrl'];
-    final showAvatar =
-        avatarUrl != null &&
-        avatarUrl.toString().trim().isNotEmpty &&
-        avatarUrl.toString().startsWith('http');
-
-    return Container(
-      padding: const EdgeInsets.only(top: 60, left: 24, right: 24, bottom: 24),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)],
-        ),
-        borderRadius: const BorderRadius.only(bottomRight: Radius.circular(32)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white24, width: 2),
-                ),
-                child: CircleAvatar(
-                  backgroundColor: colorScheme.surface,
-                  radius: 35,
-                  backgroundImage: showAvatar
-                      ? NetworkImage(avatarUrl.toString().trim())
-                      : null,
-                  child: showAvatar
-                      ? null
-                      : Text(
-                          initial,
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      company,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          _buildDetailRow(Icons.email_outlined, email),
-          const SizedBox(height: 8),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _buildModernChip(Icons.work_outline_rounded, role),
-              const SizedBox(width: 12),
-              _buildModernChip(Icons.location_on_outlined, branch),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(IconData icon, String text) {
-    return Row(
-      children: [
-        Icon(icon, color: Colors.white60, size: 16),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            text,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.8),
-              fontSize: 12,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildModernChip(IconData icon, String label) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: Colors.white70, size: 12),
-            const SizedBox(width: 4),
-            Expanded(
+            // ── Amber Profile Header Card ─────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: _buildHeaderCard(),
+            ),
+            const SizedBox(height: 8),
+            // ── Nav Label ────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
+                'NAVIGATION',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textCaption,
+                  letterSpacing: 1.2,
                 ),
-                overflow: TextOverflow.ellipsis,
               ),
+            ),
+            // ── Nav Items ────────────────────────────────────────────
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                children: [
+                  _item(Icons.person_outline, 'Profile', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const ProfileScreen(dashboardTabIndex: 3)));
+                  }),
+                  _item(Icons.calendar_today_outlined, 'Attendance', () => _navigateToTab(4)),
+                  _item(Icons.inventory_2_outlined, 'My Assets', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const AssetsListingScreen()));
+                  }),
+                  _item(Icons.trending_up_outlined, 'Performance', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const PerformanceModuleScreen()));
+                  }),
+                    _item(Icons.umbrella_outlined, 'Holidays', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const HolidaysScreen()));
+                  }),
+                  _item(Icons.assignment_outlined, 'Tasks', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
+                  }),
+                  _item(Icons.share_outlined, 'Interaction', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const InteractionShellScreen()));
+                  }),
+                  _item(Icons.campaign_outlined, 'Announcements', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const AnnouncementsScreen()));
+                  }),
+                  _item(Icons.warning_amber_outlined, 'Grievance', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const GrievanceShellScreen()));
+                  }),
+                  _item(Icons.school_outlined, 'My Learning', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const LmsShellScreen()));
+                  }),
+               //   if (_isAdminLike)
+                    _item(Icons.admin_panel_settings_outlined, 'LMS Admin', () {
+                      Navigator.pop(context);
+                      Future.microtask(() => _push(const LmsAdminShellScreen()));
+                    }),
+                  _item(Icons.settings_outlined, 'Settings', () {
+                    Navigator.pop(context);
+                    Future.microtask(() => _push(const SettingsScreen()));
+                  }),
+                ],
+              ),
+            ),
+            // ── Logout ───────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+              child: _item(Icons.logout_rounded, 'Logout', () => _logout(context),
+                  color: AppColors.error),
             ),
           ],
         ),
@@ -405,28 +208,105 @@ class _AppDrawerState extends State<AppDrawer> {
     );
   }
 
-  Widget _buildDrawerItem({
-    required BuildContext context,
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-    Color? textColor,
-    Color? iconColor,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final defaultColor = colorScheme.onSurface;
-    return ListTile(
-      leading: Icon(icon, color: iconColor ?? defaultColor),
-      title: Text(
-        title,
-        style: TextStyle(
-          color: textColor ?? defaultColor,
-          fontWeight: FontWeight.w500,
+  /// Amber rounded header card matching Figma exactly.
+  Widget _buildHeaderCard() {
+    final name     = _userData?['name']      ?? 'Employee';
+    final role     = _userData?['role']      ?? '';
+    final empId    = _userData?['staffId']   ?? _userData?['id'] ?? '';
+    final avatarUrl = _userData?['avatar']   ?? _userData?['photoUrl'];
+    final showAvatar = avatarUrl != null &&
+        avatarUrl.toString().trim().isNotEmpty &&
+        avatarUrl.toString().startsWith('http');
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'E';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      // Figma: vertical layout — avatar on top, name/role/ID stacked below.
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 2),
+            ),
+            child: CircleAvatar(
+              radius: 32,
+              backgroundColor: Colors.white.withValues(alpha: 0.25),
+              backgroundImage: showAvatar ? NetworkImage(avatarUrl.toString().trim()) : null,
+              child: showAvatar
+                  ? null
+                  : Text(initial,
+                      style: const TextStyle(
+                        fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            name,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 20,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (role.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              role,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.9),
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          if (empId.toString().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Employee ID: $empId',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.75),
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _item(IconData icon, String title, VoidCallback onTap, {Color? color}) {
+    final fg = color ?? AppColors.textPrimary;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: fg),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: fg,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
-      onTap: onTap,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 2),
     );
   }
 }

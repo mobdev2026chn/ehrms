@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_colors.dart';
+import '../config/app_text_styles.dart';
+import '../widgets/animations.dart';
 
 class ThemeProvider with ChangeNotifier {
   static const String _themeKey = 'theme_color';
@@ -122,6 +124,13 @@ class ThemeProvider with ChangeNotifier {
       brightness: Brightness.light,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: const Color(0xFFF5F7FA),
+      // Smooth fade+slide transition for every MaterialPageRoute, app-wide.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
+          TargetPlatform.iOS: FadeThroughPageTransitionsBuilder(),
+        },
+      ),
       appBarTheme: AppBarTheme(
         backgroundColor: Colors.white,
         foregroundColor: colorScheme.onSurface,
@@ -173,17 +182,12 @@ class ThemeProvider with ChangeNotifier {
         labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
         hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
       ),
-      textTheme: TextTheme(
-        bodyLarge: TextStyle(color: colorScheme.onSurface),
-        bodyMedium: TextStyle(color: colorScheme.onSurface),
-        bodySmall: TextStyle(color: colorScheme.onSurfaceVariant),
-        titleLarge: TextStyle(
-          color: colorScheme.onSurface,
-          fontWeight: FontWeight.w600,
-        ),
-        titleMedium: TextStyle(color: colorScheme.onSurface),
-        titleSmall: TextStyle(color: colorScheme.onSurfaceVariant),
-        labelLarge: TextStyle(color: colorScheme.onSurface),
+      // Typography is driven by AppTextStyles (Figma EktaHR scale). Only ~8
+      // call sites read from the global textTheme today; screens otherwise use
+      // explicit TextStyle / AppTextStyles, so this stays close to defaults.
+      textTheme: AppTextStyles.textTheme(
+        colorScheme.onSurface,
+        colorScheme.onSurfaceVariant,
       ),
     );
   }

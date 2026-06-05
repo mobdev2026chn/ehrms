@@ -1,4 +1,4 @@
-// hrms/lib/widgets/bottom_navigation_bar.dart
+﻿// hrms/lib/widgets/bottom_navigation_bar.dart
 // Reusable custom bottom navbar with dark theme and yellow accent (reference-style).
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -75,7 +75,14 @@ class AppBottomNavigationBar extends StatefulWidget {
   State<AppBottomNavigationBar> createState() => _AppBottomNavigationBarState();
 }
 
-class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
+class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
+    with SingleTickerProviderStateMixin {
+  /// Gentle continuous pulse for the center Punch button (the primary CTA).
+  late final AnimationController _pulseController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+
   // ignore: unused_field
   bool _isCandidate = false;
   bool _isPunchedIn = false;
@@ -105,6 +112,12 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   }
 
   @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(AppBottomNavigationBar oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Only refresh prefs-backed punch state on nav changes when external dashboard
@@ -125,6 +138,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
       ? widget.activeBreakStartTime
       : _fetchedBreakStartTime;
 
+  // ignore: unused_element
   bool get _effectiveBreakActive => _useExternalBreakState
       ? (widget.isBreakActive || widget.activeBreakStartTime != null)
       : _fetchedBreakStartTime != null;
@@ -188,9 +202,13 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
 
       // Prefer live today attendance (same source used by Dashboard) so all screens
       // keep the same Punch CTA visibility. Fall back to prefs on errors/offline.
+      // Use the service cache (forceRefresh: false) instead of forcing a network
+      // hit on every screen/nav mount — the Dashboard and punch submit already
+      // refresh this cache, so the nav piggybacks on fresh data without adding
+      // redundant /attendance/today calls during the peak punch window.
       try {
         final todayRes = await _attendanceService.getTodayAttendance(
-          forceRefresh: true,
+          forceRefresh: false,
         );
         final data = todayRes['data'];
         if (todayRes['success'] == true && data is Map<String, dynamic>) {
@@ -241,8 +259,27 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
 
   void _handleNavigation(BuildContext context, int index) {
     HapticFeedback.lightImpact();
-    // Bottom-nav third icon is Attendance; DashboardScreen expects tab index 4.
-    final targetIndex = index == 2 ? 4 : index;
+    // Canonical layout: slot 0=Home, 1=Attendance, 2=Break, 3=My Request,
+    // center=Punch. Map each slot to the DashboardScreen screen index, or to an
+    // action code (5=punch, 6=break) handled by the shell / DashboardScreen.
+    // Screen indices: 0=Home, 1=My Request, 4=Attendance.
+    final int targetIndex;
+    switch (index) {
+      case 0:
+        targetIndex = 0; // Home
+        break;
+      case 1:
+        targetIndex = 4; // Attendance
+        break;
+      case 2:
+        targetIndex = 6; // Break flow
+        break;
+      case 3:
+        targetIndex = 1; // My Request
+        break;
+      default:
+        targetIndex = index; // 5 = punch (passthrough)
+    }
     if (widget.onTap != null) {
       widget.onTap!(targetIndex);
     } else {
@@ -258,155 +295,26 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
   List<NavItem> _buildItems() {
     return const [
       NavItem(
-        icon: Icons.dashboard_outlined,
-        activeIcon: Icons.dashboard_rounded,
-        label: 'Dashboard',
+        icon: Icons.grid_view_outlined,
+        activeIcon: Icons.grid_view_rounded,
+        label: 'Home',
+      ),
+      NavItem(
+        icon: Icons.access_time_outlined,
+        activeIcon: Icons.access_time_filled_rounded,
+        label: 'Attendance',
+      ),
+      NavItem(
+        icon: Icons.coffee_outlined,
+        activeIcon: Icons.coffee_rounded,
+        label: 'Break',
       ),
       NavItem(
         icon: Icons.description_outlined,
         activeIcon: Icons.description_rounded,
-        label: 'Requests',
-      ),
-      NavItem(
-        icon: Icons.fact_check_outlined,
-        activeIcon: Icons.fact_check,
-        label: 'Attendance',
+        label: 'My Request',
       ),
     ];
-  }
-
-  /// [fillNavColumn] — pill stretches to fill the punch column (reference UI: large CTA).
-  Widget _buildPunchButton(BuildContext context, {bool fillNavColumn = false}) {
-    // Prefer dashboard today-card state when provided; else use prefs (same logic as today card)
-    final isPunchedIn = widget.isPunchedInToday ?? _isPunchedIn;
-    final label = isPunchedIn ? 'Punch Out' : 'Punch In';
-    final icon = isPunchedIn ? Icons.logout_rounded : Icons.login_rounded;
-    final isDisabled = widget.isPunchActionInProgress;
-
-    // Keep Punch In/Out fully visible in narrow dashboard widths.
-    final hPad = fillNavColumn ? 8.0 : 10.0;
-    final vPad = fillNavColumn ? 10.0 : 8.0;
-    final fontSize = fillNavColumn ? 11.0 : 10.0;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-      child: IgnorePointer(
-        ignoring: isDisabled,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 150),
-          opacity: isDisabled ? 0.6 : 1,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _handleNavigation(context, 5),
-            // [Container] not [AnimatedContainer]: when the break chip is inserted after
-            // punch-in, Flutter can reuse the same slot; tweening pill (borderRadius) ↔
-            // break circle (BoxShape.circle) throws (box_decoration.dart assertion).
-            child: Container(
-              width: fillNavColumn ? double.infinity : null,
-              padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [AppColors.primary, AppColors.primaryDark],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(30),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withValues(alpha: 0.45),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: fillNavColumn
-                    ? MainAxisSize.max
-                    : MainAxisSize.min,
-                children: [
-                  fillNavColumn
-                      ? Expanded(
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.left,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: fontSize,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0,
-                                ),
-                              ),
-                            ),
-                          ),
-                        )
-                      : Text(
-                          label,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: fontSize,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0,
-                          ),
-                        ),
-                  SizedBox(width: fillNavColumn ? 3 : 2),
-                  Icon(icon, size: fillNavColumn ? 16 : 16, color: Colors.white),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBreakButton(BuildContext context) {
-    final icon = _effectiveBreakActive
-        ? Icons.free_breakfast_rounded
-        : Icons.free_breakfast_outlined;
-    final isDisabled = widget.isBreakActionInProgress;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 2),
-      child: IgnorePointer(
-        ignoring: isDisabled,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 150),
-          opacity: isDisabled ? 0.6 : 1,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _handleNavigation(context, 6),
-            // Use [Container] (not [AnimatedContainer]): inserting this row when punch-in
-            // flips can otherwise reuse the punch button's element and tween incompatible
-            // decorations (circle vs borderRadius). [AnimatedOpacity] still smooths feedback.
-            child: Container(
-              width: 40,
-              height: 40,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _effectiveBreakActive
-                    ? AppColors.primary.withValues(alpha: 0.18)
-                    : const Color(0xFF111827),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: _effectiveBreakActive
-                      ? AppColors.primary.withValues(alpha: 0.45)
-                      : const Color(0xFF2B3545),
-                ),
-              ),
-              child: Icon(icon, size: 20, color: Colors.white),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   @override
@@ -415,18 +323,46 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
     final usesInternalPunchState =
         widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
     final canRenderPunchButton = !usesInternalPunchState || _isPunchStateResolved;
-    // Break icon visibility is controlled by shift break policy from dashboard.
-    // Keep punch-state value for other UX pieces (e.g. BreakStatusCard).
     final isPunchedInForBreak = widget.isPunchedInToday ?? _isPunchedIn;
+    final isPunchedIn = widget.isPunchedInToday ?? _isPunchedIn;
 
-    // Nav bar background: black
-    final barBg = Colors.black;
-    final unselectedColor = const Color(0xFF94A3B8);
-    final selectedColor = AppColors.primary;
+    const barBg = Color(0xFF1C1C1E);
+    const unselected = Color(0xFF8E8E93);
+    final selected = AppColors.primary;
+
     if (kDebugMode) {
-      debugPrint(
-        '[BreakPolicy][BottomNav] showBreakNavButton=${widget.showBreakNavButton} '
-        'isPunchedInForBreak=$isPunchedInForBreak activeBreak=${_effectiveBreakStartTime != null}',
+      debugPrint('[BottomNav] showBreakNavButton=${widget.showBreakNavButton} isPunchedInForBreak=$isPunchedInForBreak');
+    }
+
+    // Figma layout: 2 tabs | center punch circle | 2 tabs
+    // navItems[0]=Home, [1]=Attendance, center=Punch, [2]=Break, [3]=My Request
+    Widget navTab(int idx, NavItem item, int navIdx) {
+      final isActive = widget.currentIndex == navIdx;
+      return Expanded(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () { HapticFeedback.lightImpact(); _handleNavigation(context, navIdx); },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                isActive ? item.activeIcon : item.icon,
+                size: 22,
+                color: isActive ? selected : unselected,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                item.label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                  color: isActive ? selected : unselected,
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -438,101 +374,98 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: BreakStatusCard(
               startTime: _effectiveBreakStartTime!,
-              onEndBreak:
-                  widget.onEndBreakTap ?? () => _handleNavigation(context, 6),
+              onEndBreak: widget.onEndBreakTap ?? () => _handleNavigation(context, 6),
               isBusy: widget.isBreakActionInProgress,
               showSuccessBanner: false,
             ),
           ),
-        Container(
-          margin: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-          decoration: BoxDecoration(
-            color: barBg,
-            borderRadius: BorderRadius.circular(32),
-            border: Border.all(color: const Color(0xFF222222), width: 1),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.06),
-                blurRadius: 12,
-                offset: const Offset(0, -2),
-              ),
-            ],
-          ),
-          child: SafeArea(
-            top: false,
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Left cluster: tabs + break share ~2/3 of the bar; tight, even spacing
-                  // (reference: no huge dead gap in the middle).
-                  Expanded(
-                    flex: 5,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        for (int i = 0; i < navItems.length; i++)
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => _handleNavigation(context, i),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: widget.currentIndex == i
-                                    ? selectedColor
-                                    : Colors.transparent,
-                                shape: BoxShape.circle,
-                                boxShadow: widget.currentIndex == i
-                                    ? [
-                                        BoxShadow(
-                                          color: selectedColor.withValues(
-                                            alpha: 0.4,
-                                          ),
-                                          blurRadius: 10,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                              child: Icon(
-                                widget.currentIndex == i
-                                    ? navItems[i].activeIcon
-                                    : navItems[i].icon,
-                                size: 24,
-                                color: widget.currentIndex == i
-                                    ? Colors.white
-                                    : unselectedColor,
+        SafeArea(
+          top: false,
+          child: Container(
+            height: 72,
+            margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            decoration: BoxDecoration(
+              color: barBg,
+              borderRadius: BorderRadius.circular(36),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.25),
+                  blurRadius: 20,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                // Left 2 tabs: Home + Attendance
+                if (navItems.isNotEmpty) navTab(0, navItems[0], 0),
+                if (navItems.length > 1) navTab(1, navItems[1], 1),
+
+                // Center: Punch button (raised amber circle)
+                SizedBox(
+                  width: 72,
+                  child: canRenderPunchButton
+                      ? Center(
+                          child: GestureDetector(
+                            onTap: () { HapticFeedback.mediumImpact(); _handleNavigation(context, 5); },
+                            child: ScaleTransition(
+                              scale: Tween<double>(begin: 1.0, end: 1.045)
+                                  .animate(CurvedAnimation(
+                                    parent: _pulseController,
+                                    curve: Curves.easeInOut,
+                                  )),
+                              child: AnimatedOpacity(
+                              duration: const Duration(milliseconds: 150),
+                              opacity: (widget.isPunchActionInProgress || (widget.isPunchCompletedToday ?? _isPunchCompletedToday)) ? 0.5 : 1.0,
+                              child: Container(
+                                width: 58,
+                                height: 58,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: LinearGradient(
+                                    colors: [AppColors.primary, AppColors.primaryDark],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppColors.primary.withValues(alpha: 0.5),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 3),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      isPunchedIn ? Icons.fingerprint : Icons.fingerprint,
+                                      color: Colors.white,
+                                      size: 26,
+                                    ),
+                                    Text(
+                                      isPunchedIn ? 'Punch out' : 'Punch in',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 7,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 0.2,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
+                            ),
                           ),
-                        if (widget.currentIndex >= 0 &&
-                            isPunchedInForBreak &&
-                            widget.showBreakNavButton)
-                          KeyedSubtree(
-                            key: const ValueKey('bottom_nav_break'),
-                            child: _buildBreakButton(context),
-                          ),
-                      ],
-                    ),
-                  ),
-                  // Punch CTA: ~3/8 of bar — larger pill (reference ~30–35% width).
-                  if (canRenderPunchButton &&
-                      !(widget.isPunchCompletedToday ?? _isPunchCompletedToday))
-                    Expanded(
-                      flex: 3,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 4, right: 10),
-                        child: KeyedSubtree(
-                          key: const ValueKey('bottom_nav_punch'),
-                          child: _buildPunchButton(context, fillNavColumn: true),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+
+                // Right 2 tabs: Break + My Request
+                if (navItems.length > 2) navTab(2, navItems[2], 2),
+                if (navItems.length > 3) navTab(3, navItems[3], 3),
+              ],
             ),
           ),
         ),

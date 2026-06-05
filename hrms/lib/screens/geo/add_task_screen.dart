@@ -14,6 +14,7 @@ import 'package:hrms/services/geo/places_service.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/screens/geo/live_tracking_screen.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
+import 'package:hrms/screens/notifications/notifications_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 
@@ -163,11 +164,94 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     });
   }
 
-  InputDecoration _inputDecoration(String label, IconData icon) {
+  /// Figma "Keep the momentum" header banner.
+  Widget _buildMomentumBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.primary, AppColors.primaryDark],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.3),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -8,
+              bottom: -4,
+              child: Icon(
+                Icons.notes_rounded,
+                size: 96,
+                color: Colors.white.withValues(alpha: 0.12),
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Keep the momentum',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Organize your workflow by adding a clear title and priority.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.white.withValues(alpha: 0.9),
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Bold label above a field, matching the Figma form style.
+  Widget _buildLabeledField(String label, Widget field) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        field,
+      ],
+    );
+  }
+
+  /// Clean white input (no prefix icon), label sits above via [_buildLabeledField].
+  InputDecoration _cleanInputDecoration(String hint) {
     return InputDecoration(
-      labelText: label,
-      prefixIcon: Icon(icon, size: 20, color: AppColors.primary),
-      labelStyle: const TextStyle(color: Colors.black, fontSize: 13),
+      hintText: hint,
+      hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+      filled: true,
+      fillColor: Colors.white,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide(color: Colors.grey.shade300),
@@ -180,7 +264,49 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide(color: AppColors.primary, width: 2),
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    );
+  }
+
+  /// Read-only "Assigned To" field — tasks are always assigned to the current
+  /// staff (widget.staffId), shown as "Me" to match the Figma layout.
+  Widget _buildAssignedToField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Assigned To',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.person_outline_rounded,
+                  size: 20, color: Colors.grey.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Me',
+                  style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                ),
+              ),
+              Icon(Icons.keyboard_arrow_down_rounded,
+                  size: 22, color: Colors.grey.shade500),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -604,18 +730,39 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: const Text(
-          'Add Task',
+          'New Task',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        centerTitle: true,
+        centerTitle: false,
         elevation: 0,
+        backgroundColor: Colors.white,
+        foregroundColor: AppColors.textPrimary,
+        surfaceTintColor: Colors.transparent,
+        actions: [
+          IconButton(
+            icon: Icon(Icons.notifications_none_rounded,
+                color: AppColors.textPrimary, size: 26),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 14, left: 4),
+            child: CircleAvatar(
+              radius: 18,
+              backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+              child: Icon(Icons.person_rounded,
+                  color: AppColors.primary, size: 22),
+            ),
+          ),
+        ],
       ),
       body: Form(
         key: _formKey,
@@ -632,29 +779,42 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    TextFormField(
-                      controller: _taskTitleController,
-                      decoration: _inputDecoration(
-                        'Task Title',
-                        Icons.title_rounded,
+                    _buildMomentumBanner(),
+                    const SizedBox(height: 20),
+                    _buildLabeledField(
+                      'Task Title',
+                      TextFormField(
+                        controller: _taskTitleController,
+                        decoration: _cleanInputDecoration(
+                          'e.g., Design System Audit',
+                        ),
+                        validator: (v) =>
+                            (v == null || v.trim().isEmpty) ? 'Required' : null,
+                        textInputAction: TextInputAction.next,
                       ),
-                      validator: (v) =>
-                          (v == null || v.trim().isEmpty) ? 'Required' : null,
-                      textInputAction: TextInputAction.next,
                     ),
                     const SizedBox(height: 16),
                     _buildCustomerField(),
                     const SizedBox(height: 16),
-                    _buildExpectedCompletionDateField(),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: _buildExpectedCompletionDateField()),
+                        const SizedBox(width: 12),
+                        Expanded(child: _buildAssignedToField()),
+                      ],
+                    ),
                     const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _descriptionController,
-                      decoration: _inputDecoration(
-                        'Description',
-                        Icons.description_rounded,
+                    _buildLabeledField(
+                      'Description',
+                      TextFormField(
+                        controller: _descriptionController,
+                        decoration: _cleanInputDecoration(
+                          'Briefly describe the tasks and objectives...',
+                        ),
+                        maxLines: 4,
+                        textInputAction: TextInputAction.newline,
                       ),
-                      maxLines: 4,
-                      textInputAction: TextInputAction.newline,
                     ),
                     const SizedBox(height: 16),
                     _buildSourceField(),
@@ -692,7 +852,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                             ),
                           )
                         : const Icon(
-                            Icons.add_rounded,
+                            Icons.task_alt_rounded,
                             color: Colors.white,
                             size: 22,
                           ),
@@ -727,14 +887,14 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Expected Completion Date',
+          'Due Date',
           style: TextStyle(
-            fontSize: 11,
-            color: Colors.grey.shade700,
-            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         InkWell(
           onTap: () async {
             final now = DateTime.now();

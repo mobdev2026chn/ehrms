@@ -18,6 +18,8 @@ import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../notifications/notifications_screen.dart';
+import 'edit_profile_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final int? dashboardTabIndex;
@@ -40,7 +42,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   final StaffCustomFieldsService _staffCustomFieldsService =
       StaffCustomFieldsService();
   Map<String, dynamic>? _userData;
-  Map<String, dynamic>? _onboardingData;
+  Map<String, dynamic>? _onboardingData;         
   List<dynamic> _documents = [];
   List<Map<String, dynamic>> _activeStaffCustomFields = [];
   bool _isLoading = true;
@@ -275,38 +277,47 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: colorScheme.surfaceContainerHighest,
+      backgroundColor: AppColors.background,
       drawer: AppDrawer(
         currentIndex: widget.dashboardTabIndex ?? 3,
         onNavigateToIndex: widget.onNavigateToIndex,
       ),
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text(
-          'My Profile',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-        ),
+        title: const Text('My Profile',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         elevation: 0,
         centerTitle: true,
-        actions: const [],
+        backgroundColor: AppColors.background,
+        foregroundColor: AppColors.textPrimary,
+        surfaceTintColor: Colors.transparent,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_outlined, size: 24),
+            color: AppColors.primary,
+            tooltip: 'Edit profile',
+            onPressed: _showEditProfileDialog,
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications_none_rounded, size: 26),
+            color: AppColors.textPrimary,
+            tooltip: 'Notifications',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: colorScheme.primary,
-          labelColor: colorScheme.primary,
-          unselectedLabelColor: colorScheme.onSurfaceVariant,
-          indicatorSize: TabBarIndicatorSize.tab,
-          labelPadding: const EdgeInsets.symmetric(horizontal: 8),
-          indicator: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 13,
-          ),
-          unselectedLabelStyle: const TextStyle(fontSize: 13),
+          indicatorColor: AppColors.primary,
+          labelColor: AppColors.primary,
+          unselectedLabelColor: AppColors.textSecondary,
+          indicatorSize: TabBarIndicatorSize.label,
+          dividerColor: Colors.transparent,
+          labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
           tabs: const [
             Tab(text: 'Personal'),
             Tab(text: 'Exp & Edu'),
@@ -337,25 +348,40 @@ class _ProfileScreenState extends State<ProfileScreen>
       onRefresh: _refreshProfile,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.zero,
         child: Column(
           children: [
+            // Full-bleed gradient header (avatar, name, EMP ID, status badge)
             _buildHeaderCard(),
-            const SizedBox(height: 24),
-            if (_fieldsForCategory('General Information').isNotEmpty) ...[
-              _buildCardSection(
-                icon: Icons.info_outline,
-                title: 'General Information',
-                content: _buildCustomFieldColumnForCard(
-                  _fieldsForCategory('General Information'),
-                ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
+              child: Column(
+                children: [
+                  // Joined / Location stat cards
+                  _buildStatCardsRow(),
+                  const SizedBox(height: 24),
+                  if (_fieldsForCategory('General Information').isNotEmpty) ...[
+                    _buildCardSection(
+                      icon: Icons.info_outline,
+                      title: 'General Information',
+                      content: _buildCustomFieldColumnForCard(
+                        _fieldsForCategory('General Information'),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                  _buildContactCard(),
+                  const SizedBox(height: 24),
+                  _buildIdQuickCards(),
+                  const SizedBox(height: 24),
+                  _buildDarkBankCard(),
+                  const SizedBox(height: 24),
+                  _buildPersonalSection(),
+                  const SizedBox(height: 24),
+                  _buildIdentityAndBankSection(),
+                ],
               ),
-              const SizedBox(height: 24),
-            ],
-            _buildPersonalSection(),
-            const SizedBox(height: 24),
-            _buildIdentityAndBankSection(),
-            const SizedBox(height: 30),
+            ),
           ],
         ),
       ),
@@ -366,11 +392,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     final name = _profile?['name'] ?? 'User';
     final initial = name.isNotEmpty ? name[0].toUpperCase() : 'U';
     final empId = _staffData?['employeeId'] ?? 'EMP-XXXX';
-    final designation = _staffData?['designation'] ?? 'Employee';
-    final status = _staffData?['status'] ?? 'Active';
-    final email = _profile?['email'] ?? '';
-    final phone = _profile?['phone'] ?? '';
-    final dept = _staffData?['department'] ?? '';
+    final status = (_staffData?['status'] ?? 'Active').toString();
     final photoUrl =
         _profile?['avatar'] ??
         _profile?['photoUrl'] ??
@@ -384,221 +406,225 @@ class _ProfileScreenState extends State<ProfileScreen>
         (photoUrlStr.startsWith('http://') ||
             photoUrlStr.startsWith('https://')) &&
         !_profileImageError;
+
+    final statusUpper = status.toUpperCase();
+    final statusLabel =
+        statusUpper.contains('EMPLOYEE') ? statusUpper : '$statusUpper EMPLOYEE';
+
+    // Figma: warm peach gradient header, centered avatar + pencil edit button,
+    // name, EMP ID, status badge.
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFFFCE6C5),
+            Color(0xFFF8EEE0),
+            AppColors.background,
+          ],
+          stops: [0.0, 0.55, 1.0],
+        ),
+      ),
+      child: Column(
+        children: [
+          // Avatar with pencil edit button + white ring
+          GestureDetector(
+            onTap: () => showPhoto
+                ? _showProfilePhotoOptions(photoUrl: photoUrlStr, hasPhoto: true)
+                : _changeProfilePhoto(),
+            onLongPress: _changeProfilePhoto,
+            child: Stack(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 14,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: CircleAvatar(
+                    radius: 48,
+                    backgroundColor: AppColors.primary.withValues(alpha: 0.12),
+                    backgroundImage:
+                        showPhoto ? NetworkImage(photoUrlStr) : null,
+                    onBackgroundImageError: showPhoto
+                        ? (_, __) {
+                            if (mounted) {
+                              setState(() => _profileImageError = true);
+                            }
+                          }
+                        : null,
+                    child: showPhoto
+                        ? null
+                        : Text(initial,
+                            style: TextStyle(
+                                fontSize: 34,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primary)),
+                  ),
+                ),
+                Positioned(
+                  bottom: 4,
+                  right: 4,
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2.5)),
+                    child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          // Name
+          Text(name,
+              style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary),
+              textAlign: TextAlign.center),
+          const SizedBox(height: 4),
+          // EMP ID
+          Text('EMP ID: $empId',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.3)),
+          const SizedBox(height: 12),
+          // Active Employee badge
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border:
+                  Border.all(color: AppColors.primary.withValues(alpha: 0.45)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                        color: AppColors.primary, shape: BoxShape.circle)),
+                const SizedBox(width: 6),
+                Text(statusLabel,
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
+                        letterSpacing: 0.5)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Figma "Joined" / "Location" stat cards row beneath the header.
+  Widget _buildStatCardsRow() {
     final joiningDate = _staffData?['joiningDate'];
-    final role = _profile?['role'] ?? _staffData?['role'] ?? 'N/A';
     final branchName =
         _userData?['branchName']?.toString() ??
         (_staffData?['branchId'] is Map
             ? (_staffData!['branchId'] as Map)['branchName']?.toString()
             : null) ??
         'Main Office';
+    final joined = joiningDate != null ? _formatDateShort(joiningDate) : '';
 
-    // Two font sizes for profile: heading and value (consistent across profile card and sections)
-    const TextStyle profileHeadingWhite = TextStyle(
-      fontSize: _profileHeadingSize,
-      fontWeight: FontWeight.bold,
-      color: Colors.white,
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _buildStatCard(
+              Icons.calendar_today_outlined,
+              'Joined',
+              joined.isEmpty ? 'N/A' : joined,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: _buildStatCard(
+              Icons.location_on_outlined,
+              'Location',
+              branchName,
+            ),
+          ),
+        ],
+      ),
     );
-    const TextStyle profileValueWhite = TextStyle(
-      fontSize: _profileValueSize,
-      fontWeight: FontWeight.w500,
-      color: Colors.white,
-    );
+  }
 
+  Widget _buildStatCard(IconData icon, String label, String value) {
     return Container(
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.primary, AppColors.primaryDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              GestureDetector(
-                onTap: () {
-                  if (showPhoto) {
-                    _showProfilePhotoOptions(
-                      photoUrl: photoUrlStr,
-                      hasPhoto: true,
-                    );
-                  } else {
-                    _changeProfilePhoto();
-                  }
-                },
-                onLongPress: () => _changeProfilePhoto(),
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 3),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 8,
-                      ),
-                    ],
-                  ),
-                  child: Stack(
-                    children: [
-                      CircleAvatar(
-                        radius: 40,
-                        backgroundColor: Colors.white,
-                        backgroundImage: showPhoto
-                            ? NetworkImage(photoUrlStr)
-                            : null,
-                        onBackgroundImageError: showPhoto
-                            ? (_, __) {
-                                if (mounted) {
-                                  setState(() => _profileImageError = true);
-                                }
-                              }
-                            : null,
-                        child: showPhoto
-                            ? null
-                            : Text(
-                                initial,
-                                style: TextStyle(
-                                  fontSize: _profileHeadingSize,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.primary,
-                                ),
-                              ),
-                      ),
-                      Positioned(
-                        bottom: 2,
-                        right: 2,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.camera_alt,
-                            size: 14,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, style: profileHeadingWhite),
-                    const SizedBox(height: 2),
-                    Text(empId, style: profileValueWhite),
-                    const SizedBox(height: 6),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          _buildHeaderBadge(
-                            status,
-                            Colors.white.withOpacity(0.2),
-                            textStyle: profileValueWhite,
-                          ),
-                          if (joiningDate != null) ...[
-                            const SizedBox(width: 6),
-                            _buildHeaderBadge(
-                              'Joined: ${_formatDate(joiningDate)}',
-                              Colors.white.withOpacity(0.2),
-                              textStyle: profileValueWhite,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.work_outline_rounded,
-                          color: Colors.white70,
-                          size: 14,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          role,
-                          style: profileValueWhite.copyWith(
-                            color: Colors.white.withOpacity(0.95),
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(width: 12),
-                        Icon(
-                          Icons.location_on_outlined,
-                          color: Colors.white70,
-                          size: 14,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            branchName,
-                            style: profileValueWhite.copyWith(
-                              color: Colors.white.withOpacity(0.95),
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      designation.toUpperCase(),
-                      style: profileHeadingWhite.copyWith(
-                        color: Colors.white.withOpacity(0.9),
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: AppColors.primary, size: 20),
           ),
-          const SizedBox(height: 10),
-          const Divider(color: Colors.white24),
-          const SizedBox(height: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (email.isNotEmpty)
-                _buildHeaderInfoRow(Icons.email_outlined, email, profileValueWhite, maxLines: 2),
-              if (email.isNotEmpty && (phone.isNotEmpty || dept.isNotEmpty))
-                const SizedBox(height: 8),
-              if (phone.isNotEmpty)
-                _buildHeaderInfoRow(Icons.phone_outlined, phone, profileValueWhite),
-              if (phone.isNotEmpty && dept.isNotEmpty)
-                const SizedBox(height: 8),
-              if (dept.isNotEmpty)
-                _buildHeaderInfoRow(Icons.business_outlined, dept, profileValueWhite),
-              if (_fieldsForCategory('Profile Information').isNotEmpty) ...[
-                const SizedBox(height: 10),
-                const Divider(color: Colors.white24),
-                const SizedBox(height: 8),
-                _buildHeaderProfileCustomFields(),
-              ],
-            ],
+          const SizedBox(height: 14),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
     );
+  }
+
+  String _formatDateShort(dynamic date) {
+    try {
+      final d = date is DateTime ? date : DateTime.parse(date.toString());
+      return DateFormat('MMM yyyy').format(d);
+    } catch (_) { return ''; }
   }
 
   Widget _buildHeaderInfoRow(IconData icon, String text, TextStyle textStyle, {int maxLines = 1}) {
@@ -812,7 +838,6 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   Widget _buildIdentityAndBankSection() {
     final empIds = _staffData?['employmentIds'] ?? {};
-    final bank = _staffData?['bankDetails'] ?? {};
     final employmentCustom = _fieldsForCategory('Employment Information');
     final bankCustom = _fieldsForCategory('Bank Details');
     final customCategory = _fieldsForCategory('Custom');
@@ -840,28 +865,14 @@ class _ProfileScreenState extends State<ProfileScreen>
             ],
           ),
         ),
-        const SizedBox(height: 24),
-        _buildCardSection(
-          icon: Icons.account_balance_outlined,
-          title: 'Bank Details',
-          content: Column(
-            children: [
-              _buildInfoGrid([
-                _buildInfoItem('Bank Name', bank['bankName']),
-                _buildInfoItem('Account Number', bank['accountNumber']),
-              ]),
-              const SizedBox(height: 20),
-              _buildInfoGrid([
-                _buildInfoItem('IFSC Code', bank['ifscCode']),
-                _buildInfoItem('Holder Name', bank['accountHolderName']),
-              ]),
-              if (bankCustom.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                _buildCustomFieldColumnForCard(bankCustom),
-              ],
-            ],
+        if (bankCustom.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          _buildCardSection(
+            icon: Icons.account_balance_outlined,
+            title: 'Bank Details',
+            content: _buildCustomFieldColumnForCard(bankCustom),
           ),
-        ),
+        ],
         if (customCategory.isNotEmpty) ...[
           const SizedBox(height: 24),
           _buildCardSection(
@@ -872,6 +883,384 @@ class _ProfileScreenState extends State<ProfileScreen>
         ],
       ],
     );
+  }
+
+  /// Figma "Personal Details" card: email / phone / address with an EDIT pill.
+  Widget _buildContactCard() {
+    final email = _profile?['email']?.toString() ?? '';
+    final phone = _profile?['phone']?.toString() ?? '';
+    final addr = _staffData?['address'];
+    String address = '';
+    if (addr is Map) {
+      address = [
+        addr['line1'],
+        addr['city'],
+        addr['state'],
+        addr['postalCode'],
+        addr['country'],
+      ]
+          .map((e) => e?.toString().trim() ?? '')
+          .where((e) => e.isNotEmpty)
+          .join(', ');
+    } else if (addr != null) {
+      address = addr.toString();
+    }
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Personal Details',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _showEditProfileDialog,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'EDIT',
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              children: [
+                _buildContactRow(
+                    Icons.email_outlined, 'EMAIL ADDRESS', email),
+                const SizedBox(height: 18),
+                _buildContactRow(Icons.phone_outlined, 'PHONE NUMBER', phone),
+                const SizedBox(height: 18),
+                _buildContactRow(Icons.home_outlined, 'ADDRESS', address),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContactRow(IconData icon, String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: AppColors.primary, size: 18),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                value.trim().isEmpty ? 'N/A' : value,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Figma PAN / Aadhaar highlighted mini-cards row.
+  Widget _buildIdQuickCards() {
+    final empIds = _staffData?['employmentIds'];
+    final pan =
+        (empIds is Map ? empIds['pan']?.toString() : null)?.trim() ?? '';
+    final aadhaar =
+        (empIds is Map ? empIds['aadhaar']?.toString() : null)?.trim() ?? '';
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _buildIdMiniCard(
+              Icons.badge_outlined,
+              'PAN CARD',
+              pan.isEmpty ? 'N/A' : pan,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: _buildIdMiniCard(
+              Icons.fingerprint,
+              'AADHAR NO.',
+              _maskAadhaar(aadhaar),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIdMiniCard(IconData icon, String label, String value) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: AppColors.primary, size: 20),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _maskAadhaar(String? a) {
+    if (a == null || a.trim().isEmpty) return 'N/A';
+    final s = a.replaceAll(' ', '');
+    if (s.length <= 4) return a;
+    return 'XXXX XXXX ${s.substring(s.length - 4)}';
+  }
+
+  /// Figma dark gradient bank card with a VERIFIED badge.
+  Widget _buildDarkBankCard() {
+    final bank = _staffData?['bankDetails'];
+    final bankName =
+        (bank is Map ? bank['bankName']?.toString() : null)?.trim();
+    final account =
+        _maskBankAccount(bank is Map ? bank['accountNumber']?.toString() : null);
+    final ifsc =
+        (bank is Map ? bank['ifscCode']?.toString() : null)?.trim();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF2A2A2E), Color(0xFF1C1C1E)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'PRIMARY BANK',
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      bankName == null || bankName.isEmpty ? 'N/A' : bankName,
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.account_balance,
+                    color: Colors.white, size: 22),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'ACCOUNT NUMBER',
+            style: TextStyle(
+              color: Colors.white60,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            account,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 2,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Divider(color: Colors.white.withValues(alpha: 0.12), height: 1),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'IFSC CODE',
+                    style: TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    ifsc == null || ifsc.isEmpty ? 'N/A' : ifsc,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.verified, color: AppColors.primary, size: 14),
+                    const SizedBox(width: 4),
+                    Text(
+                      'VERIFIED',
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _maskBankAccount(String? account) {
+    if (account == null || account.trim().isEmpty) return 'N/A';
+    final a = account.trim();
+    if (a.length <= 4) return a;
+    return '**** **** ${a.substring(a.length - 4)}';
   }
 
   Widget _buildExpAndEduTab() {
@@ -1617,83 +2006,16 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
   }
 
-  void _showEditProfileDialog() {
+  Future<void> _showEditProfileDialog() async {
     final flattenedData = {..._profile ?? {}, ..._staffData ?? {}};
-
-    final photoUrl =
-        flattenedData['avatar'] ??
-        flattenedData['photoUrl'] ??
-        flattenedData['profilePic'];
-    final photoUrlStr = photoUrl?.toString().trim();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      builder: (context) => _EditProfileSheet(
-        userData: flattenedData,
-        profilePhotoUrl: photoUrlStr,
-        onEditProfilePhoto: () {
-          Navigator.of(context).pop();
-          WidgetsBinding.instance.addPostFrameCallback(
-            (_) => _changeProfilePhoto(),
-          );
-        },
-        onDeleteProfilePhoto: () async {
-          await _deleteProfilePhoto();
-          if (context.mounted) Navigator.of(context).pop();
-        },
-        onSave: (updatedData) async {
-          // Separate optional password change payload
-          Map<String, dynamic>? passwordChange = updatedData['passwordChange'];
-          if (passwordChange != null) {
-            updatedData = Map<String, dynamic>.from(updatedData)
-              ..remove('passwordChange');
-          }
-
-          final result = await _authService.updateProfile(updatedData);
-
-          if (!result['success']) {
-            if (context.mounted) {
-              SnackBarUtils.showSnackBar(
-                context,
-                ErrorMessageUtils.sanitizeForDisplay(result['message']?.toString(), fallback: 'Failed to update profile'),
-                isError: true,
-              );
-            }
-            return;
-          }
-
-          // If profile update succeeded and password change requested, handle it
-          if (passwordChange != null) {
-            final pwdResult = await _authService.changePassword(
-              oldPassword: passwordChange['oldPassword'] ?? '',
-              newPassword: passwordChange['newPassword'] ?? '',
-            );
-
-            if (context.mounted) {
-              SnackBarUtils.showSnackBar(
-                context,
-                pwdResult['message'] ??
-                    (pwdResult['success'] == true
-                        ? 'Password updated successfully'
-                        : 'Failed to update password'),
-                isError: pwdResult['success'] != true,
-              );
-            }
-
-            if (pwdResult['success'] != true) {
-              // Do not close sheet if password change failed
-              _loadProfile();
-              return;
-            }
-          }
-
-          _loadProfile();
-          if (context.mounted) Navigator.pop(context);
-        },
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => EditProfileScreen(userData: flattenedData),
       ),
     );
+    if (saved == true && mounted) {
+      _loadProfile();
+    }
   }
 
   void _showProfilePhotoOptions({

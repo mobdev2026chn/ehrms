@@ -1,19 +1,12 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../config/app_colors.dart';
 
-/// Dashboard worked-time card.
-///
-/// - **In progress** (no checkout): live elapsed from [punchInTime], updates every second.
-/// - **Completed** ([punchOutTime] set): fixed duration — prefers [workHoursFromAttendance]
-///   (attendance collection / API, minutes or legacy fractional hours) when positive, else
-///   [punchOutTime] − [punchInTime].
-///
-/// Styling matches leave request list cards (Requests → Leave).
+/// Dashboard worked-time card — dark gradient, live timer, punch times.
 class CloudPunchCard extends StatefulWidget {
   final DateTime punchInTime;
   final DateTime? punchOutTime;
-  /// Raw `workHours` from today's attendance row (see dashboard `_workHoursToMinutes`).
   final num? workHoursFromAttendance;
   final VoidCallback? onCheckOutTap;
   final bool isLoading;
@@ -33,20 +26,20 @@ class CloudPunchCard extends StatefulWidget {
   State<CloudPunchCard> createState() => _CloudPunchCardState();
 }
 
-/// Same rules as [HomeDashboardScreen._workHoursToMinutes]: API minutes vs legacy hours.
 int? _attendanceWorkHoursToMinutes(num? workHours) {
   if (workHours == null) return null;
   final d = workHours.toDouble();
   if (d <= 0) return null;
-  if (d < 24 && (d - d.truncate()).abs() > 0.001) {
-    return (d * 60).round();
-  }
+  if (d < 24 && (d - d.truncate()).abs() > 0.001) return (d * 60).round();
   return d.round();
 }
 
-class _CloudPunchCardState extends State<CloudPunchCard> {
+class _CloudPunchCardState extends State<CloudPunchCard>
+    with SingleTickerProviderStateMixin {
   Duration _displayed = Duration.zero;
   Timer? _timer;
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnim;
 
   bool get _isLive => widget.punchOutTime == null;
 
@@ -54,17 +47,21 @@ class _CloudPunchCardState extends State<CloudPunchCard> {
     final out = widget.punchOutTime;
     if (out == null) return Duration.zero;
     final apiMins = _attendanceWorkHoursToMinutes(widget.workHoursFromAttendance);
-    if (apiMins != null && apiMins > 0) {
-      return Duration(minutes: apiMins);
-    }
-    var d = out.difference(widget.punchInTime);
-    if (d.isNegative) return Duration.zero;
-    return d;
+    if (apiMins != null && apiMins > 0) return Duration(minutes: apiMins);
+    final d = out.difference(widget.punchInTime);
+    return d.isNegative ? Duration.zero : d;
   }
 
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
     if (_isLive) {
       _tick();
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
@@ -78,11 +75,8 @@ class _CloudPunchCardState extends State<CloudPunchCard> {
     super.didUpdateWidget(oldWidget);
     if (widget.punchInTime == oldWidget.punchInTime &&
         widget.punchOutTime == oldWidget.punchOutTime &&
-        widget.workHoursFromAttendance == oldWidget.workHoursFromAttendance) {
-      return;
-    }
-    final nowLive = widget.punchOutTime == null;
-    if (nowLive) {
+        widget.workHoursFromAttendance == oldWidget.workHoursFromAttendance) return;
+    if (widget.punchOutTime == null) {
       _timer?.cancel();
       _tick();
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
@@ -97,6 +91,7 @@ class _CloudPunchCardState extends State<CloudPunchCard> {
   @override
   void dispose() {
     _timer?.cancel();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -106,104 +101,228 @@ class _CloudPunchCardState extends State<CloudPunchCard> {
     if (e != _displayed) setState(() => _displayed = e);
   }
 
-  String _formatHrsMins(Duration d) {
-    if (d.isNegative) return '00Hrs 00Mins';
-    final totalMins = d.inMinutes;
-    final h = totalMins ~/ 60;
-    final m = totalMins % 60;
-    return '${h.toString().padLeft(2, '0')}Hrs ${m.toString().padLeft(2, '0')}Mins';
+  String _hrs(Duration d) {
+    if (d.isNegative) return '00';
+    return (d.inMinutes ~/ 60).toString().padLeft(2, '0');
+  }
+
+  String _mins(Duration d) {
+    if (d.isNegative) return '00';
+    return (d.inMinutes % 60).toString().padLeft(2, '0');
+  }
+
+  String _secs(Duration d) {
+    if (d.isNegative || !_isLive) return '';
+    return (d.inSeconds % 60).toString().padLeft(2, '0');
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final workingHrsText = _formatHrsMins(_displayed);
-    final checkedInAtStr = DateFormat('hh:mm a').format(widget.punchInTime);
-    final checkedOutAtStr = widget.punchOutTime != null
+    final inStr = DateFormat('hh:mm a').format(widget.punchInTime);
+    final outStr = widget.punchOutTime != null
         ? DateFormat('hh:mm a').format(widget.punchOutTime!)
         : null;
 
     return Container(
       width: double.infinity,
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colorScheme.outline),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1A1A2E), Color(0xFF16213E)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: colorScheme.shadow.withOpacity(0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.black.withValues(alpha: 0.22),
+            blurRadius: 18,
+            offset: const Offset(0, 7),
           ),
         ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Animated pulse ring + icon
+          SizedBox(
+            width: 58,
+            height: 58,
+            child: Stack(
+              alignment: Alignment.center,
               children: [
-                Flexible(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      workingHrsText,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E293B),
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                GestureDetector(
-                  onTap: () {
-                    final msg = checkedOutAtStr != null
-                        ? 'Check-in $checkedInAtStr · Check-out $checkedOutAtStr'
-                        : 'Checked in today at $checkedInAtStr';
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(msg),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
-                  child: Container(
-                    width: 22,
-                    height: 22,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE53935),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Center(
-                      child: Text(
-                        'i',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
+                if (_isLive)
+                  AnimatedBuilder(
+                    animation: _pulseAnim,
+                    builder: (_, __) => Container(
+                      width: 58,
+                      height: 58,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: AppColors.primary.withValues(alpha: _pulseAnim.value * 0.5),
+                          width: 2,
                         ),
                       ),
                     ),
                   ),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    _isLive ? Icons.timer_rounded : Icons.check_circle_rounded,
+                    color: AppColors.primary,
+                    size: 22,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            Text(
-              _isLive ? 'Worked' : 'Worked today',
-              style: TextStyle(
-                fontSize: 12,
-                color: colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w500,
-              ),
+          ),
+          const SizedBox(width: 16),
+          // Time display
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      _isLive ? 'Currently Working' : 'Worked Today',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.5),
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    if (_isLive) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${_hrs(_displayed)}:${_mins(_displayed)}',
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        letterSpacing: -0.5,
+                        height: 1.0,
+                      ),
+                    ),
+                    if (_isLive) ...[
+                      const SizedBox(width: 3),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Text(
+                          ':${_secs(_displayed)}',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'hrs : mins${_isLive ? ' : secs' : ''}',
+                  style: TextStyle(
+                    fontSize: 9,
+                    color: Colors.white.withValues(alpha: 0.3),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          // Punch in / out times column
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildTimeTag(
+                icon: Icons.login_rounded,
+                label: 'IN',
+                time: inStr,
+                color: Colors.greenAccent.shade400,
+              ),
+              const SizedBox(height: 8),
+              _buildTimeTag(
+                icon: Icons.logout_rounded,
+                label: 'OUT',
+                time: outStr ?? '--:--',
+                color: outStr != null ? AppColors.primary : Colors.white.withValues(alpha: 0.2),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeTag({
+    required IconData icon,
+    required String label,
+    required String time,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.25), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 8,
+                  color: color.withValues(alpha: 0.7),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              Text(
+                time,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: color,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

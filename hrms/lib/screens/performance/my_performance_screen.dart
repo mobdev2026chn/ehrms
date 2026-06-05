@@ -1,5 +1,5 @@
 // hrms/lib/screens/performance/my_performance_screen.dart
-// My Performance - Landing page for Performance module
+// My Performance - Landing page for Performance module (Overview tab)
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -9,7 +9,6 @@ import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../services/performance_service.dart';
 import 'my_reviews_screen.dart';
-import 'self_assessment_screen.dart';
 import 'my_goals_screen.dart';
 import 'review_detail_screen.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -89,24 +88,8 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
             color: AppColors.primary,
             child: SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildOverviewSection(),
-                  if (_summary?['latestReview'] != null) ...[
-                    const SizedBox(height: 24),
-                    _buildLatestReviewSection(),
-                  ],
-                  if (_summary?['recentReviews'] != null &&
-                      (_summary!['recentReviews'] as List).isNotEmpty) ...[
-                    const SizedBox(height: 24),
-                    _buildRecentReviewsSection(),
-                  ],
-                  const SizedBox(height: 24),
-                  _buildQuickAccessCards(),
-                ],
-              ),
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+              child: _buildOverviewContent(),
             ),
           );
 
@@ -160,688 +143,164 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
     );
   }
 
-  Widget _buildOverviewSection() {
+  Widget _buildOverviewContent() {
     final emp = _summary?['employee'] as Map<String, dynamic>? ?? {};
-    final avgRating = (_summary?['averageRating'] ?? 0.0) as num;
+    final avgRating = ((_summary?['averageRating'] ?? 0.0) as num).toDouble();
     final totalReviews = (_summary?['totalReviews'] ?? 0) as int;
     final completedReviews = (_summary?['completedReviews'] ?? 0) as int;
     final currentGoals = (_summary?['currentGoals'] ?? 0) as int;
     final latestReview = _summary?['latestReview'] as Map<String, dynamic>?;
+    final latestReviewId = latestReview?['_id'] as String?;
+
+    // Subtitle under the hero rating — uses real employee context.
+    final subtitleParts = [
+      (emp['designation'] ?? '').toString(),
+      (emp['department'] ?? '').toString(),
+    ].where((s) => s.isNotEmpty).toList();
+    final heroSubtitle = subtitleParts.isNotEmpty
+        ? subtitleParts.join(' · ')
+        : 'Your performance overview';
+
+    // Latest review display value (e.g. "Oct 24") + subtitle.
+    String latestValue = latestReview?['reviewCycle']?.toString() ?? 'N/A';
+    final latestPeriod = latestReview?['reviewPeriod'] as Map<String, dynamic>?;
+    final latestEnd = DateTime.tryParse(
+      latestPeriod?['endDate']?.toString() ?? '',
+    );
+    if (latestEnd != null) {
+      latestValue = DateFormat('MMM yy').format(latestEnd);
+    }
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'My Performance Overview',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
+        const SizedBox(height: 8),
+        _buildHeroRating(avgRating, heroSubtitle),
+        const SizedBox(height: 20),
+        _buildStatTile(
+          icon: Icons.rate_review_rounded,
+          title: 'Total Reviews',
+          subtitle: completedReviews > 0
+              ? '$completedReviews completed cycles'
+              : 'Completed cycles',
+          value: totalReviews.toString(),
+          onTap: () => _navigate(2, const MyReviewsScreen()),
         ),
-        const SizedBox(height: 4),
-        Text(
-          '${emp['name'] ?? ''} · ${emp['designation'] ?? ''} · ${emp['department'] ?? ''}',
-          style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+        const SizedBox(height: 12),
+        _buildStatTile(
+          icon: Icons.track_changes_rounded,
+          title: 'Current Goals',
+          subtitle: 'Active objectives',
+          value: currentGoals.toString(),
+          onTap: () => _navigate(1, const MyGoalsScreen()),
         ),
-        const SizedBox(height: 16),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          mainAxisSpacing: 6,
-          crossAxisSpacing: 6,
-          childAspectRatio: 1.5,
-          children: [
-            _buildOverviewCard(
-              title: 'Average Rating',
-              value: avgRating > 0 ? avgRating.toStringAsFixed(1) : 'N/A',
-              subtitle: 'Out of 5.0',
-              icon: Icons.star_rounded,
-              iconColor: AppColors.warning,
-            ),
-            _buildOverviewCard(
-              title: 'Total Reviews',
-              value: totalReviews.toString(),
-              subtitle: '$completedReviews completed',
-              icon: Icons.description_rounded,
-              iconColor: AppColors.textSecondary,
-            ),
-            _buildOverviewCard(
-              title: 'Current Goals',
-              value: currentGoals.toString(),
-              subtitle: 'Active goals',
-              icon: Icons.flag_rounded,
-              iconColor: AppColors.textSecondary,
-            ),
-            _buildOverviewCard(
-              title: 'Latest Review',
-              value: latestReview?['reviewCycle'] ?? 'N/A',
-              subtitle: latestReview?['reviewType'] ?? 'No reviews yet',
-              icon: Icons.calendar_today_rounded,
-              iconColor: AppColors.textSecondary,
-            ),
-          ],
+        const SizedBox(height: 12),
+        _buildStatTile(
+          icon: Icons.history_rounded,
+          title: 'Latest Review',
+          subtitle: 'Last assessment date',
+          value: latestValue,
+          onTap: latestReviewId != null
+              ? () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ReviewDetailScreen(reviewId: latestReviewId),
+                    ),
+                  ).then((_) => _fetchSummary());
+                }
+              : null,
         ),
       ],
     );
   }
 
-  Widget _buildOverviewCard({
-    required String title,
-    required String value,
-    required String subtitle,
-    required IconData icon,
-    required Color iconColor,
-  }) {
+  /// Navigate to a sibling tab when embedded, otherwise push the screen.
+  void _navigate(int tabIndex, Widget fallback) {
+    if (widget.onNavigateToTab != null) {
+      widget.onNavigateToTab!(tabIndex);
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => fallback),
+      );
+    }
+  }
+
+  Widget _buildHeroRating(double rating, String subtitle) {
     return Container(
-      padding: const EdgeInsets.all(8),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.textSecondary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Icon(icon, size: 14, color: iconColor),
-            ],
-          ),
-          const SizedBox(height: 2),
           Text(
-            value,
+            'OVERALL RATING',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 12,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              letterSpacing: 1.5,
+              color: AppColors.textSecondary,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
+          const SizedBox(height: 8),
           Text(
-            subtitle,
-            style: TextStyle(fontSize: 9, color: AppColors.textSecondary),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLatestReviewSection() {
-    final latestReview = _summary!['latestReview'] as Map<String, dynamic>;
-    final period = latestReview['reviewPeriod'] as Map<String, dynamic>?;
-    final status = (latestReview['status'] ?? '').toString();
-    final finalRating = latestReview['finalRating'];
-    final managerReview =
-        latestReview['managerReview'] as Map<String, dynamic>?;
-    final hrReview = latestReview['hrReview'] as Map<String, dynamic>?;
-    final selfReview = latestReview['selfReview'] as Map<String, dynamic>?;
-    final reviewId = latestReview['_id'] as String?;
-
-    String periodStr = '';
-    if (period != null) {
-      try {
-        final start = DateTime.tryParse(period['startDate']?.toString() ?? '');
-        final end = DateTime.tryParse(period['endDate']?.toString() ?? '');
-        if (start != null && end != null) {
-          periodStr =
-              '${DateFormat.yMMMd().format(start)} - ${DateFormat.yMMMd().format(end)}';
-        }
-      } catch (_) {}
-    }
-
-    Color statusColor = AppColors.textSecondary;
-    if (status == 'completed') statusColor = AppColors.success;
-    if (status.contains('pending')) statusColor = AppColors.warning;
-    if (status.contains('submitted')) statusColor = AppColors.info;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(
-              Icons.emoji_events_rounded,
-              size: 22,
+            rating > 0 ? rating.toStringAsFixed(1) : 'N/A',
+            style: TextStyle(
+              fontSize: 72,
+              fontWeight: FontWeight.bold,
+              height: 1.0,
               color: AppColors.primary,
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Latest Performance Review - ${latestReview['reviewCycle'] ?? 'Review'}',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Review Period',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                      Text(
-                        periodStr,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Final Rating',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                      Row(
-                        children: [
-                          Text(
-                            finalRating != null
-                                ? (finalRating as num).toStringAsFixed(1)
-                                : 'N/A',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Icon(
-                            Icons.star_rounded,
-                            size: 20,
-                            color: AppColors.warning,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  status.replaceAll('-', ' ').toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor,
-                  ),
-                ),
-              ),
-              if (managerReview != null) ...[
-                const SizedBox(height: 16),
-                const Divider(height: 1),
-                const SizedBox(height: 12),
-                Text(
-                  'Manager Review',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _buildRatingRow('Overall', managerReview['overallRating']),
-                _buildRatingRow(
-                  'Technical Skills',
-                  managerReview['technicalSkills'],
-                ),
-                _buildRatingRow(
-                  'Communication',
-                  managerReview['communication'],
-                ),
-              ],
-              if (hrReview != null) ...[
-                const SizedBox(height: 16),
-                const Divider(height: 1),
-                const SizedBox(height: 12),
-                Text(
-                  'HR Review',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _buildRatingRow('Overall', hrReview['overallRating']),
-                _buildRatingRow(
-                  'Company Values',
-                  hrReview['alignmentWithCompanyValues'],
-                ),
-                _buildRatingRow(
-                  'Growth Potential',
-                  hrReview['growthPotential'],
-                ),
-              ],
-              if (selfReview != null) ...[
-                const SizedBox(height: 16),
-                const Divider(height: 1),
-                const SizedBox(height: 12),
-                Text(
-                  'Your Self Review',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _buildRatingRow('Overall Rating', selfReview['overallRating']),
-              ],
-              if (reviewId != null) ...[
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              ReviewDetailScreen(reviewId: reviewId),
-                        ),
-                      ).then((_) => _fetchSummary());
-                    },
-                    icon: const Icon(Icons.visibility_rounded, size: 18),
-                    label: Text('View Details'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side: BorderSide(color: AppColors.primary),
-                    ),
-                  ),
-                ),
-              ],
-            ],
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: _buildStars(rating),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRatingRow(String label, dynamic value) {
-    final v = value is num ? value.toDouble() : 0.0;
-    final pct = (v / 5.0 * 100).clamp(0.0, 100.0);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+          const SizedBox(height: 12),
           Text(
-            label,
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 4),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              value: pct / 100,
-              backgroundColor: AppColors.divider,
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-              minHeight: 6,
-            ),
-          ),
-          Text(
-            '$v/5',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+            subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildRecentReviewsSection() {
-    final recentReviews = _summary!['recentReviews'] as List<dynamic>? ?? [];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Recent Reviews',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              for (int i = 0; i < recentReviews.length; i++) ...[
-                if (i > 0) const Divider(height: 24),
-                _buildRecentReviewItem(
-                  recentReviews[i] as Map<String, dynamic>,
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
+  List<Widget> _buildStars(double rating) {
+    return List.generate(5, (i) {
+      IconData icon;
+      Color color = AppColors.primary;
+      if (rating >= i + 1) {
+        icon = Icons.star_rounded;
+      } else if (rating >= i + 0.5) {
+        icon = Icons.star_half_rounded;
+      } else {
+        icon = Icons.star_rounded;
+        color = AppColors.divider;
+      }
+      return Icon(icon, size: 32, color: color);
+    });
   }
 
-  Widget _buildRecentReviewItem(Map<String, dynamic> review) {
-    final period = review['reviewPeriod'] as Map<String, dynamic>?;
-    final reviewId = review['_id'] as String?;
-    final status = (review['status'] ?? '').toString();
-    final finalRating = review['finalRating'];
-
-    String periodStr = '';
-    if (period != null) {
-      try {
-        final start = DateTime.tryParse(period['startDate']?.toString() ?? '');
-        final end = DateTime.tryParse(period['endDate']?.toString() ?? '');
-        if (start != null && end != null) {
-          periodStr =
-              '${DateFormat.yMMMd().format(start)} - ${DateFormat.yMMMd().format(end)}';
-        }
-      } catch (_) {}
-    }
-
-    Color statusColor = AppColors.textSecondary;
-    if (status == 'completed') statusColor = AppColors.success;
-    if (status.contains('pending')) statusColor = AppColors.warning;
-    if (status.contains('submitted')) statusColor = AppColors.info;
-
-    return InkWell(
-      onTap: reviewId != null
-          ? () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => ReviewDetailScreen(reviewId: reviewId),
-                ),
-              ).then((_) => _fetchSummary());
-            }
-          : null,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    review['reviewCycle'] ?? 'Review',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  Text(
-                    '${review['reviewType'] ?? ''} · $periodStr',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (finalRating != null)
-              Row(
-                children: [
-                  Text(
-                    (finalRating as num).toStringAsFixed(1),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(Icons.star_rounded, size: 18, color: AppColors.warning),
-                ],
-              )
-            else
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  status.replaceAll('-', ' '),
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor,
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickAccessCards() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Quick Access',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 12),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth > 500;
-            return isWide
-                ? Row(
-                    children: [
-                      Expanded(
-                        child: _buildQuickCard(
-                          title: 'My Reviews',
-                          subtitle: 'View your performance reviews',
-                          icon: Icons.star_rounded,
-                          onTap: () {
-                            if (widget.onNavigateToTab != null) {
-                              widget.onNavigateToTab!(2);
-                            } else {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const MyReviewsScreen(),
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildQuickCard(
-                          title: 'Self Assessment',
-                          subtitle: 'Complete your self assessment',
-                          icon: Icons.checklist_rounded,
-                          onTap: () {
-                            if (widget.onNavigateToTab != null) {
-                              widget.onNavigateToTab!(3);
-                            } else {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const SelfAssessmentScreen(),
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildQuickCard(
-                          title: 'My Goals',
-                          subtitle: 'Track and manage your goals',
-                          icon: Icons.flag_rounded,
-                          onTap: () => widget.onNavigateToTab != null
-                              ? widget.onNavigateToTab!(1)
-                              : Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => const MyGoalsScreen(),
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ],
-                  )
-                : Column(
-                    children: [
-                      _buildQuickCard(
-                        title: 'My Reviews',
-                        subtitle: 'View your performance reviews',
-                        icon: Icons.star_rounded,
-                        onTap: () {
-                          if (widget.onNavigateToTab != null) {
-                            widget.onNavigateToTab!(2);
-                          } else {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const MyReviewsScreen(),
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      _buildQuickCard(
-                        title: 'Self Assessment',
-                        subtitle: 'Complete your self assessment',
-                        icon: Icons.checklist_rounded,
-                        onTap: () {
-                          if (widget.onNavigateToTab != null) {
-                            widget.onNavigateToTab!(3);
-                          } else {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const SelfAssessmentScreen(),
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      _buildQuickCard(
-                        title: 'My Goals',
-                        subtitle: 'Track and manage your goals',
-                        icon: Icons.flag_rounded,
-                        onTap: () {
-                          if (widget.onNavigateToTab != null) {
-                            widget.onNavigateToTab!(1);
-                          } else {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const MyGoalsScreen(),
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                    ],
-                  );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickCard({
+  Widget _buildStatTile({
+    required IconData icon,
     required String title,
     required String subtitle,
-    required IconData icon,
-    required VoidCallback onTap,
+    required String value,
+    VoidCallback? onTap,
   }) {
     return Material(
       color: Colors.transparent,
@@ -849,33 +308,30 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Container(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.08),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: AppColors.primary.withOpacity(0.2),
-              width: 1,
-            ),
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
           child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                width: 48,
+                height: 48,
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
                 ),
-                child: Icon(icon, color: AppColors.primary, size: 20),
+                child: Icon(icon, color: AppColors.primary, size: 24),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -883,7 +339,7 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
                     Text(
                       title,
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
                         color: AppColors.textPrimary,
                       ),
@@ -892,17 +348,21 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
                     Text(
                       subtitle,
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 13,
                         color: AppColors.textSecondary,
                       ),
                     ),
                   ],
                 ),
               ),
-              Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 16,
-                color: AppColors.textSecondary,
+              const SizedBox(width: 12),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ],
           ),

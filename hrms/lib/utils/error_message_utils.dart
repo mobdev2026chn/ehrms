@@ -38,7 +38,7 @@ class ErrorMessageUtils {
       if (msg.contains('connection refused') || msg.contains('connection reset')) {
         return 'Server is not responding. Please try again in a moment.';
       }
-      return 'Connection error. Please check your internet and try again.';
+      return 'Connection error6. Please check your internet and try again.';
     }
 
     if (error is TimeoutException) {
@@ -161,7 +161,7 @@ class ErrorMessageUtils {
       case DioExceptionType.receiveTimeout:
         return 'Request timed out. Please check your internet and try again.';
       case DioExceptionType.connectionError:
-        return 'Connection error. Please check your internet and try again.';
+        return 'Connection error7. Please check your internet and try again.';
       case DioExceptionType.badCertificate:
         return 'Secure connection failed. Please try again later.';
       case DioExceptionType.cancel:

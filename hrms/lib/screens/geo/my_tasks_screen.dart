@@ -6,6 +6,7 @@ import 'dart:math' as math;
 
 import 'package:excel/excel.dart' hide Border;
 import 'package:flutter/material.dart';
+import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/config/app_route_observer.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/customer_service.dart';
@@ -743,6 +744,240 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     onYes();
   }
 
+  /// Sets a single quick-filter group exclusively (or clears all when null),
+  /// reusing the existing status-group filter + fetch logic.
+  void _applyQuickFilter(String? group) {
+    setState(() {
+      _filterInProgress = group == 'inProgress';
+      _filterHold = group == 'hold';
+      _filterCompleted = group == 'completed';
+      _tasksPage = 1;
+    });
+    _fetchTasks();
+  }
+
+  /// Figma task-list header: Pending/Completed stat cards, New Task button,
+  /// and horizontal status filter chips.
+  Widget _buildTaskListHeader() {
+    final pending =
+        _statusGroupCount('inProgress') + _statusGroupCount('hold');
+    final completed = _statusGroupCount('completed');
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  label: 'PENDING',
+                  value: '$pending',
+                  caption: 'Tasks',
+                  icon: Icons.assignment_outlined,
+                  filled: false,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildStatCard(
+                  label: 'COMPLETED',
+                  value: '$completed',
+                  caption: 'Tasks',
+                  icon: Icons.check_circle_outline_rounded,
+                  filled: true,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_loggedInStaffId != null && _loggedInStaffId!.isNotEmpty)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          AddTaskScreen(staffId: _loggedInStaffId!),
+                    ),
+                  ).then((_) => _fetchTasks());
+                },
+                icon: const Icon(Icons.add_rounded, color: Colors.white),
+                label: const Text(
+                  'New Task',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 36,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildFilterChip(
+                  'All Tasks',
+                  selected: !_filterInProgress &&
+                      !_filterHold &&
+                      !_filterCompleted,
+                  onTap: () => _applyQuickFilter(null),
+                ),
+                _buildFilterChip(
+                  'In Progress',
+                  selected: _filterInProgress &&
+                      !_filterHold &&
+                      !_filterCompleted,
+                  onTap: () => _applyQuickFilter('inProgress'),
+                ),
+                _buildFilterChip(
+                  'Hold',
+                  selected: _filterHold &&
+                      !_filterInProgress &&
+                      !_filterCompleted,
+                  onTap: () => _applyQuickFilter('hold'),
+                ),
+                _buildFilterChip(
+                  'Completed',
+                  selected: _filterCompleted &&
+                      !_filterInProgress &&
+                      !_filterHold,
+                  onTap: () => _applyQuickFilter('completed'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard({
+    required String label,
+    required String value,
+    required String caption,
+    required IconData icon,
+    required bool filled,
+  }) {
+    final bg = filled ? AppColors.primary : Colors.white;
+    final labelColor =
+        filled ? Colors.white.withValues(alpha: 0.9) : AppColors.textSecondary;
+    final valueColor = filled ? Colors.white : AppColors.textPrimary;
+    final iconBg = filled
+        ? Colors.white.withValues(alpha: 0.2)
+        : AppColors.primary.withValues(alpha: 0.12);
+    final iconColor = filled ? Colors.white : AppColors.primary;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: filled
+                ? AppColors.primary.withValues(alpha: 0.3)
+                : Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: iconBg,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 20, color: iconColor),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              color: labelColor,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: valueColor,
+                  height: 1,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Text(
+                  caption,
+                  style: TextStyle(fontSize: 13, color: labelColor),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(
+    String label, {
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.primary
+                : AppColors.primary.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : AppColors.primary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTaskPaginationBar(ColorScheme colorScheme) {
     final totalPages = _totalTaskPages;
     if (_filteredTasks.isEmpty) return const SizedBox.shrink();
@@ -1085,6 +1320,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (!_isSelectionMode) _buildSearchAndRefreshRow(),
+                          if (!_isSelectionMode) _buildTaskListHeader(),
                           Expanded(
                     child: _tasks.isEmpty
                         ? RefreshIndicator(

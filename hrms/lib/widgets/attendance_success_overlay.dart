@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../config/app_colors.dart';
 import '../utils/snackbar_utils.dart';
 
 /// Full-screen overlay shown after check-in or check-out with animated emoji
@@ -136,30 +137,70 @@ class _AttendanceSuccessOverlayState extends State<AttendanceSuccessOverlay>
   }
   @override
   Widget build(BuildContext context) {
+    final heading = widget.isCheckIn
+        ? 'Thanks for marking attendance'
+        : 'Have a great day!';
+    final message = widget.isCheckIn
+        ? (widget.checkInMessage ?? 'Your punch-in was successful.')
+        : (widget.checkOutMessage ?? 'Your punch-out was successful.');
     return Material(
-      color: Colors.transparent,
+      // Full-screen hero confirmation (per Figma "Attendance Marked"); still a
+      // transient overlay that auto-dismisses — the post-submit flow is unchanged.
+      color: AppColors.background.withValues(alpha: 0.98),
       child: GestureDetector(
-        onTap: () {
-          widget.onDismiss?.call();
-        },
+        behavior: HitTestBehavior.opaque,
+        onTap: () => widget.onDismiss?.call(),
         child: SafeArea(
           child: Center(
-            child: AnimatedBuilder(
-              animation: _emojiController,
-              builder: (context, child) {
-                return Opacity(
-                  opacity: _emojiOpacity.value,
-                  child: Transform.scale(
-                    scale: _emojiBounce.value,
-                    child: child,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Emoji inside a soft amber glow circle.
+                AnimatedBuilder(
+                  animation: _emojiController,
+                  builder: (context, child) => Opacity(
+                    opacity: _emojiOpacity.value,
+                    child: Transform.scale(scale: _emojiBounce.value, child: child),
                   ),
-                );
-              },
-              child: Text(
-                _emoji,
-                style: const TextStyle(fontSize: 92),
-                textAlign: TextAlign.center,
-              ),
+                  child: Container(
+                    width: 136,
+                    height: 136,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.primary.withValues(alpha: 0.15),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(_emoji, style: const TextStyle(fontSize: 68)),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  child: Text(
+                    heading,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 48),
+                  child: Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: AppColors.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

@@ -52,24 +52,23 @@ class _PerformanceModuleScreenState extends State<PerformanceModuleScreen> {
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: Text(
-          _getTitle(),
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-        ),
+        title: const Text('Performance',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.surface,
+        centerTitle: false,
+        backgroundColor: AppColors.background,
         foregroundColor: AppColors.textPrimary,
+        surfaceTintColor: Colors.transparent,
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
+          preferredSize: const Size.fromHeight(56),
           child: Container(
-            color: AppColors.surface,
+            color: Colors.white,
             child: Row(
               children: [
-                _buildNavItem(0, Icons.dashboard_rounded, 'Overview'),
-                _buildNavItem(1, Icons.flag_rounded, 'Goals'),
-                _buildNavItem(2, Icons.description_rounded, 'Reviews'),
-                _buildNavItem(3, Icons.assignment_rounded, 'Self'),
+                _buildNavItem(0, Icons.grid_view_rounded,    'Overview'),
+                _buildNavItem(1, Icons.flag_rounded,         'Goals'),
+                _buildNavItem(2, Icons.description_outlined, 'Reviews'),
+                _buildNavItem(3, Icons.person_outline,       'Self'),
               ],
             ),
           ),
@@ -162,18 +161,4 @@ class _PerformanceModuleScreenState extends State<PerformanceModuleScreen> {
     );
   }
 
-  String _getTitle() {
-    switch (_currentIndex) {
-      case 0:
-        return 'My Performance';
-      case 1:
-        return 'My Goals';
-      case 2:
-        return 'My Reviews';
-      case 3:
-        return 'Self Assessment';
-      default:
-        return 'Performance';
-    }
-  }
 }

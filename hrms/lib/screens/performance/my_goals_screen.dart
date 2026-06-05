@@ -212,41 +212,14 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
               color: AppColors.primary,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 80),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Manage your goals and track progress',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
+                    _buildSummaryCard(),
                     const SizedBox(height: 16),
-                    _buildSummaryCards(),
-                    const SizedBox(height: 24),
-                    _buildFiltersSection(),
+                    _buildGoalsHeaderCard(),
                     const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.flag_rounded,
-                          size: 20,
-                          color: AppColors.primary,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'My Goals (${_goals.length})',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
                     _goals.isEmpty
                         ? _buildEmptyState()
                         : ListView.builder(
@@ -328,20 +301,76 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
   }
 
   Widget _buildEmptyState() {
-    return Card(
-      margin: const EdgeInsets.only(top: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: AppColors.surface,
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
         child: Column(
           children: [
-            Icon(Icons.flag_outlined, size: 48, color: AppColors.textSecondary),
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.inputFill,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.flag_outlined,
+                size: 32,
+                color: AppColors.textHint,
+              ),
+            ),
             const SizedBox(height: 16),
             Text(
-              'No goals found',
-              style: TextStyle(fontSize: 16, color: AppColors.textSecondary),
+              'No goals yet',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Get started by creating your first\nperformance goal.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 22),
+            ElevatedButton.icon(
+              onPressed: () => _showCreateGoalSheet(context),
+              icon: const Icon(Icons.add_rounded, size: 20),
+              label: const Text('Add Goal'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 28,
+                  vertical: 14,
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(30),
+                ),
+              ),
             ),
           ],
         ),
@@ -349,52 +378,172 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
     );
   }
 
-  Widget _buildSummaryCards() {
-        return GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      mainAxisSpacing: 8,
-      crossAxisSpacing: 8,
-      childAspectRatio: 1.6,
-          children: [
-            _buildSummaryCard('Total', _total.toString(), Icons.flag_rounded),
-            _buildSummaryCard(
-              'Approved',
-              _approved.toString(),
-              Icons.check_circle_rounded,
+  Widget _buildSummaryCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Manage your goals and track progress',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              height: 1.3,
+              color: AppColors.textPrimary,
             ),
-            _buildSummaryCard(
-              'Pending',
-              _pending.toString(),
-              Icons.schedule_rounded,
-            ),
-            _buildSummaryCard(
-              'Completed',
-              _completed.toString(),
-              Icons.done_all_rounded,
-            ),
-          ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Performance Summary',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 22),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildStatItem(
+                _total.toString(),
+                'TOTAL',
+                Icons.flag_rounded,
+                AppColors.primary,
+              ),
+              _buildStatItem(
+                _approved.toString(),
+                'APPROVED',
+                Icons.check_circle_rounded,
+                AppColors.success,
+              ),
+              _buildStatItem(
+                _pending.toString(),
+                'PENDING',
+                Icons.schedule_rounded,
+                AppColors.warning,
+              ),
+              _buildStatItem(
+                _completed.toString(),
+                'DONE',
+                Icons.done_all_rounded,
+                AppColors.primary,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildFiltersSection() {
+  Widget _buildStatItem(
+    String value,
+    String label,
+    IconData icon,
+    Color iconColor,
+  ) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          'Filters',
+          value,
           style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w600,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
             color: AppColors.textPrimary,
           ),
         ),
-        const SizedBox(height: 3),
+        const SizedBox(height: 6),
         Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: _buildFilterDropdown(
+            Icon(icon, size: 13, color: iconColor),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGoalsHeaderCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.flag_rounded, size: 20, color: AppColors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    'My Goals (${_goals.length})',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Icon(
+                    Icons.tune_rounded,
+                    size: 16,
+                    color: AppColors.textSecondary,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'FILTERS',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.3,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _buildFilterDropdown(
                 value: _selectedCycle,
                 hint: 'All Cycles',
                 items: [
@@ -465,8 +614,9 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
               ),
             ),
           ],
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -500,55 +650,6 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
           ),
           iconSize: 16,
         ),
-      ),
-    );
-  }
-
-  Widget _buildSummaryCard(String title, String value, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                title,
-                style: TextStyle(
-                    fontSize: 10,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textSecondary,
-                ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-              ),
-              ),
-              Icon(icon, size: 14, color: AppColors.primary),
-            ],
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -871,7 +972,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
       maxChildSize: 0.95,
       builder: (_, scrollController) => Container(
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.background,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Column(
@@ -886,13 +987,27 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.fromLTRB(20, 4, 12, 4),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Create New Goal',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.arrow_back_rounded,
+                        size: 22,
+                        color: AppColors.textPrimary,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Add New goal',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
                   ),
                   IconButton(
                     onPressed: widget.onCancel,
@@ -901,26 +1016,37 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Text(
-                'This will be submitted for manager approval.',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-              ),
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             Expanded(
               child: Form(
                 key: _formKey,
                 child: ListView(
                   controller: scrollController,
                   padding: EdgeInsets.fromLTRB(
-                    20,
+                    16,
                     0,
-                    20,
+                    16,
                     24 + MediaQuery.of(context).viewInsets.bottom,
                   ),
                   children: [
+                    Text(
+                      'Set Your Next Milestone',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Define clear, actionable goals to track your professional evolution.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.4,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
                     _buildFormDropdown(
                       label: 'Review Cycle *',
                       value: _selectedCycle,
@@ -983,7 +1109,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                     _buildFormField(
                       controller: _targetController,
                       label: 'Target *',
-                      hint: 'e.g., 4.5/5, \$50K, 95%',
+                      hint: 'e.g., 4.5/5, ₹50K, 95%',
                       icon: Icons.track_changes_rounded,
                       validator: (v) =>
                           (v == null || v.trim().isEmpty) ? 'Required' : null,
@@ -997,138 +1123,106 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                       keyboardType: TextInputType.number,
                     ),
                     const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: InkWell(
-                            onTap: () async {
-                              final d = await showDatePicker(
-                                context: context,
-                                initialDate: _startDate ?? DateTime.now(),
-                                firstDate: DateTime(2020),
-                                lastDate: DateTime(2030),
-                              );
-                              if (d != null) setState(() => _startDate = d);
-                            },
-                            child: InputDecorator(
-                              decoration: _profileInputDecoration(
-                                'Start Date',
-                                Icons.calendar_today_rounded,
-                              ),
-                              child: Text(
-                                _startDate != null
-                                    ? DateFormat(
-                                        'dd-MM-yyyy',
-                                      ).format(_startDate!)
-                                    : 'dd-mm-yyyy',
-                                style: TextStyle(
-                                  color: _startDate != null
-                                      ? Colors.black87
-                                      : Colors.grey,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
+                    _fieldCard(
+                      'Target Date',
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildDateBox(
+                              hint: 'Start date',
+                              value: _startDate,
+                              onTap: () async {
+                                final d = await showDatePicker(
+                                  context: context,
+                                  initialDate: _startDate ?? DateTime.now(),
+                                  firstDate: DateTime(2020),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (d != null) setState(() => _startDate = d);
+                              },
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: InkWell(
-                            onTap: () async {
-                              final d = await showDatePicker(
-                                context: context,
-                                initialDate:
-                                    _endDate ?? _startDate ?? DateTime.now(),
-                                firstDate: _startDate ?? DateTime(2020),
-                                lastDate: DateTime(2030),
-                              );
-                              if (d != null) setState(() => _endDate = d);
-                            },
-                            child: InputDecorator(
-                              decoration: _profileInputDecoration(
-                                'End Date',
-                                Icons.event_rounded,
-                              ),
-                              child: Text(
-                                _endDate != null
-                                    ? DateFormat('dd-MM-yyyy').format(_endDate!)
-                                    : 'dd-mm-yyyy',
-                                style: TextStyle(
-                                  color: _endDate != null
-                                      ? Colors.black87
-                                      : Colors.grey,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildDateBox(
+                              hint: 'End date',
+                              value: _endDate,
+                              onTap: () async {
+                                final d = await showDatePicker(
+                                  context: context,
+                                  initialDate:
+                                      _endDate ?? _startDate ?? DateTime.now(),
+                                  firstDate: _startDate ?? DateTime(2020),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (d != null) setState(() => _endDate = d);
+                              },
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 14),
-                    DropdownButtonFormField<String>(
-                      initialValue: _selectedKraId,
-                      decoration: _profileInputDecoration(
-                        'Link to KRA (Optional)',
-                        Icons.link_rounded,
+                    _fieldCard(
+                      'Link to KRA (Optional)',
+                      DropdownButtonFormField<String>(
+                        initialValue: _selectedKraId,
+                        isExpanded: true,
+                        decoration: _filledInput('None - Don\'t link to KRA'),
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: null,
+                            child: Text('None - Don\'t link to KRA'),
+                          ),
+                          ...widget.kras.map((k) {
+                            final id = k['_id']?.toString() ?? '';
+                            final title = k['title'] ?? '';
+                            final kpi = k['kpi'] ?? '';
+                            final timeframe = k['timeframe'] ?? '';
+                            return DropdownMenuItem<String>(
+                              value: id,
+                              child: Text(
+                                '$title - $kpi ($timeframe)',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            );
+                          }),
+                        ],
+                        onChanged: (v) => setState(() => _selectedKraId = v),
                       ),
-                      items: [
-                        const DropdownMenuItem<String>(
-                          value: null,
-                          child: Text('None - Don\'t link to KRA'),
-                        ),
-                        ...widget.kras.map((k) {
-                          final id = k['_id']?.toString() ?? '';
-                          final title = k['title'] ?? '';
-                          final kpi = k['kpi'] ?? '';
-                          final timeframe = k['timeframe'] ?? '';
-                          return DropdownMenuItem<String>(
-                            value: id,
-                            child: Text(
-                              '$title - $kpi ($timeframe)',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          );
-                        }),
-                      ],
-                      onChanged: (v) => setState(() => _selectedKraId = v),
                     ),
                     const SizedBox(height: 24),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: _isSubmitting ? null : widget.onCancel,
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              side: BorderSide(color: AppColors.primary),
-                              foregroundColor: AppColors.primary,
-                            ),
-                            child: Text('Cancel'),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _isSubmitting ? null : _submit,
+                        icon: _isSubmitting
+                            ? const SizedBox.shrink()
+                            : const Icon(Icons.task_alt_rounded, size: 20),
+                        label: _isSubmitting
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('Create Goal'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          textStyle: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _isSubmitting ? null : _submit,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.success,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            child: _isSubmitting
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : Text('Submit'),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
@@ -1140,24 +1234,101 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
     );
   }
 
-  InputDecoration _profileInputDecoration(String label, IconData icon) {
-    return InputDecoration(
-      labelText: label,
-      prefixIcon: Icon(icon, size: 20, color: AppColors.primary),
-      labelStyle: const TextStyle(color: Colors.black, fontSize: 13),
-      border: OutlineInputBorder(
+  /// White card wrapper with an orange uppercase section label (Figma style).
+  Widget _fieldCard(String label, Widget child) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Colors.grey.shade300),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+              color: AppColors.primary,
+            ),
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+
+  /// Borderless filled input (light grey) used inside [_fieldCard].
+  InputDecoration _filledInput(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: AppColors.textCaption, fontSize: 14),
+      filled: true,
+      fillColor: AppColors.inputFill,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: AppColors.primary, width: 2),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    );
+  }
+
+  Widget _buildDateBox({
+    required String hint,
+    required DateTime? value,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        decoration: BoxDecoration(
+          color: AppColors.inputFill,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                value != null
+                    ? DateFormat('MM/dd/yyyy').format(value)
+                    : hint,
+                style: TextStyle(
+                  color: value != null
+                      ? AppColors.textPrimary
+                      : AppColors.textCaption,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            Icon(
+              Icons.calendar_today_rounded,
+              size: 16,
+              color: AppColors.textSecondary,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1168,15 +1339,24 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
     required IconData icon,
     String? Function(String?)? validator,
     TextInputType? keyboardType,
+    int maxLines = 1,
     void Function(String)? onChanged,
   }) {
-    return TextFormField(
-      controller: controller,
-      style: TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
-      decoration: _profileInputDecoration(label, icon).copyWith(hintText: hint),
-      validator: validator,
-      keyboardType: keyboardType,
-      onChanged: onChanged,
+    return _fieldCard(
+      label,
+      TextFormField(
+        controller: controller,
+        style: TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 14,
+          color: AppColors.textPrimary,
+        ),
+        decoration: _filledInput(hint),
+        validator: validator,
+        keyboardType: keyboardType,
+        maxLines: maxLines,
+        onChanged: onChanged,
+      ),
     );
   }
 
@@ -1188,12 +1368,19 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
     required List<DropdownMenuItem<String?>> items,
     required void Function(String?) onChanged,
   }) {
-    return DropdownButtonFormField<String?>(
-      initialValue: (value == null || value.isEmpty) ? null : value,
-      decoration: _profileInputDecoration(label, icon),
-      hint: Text(hint, style: TextStyle(color: Colors.grey.shade600)),
-      items: items,
-      onChanged: onChanged,
+    return _fieldCard(
+      label,
+      DropdownButtonFormField<String?>(
+        initialValue: (value == null || value.isEmpty) ? null : value,
+        isExpanded: true,
+        decoration: _filledInput(hint),
+        hint: Text(
+          hint,
+          style: TextStyle(color: AppColors.textCaption, fontSize: 14),
+        ),
+        items: items,
+        onChanged: onChanged,
+      ),
     );
   }
 }

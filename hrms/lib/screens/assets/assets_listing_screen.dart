@@ -1,15 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
+import '../../widgets/animations.dart';
+import '../../widgets/app_tab_loader.dart';
 import '../../services/asset_service.dart';
 import '../../models/asset_model.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import 'asset_details_screen.dart';
-import '../../widgets/app_tab_loader.dart';
+import 'assets_all_list_screen.dart';
+import 'software_licenses_screen.dart';
 
+/// "My Assets" overview (Figma redesign). Summarises the employee's hardware
+/// assets and software licences, with deep-links into the full hardware list,
+/// the software licences screen and asset details.
+///
+/// Hardware vs software is derived client-side via [Asset.isSoftware] since the
+/// backend exposes a single generic asset collection.
 class AssetsListingScreen extends StatefulWidget {
   const AssetsListingScreen({super.key});
 
@@ -19,727 +29,577 @@ class AssetsListingScreen extends StatefulWidget {
 
 class _AssetsListingScreenState extends State<AssetsListingScreen> {
   final AssetService _assetService = AssetService();
-  List<Asset> _assets = [];
-  List<Asset> _allAssets = []; // Keep all assets for accurate counts
+  List<Asset> _hardware = [];
+  List<Asset> _software = [];
   bool _isLoading = true;
-  String _selectedStatus = 'All Assets';
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
-  
-  // Filter state
-  bool _showFilterCard = false;
-  String? _selectedAssetType;
-  String? _selectedBranchId;
-  List<Map<String, dynamic>> _assetTypes = [];
-  List<Map<String, dynamic>> _branches = [];
-  bool _isLoadingFilters = false;
-  bool _isFetchingFilters = false; // Prevent concurrent fetches
-  
-  // Pagination state
-  int _page = 1;
-  int _totalPages = 1;
-  int _totalRecords = 0;
-  final int _limit = 10;
-  
-  final List<String> _statusOptions = [
-    'All Assets',
-    'Working',
-    'Under Maintenance',
-    'Damaged',
-    'Retired',
-  ];
 
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_onSearchChanged);
-    _fetchAllAssetsForCounts();
-    _fetchFilters();
-    _fetchAssets(refresh: true);
+    _fetch();
   }
 
-  Future<void> _fetchFilters({bool forceRefresh = false}) async {
-    // Prevent concurrent fetches
-    if (_isFetchingFilters) {
-      return;
-    }
-    
-    _isFetchingFilters = true;
-    setState(() => _isLoadingFilters = true);
-    
-    try {
-      // Fetch sequentially with a small delay to avoid rate limiting
-      final assetTypesResult = await _assetService.getAssetTypes(forceRefresh: forceRefresh);
-      
-      // Small delay between requests to avoid hitting rate limits
-      await Future.delayed(const Duration(milliseconds: 300));
-      
-      final branchesResult = await _assetService.getBranches(forceRefresh: forceRefresh);
-      
-      if (mounted) {
-        setState(() {
-          // Parse asset types
-          if (assetTypesResult['success'] == true && assetTypesResult['data'] != null) {
-            final data = assetTypesResult['data'];
-            if (data is List) {
-              _assetTypes = List<Map<String, dynamic>>.from(data);
-            } else {
-              _assetTypes = [];
-            }
-          } else {
-            // Keep existing data if fetch failed and no cache
-            if (_assetTypes.isEmpty) {
-              _assetTypes = [];
-            }
-          }
-          
-          // Parse branches
-          if (branchesResult['success'] == true && branchesResult['data'] != null) {
-            final data = branchesResult['data'];
-            if (data is List) {
-              _branches = List<Map<String, dynamic>>.from(data);
-            } else {
-              _branches = [];
-            }
-          } else {
-            // Keep existing data if fetch failed and no cache
-            if (_branches.isEmpty) {
-              _branches = [];
-            }
-          }
-          
-          _isLoadingFilters = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          // Don't clear existing data on error, keep what we have
-          _isLoadingFilters = false;
-        });
-      }
-    } finally {
-      _isFetchingFilters = false;
-    }
-  }
-
-  @override
-  void dispose() {
-    _searchController.removeListener(_onSearchChanged);
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _onSearchChanged() {
-    final query = _searchController.text.trim();
-    if (query != _searchQuery) {
-      setState(() {
-        _searchQuery = query;
-      });
-      // Debounce search - wait 500ms after user stops typing
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (_searchController.text.trim() == query) {
-          _fetchAssets(refresh: true);
-        }
-      });
-    }
-  }
-
-  // Fetch all assets once to get accurate counts
-  Future<void> _fetchAllAssetsForCounts() async {
-    final result = await _assetService.getAssets(status: null, page: 1, limit: 1000);
-    if (mounted && result['success']) {
-      setState(() {
-        _allAssets = result['data'] ?? [];
-      });
-    }
-  }
-
-  Future<void> _fetchAssets({bool refresh = false, int? page}) async {
-    if (_isLoading && !refresh) return;
-    
-    final pageToFetch = page ?? _page;
-    if (refresh) {
-      _page = 1;
-      _assets.clear();
-    }
-
+  Future<void> _fetch() async {
     setState(() => _isLoading = true);
-    
-    final result = await _assetService.getAssets(
-      status: _selectedStatus == 'All Assets' ? null : _selectedStatus,
-      search: _searchQuery.isNotEmpty ? _searchQuery : null,
-      type: _selectedAssetType,
-      branchId: _selectedBranchId,
-      page: pageToFetch,
-      limit: _limit,
-    );
-    
-    if (mounted) {
-      if (result['success']) {
-        final pagination = result['pagination'] ?? {};
-        setState(() {
-          _assets = result['data'] ?? [];
-          _page = pageToFetch;
-          _totalRecords = pagination['total'] ?? 0;
-          _totalPages = ((_totalRecords / _limit).ceil()).clamp(1, double.infinity).toInt();
-          _isLoading = false;
-        });
-      } else {
-        setState(() => _isLoading = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(result['message']?.toString(), fallback: 'Failed to fetch assets'),
-          isError: true,
-        );
-      }
+    final result =
+        await _assetService.getAssets(status: null, page: 1, limit: 1000);
+    if (!mounted) return;
+
+    if (result['success']) {
+      final all = (result['data'] as List<Asset>?) ?? [];
+      setState(() {
+        _software = all.where((a) => a.isSoftware).toList();
+        _hardware = all.where((a) => !a.isSoftware).toList();
+        _isLoading = false;
+      });
+    } else {
+      setState(() => _isLoading = false);
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.sanitizeForDisplay(result['message']?.toString(),
+            fallback: 'Failed to fetch assets'),
+        isError: true,
+      );
     }
   }
 
-  void _onStatusChanged(String status) {
-    setState(() {
-      _selectedStatus = status;
-    });
-    _fetchAssets(refresh: true);
-  }
-
-  void _viewAssetDetails(Asset asset) {
+  void _openHardwareList() {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => AssetDetailsScreen(assetId: asset.id!),
+        builder: (_) => const AssetsAllListScreen(
+          softwareOnly: false,
+          title: 'Hardware Assets',
+        ),
       ),
     );
   }
 
-  int _getStatusCount(String status) {
-    if (status == 'All Assets') {
-      return _allAssets.length;
-    }
-    // Use all assets for accurate counts across all statuses
-    return _allAssets.where((a) => a.status == status).length;
+  void _openSoftware() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SoftwareLicensesScreen()),
+    ).then((_) => _fetch());
+  }
+
+  void _openDetails(Asset asset) {
+    if (asset.id == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AssetDetailsScreen(assetId: asset.id!),
+      ),
+    );
+  }
+
+  void _reportIssue(Asset asset) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.report_problem_outlined, color: AppColors.primary),
+            const SizedBox(width: 10),
+            const Expanded(child: Text('Report Issue')),
+          ],
+        ),
+        content: Text(
+          'Raise an issue for "${asset.name}"? Your IT / admin team will be '
+          'notified to follow up.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              SnackBarUtils.showSnackBar(
+                context,
+                'Issue reported for ${asset.name}.',
+              );
+            },
+            child: const Text('Report'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: colorScheme.surfaceContainerHighest,
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
+        centerTitle: false,
         title: const Text(
           'My Assets',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 22,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
         ),
         elevation: 0,
-        centerTitle: true,
         actions: [
           IconButton(
-            icon: Icon(
-              _showFilterCard ? Icons.filter_alt : Icons.filter_alt_outlined,
-              color: _showFilterCard ? colorScheme.primary : colorScheme.onSurface,
+            icon: const Icon(Icons.notifications_none),
+            onPressed: () {},
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12, left: 4),
+            child: CircleAvatar(
+              radius: 18,
+              backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+              child: Icon(Icons.person, color: AppColors.primary, size: 20),
             ),
-            onPressed: () {
-              setState(() {
-                _showFilterCard = !_showFilterCard;
-              });
-            },
-            tooltip: 'Filter',
           ),
         ],
       ),
-      body: Column(
-        children: [
-      
-          // Status filter tabs
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-            color: colorScheme.surface,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _statusOptions.map((status) {
-                  final isSelected = _selectedStatus == status;
-                  final count = _getStatusCount(status);
-                  return GestureDetector(
-                    onTap: () => _onStatusChanged(status),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 24),
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: isSelected ? AppColors.primary : Colors.transparent,
-                            width: 2,
-                          ),
-                        ),
-                      ),
-                      child: Text(
-                        '$status${count > 0 ? ' ($count)' : ''}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                          color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+      body: _isLoading
+          ? const Center(child: AppTabLoader())
+          : RefreshIndicator(
+              onRefresh: _fetch,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                children: [
+                  _buildSummaryRow(),
+                  const SizedBox(height: 28),
+                  _buildSectionHeader('Hardware Assets',
+                      onViewAll: _hardware.isEmpty ? null : _openHardwareList),
+                  const SizedBox(height: 12),
+                  if (_hardware.isEmpty)
+                    _buildEmpty('No hardware assigned to you.',
+                        Icons.devices_other_outlined)
+                  else
+                    ...List.generate(
+                      _hardware.length > 3 ? 3 : _hardware.length,
+                      (i) => Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: FadeSlideIn(
+                          delay:
+                              Duration(milliseconds: (i * 60).clamp(0, 240)),
+                          child: _buildHardwareCard(_hardware[i]),
                         ),
                       ),
                     ),
-                  );
-                }).toList(),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Filter Card with Search
-          if (_showFilterCard) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 18),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: colorScheme.outline),
-                boxShadow: [
-                  BoxShadow(
-                    color: colorScheme.shadow.withOpacity(0.08),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 4),
-                  // Search bar with refresh icon
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: colorScheme.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: colorScheme.outline),
-                          ),
-                          child: TextField(
-                            controller: _searchController,
-                            decoration: InputDecoration(
-                              hintText: 'Search by name, type, category...',
-                              hintStyle: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
-                              prefixIcon: Icon(Icons.search, color: colorScheme.onSurfaceVariant, size: 20),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: const Icon(Icons.refresh, size: 20),
-                        onPressed: () {
-                          _fetchFilters(forceRefresh: true);
-                          _fetchAssets(refresh: true);
-                        },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        tooltip: 'Refresh',
-                        color: AppColors.primary,
-                      ),
-                    ],
-                  ),
+                  const SizedBox(height: 16),
+                  _buildSectionHeader('Software Licenses',
+                      onViewAll: _openSoftware),
                   const SizedBox(height: 12),
-                  // Asset Type and Branch row
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _selectedAssetType,
-                              isExpanded: true,
-                              hint: const Text(
-                                'All Asset Types',
-                                style: TextStyle(fontSize: 13),
-                              ),
-                              items: [
-                                const DropdownMenuItem<String>(
-                                  value: null,
-                                  child: Text('All Asset Types', style: TextStyle(fontSize: 13)),
-                                ),
-                                ..._assetTypes.map((type) {
-                                  final typeName = type['name']?.toString() ?? '';
-                                  return DropdownMenuItem<String>(
-                                    value: typeName.isEmpty ? null : typeName,
-                                    child: Text(
-                                      typeName.isEmpty ? 'N/A' : typeName,
-                                      style: const TextStyle(fontSize: 13),
-                                    ),
-                                  );
-                                }).where((item) => item.value != null),
-                              ],
-                              onChanged: (value) {
-                                setState(() {
-                                  _selectedAssetType = value;
-                                });
-                                _fetchAssets(refresh: true);
-                              },
-                            ),
-                          ),
+                  if (_software.isEmpty)
+                    _buildEmpty('No software licenses yet.',
+                        Icons.apps_outlined)
+                  else
+                    SizedBox(
+                      height: 168,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _software.length,
+                        separatorBuilder: (_, __) =>
+                            const SizedBox(width: 14),
+                        itemBuilder: (context, i) => FadeSlideIn(
+                          delay:
+                              Duration(milliseconds: (i * 60).clamp(0, 240)),
+                          child: _buildSoftwareCard(_software[i]),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _selectedBranchId,
-                              isExpanded: true,
-                              hint: const Text(
-                                'All Branches',
-                                style: TextStyle(fontSize: 13),
-                              ),
-                              items: [
-                                const DropdownMenuItem<String>(
-                                  value: null,
-                                  child: Text('All Branches', style: TextStyle(fontSize: 13)),
-                                ),
-                                ..._branches.map((branch) {
-                                  final branchId = branch['_id']?.toString() ?? branch['id']?.toString();
-                                  final branchName = branch['branchName']?.toString() ?? '';
-                                  return DropdownMenuItem<String>(
-                                    value: branchId,
-                                    child: Text(
-                                      branchName.isEmpty ? 'N/A' : branchName,
-                                      style: const TextStyle(fontSize: 13),
-                                    ),
-                                  );
-                                }),
-                              ],
-                              onChanged: (value) {
-                                setState(() {
-                                  _selectedBranchId = value;
-                                });
-                                _fetchAssets(refresh: true);
-                              },
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
                 ],
               ),
             ),
-          ],
-          const SizedBox(height: 16),
-          // Assets cards
-          Expanded(
-            child: _isLoading && _assets.isEmpty
-                ? const Center(child: AppTabLoader())
-                : _assets.isEmpty
-                    ? RefreshIndicator(
-                        onRefresh: () async {
-                          setState(() => _page = 1);
-                          await _fetchAssets(refresh: true);
-                        },
-                        child: ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: [
-                            SizedBox(
-                              height: MediaQuery.of(context).size.height * 0.5,
-                              child: Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.inventory_2_outlined,
-                                      size: 64,
-                                      color: AppColors.textSecondary,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'No assets assigned to you.',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        color: AppColors.textSecondary,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : Column(
-                        children: [
-                          Expanded(
-                            child: RefreshIndicator(
-                              onRefresh: () async {
-                                setState(() => _page = 1);
-                                await _fetchAssets(refresh: true);
-                              },
-                              child: ListView.builder(
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                padding: const EdgeInsets.all(16.0),
-                                itemCount: _assets.length,
-                                itemBuilder: (context, index) {
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 12.0),
-                                    child: _buildAssetCard(_assets[index]),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                          if (_totalPages > 1) ...[
-                            const SizedBox(height: 16),
-                            _buildPaginationControls(),
-                            const SizedBox(height: 16),
-                          ],
-                        ],
-                      ),
-          ),
-        ],
-      ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
   }
 
-  Widget _buildAssetCard(Asset asset) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: () => _viewAssetDetails(asset),
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: colorScheme.outline),
-          boxShadow: [
-            BoxShadow(
-              color: colorScheme.shadow.withOpacity(0.08),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              // Icon
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.inventory_2_outlined,
-                  color: AppColors.primary,
-                  size: 32,
-                ),
-              ),
-              const SizedBox(width: 16),
-              // Content
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Asset Name and Status
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            asset.name,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1A1A1A),
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _getStatusColor(asset.status).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            asset.status,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: _getStatusColor(asset.status),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    // Details in a compact format
-                    _buildCardDetailRow(Icons.category_outlined, 'Type', asset.type ?? '-'),
-                    const SizedBox(height: 4),
-                    _buildCardDetailRow(Icons.label_outline, 'Category', asset.assetCategory ?? '-'),
-                    if (asset.serialNumber != null && asset.serialNumber!.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      _buildCardDetailRow(Icons.qr_code, 'Serial', asset.serialNumber!),
-                    ],
-                    if (asset.location != null && asset.location!.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      _buildCardDetailRow(Icons.location_on_outlined, 'Location', asset.location!),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCardDetailRow(IconData icon, String label, String value) {
-    final colorScheme = Theme.of(context).colorScheme;
+  // ── Summary cards ────────────────────────────────────────────────────────
+  Widget _buildSummaryRow() {
     return Row(
       children: [
-        Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
-        const SizedBox(width: 6),
         Expanded(
-          child: RichText(
-            text: TextSpan(
-              style: TextStyle(
-                fontSize: 12,
-                color: colorScheme.onSurfaceVariant,
-              ),
-              children: [
-                TextSpan(
-                  text: '$label: ',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                TextSpan(
-                  text: value,
-                  style: const TextStyle(fontWeight: FontWeight.normal),
-                ),
-              ],
-            ),
+          child: _summaryCard(
+            filled: true,
+            icon: Icons.devices_outlined,
+            label: 'HARDWARE',
+            count: _hardware.length,
+            onTap: _hardware.isEmpty ? null : _openHardwareList,
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: _summaryCard(
+            filled: false,
+            icon: Icons.dvr_outlined,
+            label: 'SOFTWARE',
+            count: _software.length,
+            onTap: _openSoftware,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildPaginationControls() {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outline),
+  Widget _summaryCard({
+    required bool filled,
+    required IconData icon,
+    required String label,
+    required int count,
+    VoidCallback? onTap,
+  }) {
+    final fg = filled ? Colors.white : AppColors.textPrimary;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: filled ? AppColors.primary : AppColors.surface,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: filled
+                  ? AppColors.primary.withValues(alpha: 0.3)
+                  : Colors.black.withValues(alpha: 0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon,
+                color: filled ? Colors.white : AppColors.primary, size: 26),
+            const SizedBox(height: 20),
+            Text(
+              label,
+              style: TextStyle(
+                color: filled
+                    ? Colors.white.withValues(alpha: 0.9)
+                    : AppColors.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              count.toString().padLeft(2, '0'),
+              style: TextStyle(
+                color: fg,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // Previous button
-          IconButton(
-            icon: const Icon(Icons.chevron_left),
-            onPressed: _page > 1
-                ? () => _fetchAssets(page: _page - 1)
-                : null,
-            color: _page > 1 ? colorScheme.primary : colorScheme.onSurfaceVariant,
+    );
+  }
+
+  // ── Section header ───────────────────────────────────────────────────────
+  Widget _buildSectionHeader(String title, {VoidCallback? onViewAll}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: AppColors.textPrimary,
           ),
-          const SizedBox(width: 8),
-          // Page numbers
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: List.generate(
-              _totalPages.clamp(0, 10), // Show max 10 pages
-              (index) {
-                final pageNum = index + 1;
-                final isCurrentPage = pageNum == _page;
-                return GestureDetector(
-                  onTap: () => _fetchAssets(page: pageNum),
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isCurrentPage
-                          ? colorScheme.primary
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: isCurrentPage
-                            ? colorScheme.primary
-                            : colorScheme.outline,
-                      ),
-                    ),
-                    child: Text(
-                      '<$pageNum>',
-                      style: TextStyle(
-                        color: isCurrentPage
-                            ? colorScheme.onPrimary
-                            : colorScheme.onSurface,
-                        fontWeight: isCurrentPage
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                );
-              },
+        ),
+        if (onViewAll != null)
+          GestureDetector(
+            onTap: onViewAll,
+            child: Text(
+              'VIEW ALL',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+                letterSpacing: 0.5,
+              ),
             ),
           ),
-          const SizedBox(width: 8),
-          // Next button
-          IconButton(
-            icon: const Icon(Icons.chevron_right),
-            onPressed: _page < _totalPages
-                ? () => _fetchAssets(page: _page + 1)
-                : null,
-            color: _page < _totalPages ? colorScheme.primary : colorScheme.onSurfaceVariant,
+      ],
+    );
+  }
+
+  // ── Hardware card ────────────────────────────────────────────────────────
+  Widget _buildHardwareCard(Asset asset) {
+    final badge = _statusBadge(asset.status);
+    return InkWell(
+      onTap: () => _openDetails(asset),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(_hardwareIcon(asset),
+                      color: AppColors.primary, size: 24),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        asset.name,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        (asset.serialNumber != null &&
+                                asset.serialNumber!.isNotEmpty)
+                            ? 'S/N: ${asset.serialNumber}'
+                            : (asset.type ?? asset.assetCategory ?? '—'),
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: badge.bg,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    badge.label,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      color: badge.fg,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // Report issue action.
+            InkWell(
+              onTap: () => _reportIssue(asset),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline,
+                        size: 16, color: AppColors.primaryDark),
+                    const SizedBox(width: 6),
+                    Text(
+                      'REPORT ISSUE',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                        color: AppColors.primaryDark,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Software card (horizontal) ───────────────────────────────────────────
+  Widget _buildSoftwareCard(Asset asset) {
+    final renewLabel = asset.warrantyExpiry != null
+        ? DateFormat('dd MMM yyyy').format(asset.warrantyExpiry!)
+        : '—';
+    return InkWell(
+      onTap: () => _openDetails(asset),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: 180,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.widgets_outlined,
+                  color: AppColors.primary, size: 20),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              asset.name,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+                height: 1.2,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              asset.type ?? asset.assetCategory ?? 'License',
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const Spacer(),
+            const Divider(height: 16),
+            Text(
+              'RENEWAL',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+                color: AppColors.textCaption,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              renewLabel,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmpty(String message, IconData icon) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 48, color: AppColors.textHint),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            style: const TextStyle(
+                fontSize: 14, color: AppColors.textSecondary),
           ),
         ],
       ),
     );
   }
 
-  Color _getStatusColor(String status) {
+  IconData _hardwareIcon(Asset asset) {
+    final s = '${asset.type ?? ''} ${asset.assetCategory ?? ''} ${asset.name}'
+        .toLowerCase();
+    if (s.contains('laptop') || s.contains('macbook') || s.contains('book')) {
+      return Icons.laptop_mac;
+    }
+    if (s.contains('monitor') || s.contains('display') || s.contains('screen')) {
+      return Icons.desktop_windows_outlined;
+    }
+    if (s.contains('mouse') || s.contains('keyboard')) {
+      return Icons.mouse_outlined;
+    }
+    if (s.contains('phone') || s.contains('mobile')) return Icons.smartphone;
+    if (s.contains('printer')) return Icons.print_outlined;
+    return Icons.devices_other_outlined;
+  }
+
+  ({String label, Color fg, Color bg}) _statusBadge(String status) {
     switch (status.toLowerCase()) {
       case 'working':
-        return AppColors.success;
+        return (
+          label: 'ACTIVE',
+          fg: AppColors.primaryDark,
+          bg: AppColors.primary.withValues(alpha: 0.12),
+        );
       case 'under maintenance':
-        return AppColors.warning;
+        return (
+          label: 'MAINTENANCE',
+          fg: AppColors.warning,
+          bg: AppColors.warningBg,
+        );
       case 'damaged':
-        return AppColors.error;
+        return (label: 'DAMAGED', fg: AppColors.error, bg: AppColors.errorBg);
       case 'retired':
-        return AppColors.textSecondary;
+        return (
+          label: 'RETIRED',
+          fg: AppColors.textSecondary,
+          bg: AppColors.inputFill,
+        );
       default:
-        return AppColors.success;
+        return (
+          label: status.toUpperCase(),
+          fg: AppColors.textSecondary,
+          bg: AppColors.inputFill,
+        );
     }
   }
 }

@@ -32,7 +32,7 @@ class _LoginScreenState extends State<LoginScreen>
   final _otpController = TextEditingController();
   bool _loginSubmitLocked = false;
 
-  // Entrance animations
+  // Entrance animations 
   late AnimationController _entranceController;
   late Animation<double> _bgOpacity;
   late Animation<double> _bgScale;
@@ -236,7 +236,7 @@ class _LoginScreenState extends State<LoginScreen>
       listener: _onAuthStateChanged,
       child: Scaffold(
         resizeToAvoidBottomInset: false,
-        backgroundColor: const Color(0xFF1A1A1A),
+        backgroundColor:  AppColors.primary,
         body: Stack(
           children: [
               // Animated background
@@ -249,14 +249,17 @@ class _LoginScreenState extends State<LoginScreen>
                       scale: _bgScale.value,
                       alignment: Alignment.center,
                       child: Container(
-                        height: MediaQuery.sizeOf(context).height * 0.45,
+                        height: MediaQuery.sizeOf(context).height * 0.55,
                         width: double.infinity,
                         decoration: const BoxDecoration(
+                                    color: Color(0xFF1A1A1A),
+
                           image: DecorationImage(
                             image: AssetImage(
-                              'assets/images/ektaHr_feature_graphic.png',
+                              'assets/images/ektahr_logo_white.png',
                             ),
                             fit: BoxFit.cover,
+                            
                           ),
                           borderRadius: BorderRadius.only(
                             bottomLeft: Radius.circular(40),

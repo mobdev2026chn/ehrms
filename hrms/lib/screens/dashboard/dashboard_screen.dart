@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/walking_turtle_emoji.dart';
 import '../../config/constants.dart';
+import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/break_datetime_util.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/punch_flow_log.dart';
@@ -147,7 +148,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
               SizedBox(width: 16),
-              Text('submitting attendance please wait..'),
+              Flexible(child: Text('submitting attendance please wait..')),
             ],
           ),
         ),
@@ -986,35 +987,54 @@ class _DashboardScreenState extends State<DashboardScreen>
     return index.clamp(0, 4);
   }
 
-  /// Bottom bar: Dashboard (0), Requests (1), and Attendance (2). Punch/break use 5 and 6.
+  /// Canonical bottom bar slots: Home (0), Attendance (1), Break (2), My Request (3).
+  /// Maps the active shell screen index to the highlighted nav slot.
+  /// Punch/break use action codes 5 and 6.
   int _bottomBarSelectedIndex() {
-    if (_currentIndex >= 0 && _currentIndex <= 1) return _currentIndex;
-    if (_currentIndex == 4) return 2;
-    return -1;
+    switch (_currentIndex) {
+      case 0:
+        return 0; // Home
+      case 1:
+        return 3; // My Request
+      case 4:
+        return 1; // Attendance
+      default:
+        return -1;
+    }
   }
 
   int _mapBottomNavIndexToScreenIndex(int index) {
-    // Bottom bar third icon is Attendance, which lives at screen index 4.
-    if (index == 2) return 4;
+    // By the time this runs, [AppBottomNavigationBar] has already translated the
+    // tapped slot into a screen index (0=Home, 1=Requests, 4=Attendance);
+    // punch (5) and break (6) are intercepted in onTap before reaching here.
     return _normalizeTabIndex(index);
   }
 
+  /// Canonical bottom-nav items — identical to [AppBottomNavigationBar]'s
+  /// default so the shell (Home / Requests / Attendance tabs) shows the exact
+  /// same bar as standalone screens (Assets, Salary, Profile, …).
+  /// Layout: Home · Attendance · [Punch] · Break · My Request.
   List<NavItem> _buildBottomNavItems() {
     return const <NavItem>[
       NavItem(
-        icon: Icons.dashboard_outlined,
-        activeIcon: Icons.dashboard_rounded,
-        label: 'Dashboard',
+        icon: Icons.grid_view_outlined,
+        activeIcon: Icons.grid_view_rounded,
+        label: 'Home',
+      ),
+      NavItem(
+        icon: Icons.access_time_outlined,
+        activeIcon: Icons.access_time_filled_rounded,
+        label: 'Attendance',
+      ),
+      NavItem(
+        icon: Icons.coffee_outlined,
+        activeIcon: Icons.coffee_rounded,
+        label: 'Break',
       ),
       NavItem(
         icon: Icons.description_outlined,
         activeIcon: Icons.description_rounded,
-        label: 'Requests',
-      ),
-      NavItem(
-        icon: Icons.fact_check_outlined,
-        activeIcon: Icons.fact_check,
-        label: 'Attendance',
+        label: 'My Request',
       ),
     ];
   }
@@ -1288,7 +1308,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     final selfieBytes = await file.readAsBytes();
     if (!mounted) return;
-    final selfie = 'data:image/jpeg;base64,${base64Encode(selfieBytes)}';
+    final selfie =
+        await AttendanceSelfieCompress.compressRawBytesToDataUrl(selfieBytes);
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -2856,9 +2878,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         ? precomputedIsCheckedIn!
         : _isAttendancePunchedIn(_extractAttendanceRecord(todayData));
 
-    List<int> imageBytes = await file.readAsBytes();
-    String base64Image = base64Encode(imageBytes);
-    final selfiePayload = 'data:image/jpeg;base64,$base64Image';
+    // Compress once, off the UI isolate, and reuse the same payload for face
+    // verification and the punch upload (verify previously sent full-res).
+    final imageBytes = await file.readAsBytes();
+    final selfiePayload =
+        await AttendanceSelfieCompress.compressRawBytesToDataUrl(imageBytes);
+    if (!mounted) return;
 
     if (AppConstants.enableAttendanceFaceMatching &&
         requireSelfie &&
@@ -3337,9 +3362,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (ctx) => PopScope(
+                  builder: (ctx) => const PopScope(
                     canPop: false,
-                    child: const AlertDialog(
+                    child: AlertDialog(
                       content: Row(
                         children: [
                           SizedBox(
@@ -3348,7 +3373,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                           SizedBox(width: 16),
-                          Text('Getting location…'),
+                          Flexible(child: Text('Getting location…')),
                         ],
                       ),
                     ),

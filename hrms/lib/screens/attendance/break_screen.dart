@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -10,6 +9,7 @@ import '../../config/app_colors.dart';
 import '../../services/break_service.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
+import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/break_datetime_util.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/face_detection_helper.dart';
@@ -220,7 +220,7 @@ class _BreakScreenState extends State<BreakScreen> {
     final file = _imageFile;
     if (file == null) return null;
     final imageBytes = await file.readAsBytes();
-    return 'data:image/jpeg;base64,${base64Encode(imageBytes)}';
+    return AttendanceSelfieCompress.compressRawBytesToDataUrl(imageBytes);
   }
 
   DateTime? _breakStartTime() {
