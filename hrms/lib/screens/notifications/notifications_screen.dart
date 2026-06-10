@@ -157,14 +157,27 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: () async {
+          // replaceCurrent: true makes FcmService swap this NotificationsScreen
+          // for the target on the shared root navigator. Do NOT pop here — the
+          // screen is already gone on success, and popping would remove the
+          // target instead (push-then-pop race on a single navigator).
+          final messenger = ScaffoldMessenger.of(context);
           final navigated = await FcmService.handleNotificationTap(
             data,
             title: title,
             body: body,
+            replaceCurrent: true,
           );
-          if (context.mounted && navigated) {
-            Navigator.of(context).pop();
-          }
+          if (navigated) return;
+          // No module/type matched (e.g. a generic or test notification):
+          // give feedback instead of a silent dead tap.
+          if (!mounted) return;
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text('No related page for this notification.'),
+              duration: Duration(seconds: 2),
+            ),
+          );
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(

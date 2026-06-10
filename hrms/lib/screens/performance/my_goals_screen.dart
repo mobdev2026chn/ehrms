@@ -350,28 +350,28 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                 color: AppColors.textSecondary,
               ),
             ),
-            const SizedBox(height: 22),
-            ElevatedButton.icon(
-              onPressed: () => _showCreateGoalSheet(context),
-              icon: const Icon(Icons.add_rounded, size: 20),
-              label: const Text('Add Goal'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 28,
-                  vertical: 14,
-                ),
-                textStyle: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
-              ),
-            ),
+//const SizedBox(height: 22),
+            // ElevatedButton.icon(
+            //   onPressed: () => _showCreateGoalSheet(context),
+            //   icon: const Icon(Icons.add_rounded, size: 20),
+            //   label: const Text('Add Goal'),
+            //   style: ElevatedButton.styleFrom(
+            //     backgroundColor: AppColors.primary,
+            //     foregroundColor: Colors.white,
+            //     elevation: 0,
+            //     padding: const EdgeInsets.symmetric(
+            //       horizontal: 28,
+            //       vertical: 14,
+            //     ),
+            //     textStyle: const TextStyle(
+            //       fontSize: 15,
+            //       fontWeight: FontWeight.bold,
+            //     ),
+            //     shape: RoundedRectangleBorder(
+            //       borderRadius: BorderRadius.circular(30),
+            //     ),
+            //   ),
+            // ),
           ],
         ),
       ),
@@ -1162,35 +1162,35 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    _fieldCard(
-                      'Link to KRA (Optional)',
-                      DropdownButtonFormField<String>(
-                        initialValue: _selectedKraId,
-                        isExpanded: true,
-                        decoration: _filledInput('None - Don\'t link to KRA'),
-                        items: [
-                          const DropdownMenuItem<String>(
-                            value: null,
-                            child: Text('None - Don\'t link to KRA'),
-                          ),
-                          ...widget.kras.map((k) {
-                            final id = k['_id']?.toString() ?? '';
-                            final title = k['title'] ?? '';
-                            final kpi = k['kpi'] ?? '';
-                            final timeframe = k['timeframe'] ?? '';
-                            return DropdownMenuItem<String>(
-                              value: id,
-                              child: Text(
-                                '$title - $kpi ($timeframe)',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            );
-                          }),
-                        ],
-                        onChanged: (v) => setState(() => _selectedKraId = v),
-                      ),
-                    ),
+                   // const SizedBox(height: 14),
+                    // _fieldCard(
+                    //   'Link to KRA (Optional)',
+                    //   DropdownButtonFormField<String>(
+                    //     initialValue: _selectedKraId,
+                    //     isExpanded: true,
+                    //     decoration: _filledInput('None - Don\'t link to KRA'),
+                    //     items: [
+                    //       const DropdownMenuItem<String>(
+                    //         value: null,
+                    //         child: Text('None - Don\'t link to KRA'),
+                    //       ),
+                    //       ...widget.kras.map((k) {
+                    //         final id = k['_id']?.toString() ?? '';
+                    //         final title = k['title'] ?? '';
+                    //         final kpi = k['kpi'] ?? '';
+                    //         final timeframe = k['timeframe'] ?? '';
+                    //         return DropdownMenuItem<String>(
+                    //           value: id,
+                    //           child: Text(
+                    //             '$title - $kpi ($timeframe)',
+                    //             overflow: TextOverflow.ellipsis,
+                    //           ),
+                    //         );
+                    //       }),
+                    //     ],
+                    //     onChanged: (v) => setState(() => _selectedKraId = v),
+                    //   ),
+                    // ),
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,

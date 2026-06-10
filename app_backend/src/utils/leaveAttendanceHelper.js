@@ -275,16 +275,12 @@ const canCheckInWithHalfDayLeave = (leave, now, shiftStartTime, shiftEndTime, ti
     const midMin = session === 'First Half Day' ? bounds.end : bounds.start;
 
     if (session === 'First Half Day') {
-        // First Half Day leave: employee works SECOND HALF. Check-in allowed from (mid - secondHalfLoginGraceMinutes) to shift end.
-        // secondHalfLoginGraceMinutes = login allowed before mid time (e.g. 30 min before 14:30 => from 14:00). If secondHalfStrictLogin: from mid only.
-        const strict = halfDaySettings && halfDaySettings.secondHalfStrictLogin === true;
-        const graceMins = halfDaySettings?.secondHalfLoginGraceMinutes ?? 0;
-        const checkInFrom = (strict || graceMins === 0) ? midMin : midMin - graceMins;
+        // First Half Day leave: employee works SECOND HALF.
+        // Early punch-in (before the second-half window) is allowed and recorded so the
+        // employee can punch in ahead of the second half starting; late/fine logic handles
+        // the actual session timing. We only block punch-in once the shift has already ended.
         const checkInUntil = shiftEndMin;
 
-        if (currentMinutes < checkInFrom) {
-            return { allowed: false, message: 'You are on leave for the first half and cannot check in/out during this time.' };
-        }
         if (currentMinutes > checkInUntil) {
             return { allowed: false, message: 'Check-in time has passed. Shift ends at ' + shiftEndTime + '.' };
         }
@@ -307,6 +303,39 @@ const canCheckInWithHalfDayLeave = (leave, now, shiftStartTime, shiftEndTime, ti
         return { allowed: true };
     }
     return { allowed: true };
+};
+
+/**
+ * For a First Half Day leave (employee works the SECOND half), check-in should become available a
+ * little before the second half actually starts, so the employee can punch in ahead of time.
+ * Returns true when `now` is inside the early-login window [mid - grace, mid) of a First Half Day leave.
+ *
+ * Although the clock is still technically inside the (first-half) leave session during this window,
+ * the employee is about to start their working half and must be allowed to check in. Callers use this
+ * to relax the "currently in leave session" block for the early second-half login only.
+ *
+ * Grace comes from halfDaySettings.secondHalfLoginGraceMinutes (fallback SESSION_2_EARLY_CHECKIN_MINUTES
+ * = 30). If secondHalfStrictLogin is true, grace is 0 (window collapses, so this returns false until mid).
+ */
+const isWithinSecondHalfEarlyLoginWindow = (leave, now, shiftStartTime, shiftEndTime, timeZone, halfDaySettings = null, currentMinutesOverride = null) => {
+    if (!leave || !isHalfDayLeaveType(leave.leaveType)) return false;
+    const session = String(resolveHalfDaySession(leave) ?? '').trim();
+    if (session !== 'First Half Day') return false;
+    const bounds = getSessionBoundsMinutes(session, shiftStartTime, shiftEndTime, halfDaySettings);
+    if (!bounds) return false;
+    // First Half Day leave → working (second) half begins at the midpoint (bounds.end).
+    const midMin = bounds.end;
+    const strict = halfDaySettings?.secondHalfStrictLogin === true;
+    const grace = strict ? 0 : (Number(halfDaySettings?.secondHalfLoginGraceMinutes ?? SESSION_2_EARLY_CHECKIN_MINUTES) || 0);
+    const windowStart = midMin - grace;
+    let currentMinutes;
+    if (typeof currentMinutesOverride === 'number' && currentMinutesOverride >= 0 && currentMinutesOverride < 24 * 60) {
+        currentMinutes = Math.floor(currentMinutesOverride);
+    } else {
+        const effectiveTz = timeZone || DEFAULT_BUSINESS_TIMEZONE;
+        currentMinutes = getLocalHoursMinutes(now, effectiveTz).currentMinutes;
+    }
+    return currentMinutes >= windowStart && currentMinutes < midMin;
 };
 
 /**
@@ -1089,6 +1118,7 @@ const getShiftTimings = (
     let workHours = null;
     let permissionPolicy = null;
     let breakPolicy = null;
+    let overtimePolicy = null;
     /** Embedded company row used for timings after rotational resolution (for logs / UI). */
     let effectiveShiftName = null;
     /** Mongo ObjectId string of the resolved embedded shift row (same calendar day as timings). */
@@ -1229,6 +1259,15 @@ const getShiftTimings = (
                     customFinePerHour: Math.max(0, Number(shift.breakPolicy.customFinePerHour || 0))
                 };
             }
+            if (shift.overtimePolicy && typeof shift.overtimePolicy === 'object') {
+                const rawEnabled = shift.overtimePolicy.enabled;
+                const rawMult = Number(shift.overtimePolicy.multiplier);
+                overtimePolicy = {
+                    // Tri-state: null = not configured (fall back to AttendanceTemplate.allowOvertime).
+                    enabled: rawEnabled == null ? null : rawEnabled === true,
+                    multiplier: Number.isFinite(rawMult) && rawMult > 0 ? rawMult : null
+                };
+            }
 
             const missingStandardWindow =
                 shiftType !== 'open' &&
@@ -1274,6 +1313,7 @@ const getShiftTimings = (
         workHours,
         permissionPolicy,
         breakPolicy,
+        overtimePolicy,
         effectiveShiftName,
         effectiveShiftId
     };
@@ -1864,6 +1904,7 @@ module.exports = {
     revertAttendanceForDeletedLeave,
     canCheckInWithHalfDayLeave,
     canCheckOutWithHalfDayLeave,
+    isWithinSecondHalfEarlyLoginWindow,
     getHalfDaySessionMessage,
     isCurrentlyInLeaveSession,
     getLeaveMessageForUI,

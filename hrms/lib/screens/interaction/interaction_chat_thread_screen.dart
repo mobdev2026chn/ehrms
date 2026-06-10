@@ -7,6 +7,7 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:image_picker/image_picker.dart';
@@ -94,35 +95,45 @@ void showChatTopBanner(BuildContext context, String message) {
             ],
           ),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Stack(
             children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: const BoxDecoration(
-                  color: Color(0x33FFFFFF),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.notifications_none, size: 16, color: Colors.white),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  message,
-                  maxLines: 6,
-                  overflow: TextOverflow.fade,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
+              // Centered text across the full banner width, regardless of
+              // how many lines it wraps to. Horizontal padding keeps it
+              // clear of the leading icon and trailing close button.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 34),
+                child: Center(
+                  child: Text(
+                    message,
+                    maxLines: 6,
+                    overflow: TextOverflow.fade,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: _hideChatTopBanner,
-                child: const Icon(Icons.close, size: 18, color: Colors.white),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  width: 26,
+                  height: 26,
+                  decoration: const BoxDecoration(
+                    color: Color(0x33FFFFFF),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.notifications_none, size: 16, color: Colors.white),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: GestureDetector(
+                  onTap: _hideChatTopBanner,
+                  child: const Icon(Icons.close, size: 18, color: Colors.white),
+                ),
               ),
             ],
           ),
@@ -186,6 +197,10 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   Timer? _typingTimer;
   Timer? _markReadDebounce;
   final Set<String> _markReadInFlight = <String>{};
+  /// Received message ids already marked read this session — one PATCH per id,
+  /// so opening the thread reliably clears the server unread count without
+  /// re-marking on every rebuild.
+  final Set<String> _markedReadIds = <String>{};
   /// From `GET /interaction/polls` — option ids the current user selected per poll.
   Map<String, List<String>> _myPollOptionIds = {};
   bool _showScrollToBottom = false;
@@ -291,7 +306,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     return CircleAvatar(
       radius: radius,
       backgroundColor: url != null ? Colors.transparent : bg,
-      backgroundImage: url != null ? NetworkImage(url) : null,
+      backgroundImage: url != null ? CachedNetworkImageProvider(url) : null,
       onBackgroundImageError: url == null
           ? null
           : (_, __) {
@@ -1308,10 +1323,14 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (me == null) return;
     final ids = <String>[];
     for (final m in _messages.take(30)) {
-      if (m['readStatus'] == true) continue;
+      // Don't gate on `readStatus`: for group/broadcast messages that flag does
+      // not reliably mean "the current user read it", so trusting it leaves the
+      // conversation's unread count stuck. Instead mark every received message
+      // once (deduped via _markedReadIds), which clears the count server-side.
       if (m['senderId']?.toString() == me) continue;
       final id = m['_id']?.toString();
       if (id == null || id.isEmpty) continue;
+      if (_markedReadIds.contains(id)) continue;
       if (_markReadInFlight.contains(id)) continue;
       ids.add(id);
       _markReadInFlight.add(id);
@@ -1321,6 +1340,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       ids.map((id) async {
         try {
           await InteractionService.instance.markMessageRead(id);
+          _markedReadIds.add(id);
         } catch (_) {
           // Ignore read receipt failures for smooth chat UX.
         } finally {
@@ -1382,13 +1402,6 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     await _upload(x.path, x.name, 'image');
   }
 
-  Future<void> _pickVideo(ImageSource source) async {
-    final pick = ImagePicker();
-    final x = await pick.pickVideo(source: source);
-    if (x == null) return;
-    await _upload(x.path, x.name, 'file');
-  }
-
   Future<void> _pickFile() async {
     final r = await FilePicker.platform.pickFiles();
     if (r == null || r.files.isEmpty) return;
@@ -1401,7 +1414,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   Future<void> _pickAudioFile() async {
     final r = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['mp3', 'm4a', 'aac', 'wav', 'ogg'],
+      allowedExtensions: const ['mp3', 'm4a', 'aac', 'wav'],
     );
     if (r == null || r.files.isEmpty) return;
     final f = r.files.first;
@@ -1433,7 +1446,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         if (!mounted) return;
         _upsertMessageFromSendOrSocket(m);
         final id = m['_id']?.toString() ?? '';
-        final mediaMissing = (type == 'image' || type == 'file' || type == 'voice') &&
+        final mediaMissing = (type == 'image' || type == 'file' || type == 'voice' || type == 'video') &&
             _messageMediaUrl(m) == null &&
             id.isNotEmpty;
         if (mediaMissing) {
@@ -1499,14 +1512,6 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
               onTap: () {
                 Navigator.pop(ctx);
                 _pickImage(ImageSource.gallery);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.video_library_outlined),
-              title: const Text('Video library'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickVideo(ImageSource.gallery);
               },
             ),
             ListTile(
@@ -1627,9 +1632,12 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (!mounted) return;
     if (!await _audioRecorder.hasPermission()) return;
     final dir = await getTemporaryDirectory();
-    final filePath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.ogg';
+    // Record AAC/m4a, not Opus/.ogg: the interaction server's upload filter
+    // rejects OGG ("OGG, MP4, and WEBM file formats are not supported"), so an
+    // Opus recording could never be sent. m4a is on the server allowlist.
+    final filePath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
     await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.opus),
+      const RecordConfig(encoder: AudioEncoder.aacLc),
       path: filePath,
     );
     if (mounted) {
@@ -1669,6 +1677,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   String _replySnippetFor(Map<String, dynamic> msg) {
     final t = msg['messageType']?.toString() ?? 'text';
     if (t == 'image') return 'Photo';
+    if (t == 'video') return 'Video';
     if (t == 'file') return msg['fileName']?.toString() ?? 'Document';
     if (t == 'voice') return 'Voice message';
     if (t == 'poll') return 'Poll';
@@ -1722,7 +1731,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     final a = s['avatar']?.toString();
     if (a == null || a.isEmpty) return null;
     final u =
-        a.startsWith('http://') || a.startsWith('https://') ? a : AppConstants.getLmsFileUrl(a);
+        a.startsWith('http://') || a.startsWith('https://') ? a : AppConstants.getInteractionFileUrl(a);
     return u.startsWith('http') ? u : null;
   }
 
@@ -1735,7 +1744,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (raw == null || raw.isEmpty) return null;
     if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
     if (raw.startsWith('/') || raw.contains('/uploads/') || raw.startsWith('uploads/')) {
-      final u = AppConstants.getLmsFileUrl(raw);
+      // Chat uploads live on the interaction host, not the geo [baseUrl] host.
+      final u = AppConstants.getInteractionFileUrl(raw);
       return u.startsWith('http') ? u : null;
     }
     return null;
@@ -1869,7 +1879,48 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
             ? Text('Image', style: TextStyle(color: textColor.withValues(alpha: 0.7)))
             : ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.network(url, width: 220, fit: BoxFit.cover),
+                child: GestureDetector(
+                  onTap: () => launchUrl(Uri.parse(url)),
+                  child: CachedNetworkImage(
+                    imageUrl: url,
+                    width: 220,
+                    // Fixed thumbnail height so the bubble stays compact and
+                    // doesn't expand to the image's full natural size once it
+                    // finishes loading. Tap opens the full image.
+                    height: 220,
+                    fit: BoxFit.cover,
+                    fadeInDuration: const Duration(milliseconds: 120),
+                    placeholder: (_, __) => Container(
+                      width: 220,
+                      height: 220,
+                      color: Colors.black.withValues(alpha: 0.04),
+                      alignment: Alignment.center,
+                      child: const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      width: 220,
+                      height: 220,
+                      color: Colors.black.withValues(alpha: 0.04),
+                      alignment: Alignment.center,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.broken_image_outlined,
+                              color: textColor.withValues(alpha: 0.5)),
+                          const SizedBox(height: 4),
+                          Text('Tap to open',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: textColor.withValues(alpha: 0.6))),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               );
         break;
       case 'file':
@@ -1881,6 +1932,21 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.insert_drive_file, color: textColor.withValues(alpha: 0.8)),
+              const SizedBox(width: 8),
+              Flexible(child: Text(name, style: TextStyle(color: textColor))),
+            ],
+          ),
+        );
+        break;
+      case 'video':
+        final name = msg['fileName']?.toString() ?? 'Video';
+        final url = _messageMediaUrl(msg);
+        inner = InkWell(
+          onTap: url != null ? () => launchUrl(Uri.parse(url)) : null,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.play_circle_fill, color: textColor.withValues(alpha: 0.8)),
               const SizedBox(width: 8),
               Flexible(child: Text(name, style: TextStyle(color: textColor))),
             ],
@@ -1935,6 +2001,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         inner = pollId == null
             ? Text(titleText, style: TextStyle(color: textColor.withValues(alpha: 0.7)))
             : _PollInlineCard(
+                key: ValueKey<String>('poll-$pollId'),
                 pollId: pollId,
                 titleText: titleText,
                 embeddedPollOptions: pollOptsFromMsg,
@@ -2174,7 +2241,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       return Center(
         child: Text(
           'Search messages…',
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 15),
+          style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
         ),
       );
     }
@@ -2310,9 +2377,9 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                   child: _searchOpen
                       ? Container(
                           height: 40,
-                          padding: const EdgeInsets.only(left: 4, right: 2),
+                          padding: const EdgeInsets.only(left: 4, right: 12),
                           decoration: BoxDecoration(
-                            color: Colors.grey.shade200,
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(22),
                             border: Border.all(color: Colors.grey.shade400),
                           ),
@@ -2329,7 +2396,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                     border: InputBorder.none,
                                     hintText: 'Search messages...',
                                     hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 15),
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                                   ),
                                   onChanged: (_) => setState(() {}),
                                 ),
@@ -2444,7 +2511,19 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                 }
                               }
                               pieces.add(_bubble(msg));
+                              // Key the row by message id so each item's
+                              // element (and any stateful child like a poll
+                              // card or voice player) stays bound to its own
+                              // message when the list reorders — inserting a
+                              // new message at index 0 shifts every index, and
+                              // without a key Flutter reuses State by position,
+                              // which flashes the previous poll's data for a
+                              // frame before it reloads.
+                              final rowKey = ValueKey<String>(
+                                msg['_id']?.toString() ?? 'idx-$i',
+                              );
                               return Column(
+                                key: rowKey,
                                 mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: pieces,
@@ -2735,6 +2814,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
 /// Web-style poll card in the chat stream (options + Vote).
 class _PollInlineCard extends StatefulWidget {
   const _PollInlineCard({
+    super.key,
     required this.pollId,
     required this.titleText,
     this.embeddedPollOptions,
@@ -3050,7 +3130,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                                               });
                                             },
                                     ),
-                                    Expanded(child: Text(label, style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)))),
+                                    Expanded(child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)))),
                                   ],
                                 ),
                               ),
@@ -3077,7 +3157,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(vertical: 2),
                                 child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     Checkbox(
                                       value: checked,
@@ -3095,7 +3175,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                                               });
                                             },
                                     ),
-                                    Expanded(child: Text(label, style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)))),
+                                    Expanded(child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)))),
                                   ],
                                 ),
                               ),

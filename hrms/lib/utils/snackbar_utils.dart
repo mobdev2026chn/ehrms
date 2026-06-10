@@ -220,7 +220,7 @@ class _TopSnackBarWidgetState extends State<_TopSnackBarWidget>
                     Expanded(
                       child: Text(
                         widget.message,
-                        textAlign: TextAlign.left,
+                        textAlign: TextAlign.center,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

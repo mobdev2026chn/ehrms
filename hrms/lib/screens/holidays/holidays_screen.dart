@@ -4,6 +4,7 @@ import '../../config/app_colors.dart';
 import '../../models/holiday_model.dart';
 import '../../services/holiday_service.dart';
 import '../../utils/error_message_utils.dart';
+import '../../utils/swr_cache.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -40,6 +41,8 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     DateTime.now().year + 2,
   ];
 
+  String get _cacheKey => 'holidays_$_selectedYear';
+
   @override
   void initState() {
     super.initState();
@@ -47,7 +50,17 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
-    _fetchHolidays();
+    // Stale-while-revalidate: paint last-known holidays instantly (no loader).
+    // Skip the network entirely while the cache is still fresh so moving
+    // tab-to-tab doesn't reload or replay animations ("double load").
+    final cached = SwrCache.get<List<Holiday>>(_cacheKey);
+    if (cached != null) {
+      _holidays = cached;
+      _isLoading = false;
+    }
+    if (!SwrCache.isFresh(_cacheKey)) {
+      _fetchHolidays();
+    }
   }
 
   @override
@@ -57,8 +70,10 @@ class _HolidaysScreenState extends State<HolidaysScreen>
   }
 
   Future<void> _fetchHolidays() async {
+    // Only show the blocking loader when there's nothing cached to display;
+    // a background revalidation must not blank out already-visible data.
     setState(() {
-      _isLoading = true;
+      if (_holidays.isEmpty) _isLoading = true;
       _errorMessage = null;
     });
 
@@ -73,6 +88,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         if (result['success']) {
           _holidays = result['data'];
           _holidays.sort((a, b) => a.date.compareTo(b.date));
+          SwrCache.set(_cacheKey, _holidays);
         } else {
           _errorMessage = ErrorMessageUtils.sanitizeForDisplay(
             result['message']?.toString(),
@@ -87,8 +103,13 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     if (year != null && _selectedYear != year) {
       setState(() {
         _selectedYear = year;
+        // Swap to the new year's cached holidays (or empty) so the list never
+        // shows the previous year's data while the refresh is in flight.
+        _holidays = SwrCache.get<List<Holiday>>(_cacheKey) ?? <Holiday>[];
       });
-      _fetchHolidays();
+      if (!SwrCache.isFresh(_cacheKey)) {
+        _fetchHolidays();
+      }
     }
   }
 
@@ -256,16 +277,6 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         currentIndex: widget.dashboardTabIndex ?? 3,
         onNavigateToIndex: widget.onNavigateToIndex,
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.primary,
-        elevation: 4,
-        onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Add holiday — coming soon')),
-          );
-        },
-        child: const Icon(Icons.add, color: Colors.white, size: 28),
-      ),
       body: Column(
         children: [
           _buildSegmentedToggle(),
@@ -312,7 +323,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 11),
           decoration: BoxDecoration(
-            color: selected ? AppColors.surface : Colors.transparent,
+            color: selected ? AppColors.surface : AppColors.inputFill,
             borderRadius: BorderRadius.circular(10),
             boxShadow: selected
                 ? [
@@ -515,10 +526,18 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     final monthStr = DateFormat('MMM').format(holiday.date).toUpperCase();
     final dayStr = DateFormat('dd').format(holiday.date);
     final isCompany = holiday.type.toLowerCase() == 'company';
+    final isNational = holiday.type.toLowerCase() == 'national';
 
-    final badgeBg = isCompany ? AppColors.primaryLight : AppColors.inputFill;
-    final monthColor =
-        isCompany ? AppColors.primary : AppColors.textSecondary;
+    final badgeBg = isCompany
+        ? AppColors.indigoBg
+        : isNational
+            ? AppColors.primaryLight
+            : AppColors.inputFill;
+    final monthColor = isCompany
+        ? AppColors.indigo
+        : isNational
+            ? AppColors.primary
+            : AppColors.textSecondary;
 
     return Container(
       decoration: BoxDecoration(
@@ -587,8 +606,6 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                 ],
               ),
             ),
-            Icon(Icons.chevron_right_rounded,
-                color: AppColors.textHint, size: 24),
           ],
         ),
       ),
@@ -713,50 +730,166 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         final isCurrentMonth = _selectedYear == DateTime.now().year &&
             month == DateTime.now().month;
 
-        return Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
+        return Material(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
             borderRadius: BorderRadius.circular(16),
-            border: isCurrentMonth
-                ? Border.all(color: AppColors.primary, width: 1.5)
-                : null,
+            onTap: () => _showMonthHolidaysSheet(month, holidays),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: isCurrentMonth
+                    ? Border.all(color: AppColors.primary, width: 1.5)
+                    : null,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    DateFormat('MMM').format(DateTime(_selectedYear, month)),
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  Wrap(
+                    spacing: 5,
+                    runSpacing: 5,
+                    children: [
+                      for (final h in holidays.take(7))
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _dotColor(h.type),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Bottom sheet listing the holidays for the tapped [month].
+  void _showMonthHolidaysSheet(int month, List<Holiday> holidays) {
+    final monthName = DateFormat('MMMM').format(DateTime(_selectedYear, month));
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.7,
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.03),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 24,
+                offset: const Offset(0, -4),
               ),
             ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                DateFormat('MMM').format(DateTime(_selectedYear, month)),
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
-              const Spacer(),
-              Wrap(
-                spacing: 5,
-                runSpacing: 5,
-                children: [
-                  for (final h in holidays.take(7))
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _dotColor(h.type),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Row(
+                    children: [
+                      Text(
+                        '$monthName $_selectedYear',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
                       ),
-                    ),
-                ],
-              ),
-            ],
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryLight,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          holidays.length == 1
+                              ? '1 day'
+                              : '${holidays.length} days',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: holidays.isEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.event_busy_rounded,
+                                size: 48,
+                                color: AppColors.textSecondary,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'No holidays in $monthName',
+                                style:
+                                    TextStyle(color: AppColors.textSecondary),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.separated(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                          itemCount: holidays.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 12),
+                          itemBuilder: (_, i) => _buildHolidayCard(holidays[i]),
+                        ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -884,11 +1017,10 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     Color bgColor;
     Color textColor;
 
-    // Figma: NATIONAL = indigo, COMPANY = amber.
     switch (type.toLowerCase()) {
       case 'company':
-        bgColor = AppColors.primaryLight;
-        textColor = AppColors.primary;
+        bgColor = AppColors.indigoBg;
+        textColor = AppColors.indigo;
         break;
       case 'regional':
         bgColor = AppColors.accent.withValues(alpha: 0.12);
@@ -896,8 +1028,8 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         break;
       case 'national':
       default:
-        bgColor = AppColors.indigoBg;
-        textColor = AppColors.indigo;
+        bgColor = AppColors.primaryLight;
+        textColor = AppColors.primary;
     }
 
     return Container(

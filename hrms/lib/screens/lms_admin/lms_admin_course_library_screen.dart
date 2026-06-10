@@ -3,6 +3,7 @@
 // Mirrors web LMS "Course Library". Read-only on mobile; create/edit/delete
 // surface an informational message (managed from web admin console).
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
 import '../../config/constants.dart';
@@ -283,10 +284,11 @@ class _CourseCard extends StatelessWidget {
                 AspectRatio(
                   aspectRatio: 16 / 10,
                   child: thumb != null && thumb.isNotEmpty
-                      ? Image.network(
-                          AppConstants.getLmsFileUrl(thumb),
+                      ? CachedNetworkImage(
+                          imageUrl: AppConstants.getLmsFileUrl(thumb),
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _ph(),
+                          placeholder: (_, __) => _ph(),
+                          errorWidget: (_, __, ___) => _ph(),
                         )
                       : _ph(),
                 ),

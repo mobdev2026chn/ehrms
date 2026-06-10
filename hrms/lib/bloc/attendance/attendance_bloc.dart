@@ -110,6 +110,7 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
         lateMinutes: event.lateMinutes,
         earlyMinutes: event.earlyMinutes,
         fineAmount: event.fineAmount,
+        clientTime: event.clientTime,
       );
       if (result['success'] == true) {
         emit(
@@ -170,6 +171,7 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
       city: event.city,
       pincode: event.pincode,
       selfie: event.selfie ?? '',
+      clientTime: event.clientTime,
     );
     if (endResult['success'] == true) {
       return null;
@@ -205,6 +207,7 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
         lateMinutes: event.lateMinutes,
         earlyMinutes: event.earlyMinutes,
         fineAmount: event.fineAmount,
+        clientTime: event.clientTime,
       );
       if (result['success'] == true) {
         punchFlowLog('[AttendanceBloc][checkOut] emit=AttendanceCheckOutSuccess');

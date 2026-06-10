@@ -4,6 +4,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -35,6 +36,43 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
 
   /// 0 All, 1 Unread, 2 Groups (matches web tabs).
   int _segment = 0;
+
+  /// Chats the user has opened: rowKey → signature (last-message id/time) at the
+  /// moment it was read. While that signature is unchanged we treat the chat as
+  /// read locally, so the unread badge clears the instant you open the chat and
+  /// stays clear across the post-return reload — even if the server's own unread
+  /// count lags. A genuinely newer message changes the signature and the badge
+  /// returns (WhatsApp behaviour).
+  final Map<String, String> _readSignatures = {};
+
+  String _rowKey(Map<String, dynamic> row) {
+    final gid = row['groupId']?.toString();
+    if (gid != null && gid.isNotEmpty) return 'g:$gid';
+    final r = row['receiver'];
+    final rid = (r is Map ? (r['_id']?.toString() ?? r['id']?.toString()) : null) ??
+        row['receiverId']?.toString();
+    if (rid != null && rid.isNotEmpty) return 'p:$rid';
+    return 'c:${row['chatId']?.toString() ?? ''}';
+  }
+
+  String _lastMsgSignature(Map<String, dynamic> row) {
+    final lm = row['lastMessage'];
+    if (lm is Map) {
+      final id = lm['_id']?.toString() ?? lm['id']?.toString();
+      if (id != null && id.isNotEmpty) return id;
+      final t = lm['sentTime']?.toString();
+      if (t != null && t.isNotEmpty) return t;
+    }
+    return row['sentTime']?.toString() ?? '';
+  }
+
+  /// Mark a chat read locally up to its current latest message.
+  void _markChatReadLocally(Map<String, dynamic> row) {
+    final key = _rowKey(row);
+    final sig = _lastMsgSignature(row);
+    if (_readSignatures[key] == sig) return;
+    setState(() => _readSignatures[key] = sig);
+  }
 
   @override
   void initState() {
@@ -147,9 +185,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     }
     switch (_segment) {
       case 1:
-        return list
-            .where((r) => ((r['unreadCount'] as num?)?.toInt() ?? 0) > 0)
-            .toList();
+        return list.where((r) => _unreadCount(r) > 0).toList();
       case 2:
         return list.where((r) => r['groupId'] != null).toList();
       case 0:
@@ -307,6 +343,10 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
   }
 
   int _unreadCount(Map<String, dynamic> row) {
+    // Locally read (and nothing newer has arrived) → no badge.
+    final key = _rowKey(row);
+    final sig = _readSignatures[key];
+    if (sig != null && sig == _lastMsgSignature(row)) return 0;
     final raw = row['unreadCount'];
     if (raw is num) return raw.toInt();
     if (raw is String) return int.tryParse(raw.trim()) ?? 0;
@@ -353,6 +393,10 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
       peerOnline = null;
       peerLastSeenAt = null;
     }
+    // Clear the unread badge immediately on open (WhatsApp-style); the thread
+    // marks the messages read on the server in the background.
+    final key = _rowKey(row);
+    _markChatReadLocally(row);
     await Navigator.push<void>(
       context,
       MaterialPageRoute(
@@ -368,7 +412,15 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
         ),
       ),
     );
-    _load();
+    await _load();
+    // Re-affirm read up to whatever is now the latest message, covering any
+    // messages that arrived (and were viewed) while the thread was open.
+    if (!mounted) return;
+    final fresh = _chats.firstWhere(
+      (r) => _rowKey(r) == key,
+      orElse: () => const <String, dynamic>{},
+    );
+    if (fresh.isNotEmpty) _markChatReadLocally(fresh);
   }
 
   Widget _segmentBar() {
@@ -492,7 +544,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
                     children: [
                       CircleAvatar(
                         backgroundColor: sugBg,
-                        backgroundImage: url != null ? NetworkImage(url) : null,
+                        backgroundImage: url != null ? CachedNetworkImageProvider(url) : null,
                         child: url == null
                             ? Text(
                                 name.isNotEmpty ? name[0].toUpperCase() : '?',
@@ -545,7 +597,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
       key: ValueKey(listKey),
       leading: CircleAvatar(
         backgroundColor: letterBg,
-        backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
+        backgroundImage: avatarUrl != null ? CachedNetworkImageProvider(avatarUrl) : null,
         child: avatarUrl == null
             ? Text(
                 title.isNotEmpty ? title[0].toUpperCase() : '?',

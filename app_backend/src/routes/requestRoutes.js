@@ -2,9 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const { getLeaves, createLeave, getLeaveTypes, getLeaveTypesForApply, getLeaveBalance, checkLeaveDates, updateLeaveStatus } = require('../controllers/leaveController');
-const { getReimbursements, createReimbursement } = require('../controllers/reimbursementController');
+const { getReimbursements, getReimbursementSummary, createReimbursement } = require('../controllers/reimbursementController');
 
-const { getLoans, createLoan } = require('../controllers/loanController');
+const { getLoans, createLoan, getLoanSummary } = require('../controllers/loanController');
 const {
   requestPayslip,
   getPayslipRequests,
@@ -26,12 +26,15 @@ router.post('/leave', protect, createLeave);
 router.patch('/leave/:id/status', protect, updateLeaveStatus); // Approve/Reject leave
 
 // Reimbursement (Expense) Routes
+router.get('/reimbursement/summary', protect, getReimbursementSummary);
 router.get('/reimbursement', protect, getReimbursements);
 router.post('/reimbursement', protect, createReimbursement);
+router.get('/expense/summary', protect, getReimbursementSummary);
 router.get('/expense', protect, getReimbursements);
 router.post('/expense', protect, createReimbursement);
 
 // Loan Routes
+router.get('/loan/summary', protect, getLoanSummary);
 router.get('/loan', protect, getLoans);
 router.post('/loan', protect, createLoan);
 

@@ -23,6 +23,7 @@ class AttendanceRepository {
     int? lateMinutes,
     int? earlyMinutes,
     double? fineAmount,
+    String? clientTime,
   }) async {
     return _attendance.checkIn(
       lat,
@@ -36,6 +37,7 @@ class AttendanceRepository {
       lateMinutes: lateMinutes,
       earlyMinutes: earlyMinutes,
       fineAmount: fineAmount,
+      clientTime: clientTime,
     );
   }
 
@@ -52,6 +54,7 @@ class AttendanceRepository {
     int? lateMinutes,
     int? earlyMinutes,
     double? fineAmount,
+    String? clientTime,
   }) async {
     return _attendance.checkOut(
       lat,
@@ -65,6 +68,7 @@ class AttendanceRepository {
       lateMinutes: lateMinutes,
       earlyMinutes: earlyMinutes,
       fineAmount: fineAmount,
+      clientTime: clientTime,
     );
   }
 

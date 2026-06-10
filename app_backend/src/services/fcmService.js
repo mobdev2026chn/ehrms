@@ -9,6 +9,32 @@ const fs = require('fs');
 
 let _initialized = false;
 
+/**
+ * Infer { module, type } from a notification's title/body when the caller did not put them in `data`.
+ * Mirrors the app's client-side inference so a tap always routes to the right screen, even for
+ * pushes sent by external callers (e.g. the web admin backend via /notifications/send-push).
+ * Checks announcement first (so an announcement mentioning "leave" is not mis-routed), then the
+ * request modules most-specific first (e.g. "reimbursement" => expense before generic checks).
+ * @returns {{ module: string, type: string }} empty strings when nothing matches.
+ */
+function inferModuleAndTypeFromText(title, body) {
+    const text = `${title || ''} ${body || ''}`.toLowerCase();
+    let module = '';
+    if (/announcement/.test(text)) module = 'announcement';
+    else if (/reimbursement|expense|claim/.test(text)) module = 'expense';
+    else if (/loan/.test(text)) module = 'loan';
+    else if (/payslip|pay slip|salary slip/.test(text)) module = 'payslip';
+    else if (/permission/.test(text)) module = 'permission';
+    else if (/leave/.test(text)) module = 'leave';
+    else if (/attendance/.test(text)) module = 'attendance';
+    else if (/performance|appraisal|review/.test(text)) module = 'performance';
+    if (!module || module === 'announcement') return { module, type: '' };
+    let type = '';
+    if (/approved/.test(text)) type = `${module}_approved`;
+    else if (/rejected|declined/.test(text)) type = `${module}_rejected`;
+    return { module, type };
+}
+
 function init() {
     if (_initialized) return admin.app();
     // Prefer env; then app_backend/firebase-service-account.json (works when PM2 runs from src/scripts)
@@ -70,6 +96,18 @@ async function sendToToken(token, { title, body, data = {}, ...options } = {}) {
                 Object.entries(data).map(([k, v]) => [String(k), String(v == null ? '' : v)])
             ),
         };
+        // Guarantee module/type so the app can route the tap. Callers that already set them (our own
+        // helpers below) are untouched; external callers (web admin send-push) get them inferred from text.
+        if (!dataObj.module || !dataObj.module.trim()) {
+            const inferred = inferModuleAndTypeFromText(title, body);
+            if (inferred.module) {
+                dataObj.module = inferred.module;
+                if (inferred.type && (!dataObj.type || !dataObj.type.trim())) {
+                    dataObj.type = inferred.type;
+                }
+                console.log('[FCM] sendToToken: inferred module=', inferred.module, 'type=', inferred.type || 'none', 'from title/body (caller omitted them)');
+            }
+        }
         const payload = {
             token,
             data: dataObj,
@@ -143,6 +181,7 @@ async function sendLeaveApprovedNotification(leaveDoc, staff = null) {
         body,
         data: {
             module: 'leave',
+            screen: 'leave',
             type: 'leave_approved',
             staffId: staffIdStr,
             leaveType,
@@ -190,6 +229,7 @@ async function sendLeaveRejectedNotification(leaveDoc, staff = null) {
         body,
         data: {
             module: 'leave',
+            screen: 'leave',
             type: 'leave_rejected',
             staffId: staffIdStr,
             leaveType,
@@ -237,6 +277,7 @@ async function sendExpenseApprovedNotification(expenseDoc, staff = null) {
     const body = `Your ${type} request ${amount ? `of ${amount} ` : ''}has been approved.`;
     return _sendToEmployee(employeeId, 'Expense Approved', body, {
         module: 'expense',
+        screen: 'expense',
         type: 'expense_approved',
         staffId: String(employeeId),
         expenseId: String(expenseDoc._id || ''),
@@ -249,6 +290,7 @@ async function sendExpenseRejectedNotification(expenseDoc, staff = null) {
     const body = `Your expense request has been rejected.`;
     return _sendToEmployee(employeeId, 'Expense Rejected', body, {
         module: 'expense',
+        screen: 'expense',
         type: 'expense_rejected',
         staffId: String(employeeId),
         expenseId: String(expenseDoc._id || ''),
@@ -264,6 +306,7 @@ async function sendPayslipApprovedNotification(payslipDoc, staff = null) {
     const body = `Your payslip request for ${monthNames[m-1]} ${y} has been approved.`;
     return _sendToEmployee(employeeId, 'Payslip Approved', body, {
         module: 'payslip',
+        screen: 'payslips',
         type: 'payslip_approved',
         staffId: String(employeeId),
         payslipId: String(payslipDoc._id || ''),
@@ -276,6 +319,7 @@ async function sendPayslipRejectedNotification(payslipDoc, staff = null) {
     const body = `Your payslip request has been rejected.`;
     return _sendToEmployee(employeeId, 'Payslip Rejected', body, {
         module: 'payslip',
+        screen: 'payslips',
         type: 'payslip_rejected',
         staffId: String(employeeId),
         payslipId: String(payslipDoc._id || ''),
@@ -289,6 +333,7 @@ async function sendLoanApprovedNotification(loanDoc, staff = null) {
     const body = `Your loan request ${amount ? `of ${amount} ` : ''}has been approved.`;
     return _sendToEmployee(employeeId, 'Loan Approved', body, {
         module: 'loan',
+        screen: 'loan',
         type: 'loan_approved',
         staffId: String(employeeId),
         loanId: String(loanDoc._id || ''),
@@ -301,6 +346,7 @@ async function sendLoanRejectedNotification(loanDoc, staff = null) {
     const body = `Your loan request has been rejected.`;
     return _sendToEmployee(employeeId, 'Loan Rejected', body, {
         module: 'loan',
+        screen: 'loan',
         type: 'loan_rejected',
         staffId: String(employeeId),
         loanId: String(loanDoc._id || ''),
@@ -314,6 +360,7 @@ async function sendAttendanceApprovedNotification(attendanceDoc, staff = null) {
     const body = dateStr ? `Your attendance for ${dateStr} has been approved.` : `Your attendance has been approved.`;
     return _sendToEmployee(employeeId, 'Attendance Approved', body, {
         module: 'attendance',
+        screen: 'attendance',
         type: 'attendance_approved',
         staffId: String(employeeId),
         attendanceId: String(attendanceDoc._id || ''),
@@ -326,6 +373,7 @@ async function sendAttendanceRejectedNotification(attendanceDoc, staff = null) {
     const body = `Your attendance request has been rejected.`;
     return _sendToEmployee(employeeId, 'Attendance Rejected', body, {
         module: 'attendance',
+        screen: 'attendance',
         type: 'attendance_rejected',
         staffId: String(employeeId),
         attendanceId: String(attendanceDoc._id || ''),
@@ -343,6 +391,7 @@ async function sendAttendanceStatusChangeNotification(attendanceDoc, staff = nul
     const androidTag = dateKey ? `att_status_${employeeId}_${dateKey}` : null;
     return _sendToEmployee(employeeId, 'Attendance Updated', body, {
         module: 'attendance',
+        screen: 'attendance',
         type: 'attendance_status_changed',
         staffId: String(employeeId),
         attendanceId: String(attendanceDoc._id || ''),
@@ -359,7 +408,7 @@ async function sendPerformanceDeadlineNotification(staffIdOrUserId, title, body,
     if (!staff || !staff.fcmToken || typeof staff.fcmToken !== 'string' || !staff.fcmToken.trim()) {
         return { success: false, error: 'No FCM token' };
     }
-    return sendToToken(staff.fcmToken.trim(), { title, body, data: { module: 'performance', ...data } });
+    return sendToToken(staff.fcmToken.trim(), { title, body, data: { module: 'performance', screen: 'performance', ...data } });
 }
 
 const PERFORMANCE_REVIEW_STATUS_LABELS = {
@@ -422,6 +471,7 @@ async function sendPerformanceReviewStatusChangeNotification(reviewDoc, staff = 
     const androidTag = `perf_review_${employeeId}_${String(reviewDoc._id)}`;
     return _sendToEmployee(employeeId, 'Performance Review Updated', body, {
         module: 'performance',
+        screen: 'performance',
         type: 'performance_review_status_changed',
         staffId: String(employeeId),
         reviewId: String(reviewDoc._id || ''),
@@ -433,6 +483,7 @@ async function sendPerformanceReviewStatusChangeNotification(reviewDoc, staff = 
 module.exports = {
     init,
     sendToToken,
+    inferModuleAndTypeFromText,
     sendLeaveApprovedNotification,
     sendLeaveRejectedNotification,
     sendExpenseApprovedNotification,

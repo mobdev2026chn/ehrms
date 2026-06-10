@@ -225,6 +225,16 @@ class RequestService {
         'totalAllowed': (data?['totalAllowed'] is num)
             ? (data!['totalAllowed'] as num).toDouble()
             : 0.0,
+        // Null (not 0) when the backend doesn't send these, so the app can tell
+        // "absent" from "zero" and fall back to computing usage from records.
+        'usedDays': (data?['usedDays'] is num)
+            ? (data!['usedDays'] as num).toDouble()
+            : null,
+        'pendingLeaveDays': (data?['pendingLeaveDays'] is num)
+            ? (data!['pendingLeaveDays'] as num).toDouble()
+            : (data?['pendingLeaves'] is num)
+                ? (data!['pendingLeaves'] as num).toDouble()
+                : null,
       };
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -351,6 +361,26 @@ class RequestService {
     }
   }
 
+  /// All-time loan stats for the logged-in employee (active/pending counts,
+  /// outstanding amount) - independent of any list pagination/filters.
+  Future<Map<String, dynamic>> getLoanSummary() async {
+    try {
+      await _setToken();
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/requests/loan/summary',
+      );
+      final body = response.data;
+      if (body != null && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? {}};
+      }
+      return {'success': false, 'message': body?['message'] ?? 'Error'};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
   // --- EXPENSE ---
 
   Future<Map<String, dynamic>> applyExpense(Map<String, dynamic> data) async {
@@ -417,6 +447,27 @@ class RequestService {
         return {'success': true, 'data': body['data'] ?? body};
       }
       return {'success': true, 'data': body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// All-time reimbursement totals for the logged-in employee (total
+  /// reimbursed, pending amount/count) - independent of any list
+  /// pagination/filters.
+  Future<Map<String, dynamic>> getExpenseSummary() async {
+    try {
+      await _setToken();
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/requests/expense/summary',
+      );
+      final body = response.data;
+      if (body != null && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? {}};
+      }
+      return {'success': false, 'message': body?['message'] ?? 'Error'};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
@@ -706,17 +757,26 @@ class RequestService {
       num quota = (dataMap['monthlyQuotaMinutes'] as num?) ?? 0;
       num consumed = (dataMap['consumedMinutes'] as num?) ?? 0;
       num remaining = (dataMap['remainingMinutes'] as num?) ?? 0;
+      num pending = (dataMap['pendingMinutes'] as num?) ?? 0;
 
       if (remaining <= 0 && quota > 0) remaining = (quota - consumed).clamp(0, quota);
 
       dataMap['monthlyQuotaMinutes'] = quota;
       dataMap['consumedMinutes'] = consumed;
       dataMap['remainingMinutes'] = remaining;
+      dataMap['pendingMinutes'] = pending;
+      // Default to configured=true when the backend omits the flag (older builds) so the
+      // request flow is never blocked by a missing field; disabled defaults to enabled.
+      dataMap['configured'] =
+          dataMap.containsKey('configured') ? dataMap['configured'] == true : true;
+      dataMap['enabled'] =
+          dataMap.containsKey('enabled') ? dataMap['enabled'] == true : true;
 
       punchFlowLog(
         '[PermissionBalance][App] source=$sourceEndpoint '
         'month=${q['month']} year=${q['year']} '
-        'quota=$quota consumed=$consumed remaining=$remaining '
+        'quota=$quota consumed=$consumed remaining=$remaining pending=$pending '
+        'configured=${dataMap['configured']} enabled=${dataMap['enabled']} '
         'raw=${balanceBody?['data']}',
       );
 
@@ -760,6 +820,30 @@ class RequestService {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
       return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Notifies the admin/manager that an employee has exceeded their leave or
+  /// permission quota. Fire-and-forget — silently succeeds if the backend has
+  /// not yet implemented POST /notifications/limit-exceeded.
+  /// [type]: 'leave' or 'permission'
+  Future<void> notifyAdminLimitExceeded({
+    required String type,
+    required num requested,
+    required num limit,
+  }) async {
+    try {
+      await _setToken();
+      await _api.dio.post<dynamic>(
+        '/notifications/limit-exceeded',
+        data: {
+          'type': type,
+          'requested': requested,
+          'limit': limit,
+        },
+      );
+    } catch (_) {
+      // Intentionally silent — admin notification is best-effort.
     }
   }
 

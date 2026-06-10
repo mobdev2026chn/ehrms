@@ -351,7 +351,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
           mapController?.animateCamera(CameraUpdate.newLatLng(newLatLng));
 
-          _updateRoutePolyline(newLatLng);
+          _updateRoutePolyline(newLatLng, accuracyM: location.accuracy);
 
           if (_lastLocation != null) {
             double distance = gl.Geolocator.distanceBetween(
@@ -820,23 +820,47 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     } catch (_) {}
   }
 
-  void _updateRoutePolyline(LatLng newLatLng) {
+  /// Minimum move before a new vertex is added to the traveled line (drops
+  /// GPS jitter that would otherwise zig-zag the path while standing still).
+  static const double _minTraveledMoveMeters = 6;
+
+  void _updateRoutePolyline(LatLng newLatLng, {double? accuracyM}) {
+    // Ignore low-accuracy fixes – they are the main source of route glitches.
+    if (accuracyM != null && accuracyM > kMaxAccuracyM) {
+      _updateRemainingEta();
+      return;
+    }
+
     if (_routePolyline == null) {
       _routePolyline = Polyline(
         polylineId: const PolylineId('traveled'),
         points: [widget.pickupLocation, newLatLng],
-        color: Colors.blueAccent.withOpacity(0.6),
-        width: 4,
+        color: Colors.blueAccent.withOpacity(0.7),
+        width: 5,
+        startCap: Cap.roundCap,
+        endCap: Cap.roundCap,
+        jointType: JointType.round,
+        geodesic: true,
       );
     } else {
       final currentPoints = List<LatLng>.from(_routePolyline!.points);
       final last = currentPoints.isNotEmpty ? currentPoints.last : null;
-      if (last == null ||
-          (last.latitude != newLatLng.latitude ||
-              last.longitude != newLatLng.longitude)) {
-        currentPoints.add(newLatLng);
-        _routePolyline = _routePolyline?.copyWith(pointsParam: currentPoints);
+      if (last != null) {
+        final movedM = gl.Geolocator.distanceBetween(
+          last.latitude,
+          last.longitude,
+          newLatLng.latitude,
+          newLatLng.longitude,
+        );
+        // Skip near-duplicates / jitter; only extend on real movement.
+        if (movedM < _minTraveledMoveMeters) {
+          _updateRemainingEta();
+          _fetchRoadRoute(newLatLng.latitude, newLatLng.longitude);
+          return;
+        }
       }
+      currentPoints.add(newLatLng);
+      _routePolyline = _routePolyline?.copyWith(pointsParam: currentPoints);
     }
     _updateRemainingEta();
     // Refresh road route periodically from current position

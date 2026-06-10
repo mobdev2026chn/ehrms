@@ -3,6 +3,7 @@
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
+import '../../models/customer.dart';
 import '../../models/task.dart';
 import '../../repository/task_repository.dart';
 import '../../utils/error_message_utils.dart';
@@ -61,21 +62,30 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
       List<Task> tasks = event.staffId != null && event.staffId!.isNotEmpty
           ? await _repo.getAssignedTasks(event.staffId!)
           : await _repo.getAllTasks();
-      List<Task> withCustomers = [];
-      for (var task in tasks) {
-        if (task.customerId != null) {
+
+      // Fetch each distinct customer once, all in parallel, instead of a
+      // sequential await-per-task loop (which was N round-trips back to back).
+      final customerIds = <String>{
+        for (final t in tasks)
+          if (t.customerId != null) t.customerId!,
+      };
+      final customersById = <String, Customer>{};
+      await Future.wait(
+        customerIds.map((id) async {
           try {
-            final customer = await _repo.getCustomerById(task.customerId!);
-            withCustomers.add(task.copyWith(customer: customer));
+            customersById[id] = await _repo.getCustomerById(id);
           } catch (_) {
-            // If customer is not visible to this staff, still load the task.
-            // UI will show task without customer details.
-            withCustomers.add(task);
+            // Customer not visible to this staff — task still loads without it.
           }
-        } else {
-          withCustomers.add(task);
-        }
-      }
+        }),
+      );
+
+      final withCustomers = [
+        for (final task in tasks)
+          (task.customerId != null && customersById[task.customerId] != null)
+              ? task.copyWith(customer: customersById[task.customerId])
+              : task,
+      ];
       emit(TasksLoaded(withCustomers));
     } catch (e) {
       emit(TaskFailure(message: ErrorMessageUtils.toUserFriendlyMessage(e)));

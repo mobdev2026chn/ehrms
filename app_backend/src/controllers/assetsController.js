@@ -69,8 +69,22 @@ const getAssets = async (req, res) => {
             baseQuery.status = status;
         }
         if (type) {
-            // Filter by assetCategory (which comes from AssetType collection)
-            baseQuery.assetCategory = type;
+            // `type` is an AssetType *name* coming from the filter dropdown.
+            // It can be stored on the asset in any of three places: the linked
+            // AssetType (assetTypeId), the denormalized `type` string, or the
+            // `assetCategory` string. Match against all of them so the filter
+            // works regardless of how the asset was created.
+            const matchingTypes = await AssetType.find({
+                businessId: businessId,
+                name: type
+            }).select('_id');
+            const typeIds = matchingTypes.map((t) => t._id);
+
+            baseQuery.$or = [
+                { type: type },
+                { assetCategory: type },
+                ...(typeIds.length ? [{ assetTypeId: { $in: typeIds } }] : [])
+            ];
         }
         if (branchId) {
             baseQuery.branchId = branchId;

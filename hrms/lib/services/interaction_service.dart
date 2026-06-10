@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/constants.dart';
@@ -461,40 +462,59 @@ class InteractionService {
     required String chatId,
     required String filePath,
     required String filename,
-    required String type, // image | file | voice
+    required String type, // image | video | file | voice
     String? receiverId,
   }) async {
     final endpoint = '/interaction/chats/$chatId/upload';
     final receiver = receiverId?.trim();
     final hasReceiver = receiver != null && receiver.isNotEmpty;
-    // Keep retries tight; large fallback matrices can appear as "timeout" after many 400s.
-    final payloads = <({Map<String, dynamic> fields, String fileField})>[
-      (
-        fields: {'messageType': type, if (hasReceiver) 'receiverId': receiver},
-        fileField: 'file',
-      ),
-      (
-        fields: {'type': type, if (hasReceiver) 'receiverId': receiver},
-        fileField: 'file',
-      ),
-      if (type == 'voice')
-        (
-          fields: {
-            // Web voice recording paths are usually treated as audio; keep this fallback only for voice.
-            'messageType': 'audio',
-            if (hasReceiver) 'receiverId': receiver,
-          },
-          fileField: 'file',
-        ),
-      if (type == 'voice')
-        (
-          fields: {
-            'messageType': 'voice',
-            if (hasReceiver) 'receiverId': receiver,
-          },
-          fileField: 'audio',
-        ),
-    ];
+
+    // The server rejects an upload as "Invalid file type" when the message-type
+    // value it receives isn't in its accepted set — this is unrelated to the
+    // actual file bytes (which carry a correct Content-Type below). Different
+    // HRMS server versions name the field (`messageType` vs `type`), the value
+    // (`file` vs `document`), and the file part (`file` vs `audio`/`media`)
+    // differently, so we try the most-likely shape first and fall back through
+    // the known conventions. Every attempt fails fast on 400/422, so the chain
+    // stays quick. Order is dedup'd to avoid redundant round-trips.
+    final payloads = <({Map<String, dynamic> fields, String fileField})>[];
+    final seen = <String>{};
+    void add(String typeKey, String typeValue, String fileField) {
+      final sig = '$typeKey=$typeValue:$fileField';
+      if (!seen.add(sig)) return;
+      payloads.add((
+        fields: {typeKey: typeValue, if (hasReceiver) 'receiverId': receiver},
+        fileField: fileField,
+      ));
+    }
+
+    // 1) The intended type, both field-name conventions.
+    add('messageType', type, 'file');
+    add('type', type, 'file');
+    // 2) Generic attachment fallbacks so ANY file still posts even when the
+    //    server doesn't accept the specific type value. `file` and `document`
+    //    are the two values HRMS backends use for arbitrary uploads.
+    add('messageType', 'file', 'file');
+    add('messageType', 'document', 'file');
+    add('type', 'document', 'file');
+    // 3) Voice/audio-specific shapes (web records voice as audio).
+    if (type == 'voice') {
+      add('messageType', 'audio', 'file');
+      add('messageType', 'voice', 'audio');
+      add('messageType', 'audio', 'audio');
+    }
+
+    // Resolve a real MIME type from the filename/path. Without this Dio sends
+    // `application/octet-stream`, which the server's upload filter rejects as
+    // "Invalid Format" (notably for videos picked from the gallery).
+    final contentType = _resolveMediaType(filename, filePath, type);
+
+    // Guarantee the multipart filename carries an extension matching the MIME
+    // type. Android's image_picker often returns gallery videos with an
+    // extension-less cache name (e.g. `.../cache/REC0001`), so a server filter
+    // that validates by file extension rejects the upload as "Invalid file
+    // type" even though the Content-Type header is a correct `video/mp4`.
+    final uploadFilename = _filenameForUpload(filename, contentType, type);
 
     DioException? lastError;
     for (final candidate in payloads) {
@@ -503,7 +523,8 @@ class InteractionService {
           ...candidate.fields,
           candidate.fileField: await MultipartFile.fromFile(
             filePath,
-            filename: filename,
+            filename: uploadFilename,
+            contentType: contentType,
           ),
         });
         final res = await _client().post<Map<String, dynamic>>(
@@ -522,6 +543,103 @@ class InteractionService {
     }
     if (lastError != null) throw lastError;
     return {'success': false, 'message': 'Unable to upload media'};
+  }
+
+  /// Resolve the HTTP `Content-Type` for an outgoing multipart file from its
+  /// name/path. Defaults to `application/octet-stream` only when the type is
+  /// genuinely unknown so the server filter has a real MIME type to validate.
+  DioMediaType? _resolveMediaType(String filename, String filePath, String type) {
+    // Gallery-picked videos sometimes arrive with an extension-less name/path,
+    // so the lookup returns null and Dio falls back to octet-stream — which the
+    // server rejects. Use a sensible default per message type in that case.
+    final mime =
+        lookupMimeType(filename) ?? lookupMimeType(filePath) ?? _fallbackMimeForType(type);
+    if (mime == null) return null;
+    try {
+      return DioMediaType.parse(mime);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Best-effort MIME type when the filename/path carries no usable extension.
+  String? _fallbackMimeForType(String type) {
+    switch (type) {
+      case 'video':
+        return 'video/mp4';
+      case 'image':
+        return 'image/jpeg';
+      default:
+        return null;
+    }
+  }
+
+  /// Ensure the multipart filename ends with an extension consistent with
+  /// [contentType]. Servers that validate uploads by file extension (rather than
+  /// the multipart Content-Type header) reject extension-less names as "Invalid
+  /// file type". Leaves names that already carry a recognised media extension
+  /// untouched.
+  String _filenameForUpload(
+    String filename,
+    DioMediaType? contentType,
+    String type,
+  ) {
+    final name = filename.trim().isEmpty ? 'upload' : filename.trim();
+    if (lookupMimeType(name) != null) return name;
+    final ext =
+        _extensionForMime(contentType?.mimeType) ?? _fallbackExtensionForType(type);
+    if (ext == null) return name;
+    return '$name.$ext';
+  }
+
+  /// Map a resolved MIME type back to a common file extension (no leading dot).
+  String? _extensionForMime(String? mime) {
+    switch (mime) {
+      case 'video/mp4':
+        return 'mp4';
+      case 'video/quicktime':
+        return 'mov';
+      case 'video/x-matroska':
+        return 'mkv';
+      case 'video/webm':
+        return 'webm';
+      case 'video/3gpp':
+        return '3gp';
+      case 'image/jpeg':
+        return 'jpg';
+      case 'image/png':
+        return 'png';
+      case 'image/gif':
+        return 'gif';
+      case 'image/webp':
+        return 'webp';
+      case 'audio/mpeg':
+        return 'mp3';
+      case 'audio/mp4':
+      case 'audio/aac':
+        return 'm4a';
+      case 'audio/wav':
+      case 'audio/x-wav':
+        return 'wav';
+      case 'audio/ogg':
+        return 'ogg';
+      default:
+        return null;
+    }
+  }
+
+  /// Sensible default extension per message type when the MIME is unknown.
+  String? _fallbackExtensionForType(String type) {
+    switch (type) {
+      case 'video':
+        return 'mp4';
+      case 'image':
+        return 'jpg';
+      case 'voice':
+        return 'm4a';
+      default:
+        return null;
+    }
   }
 
   Future<Map<String, dynamic>> markMessageRead(String messageId) async {
@@ -593,7 +711,11 @@ class InteractionService {
     required String filename,
   }) async {
     final form = FormData.fromMap({
-      'file': await MultipartFile.fromFile(filePath, filename: filename),
+      'file': await MultipartFile.fromFile(
+        filePath,
+        filename: filename,
+        contentType: _resolveMediaType(filename, filePath, 'image'),
+      ),
     });
     final res = await _client().post<Map<String, dynamic>>(
       '/interaction/groups/$groupId/avatar',

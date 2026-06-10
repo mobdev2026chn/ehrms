@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import '../config/constants.dart';
 import '../utils/error_message_utils.dart';
+import '../utils/swr_cache.dart';
 import 'api_client.dart';
 import 'web_hrms_api_dio.dart';
 import 'fcm_service.dart';
@@ -293,10 +294,13 @@ class AuthService {
   static String? _messageFromBody(dynamic body) {
     if (body is Map) {
       String? msg;
-      if (body['error'] != null && body['error']['message'] != null) {
-        msg = body['error']['message'] as String?;
+      final err = body['error'];
+      if (err is Map && err['message'] != null) {
+        msg = err['message']?.toString();
+      } else if (err is String && err.isNotEmpty) {
+        msg = err;
       } else {
-        msg = body['message'] as String?;
+        msg = body['message']?.toString();
       }
       if (msg != null && !ErrorMessageUtils.isTechnicalMessage(msg)) {
         return msg;
@@ -337,6 +341,7 @@ class AuthService {
     _api.clearAuthToken();
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
+    await FcmService.clearStoredNotifications();
     await prefs.remove('token');
     await prefs.remove(AppConstants.refreshTokenPrefsKey);
     await prefs.remove('user');
@@ -615,8 +620,10 @@ class AuthService {
       }
     }
     _api.clearAuthToken();
+    SwrCache.clearAll();
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
+    await FcmService.clearStoredNotifications();
     await prefs.clear();
     await _persistCurrentBaseUrl(prefs);
     await _googleSignIn.signOut();

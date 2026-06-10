@@ -9,6 +9,7 @@ import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../services/performance_service.dart';
 import 'self_assessment_form_screen.dart';
+import 'self_assessment_create_screen.dart';
 import 'my_reviews_screen.dart';
 import '../../widgets/app_tab_loader.dart';
 
@@ -79,9 +80,39 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
     }
   }
 
+  Future<void> _openCreateSelfAssessment() async {
+    final created = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const SelfAssessmentCreateScreen()),
+    );
+    if (created == true) _fetchPendingReviews();
+  }
+
+  Widget _buildCreateBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _openCreateSelfAssessment,
+          icon: const Icon(Icons.add_rounded, size: 18),
+          label: const Text('Create Self Assessment'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.primary,
+            side: BorderSide(color: AppColors.primary),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final body = _isLoading
+    final content = _isLoading
         ? const Center(child: AppTabLoader())
         : _error != null
         ? _buildErrorState()
@@ -99,6 +130,13 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
               },
             ),
           );
+
+    final body = Column(
+      children: [
+        _buildCreateBar(),
+        Expanded(child: content),
+      ],
+    );
 
     if (widget.embeddedInModule) return body;
     return Scaffold(
@@ -216,19 +254,6 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 28),
-            _buildInfoCard(
-              icon: Icons.history_rounded,
-              title: 'Recent History',
-              subtitle: 'Last completed: Annual Q3 Review (Oct 15, 2023)',
-            ),
-            const SizedBox(height: 16),
-            _buildInfoCard(
-              icon: Icons.trending_up_rounded,
-              title: 'Growth Streak',
-              subtitle:
-                  '4 consecutive quarters of goal achievement unlocked.',
-            ),
           ],
         ),
       ),
@@ -294,61 +319,6 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
                 size: 20,
                 color: AppColors.primary,
               ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Decorative summary cards shown beneath the empty state.
-  Widget _buildInfoCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 22, color: AppColors.primary),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.3,
-              color: AppColors.textSecondary,
             ),
           ),
         ],

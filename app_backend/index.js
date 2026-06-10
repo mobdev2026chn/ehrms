@@ -24,6 +24,9 @@ const { startPresenceTrackingStatusMonitor } = require('./src/services/presenceT
 const notificationRoutes = require('./src/routes/notificationRoutes');
 const monitoringRoutes = require('./src/routes/monitoringRoutes');
 const grievanceRoutes = require('./src/routes/grievanceRoutes');
+const pmsRoutes = require('./src/routes/pmsRoutes');
+const performanceRoutes = require('./src/routes/performanceRoutes');
+const shiftPolicyRoutes = require('./src/routes/shiftPolicyRoutes');
 
 const app = express();
 
@@ -78,6 +81,11 @@ app.use('/api/breaks', breakRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/grievances', grievanceRoutes);
+// Performance module (mobile app): goals + review cycles/KRA/reviews.
+app.use('/api/pms', pmsRoutes);
+app.use('/api/performance', performanceRoutes);
+// Admin/HR: per-shift break/permission/overtime policies on the attendance template.
+app.use('/api/shift-policies', shiftPolicyRoutes);
 
 // Debug: Log all incoming requests (only in development)
 if (process.env.NODE_ENV !== 'production') {

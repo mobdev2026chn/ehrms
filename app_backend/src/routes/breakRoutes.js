@@ -2,7 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { protect } = require('../middleware/authMiddleware');
 const { createRateLimitHandler } = require('../utils/rateLimitHandler');
-const { getCurrentBreak, startBreak, endBreak } = require('../controllers/breakController');
+const { getCurrentBreak, getTodayBreakSummary, startBreak, endBreak } = require('../controllers/breakController');
 
 const router = express.Router();
 
@@ -15,6 +15,7 @@ const breakLimiter = rateLimit({
 });
 
 router.get('/current', protect, breakLimiter, getCurrentBreak);
+router.get('/today', protect, breakLimiter, getTodayBreakSummary);
 router.post('/start', protect, breakLimiter, startBreak);
 router.patch('/:id/end', protect, breakLimiter, endBreak);
 

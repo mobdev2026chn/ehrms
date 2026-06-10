@@ -17,12 +17,22 @@ class SelfieCameraScreen extends StatefulWidget {
   final String title;
   final bool loadLocationOnOpen;
 
+  /// Optional info line shown as a pill under the status badge (e.g. remaining
+  /// break balance). Displayed immediately when provided.
+  final String? infoText;
+
+  /// Optional async source for [infoText]; resolves while the camera initializes
+  /// and updates the pill when ready (e.g. a fresh break-balance fetch).
+  final Future<String?>? infoTextFuture;
+
   const SelfieCameraScreen({
     super.key,
     this.locationText,
     this.onRefreshLocation,
     this.title = 'Mark Attendance',
     this.loadLocationOnOpen = false,
+    this.infoText,
+    this.infoTextFuture,
   });
 
   static Future<Object?> captureSelfie(
@@ -31,6 +41,8 @@ class SelfieCameraScreen extends StatefulWidget {
     Future<String?> Function()? onRefreshLocation,
     String title = 'Mark Attendance',
     bool loadLocationOnOpen = false,
+    String? infoText,
+    Future<String?>? infoTextFuture,
   }) async {
     final result = await Navigator.of(context).push<Object?>(
       MaterialPageRoute(
@@ -39,6 +51,8 @@ class SelfieCameraScreen extends StatefulWidget {
           onRefreshLocation: onRefreshLocation,
           title: title,
           loadLocationOnOpen: loadLocationOnOpen,
+          infoText: infoText,
+          infoTextFuture: infoTextFuture,
         ),
       ),
     );
@@ -60,11 +74,13 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   bool _isHandlingBack = false;
   String? _capturedFilePath;
   CameraState? _cameraState;
+  String? _infoText;
 
   @override
   void initState() {
     super.initState();
     _locationText = widget.locationText;
+    _infoText = widget.infoText;
     _scanController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2400),
@@ -72,6 +88,12 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     if (widget.loadLocationOnOpen && widget.onRefreshLocation != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _refreshLocation());
     }
+    // Resolve the live info text (e.g. break balance) without blocking camera init.
+    widget.infoTextFuture?.then((value) {
+      if (mounted && value != null && value.trim().isNotEmpty) {
+        setState(() => _infoText = value);
+      }
+    });
     _timeoutTimer = Timer(_initTimeout, () {
       // Timeout overlay disabled; code kept for future use.
     });
@@ -137,8 +159,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       },
       child: Scaffold(
         // Review screen is light (per Figma); camera stays black.
-        backgroundColor:
-            _capturedFilePath != null ? AppColors.background : Colors.black,
+        backgroundColor: _capturedFilePath != null
+            ? AppColors.background
+            : Colors.black,
         appBar: _capturedFilePath != null
             ? null
             : AppBar(
@@ -157,15 +180,20 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                         color: Colors.white.withValues(alpha: 0.18),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.arrow_back,
-                          color: Colors.white, size: 18),
+                      child: const Icon(
+                        Icons.arrow_back,
+                        color: Colors.white,
+                        size: 18,
+                      ),
                     ),
                   ),
                 ),
                 title: Text(
                   widget.title,
                   style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w600),
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
         body: _capturedFilePath != null
@@ -187,7 +215,10 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                           SizedBox(height: 16),
                           Text(
                             'Opening camera…',
-                            style: TextStyle(color: Colors.white70, fontSize: 14),
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
                           ),
                         ],
                       ),
@@ -205,7 +236,12 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                       sensor: Sensor.position(SensorPosition.front),
                       aspectRatio: CameraAspectRatios.ratio_4_3,
                     ),
-                    previewFit: CameraPreviewFit.cover,
+                    // `contain` keeps the full sensor frame centered, so the
+                    // subject the user lines up in the oval is exactly what gets
+                    // captured. `cover` over-scales the front 4:3 frame and
+                    // anchors the crop off-center, pushing the face to a corner.
+                    previewFit: CameraPreviewFit.contain,
+                    previewAlignment: Alignment.center,
                     availableFilters: const [],
                     onMediaCaptureEvent: (MediaCapture event) {
                       if (event.status == MediaCaptureStatus.success &&
@@ -238,6 +274,10 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       children: [
         const SizedBox(height: 20),
         Center(child: _buildStatusBadge()),
+        if (_infoText != null && _infoText!.trim().isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Center(child: _buildInfoPill(_infoText!)),
+        ],
         Expanded(
           child: Center(
             child: FractionallySizedBox(
@@ -310,6 +350,32 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     );
   }
 
+  Widget _buildInfoPill(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.coffee_rounded, color: Colors.white, size: 14),
+          const SizedBox(width: 7),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCaptureButton() {
     return GestureDetector(
       onTap: _takePhoto,
@@ -366,7 +432,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                       left: 12,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.6),
                           borderRadius: BorderRadius.circular(20),
@@ -374,15 +442,21 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.verified_rounded,
-                                size: 14, color: AppColors.primary),
+                            Icon(
+                              Icons.verified_rounded,
+                              size: 14,
+                              color: AppColors.primary,
+                            ),
                             const SizedBox(width: 6),
-                            const Text('FACE MATCHED',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.3)),
+                            const Text(
+                              'FACE MATCHED',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -393,16 +467,21 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                       right: 12,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white.withValues(alpha: 0.92),
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: Text(timeStr,
-                            style: TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600)),
+                        child: Text(
+                          timeStr,
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
                     if (location != null && location.trim().isNotEmpty)
@@ -412,7 +491,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                         bottom: 12,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(14),
@@ -425,29 +506,37 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                           ),
                           child: Row(
                             children: [
-                              Icon(Icons.location_on_rounded,
-                                  size: 18, color: AppColors.primary),
+                              Icon(
+                                Icons.location_on_rounded,
+                                size: 18,
+                                color: AppColors.primary,
+                              ),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Text('CURRENT LOCATION',
-                                        style: TextStyle(
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 0.6,
-                                            color: AppColors.textCaption)),
+                                    Text(
+                                      'CURRENT LOCATION',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 0.6,
+                                        color: AppColors.textCaption,
+                                      ),
+                                    ),
                                     const SizedBox(height: 1),
-                                    Text(location,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w600,
-                                            color: AppColors.textPrimary)),
+                                    Text(
+                                      location,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -460,16 +549,20 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
               ),
             ),
             const SizedBox(height: 18),
-            Text('Review your selfie',
-                style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary)),
+            Text(
+              'Review your selfie',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+              ),
+            ),
             const SizedBox(height: 6),
-            Text('Ensure your face is clearly visible and well-lit.',
-                textAlign: TextAlign.center,
-                style:
-                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            Text(
+              'Ensure your face is clearly visible and well-lit.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
             const SizedBox(height: 18),
             Row(
               children: [
@@ -484,7 +577,8 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                       side: BorderSide.none,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                   ),
                 ),
@@ -498,7 +592,8 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                       backgroundColor: AppColors.primary,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                   ),
                 ),
@@ -522,7 +617,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.camera_alt_outlined, size: 48, color: Colors.white54),
+                const Icon(
+                  Icons.camera_alt_outlined,
+                  size: 48,
+                  color: Colors.white54,
+                ),
                 const SizedBox(height: 16),
                 const Text(
                   'Camera is taking too long',
@@ -607,8 +706,9 @@ class _ScanFramePainter extends CustomPainter {
     const double dash = 8;
     const double gap = 7;
     final bool horiz = (end.dy - start.dy).abs() < 1.0;
-    final double total =
-        horiz ? (end.dx - start.dx).abs() : (end.dy - start.dy).abs();
+    final double total = horiz
+        ? (end.dx - start.dx).abs()
+        : (end.dy - start.dy).abs();
     final double sign = horiz
         ? (end.dx >= start.dx ? 1.0 : -1.0)
         : (end.dy >= start.dy ? 1.0 : -1.0);
@@ -731,10 +831,7 @@ class _ScanLinePainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.bottomCenter,
         end: Alignment.topCenter,
-        colors: [
-          color.withValues(alpha: 0.22),
-          color.withValues(alpha: 0),
-        ],
+        colors: [color.withValues(alpha: 0.22), color.withValues(alpha: 0)],
       ).createShader(bandRect);
     canvas.drawRect(bandRect, bandPaint);
   }

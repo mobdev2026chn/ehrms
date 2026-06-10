@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -14,6 +15,7 @@ import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../services/attendance_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/break_service.dart';
 import '../../services/attendance_template_store.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
@@ -66,6 +68,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   DateTime? _attendanceDataFetchedFor;
   final AttendanceService _attendanceService = AttendanceService();
   final AuthService _authService = AuthService();
+  final BreakService _breakService = BreakService();
   final SettingsService _settingsService = SettingsService();
 
   /// Full business from `GET /settings/business` (fallback when API omits embedded list).
@@ -90,10 +93,21 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   Map<String, dynamic>? _monthData;
   DateTime _selectedDay = DateTime.now();
   DateTime _focusedDay = DateTime.now();
-  bool _calendarInitialPageHandled =
-      false; // Ignore wrong initial onPageChanged (e.g. January)
+  // TableCalendar's internal PageView controller (from onCalendarCreated). Used to
+  // snap the visible page back to _focusedDay when TableCalendar drifts to an
+  // adjacent month on first build — otherwise the grid shows an empty month under
+  // the (correct) _focusedDay header while the loaded data sits on an off-screen page.
+  PageController? _calendarPageController;
   bool _isLoadingMonthData =
       false; // True until month data for History is loaded
+  bool _monthRetryScheduled =
+      false; // Guards the one-shot auto-retry after a failed month fetch
+  int _monthRetryAttempts =
+      0; // Bounded auto-retry count for the currently-focused month
+  String?
+      _monthRetryKey; // 'year-month' the retry budget above belongs to (resets per month)
+  String?
+      _monthLoadError; // Last month-fetch failure reason, surfaced in the calendar strip for diagnosis
 
   // Precomputed maps/sets for calendar coloring (mirrors dashboard calendar)
   final Map<String, String> _dayStatusByDate = {};
@@ -202,12 +216,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   /// Calendar flag and/or today's attendance row (e.g. web check-in with `isPaidLeave: true`, status Present).
+  /// Half-day leave days are excluded: the web/admin backend stamps `isPaidLeave: true` on a
+  /// half-day leave's attendance row, but the employee must still punch in/out for their working
+  /// half. The dedicated half-day logic (checkInAllowed / checkOutAllowed + PRIORITY 1 card)
+  /// governs those days, so this full-day paid-leave block must not pre-empt it.
   bool get _isPaidLeaveContext =>
-      _isPaidLeaveToday || _attendanceData?['isPaidLeave'] == true;
+      _halfDayLeave == null &&
+      (_isPaidLeaveToday || _attendanceData?['isPaidLeave'] == true);
 
   @override
   void initState() {
     super.initState();
+    debugPrint(
+      '[Attendance][lifecycle] initState hashCode=$hashCode isActiveTab=${widget.isActiveTab}',
+    );
     final now = DateTime.now();
     final todayOnly = DateTime(now.year, now.month, now.day);
     if (_focusedDay.isAfter(todayOnly)) {
@@ -227,6 +249,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   @override
   void dispose() {
+    debugPrint('[Attendance][lifecycle] dispose hashCode=$hashCode');
     _dateStripScrollController.dispose();
     super.dispose();
   }
@@ -234,13 +257,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   @override
   void didUpdateWidget(AttendanceScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // When user opens/switches to Attendance tab, refresh once
+    // When user opens/switches to Attendance tab, load once. Do NOT force-refresh:
+    // forcing bypassed the (now shared) month cache and re-fetched from scratch, so
+    // the calendar sat blank for a few seconds on every open even though the
+    // Dashboard had already loaded the same month. A non-forced load serves the
+    // cached month instantly (5-min TTL); pull-to-refresh and post-punch still force
+    // fresh data when it actually matters.
     if (widget.isActiveTab == true && oldWidget.isActiveTab != true) {
       if (_hasInitializedActiveData) {
-        _refreshData(forceRefresh: true);
+        _refreshData();
       } else {
         _hasInitializedActiveData = true;
-        _initData(forceRefresh: true);
+        _initData();
       }
     }
   }
@@ -248,8 +276,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   Future<void> _initData({bool forceRefresh = false}) async {
     if (!mounted) return;
     setState(() {
-      _historyList = [];
-      _monthData = null;
+      // Do NOT wipe _monthData / _historyList here. The calendar coloring depends
+      // only on month data (not template details), so we start its fetch in
+      // parallel below and let it overwrite atomically when fresh data arrives.
+      // Nulling up front used to blank the calendar behind a spinner for the
+      // entire template round-trip.
       _isLoadingHistory = true;
       _isLoadingMonthData = true;
       _retryingTemplateFetch = false;
@@ -257,22 +288,30 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     });
     if (!mounted) return;
 
-    // Fetch fresh template details on open (profile + today attendance).
-    // No re-login needed when templates change; stored in SharedPrefs for check-in alert/selfie.
-    await _fetchAllTemplateDetails();
-    if (!mounted) return;
-
-    setState(() => _isFetchingTemplateDetails = false);
-    if (!mounted) return;
-
+    // Calendar/history/fine data do not depend on the template details, so kick
+    // them off immediately and run them concurrently with the template fetch.
+    // Previously _fetchMonthData was gated behind _fetchAllTemplateDetails, so the
+    // calendar couldn't start loading until profile + today-attendance + the
+    // business-shift lookup all finished — first-open latency was the SUM of both.
+    // Running them in parallel makes it the MAX instead, so the calendar paints
+    // as soon as its own fetch returns.
+    // Order matters: invoke the calendar/history fetches first so their
+    // synchronous cache-check runs before _fetchAllTemplateDetails' top-of-body
+    // clearCachesForRefresh(), preserving any instant cache hit.
     await Future.wait<void>([
-      _fetchHistory(refresh: true),
       _fetchMonthData(
         _focusedDay.year,
         _focusedDay.month,
         forceRefresh: forceRefresh,
       ),
+      _fetchHistory(refresh: true),
       _fetchFineCalculation(),
+      // Fetch fresh template details on open (profile + today attendance).
+      // No re-login needed when templates change; stored in SharedPrefs for
+      // check-in alert/selfie.
+      _fetchAllTemplateDetails().whenComplete(() {
+        if (mounted) setState(() => _isFetchingTemplateDetails = false);
+      }),
     ]);
   }
 
@@ -303,7 +342,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   Future<void> _fetchAllTemplateDetails() async {
     try {
       debugPrint('[Attendance] Fetching template details...');
-      _attendanceService.clearCachesForRefresh();
+      // Only the today/profile data needs to be fresh here. Preserve the month
+      // cache (clearMonth: false) so the calendar can paint instantly from data
+      // the Dashboard already loaded, instead of sitting blank while a fresh
+      // month fetch runs on every tab open.
+      _attendanceService.clearCachesForRefresh(clearMonth: false);
       // Profile and today attendance are independent network calls; fetch them
       // in parallel (was sequential) to save one round-trip on every open, then
       // process profile first since today's template flags depend on it.
@@ -602,21 +645,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     int month, {
     bool forceRefresh = false,
   }) async {
+    debugPrint(
+      '[Attendance] month fetch START $year-$month (forceRefresh=$forceRefresh)',
+    );
     if (mounted) {
       setState(() {
         _isLoadingMonthData = true;
-        // Clear existing month data/maps immediately so UI doesn't show stale markings
-        _monthData = null;
-        _dayStatusByDate.clear();
-        _dayLeaveTypeByDate.clear();
-        _dayWorkHoursByDate.clear();
-        _holidayDateSet.clear();
-        _weekOffDateSet.clear();
-        _alternateWorkDatesInMonth.clear();
-        _presentDateSet.clear();
-        _absentDateSet.clear();
-        _leaveDateSet.clear();
-        _pendingWithCheckInDateSet.clear();
+        // NOTE: do NOT wipe _monthData / the day-status maps here. The success branch
+        // below clears and rebuilds them atomically once fresh data arrives. Wiping up
+        // front made the calendar flash blank on every load and — worse — left it blank
+        // when the fetch failed (e.g. throttled "Too many requests"), so the user had to
+        // tap a second time to make markings appear. Markings are keyed by full yyyy-MM-dd
+        // so stale entries from another month never render on the new month's cells.
       });
     }
     try {
@@ -625,14 +665,135 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           .timeout(_networkTimeout);
       if (!mounted) return;
 
+      // Drop stale / out-of-order responses. While navigating months, more than one month
+      // fetch can be in flight at once; without this guard a slower response for the month
+      // the user just left would overwrite _monthData (and the day-status sets) with the
+      // wrong month's data, so the calendar shows no colors until you toggle months and the
+      // correct fetch happens to win the race. Only apply a response for the focused month.
+      if (_focusedDay.year != year || _focusedDay.month != month) {
+        // This response is for a month the user already navigated away from — don't
+        // apply it. Still clear the loading flag so a dropped/out-of-order response
+        // can never leave the calendar stuck behind a spinner with the dates hidden.
+        // The fetch for the now-focused month manages its own loading state.
+        debugPrint(
+          '[Attendance] month fetch DROPPED (stale) for $year-$month; focused=${_focusedDay.year}-${_focusedDay.month}',
+        );
+        if (mounted) setState(() => _isLoadingMonthData = false);
+        return;
+      }
+
+      if (!result['success']) {
+        debugPrint(
+          '[Attendance] month fetch FAILED $year-$month: ${result['message']}',
+        );
+        setState(() {
+          _isLoadingMonthData = false;
+          _monthLoadError = (result['message'] ?? 'Unknown error').toString();
+        });
+        // Single-click guarantee: a failed month fetch — most often a transient
+        // "Too many requests" throttle when the screen fires several calls at once
+        // on open — used to leave the calendar blank until the user tapped again.
+        // Retry automatically (forcing a fresh fetch) so the markings appear from
+        // the user's first action. Previously loaded data stays visible meanwhile
+        // because we no longer wipe it at the start of a fetch.
+        //
+        // The retry must also fire on forceRefresh paths: tab-switch
+        // (didUpdateWidget) and pull-to-refresh both call _fetchMonthData with
+        // forceRefresh: true, so the old `!forceRefresh` guard meant a transient
+        // failure on the most common entry points left the calendar permanently
+        // colorless until a manual refresh. Retry whenever the first pass was soft
+        // OR we still have nothing to display, bounded per-month so a genuinely
+        // broken endpoint can't spin a 1.2s retry loop forever.
+        const maxMonthRetries = 3;
+        final monthKey = '$year-$month';
+        if (_monthRetryKey != monthKey) {
+          _monthRetryKey = monthKey;
+          _monthRetryAttempts = 0;
+        }
+        final shouldRetry = (!forceRefresh || _monthData == null) &&
+            !_monthRetryScheduled &&
+            _monthRetryAttempts < maxMonthRetries;
+        if (shouldRetry) {
+          _monthRetryScheduled = true;
+          _monthRetryAttempts++;
+          Future.delayed(const Duration(milliseconds: 1200), () {
+            if (!mounted) {
+              _monthRetryScheduled = false;
+              return;
+            }
+            _monthRetryScheduled = false;
+            // Only retry if the user is still looking at the same month.
+            if (_focusedDay.year == year && _focusedDay.month == month) {
+              _fetchMonthData(year, month, forceRefresh: true);
+            }
+          });
+        }
+        return;
+      }
+
+      // Guard: never let a success-but-EMPTY response wipe a calendar that already
+      // has markings for this same month. A second fetch (another screen sharing the
+      // static cache, a transient backend hiccup, a partial response) that comes back
+      // success:true with zero attendance/present/absent/holiday/weekOff/leave was
+      // blanking the colors right after they had loaded — the user saw data appear,
+      // then vanish, and had to tap to reload. A genuinely empty FUTURE month still
+      // loads fine because there are no existing markings to protect.
+      final newData = result['data'];
+      bool listHas(dynamic m, String k) =>
+          m is Map && (m[k] is List) && (m[k] as List).isNotEmpty;
+      final bool newHasMarkers = newData is Map &&
+          (listHas(newData, 'attendance') ||
+              listHas(newData, 'presentDates') ||
+              listHas(newData, 'absentDates') ||
+              listHas(newData, 'holidays') ||
+              listHas(newData, 'weekOffDates') ||
+              listHas(newData, 'leaveDates') ||
+              listHas(newData, 'alternateWorkDatesInMonth'));
+      final bool currentHasMarkers = _dayStatusByDate.isNotEmpty ||
+          _presentDateSet.isNotEmpty ||
+          _absentDateSet.isNotEmpty ||
+          _holidayDateSet.isNotEmpty ||
+          _weekOffDateSet.isNotEmpty ||
+          _leaveDateSet.isNotEmpty;
+      final bool sameFocusedMonth =
+          year == _focusedDay.year && month == _focusedDay.month;
+      if ((newData == null || !newHasMarkers) &&
+          _monthData != null &&
+          currentHasMarkers &&
+          sameFocusedMonth) {
+        debugPrint(
+          '[Attendance] month fetch OK but EMPTY for $year-$month — keeping '
+          'already-loaded markings (ignoring blank response)',
+        );
+        if (mounted) setState(() => _isLoadingMonthData = false);
+        return;
+      }
+
       setState(() {
         _isLoadingMonthData = false;
-
-        if (!result['success']) {
-          return;
-        }
+        // Fresh data arrived — clear the per-month retry budget so a later
+        // transient failure on this month gets its own full set of retries.
+        _monthRetryAttempts = 0;
+        _monthRetryKey = null;
+        _monthLoadError = null;
 
         _monthData = result['data'];
+        final _md = _monthData;
+        if (_md != null) {
+          debugPrint(
+            '[Attendance] month fetch OK $year-$month: '
+            'attendance=${(_md['attendance'] as List?)?.length ?? 0} '
+            'present=${(_md['presentDates'] as List?)?.length ?? 0} '
+            'absent=${(_md['absentDates'] as List?)?.length ?? 0} '
+            'holidays=${(_md['holidays'] as List?)?.length ?? 0} '
+            'weekOff=${(_md['weekOffDates'] as List?)?.length ?? 0} '
+            'leave=${(_md['leaveDates'] as List?)?.length ?? 0}',
+          );
+        } else {
+          debugPrint(
+            '[Attendance] month fetch OK $year-$month but data is NULL',
+          );
+        }
         _embeddedBusinessShiftsFromApi = null;
         final mdRoot = _monthData;
         if (mdRoot != null) {
@@ -817,8 +978,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (mounted) {
         setState(() {
           _isLoadingMonthData = false;
-          _monthData = null;
-          _recentActivityList = [];
+          _monthLoadError = e.toString();
         });
       }
     }
@@ -1257,6 +1417,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       DateTime db = _extractDateOnly(b['date']);
       return db.compareTo(da);
     });
+
+    // Restrict to the focused calendar month only. The backend's month payload can
+    // include a boundary record (e.g. a UTC-midnight date that resolves to the last
+    // day of the PREVIOUS month in local time, or server-side padding), which made
+    // "May 31" show under the June logs. History must list only the selected month.
+    combined = combined.where((e) {
+      try {
+        final d = _extractDateOnly(e['date']);
+        return d.year == _focusedDay.year && d.month == _focusedDay.month;
+      } catch (_) {
+        return false;
+      }
+    }).toList();
 
     // Show history only up to today; exclude future days
     final now = DateTime.now();
@@ -1825,7 +1998,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.grey.shade300),
               image: DecorationImage(
-                image: NetworkImage(imageUrl),
+                image: CachedNetworkImageProvider(imageUrl),
                 fit: BoxFit.cover,
                 onError: (_, __) {},
               ),
@@ -2093,7 +2266,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             color: Colors.orange.shade100,
             image: hasImage
                 ? DecorationImage(
-                    image: NetworkImage(imageUrl),
+                    image: CachedNetworkImageProvider(imageUrl),
                     fit: BoxFit.cover,
                   )
                 : null,
@@ -2795,20 +2968,23 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       } else {
         final shiftEndStr =
             sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb();
+        final shiftStartForFine =
+            sessionTimings?['startTime'] ?? _getShiftStartTime();
         if (shiftEndStr != null && shiftEndStr.isNotEmpty) {
           try {
-            final parts = shiftEndStr.split(':').map(int.parse).toList();
-            final shiftEnd = DateTime(
-              now.year,
-              now.month,
-              now.day,
-              parts[0],
-              parts.length > 1 ? parts[1] : 0,
+            // Anchor to punch-in so overnight shifts (PM start / AM end)
+            // resolve the end boundary on the correct calendar day.
+            final punchInRaw = _attendanceData?['punchIn'];
+            final punchInDt = punchInRaw != null
+                ? DateTime.tryParse(punchInRaw.toString())?.toLocal()
+                : null;
+            final shiftEnd = _resolveShiftEndForEarly(
+              shiftStartStr: shiftStartForFine,
+              shiftEndStr: shiftEndStr,
+              anchor: punchInDt ?? now,
             );
-            if (now.isBefore(shiftEnd)) {
+            if (shiftEnd != null && now.isBefore(shiftEnd)) {
               earlyMinutes = shiftEnd.difference(now).inMinutes;
-              final shiftStartForFine =
-                  sessionTimings?['startTime'] ?? _getShiftStartTime();
               final shiftHours = calculateShiftHours(
                 shiftStartForFine,
                 shiftEndStr,
@@ -3328,6 +3504,50 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return (v != null && v.isNotEmpty) ? v : null;
   }
 
+  /// Resolves the real shift-end DateTime for early-checkout math, handling
+  /// overnight shifts (PM start / AM end, e.g. 21:00→06:00).
+  ///
+  /// Reconstructing the end clock-time on the same calendar day as the start is
+  /// wrong for overnight shifts: the AM end lands *before* the PM start. Instead
+  /// we anchor the shift start to the punch-in day and add the shift duration
+  /// (which [calculateShiftHours] already computes correctly across midnight).
+  ///
+  /// [anchor] should be the punch-in time when available, else the punch-out
+  /// time. Returns null if the times can't be parsed.
+  DateTime? _resolveShiftEndForEarly({
+    required String shiftStartStr,
+    required String shiftEndStr,
+    required DateTime anchor,
+  }) {
+    try {
+      final startParts = shiftStartStr.split(':').map(int.parse).toList();
+      final endParts = shiftEndStr.split(':').map(int.parse).toList();
+      final startMinOfDay =
+          startParts[0] * 60 + (startParts.length > 1 ? startParts[1] : 0);
+      final endMinOfDay =
+          endParts[0] * 60 + (endParts.length > 1 ? endParts[1] : 0);
+      final isOvernight = endMinOfDay <= startMinOfDay;
+
+      var shiftStartDt = DateTime(
+        anchor.year,
+        anchor.month,
+        anchor.day,
+        startParts[0],
+        startParts.length > 1 ? startParts[1] : 0,
+      );
+      // Overnight shift where the anchor (punch-in) is after midnight means the
+      // shift actually began the previous calendar day.
+      if (isOvernight && (anchor.hour * 60 + anchor.minute) < startMinOfDay) {
+        shiftStartDt = shiftStartDt.subtract(const Duration(days: 1));
+      }
+
+      final shiftHours = calculateShiftHours(shiftStartStr, shiftEndStr);
+      return shiftStartDt.add(Duration(minutes: (shiftHours * 60).round()));
+    } catch (_) {
+      return null;
+    }
+  }
+
   static String _formatHhMmForDisplay(String hhmm) {
     final parts = hhmm.split(':');
     final h = int.tryParse(parts[0].trim()) ?? 0;
@@ -3680,15 +3900,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         sessionTimings = _appliedShiftSessionTimesForRecord(record);
       }
       final shiftEndStr = sessionTimings?['endTime'] ?? _getShiftEndTime();
-      final parts = shiftEndStr.split(':').map(int.parse).toList();
+      final shiftStartStr = sessionTimings?['startTime'] ?? _getShiftStartTime();
 
-      final shiftEnd = DateTime(
-        punchOut.year,
-        punchOut.month,
-        punchOut.day,
-        parts[0],
-        parts[1],
+      // Anchor to punch-in so overnight shifts (PM start / AM end) resolve the
+      // end boundary on the correct calendar day instead of the same morning.
+      final punchInRaw = record?['punchIn'];
+      final punchInDt = punchInRaw != null
+          ? DateTime.tryParse(punchInRaw.toString())?.toLocal()
+          : null;
+      final shiftEnd = _resolveShiftEndForEarly(
+        shiftStartStr: shiftStartStr,
+        shiftEndStr: shiftEndStr,
+        anchor: punchInDt ?? punchOut,
       );
+      if (shiftEnd == null) return false;
 
       return punchOut.isBefore(shiftEnd);
     } catch (e) {
@@ -3700,6 +3925,24 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final snap = _profileStaffDataSnapshot;
     if (snap == null) return null;
     return parseJoiningDate(snap['joiningDate']);
+  }
+
+  /// First day of the employee's joining month. The attendance calendar must not
+  /// display months before this — there are no attendance records before the
+  /// Date of Joining. Returns null when the joining date is unknown (no clamp).
+  DateTime? get _joiningMonthStart {
+    final doj = _profileJoiningDateForShiftResolution();
+    if (doj == null) return null;
+    return DateTime(doj.year, doj.month, 1);
+  }
+
+  /// True when [_focusedDay] is already at (or before) the joining month, so the
+  /// calendar cannot navigate further back.
+  bool get _isAtOrBeforeJoiningMonth {
+    final start = _joiningMonthStart;
+    if (start == null) return false;
+    final focusedMonth = DateTime(_focusedDay.year, _focusedDay.month, 1);
+    return !focusedMonth.isAfter(start);
   }
 
   bool _isTodayAssignedRotationalWeekOff() {
@@ -3902,6 +4145,21 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   Widget _buildCustomDay(BuildContext context, DateTime day) {
     final colorScheme = Theme.of(context).colorScheme;
+    // Diagnostic: log the calendar's render state once per rebuild (when it draws
+    // the 1st of the focused month). If colors "vanish after a second", this prints
+    // at that moment and shows whether _monthData went null, the marker sets emptied,
+    // or _focusedDay drifted to another month.
+    if (day.day == 1 && day.month == _focusedDay.month) {
+      debugPrint(
+        '[Attendance][calRender] hashCode=$hashCode '
+        'focused=${_focusedDay.year}-${_focusedDay.month} '
+        'monthDataNull=${_monthData == null} '
+        'present=${_presentDateSet.length} absent=${_absentDateSet.length} '
+        'holiday=${_holidayDateSet.length} weekOff=${_weekOffDateSet.length} '
+        'status=${_dayStatusByDate.length} loading=$_isLoadingMonthData '
+        'historyView=$_showHistoryView',
+      );
+    }
     if (_monthData == null) {
       // Fallback: just show the day number with today's border if month data is unavailable
       final now = DateTime.now();
@@ -3995,6 +4253,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       else if (isHalfDayStatus) {
         bgColor = const Color(0xFFBFDBFE); // Half Day - On Leave blue
       }
+      // 2.5. Present on holiday when allowAttendanceOnHolidays or allowAttendanceOnWeeklyOff is enabled → show as Present
+      else if (isPresentStatus &&
+          isHoliday &&
+          (_attendanceTemplate?['allowAttendanceOnHolidays'] == true ||
+              _attendanceTemplate?['allowAttendanceOnWeeklyOff'] == true)) {
+        bgColor = const Color(0xFFFCEFD2); // Present - Light Amber (Figma)
+      }
       // 3. Holiday
       else if (isHoliday) {
         bgColor = const Color(0xFFEEF0FF); // Holiday - Light Indigo (Figma)
@@ -4002,6 +4267,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       // 3.5. Alternate Working Day (compensation week-off day when employee can check-in)
       else if (_alternateWorkDatesInMonth.contains(dateStr)) {
         bgColor = const Color(0xFFE8D5C4); // Working Day - Light brown
+      }
+      // 3.7. Present on weekoff when allowAttendanceOnWeeklyOff is enabled → show as Present
+      else if (isPresentStatus &&
+          isWeekOff &&
+          _attendanceTemplate?['allowAttendanceOnWeeklyOff'] == true) {
+        bgColor = const Color(0xFFFCEFD2); // Present - Light Amber (Figma)
       }
       // 4. Week Off
       else if (isWeekOff) {
@@ -4065,9 +4336,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         leaveTypeAbbr = AttendanceDisplayUtil.leaveTypeToAbbreviation(
           _dayLeaveTypeByDate[dateStr],
         );
+      } else if (isPresentStatusForAbbr &&
+          isHoliday &&
+          _attendanceTemplate?['allowAttendanceOnHolidays'] == true) {
+        leaveTypeAbbr = 'P';
       } else if (isHoliday) {
         leaveTypeAbbr = 'H';
-      } else if (isWeekOff) {
+      } else if (isWeekOff &&
+          !(isPresentStatusForAbbr &&
+              _attendanceTemplate?['allowAttendanceOnWeeklyOff'] == true)) {
         leaveTypeAbbr = 'WF';
       } else if (_alternateWorkDatesInMonth.contains(dateStr)) {
         leaveTypeAbbr = 'WD';
@@ -4176,12 +4453,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // (logic unchanged) so the calendar/holiday/weekend data stays in sync.
     void shiftMonth(int delta) {
       final nd = DateTime(_focusedDay.year, _focusedDay.month + delta, 1);
+      // Do not navigate before the employee's joining month — there are no records there.
+      final joinStart = _joiningMonthStart;
+      if (joinStart != null && nd.isBefore(joinStart)) {
+        return;
+      }
       setState(() {
         _focusedDay = nd;
         _selectedDay = nd;
       });
       _fetchMonthData(nd.year, nd.month);
     }
+
+    final bool canGoBack = !_isAtOrBeforeJoiningMonth;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 6, 4, 10),
@@ -4200,12 +4484,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               InkWell(
-                onTap: () => shiftMonth(-1),
+                onTap: canGoBack ? () => shiftMonth(-1) : null,
                 borderRadius: BorderRadius.circular(20),
                 child: Padding(
                   padding: const EdgeInsets.all(4),
                   child: Icon(Icons.chevron_left_rounded,
-                      size: 22, color: AppColors.textSecondary),
+                      size: 22,
+                      color: canGoBack
+                          ? AppColors.textSecondary
+                          : AppColors.textSecondary.withOpacity(0.3)),
                 ),
               ),
               const SizedBox(width: 6),
@@ -4702,11 +4989,102 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   child: Column(
                     children: [
                       _buildCalendarHeader(),
+                      // When no month data is available the calendar grid can only
+                      // render faint, colorless day numbers — which reads as a broken
+                      // "stuck loading" calendar. Surface the real state instead: a
+                      // spinner while the fetch is in flight, or an explicit Retry when
+                      // it failed (e.g. throttle / timeout / server error). Markings
+                      // appear automatically once the bounded auto-retry succeeds; this
+                      // is the manual escape hatch.
+                      if (_monthData == null)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 10,
+                            horizontal: 8,
+                          ),
+                          child: _isLoadingMonthData
+                              ? Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: const [
+                                    SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.2,
+                                      ),
+                                    ),
+                                    SizedBox(width: 10),
+                                    Text(
+                                      'Loading attendance…',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                      Icons.error_outline_rounded,
+                                      size: 18,
+                                      color: Color(0xFF64748B),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Flexible(
+                                      child: Text(
+                                        _monthLoadError == null ||
+                                                _monthLoadError!.trim().isEmpty
+                                            ? "Couldn't load this month's attendance."
+                                            : "Couldn't load: ${_monthLoadError!}",
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          color: Color(0xFF64748B),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    TextButton(
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      onPressed: () {
+                                        // Manual retry: reset the per-month budget so the
+                                        // user gets a fresh set of auto-retries too.
+                                        _monthRetryAttempts = 0;
+                                        _monthRetryKey = null;
+                                        _fetchMonthData(
+                                          _focusedDay.year,
+                                          _focusedDay.month,
+                                          forceRefresh: true,
+                                        );
+                                      },
+                                      child: const Text(
+                                        'Retry',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
                       TableCalendar(
                     key: ValueKey(
-                      '${_focusedDay.year}-${_focusedDay.month}',
-                    ), // Force rebuild when month/year changes
-                    firstDay: DateTime(2020),
+                      '${_focusedDay.year}-${_focusedDay.month}'
+                      '-${_joiningMonthStart?.year ?? 0}-${_joiningMonthStart?.month ?? 0}',
+                    ), // Force rebuild when month/year OR firstDay (joiningMonthStart) changes
+                    // Start the calendar at the employee's joining month so months
+                    // before the Date of Joining cannot be displayed/navigated to.
+                    firstDay: _joiningMonthStart ?? DateTime(2020),
                     lastDay: DateTime.now().add(
                       const Duration(days: 730),
                     ), // Allow 2 years in future
@@ -4723,6 +5101,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                     },
                     headerVisible: false, // Using custom header
                     calendarFormat: CalendarFormat.month,
+                    // Disable the calendar's own gestures. Its internal PageView
+                    // (used for horizontal month swipes) would otherwise win the
+                    // gesture arena over the large grid area and swallow vertical
+                    // drags, so the parent SingleChildScrollView never scrolls.
+                    // Month navigation is handled by the < > arrows in the custom
+                    // header (_buildCalendarHeader -> shiftMonth), so swipe isn't
+                    // needed.
+                    availableGestures: AvailableGestures.none,
+                    onCalendarCreated: (controller) =>
+                        _calendarPageController = controller,
                     daysOfWeekHeight: 40,
                     calendarBuilders: CalendarBuilders(
                       defaultBuilder: (context, day, focusedDay) {
@@ -4742,48 +5130,41 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       },
                     ),
                     onPageChanged: (focusedDay) {
-                      final now = DateTime.now();
-                      final currentMonthStart = DateTime(
-                        now.year,
-                        now.month,
-                        1,
-                      );
-                      final incomingMonthStart = DateTime(
-                        focusedDay.year,
-                        focusedDay.month,
-                        1,
-                      );
-                      // TableCalendar can fire onPageChanged on first build with wrong month (e.g. January); ignore that so we stay on current month
-                      if (!_calendarInitialPageHandled) {
-                        _calendarInitialPageHandled = true;
-                        if (incomingMonthStart != currentMonthStart) {
-                          setState(() {
-                            _focusedDay = DateTime(
-                              now.year,
-                              now.month,
-                              now.day,
-                            );
-                            _selectedDay = DateTime(
-                              now.year,
-                              now.month,
-                              now.day,
-                            );
-                          });
-                          _fetchMonthData(now.year, now.month);
-                          return;
-                        }
+                      // Swipe gestures are disabled (availableGestures.none), so the only
+                      // legitimate month change is the header < > arrows (shiftMonth),
+                      // which update _focusedDay AND fetch. TableCalendar also fires a
+                      // SPURIOUS page event on first build, drifting its internal PageView
+                      // to an ADJACENT month (e.g. it lands on July while _focusedDay is
+                      // June). Because outsideBuilder renders blank and the loaded data is
+                      // keyed to _focusedDay's month, that drift shows an EMPTY grid under
+                      // the (correct) June header — the "data loads then vanishes" glitch.
+                      // We must NOT follow the drift (that re-introduced the wrong-month
+                      // fetch / July-blank). Instead snap the PageView back to _focusedDay.
+                      final intendedMonth =
+                          DateTime(_focusedDay.year, _focusedDay.month, 1);
+                      final incomingMonth =
+                          DateTime(focusedDay.year, focusedDay.month, 1);
+                      if (incomingMonth == intendedMonth) {
+                        return; // page already on the focused month — nothing to do
                       }
-                      // Allow navigation to future months to see holidays/weekends
-                      setState(() {
-                        _focusedDay = focusedDay;
-                        // Reset selected day to first day of the new month when swiping
-                        _selectedDay = DateTime(
-                          focusedDay.year,
-                          focusedDay.month,
-                          1,
-                        );
+                      debugPrint(
+                        '[Attendance][calPage] PageView drifted to '
+                        '${focusedDay.year}-${focusedDay.month}; snapping back to '
+                        '${_focusedDay.year}-${_focusedDay.month}',
+                      );
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        final pc = _calendarPageController;
+                        if (!mounted || pc == null || !pc.hasClients) return;
+                        final monthsDelta =
+                            (intendedMonth.year - incomingMonth.year) * 12 +
+                                (intendedMonth.month - incomingMonth.month);
+                        final current =
+                            (pc.page ?? pc.initialPage.toDouble()).round();
+                        final target = current + monthsDelta;
+                        if (target >= 0 && target != current) {
+                          pc.jumpToPage(target);
+                        }
                       });
-                      _fetchMonthData(focusedDay.year, focusedDay.month);
                     },
                   ),
                       const SizedBox(height: 8),
@@ -5145,7 +5526,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   width: 1.5,
                 ),
                 image: DecorationImage(
-                  image: NetworkImage(selfieUrl),
+                  image: CachedNetworkImageProvider(selfieUrl),
                   fit: BoxFit.cover,
                 ),
               ),
@@ -5335,7 +5716,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               ],
             ),
           ),
-          if (_isFetchingTemplateDetails)
+          // Only veil the mark-attendance tab while template details load — its
+          // punch in/out button state depends on them. The history/calendar view
+          // needs only month data (fetched in parallel), so never block it behind
+          // the template round-trip; that overlay was what made the calendar feel
+          // slow to appear on open.
+          if (_isFetchingTemplateDetails && !_showHistoryView)
             Container(
               color: colorScheme.surface.withOpacity(0.7),
               child: Center(
@@ -5637,6 +6023,29 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       return;
     }
     if (isAdminMarked) return;
+
+    // Punch-out with an ongoing break: validate immediately (before location/
+    // selfie work) so the user is told to end the break up front instead of
+    // hitting "Kindly end the break" only after the whole punch flow runs.
+    if (isCheckedIn) {
+      final breakResult = await _breakService.getCurrentBreak();
+      if (!mounted) return;
+      final breakRow = breakResult['data'];
+      final hasActiveBreak =
+          breakResult['success'] == true &&
+          breakRow is Map &&
+          (breakRow['id']?.toString().trim().isNotEmpty ?? false) &&
+          breakRow['endTime'] == null;
+      if (hasActiveBreak) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Please end your break before punching out.',
+          isError: true,
+        );
+        return;
+      }
+    }
+
     _setPunchActionInProgress(
       true,
       message: isCheckedIn ? 'Preparing check-out...' : 'Preparing check-in...',
@@ -6075,17 +6484,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           shouldBlock = true;
         } else if (shiftEndStr != null) {
           try {
-            final parts = shiftEndStr.split(':').map(int.parse).toList();
-            final shiftEnd = DateTime(
-              now.year,
-              now.month,
-              now.day,
-              parts[0],
-              parts[1],
+            final shiftStartForFine =
+                sessionTimings?['startTime'] ?? _getShiftStartTime();
+            // Anchor to punch-in so overnight shifts (PM start / AM end) resolve
+            // the end boundary on the correct calendar day.
+            final punchInRaw = _attendanceData?['punchIn'];
+            final punchInDt = punchInRaw != null
+                ? DateTime.tryParse(punchInRaw.toString())?.toLocal()
+                : null;
+            final shiftEnd = _resolveShiftEndForEarly(
+              shiftStartStr: shiftStartForFine,
+              shiftEndStr: shiftEndStr,
+              anchor: punchInDt ?? now,
             );
-            if (now.isBefore(shiftEnd)) {
-              final shiftStartForFine =
-                  sessionTimings?['startTime'] ?? _getShiftStartTime();
+            if (shiftEnd != null && now.isBefore(shiftEnd)) {
               final earlyMinutes = shiftEnd.difference(now).inMinutes;
               double estimatedFine = 0;
               if (netPerDaySalary != null &&
@@ -6209,7 +6621,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     if (!mounted) return;
 
-    final requireSelfie = _attendanceTemplate?['requireSelfie'] ?? true;
+    // Selfie is required only on punch-out, not on punch-in.
+    final requireSelfie =
+        isCheckedIn ? (_attendanceTemplate?['requireSelfie'] ?? true) : false;
     final requireGeolocation =
         _attendanceTemplate?['requireGeolocation'] ?? true;
     if (kDebugMode) {
@@ -6823,7 +7237,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                   ? null
                                   : _openMarkAttendanceScreen,
                               icon: Icon(
-                                (_attendanceTemplate?['requireSelfie'] ?? true)
+                                isCheckedIn &&
+                                        (_attendanceTemplate?['requireSelfie'] ??
+                                            true)
                                     ? Icons.camera_alt
                                     : Icons.touch_app,
                               ),
@@ -6833,9 +7249,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                               true)
                                           ? 'Selfie Check Out'
                                           : 'Check Out'
-                                    : (_attendanceTemplate?['requireSelfie'] ??
-                                          true)
-                                    ? 'Selfie Check In'
                                     : 'Check In',
                               ),
                               style: ElevatedButton.styleFrom(
@@ -7096,14 +7509,22 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (limit != null) {
       displayList = displayList.take(limit).toList();
     } else if (useMonthData) {
-      final effectivePages = _effectiveHistoryTotalPages();
-      final safePage = _page.clamp(1, effectivePages);
-      final start = (safePage - 1) * _limit;
-      final end = (start + _limit).clamp(0, displayList.length);
-      if (start < displayList.length) {
-        displayList = displayList.sublist(start, end);
-      } else {
-        displayList = [];
+      // 'All', 'This Month' and 'This Week' render the full month without pagination
+      // controls (see _buildHistoryTab), so show every record instead of slicing to the
+      // first page of _limit (which previously capped the list at 10 with no way to see more).
+      final bool paginate = _activeFilter != 'All' &&
+          _activeFilter != 'This Month' &&
+          _activeFilter != 'This Week';
+      if (paginate) {
+        final effectivePages = _effectiveHistoryTotalPages();
+        final safePage = _page.clamp(1, effectivePages);
+        final start = (safePage - 1) * _limit;
+        final end = (start + _limit).clamp(0, displayList.length);
+        if (start < displayList.length) {
+          displayList = displayList.sublist(start, end);
+        } else {
+          displayList = [];
+        }
       }
     }
 

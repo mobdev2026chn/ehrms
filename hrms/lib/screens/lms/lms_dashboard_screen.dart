@@ -2,6 +2,7 @@
 // My Learning Dashboard - mirrors web /lms/employee/dashboard
 // Tabs: My Courses, Learning Engine; when embedded in shell also Live Sessions. Library tab hidden.
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/bottom_navigation_bar.dart';
@@ -642,10 +643,11 @@ class _CourseCard extends StatelessWidget {
             AspectRatio(
               aspectRatio: 16 / 9,
               child: thumbnailUrl != null && thumbnailUrl.isNotEmpty
-                  ? Image.network(
-                      AppConstants.getLmsFileUrl(thumbnailUrl),
+                  ? CachedNetworkImage(
+                      imageUrl: AppConstants.getLmsFileUrl(thumbnailUrl),
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _placeholderImage(),
+                      placeholder: (_, __) => _placeholderImage(),
+                      errorWidget: (_, __, ___) => _placeholderImage(),
                     )
                   : _placeholderImage(),
             ),
@@ -803,10 +805,11 @@ class _LibraryCourseCard extends StatelessWidget {
           AspectRatio(
             aspectRatio: 16 / 9,
             child: thumbnailUrl != null && thumbnailUrl.isNotEmpty
-                ? Image.network(
-                    AppConstants.getLmsFileUrl(thumbnailUrl),
+                ? CachedNetworkImage(
+                    imageUrl: AppConstants.getLmsFileUrl(thumbnailUrl),
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _placeholder(),
+                    placeholder: (_, __) => _placeholder(),
+                    errorWidget: (_, __, ___) => _placeholder(),
                   )
                 : _placeholder(),
           ),

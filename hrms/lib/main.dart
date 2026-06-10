@@ -114,14 +114,19 @@ void main() {
         debugPrint('[main] AlarmService timezone init failed (continuing): $e');
       }
 
-      try {
-        debugPrint('[main] FCM init starting...');
-        await FcmService.init();
-        debugPrint('[main] FCM init completed');
-      } catch (e, st) {
-        debugPrint('[main] FCM init FAILED (continuing): $e');
-        if (kDebugMode) debugPrint('[main] FCM init stack: $st');
-      }
+      // FCM init does network I/O (token fetch + backend register) and a
+      // permission prompt. Don't block first paint on it — fire it off and let
+      // it complete while the splash screen is already on screen. The background
+      // message handler is registered above (before runApp), which is the only
+      // part that must happen eagerly.
+      unawaited(
+        FcmService.init().then((_) {
+          debugPrint('[main] FCM init completed');
+        }).catchError((Object e, StackTrace st) {
+          debugPrint('[main] FCM init FAILED (continuing): $e');
+          if (kDebugMode) debugPrint('[main] FCM init stack: $st');
+        }),
+      );
 
       try {
         await BackgroundLocationTrackerManager.initialize(

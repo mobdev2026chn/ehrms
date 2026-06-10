@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -91,12 +92,28 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
   }
 
   Future<void> _pickFiles() async {
-    // Use file_picker or image_picker if available - for simplicity we'll use a placeholder
-    // In a real app you'd use: FilePickerResult? result = await FilePicker.platform.pickFiles(allowMultiple: true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Use the attachment option on the detail screen after creating the grievance')),
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'xls', 'xlsx', 'txt'],
     );
+    if (result == null || result.files.isEmpty) return;
+    final newFiles = result.files
+        .where((f) => f.path != null)
+        .map((f) => File(f.path!))
+        .toList();
+    setState(() {
+      for (final f in newFiles) {
+        if (!_selectedFiles.any((e) => e.path == f.path)) {
+          _selectedFiles.add(f);
+        }
+      }
+    });
   }
+
+  void _removeFile(int index) => setState(() => _selectedFiles.removeAt(index));
+
+  String _fileName(File f) => f.path.split(Platform.pathSeparator).last;
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
@@ -121,6 +138,9 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
         final data = result['data'] as Map<String, dynamic>?;
         final id = data?['_id']?.toString();
         if (id != null) {
+          for (final file in _selectedFiles) {
+            await _service.uploadAttachment(id, file);
+          }
           if (mounted) Navigator.of(context).pop(true);
           if (mounted) {
             SnackBarUtils.showSnackBar(
@@ -348,6 +368,64 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                       onChanged: (v) => setState(() => _isAnonymous = v),
                     ),
                   ),
+                  const SizedBox(height: 16),
+                  const Text('Attachments (Optional)', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  GestureDetector(
+                    onTap: _pickFiles,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: colorScheme.outline, style: BorderStyle.solid),
+                        borderRadius: BorderRadius.circular(12),
+                        color: colorScheme.surfaceContainerLowest,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.upload_file_outlined, size: 32, color: AppColors.primary),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Tap to upload files',
+                            style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w500),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'PDF, DOC, DOCX, Images, Excel, TXT',
+                            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (_selectedFiles.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    ...List.generate(_selectedFiles.length, (i) {
+                      final name = _fileName(_selectedFiles[i]);
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: colorScheme.outline),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.insert_drive_file_outlined, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
+                            ),
+                            GestureDetector(
+                              onTap: () => _removeFile(i),
+                              child: const Icon(Icons.close, size: 18, color: AppColors.error),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed: _isLoading ? null : _submit,

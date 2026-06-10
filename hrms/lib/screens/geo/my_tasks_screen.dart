@@ -61,14 +61,30 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   bool _isSelectionMode = false;
   final Set<String> _selectedTaskIds = {};
   bool _exporting = false;
-  bool _filterInProgress = false;
-  bool _filterHold = false;
-  bool _filterCompleted = false;
+  // Selected status-filter group key sent to the backend; null = All Statuses.
+  String? _statusFilter;
+
+  // Dropdown options: label shown to the user + backend status-group key.
+  static const List<({String label, String? group})> _statusFilterOptions = [
+    (label: 'All Statuses', group: null),
+    (label: 'Pending/Assigned', group: 'pending'),
+    (label: 'In Progress', group: 'inProgress'),
+    (label: 'Hold', group: 'hold'),
+    (label: 'Hold on Arrival', group: 'holdOnArrival'),
+    (label: 'Waiting for Approval', group: 'waitingForApproval'),
+    (label: 'Completed', group: 'completed'),
+    (label: 'Exit on Arrival', group: 'exitOnArrival'),
+    (label: 'Exited', group: 'exited'),
+    (label: 'Reopened', group: 'reopened'),
+    (label: 'Rejected', group: 'rejected'),
+  ];
   int _tasksPage = 1;
-  static const int _tasksPerPage = 20;
-  int _tasksTotal = 0;
-  int _tasksTotalPages = 1;
-  Timer? _searchDebounce;
+  static const int _tasksPerPage = 5;
+
+  // Customers are paginated client-side (the service returns the full list):
+  // show 10 cards per page with a page-number + arrow bar like the task list.
+  int _customersPage = 1;
+  static const int _customersPerPage = 10;
 
   @override
   void initState() {
@@ -94,7 +110,6 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   void dispose() {
     appRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
-    _searchDebounce?.cancel();
     _mainTabController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -108,7 +123,115 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     }
   }
 
-  List<Task> get _filteredTasks => _tasks;
+  /// Every loaded task that matches the active search + date + status filters,
+  /// ordered but NOT yet paginated. All filtering is done client-side over the
+  /// full assigned-task list so the result is consistent no matter what the
+  /// backend returns — this is what keeps the stat cards, the filter dropdown
+  /// and the pagination bar in agreement (the previous server-paginated path
+  /// left pagination counting tasks the status filter then hid).
+  List<Task> get _matchedTasks {
+    Iterable<Task> list = _tasks;
+
+    final group = _statusFilter;
+    if (group != null) {
+      final allowed = _statusesForGroup(group);
+      if (allowed.isNotEmpty) {
+        list = list.where((t) => allowed.contains(t.status));
+      }
+    }
+
+    final q = _searchQuery.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      list = list.where((t) => _taskMatchesSearch(t, q));
+    }
+
+    if (_filterStartDate != null || _filterEndDate != null) {
+      list = list.where(_taskInDateRange);
+    }
+
+    return _orderTasks(list.toList());
+  }
+
+  /// The slice of [_matchedTasks] shown on the current page.
+  List<Task> get _filteredTasks {
+    final matched = _matchedTasks;
+    final start = (_currentTaskPage - 1) * _tasksPerPage;
+    if (start >= matched.length) return const [];
+    final end = math.min(start + _tasksPerPage, matched.length);
+    return matched.sublist(start, end);
+  }
+
+  /// Mirrors the backend search: task id/title/description + customer
+  /// name/number, all case-insensitive.
+  bool _taskMatchesSearch(Task t, String q) {
+    bool has(String? s) => (s ?? '').toLowerCase().contains(q);
+    return has(t.taskId) ||
+        has(t.taskTitle) ||
+        has(t.description) ||
+        has(t.customer?.customerName) ||
+        has(t.customer?.customerNumber);
+  }
+
+  /// Whether the task's expected-completion calendar day falls within the
+  /// selected range (inclusive). Compared in UTC date parts to match how the
+  /// date is stored (UTC midnight of the calendar date).
+  bool _taskInDateRange(Task t) {
+    final du = t.expectedCompletionDate.toUtc();
+    final day = DateTime.utc(du.year, du.month, du.day);
+    final s = _filterStartDate;
+    if (s != null && day.isBefore(DateTime.utc(s.year, s.month, s.day))) {
+      return false;
+    }
+    final e = _filterEndDate;
+    if (e != null && day.isAfter(DateTime.utc(e.year, e.month, e.day))) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Orders tasks by assignment date, most recently assigned first, so the
+  /// list shows a stable, predictable order regardless of what the backend
+  /// returns. Tasks without an assigned date are pushed to the end.
+  List<Task> _orderTasks(List<Task> tasks) {
+    tasks.sort((a, b) {
+      final da = a.assignedDate;
+      final db = b.assignedDate;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+    return tasks;
+  }
+
+  /// TaskStatus values whose card badge belongs to a dropdown status group.
+  /// Mirrors _statusLabel so the filter matches exactly what the card shows.
+  Set<TaskStatus> _statusesForGroup(String group) {
+    switch (group) {
+      case 'pending':
+        return {TaskStatus.pending, TaskStatus.assigned, TaskStatus.scheduled};
+      case 'inProgress':
+        return {TaskStatus.inProgress, TaskStatus.arrived};
+      case 'hold':
+        return {TaskStatus.hold};
+      case 'holdOnArrival':
+        return {TaskStatus.holdOnArrival};
+      case 'waitingForApproval':
+        return {TaskStatus.waitingForApproval};
+      case 'completed':
+        return {TaskStatus.completed};
+      case 'exitOnArrival':
+        return {TaskStatus.exitedOnArrival};
+      case 'exited':
+        return {TaskStatus.exited};
+      case 'reopened':
+        return {TaskStatus.reopened};
+      case 'rejected':
+        return {TaskStatus.rejected};
+      default:
+        return const {};
+    }
+  }
 
   int _statusGroupCount(String group) {
     switch (group) {
@@ -145,49 +268,31 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       _searchQuery.trim().isNotEmpty ||
       _filterStartDate != null ||
       _filterEndDate != null ||
-      _filterInProgress ||
-      _filterHold ||
-      _filterCompleted;
+      _statusFilter != null;
 
-  int get _totalTaskPages {
-    return math.max(_tasksTotalPages, 1);
-  }
+  int get _totalTaskPages =>
+      math.max((_matchedTasks.length / _tasksPerPage).ceil(), 1);
 
   int get _currentTaskPage =>
       math.min(math.max(_tasksPage, 1), _totalTaskPages);
 
-  List<Task> get _pagedFilteredTasks {
-    return _filteredTasks;
-  }
+  int get _customersTotalPages =>
+      math.max((_customers.length / _customersPerPage).ceil(), 1);
 
-  List<String> _activeStatusGroups() {
-    final groups = <String>[];
-    if (_filterInProgress) groups.add('inProgress');
-    if (_filterHold) groups.add('hold');
-    if (_filterCompleted) groups.add('completed');
-    return groups;
-  }
+  int get _currentCustomerPage =>
+      math.min(math.max(_customersPage, 1), _customersTotalPages);
 
-  Future<void> _refreshAndResetAllFilters() async {
-    _searchController.clear();
-    setState(() {
-      _searchQuery = '';
-      _filterStartDate = null;
-      _filterEndDate = null;
-      _filterInProgress = false;
-      _filterHold = false;
-      _filterCompleted = false;
-      _tasksPage = 1;
-    });
-    await _fetchTasks();
+  /// The slice of customers shown on the current page (up to 10).
+  List<Customer> get _pagedCustomers {
+    final start = (_currentCustomerPage - 1) * _customersPerPage;
+    if (start >= _customers.length) return const [];
+    final end = math.min(start + _customersPerPage, _customers.length);
+    return _customers.sublist(start, end);
   }
 
   Future<void> _openTaskFilterBottomSheet() async {
     DateTime? tempStart = _filterStartDate;
     DateTime? tempEnd = _filterEndDate;
-    bool tempInProgress = _filterInProgress;
-    bool tempHold = _filterHold;
-    bool tempCompleted = _filterCompleted;
     final colorScheme = Theme.of(context).colorScheme;
 
     await showModalBottomSheet<void>(
@@ -243,66 +348,110 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       const SizedBox(height: 8),
                       const Text(
                         'Date filter',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.date_range, size: 18),
-                        label: Text(dateText()),
-                        onPressed: () async {
+                      Builder(
+                        builder: (_) {
                           final now = DateTime.now();
-                          final initialStart = tempStart ?? now;
-                          final initialEnd = tempEnd ?? tempStart ?? now;
-                          final range = await showDateRangePicker(
-                            context: ctx,
-                            firstDate: DateTime(2020),
-                            lastDate: now.add(const Duration(days: 365)),
-                            initialDateRange: DateTimeRange(
-                              start: initialStart.isBefore(initialEnd)
-                                  ? initialStart
-                                  : initialEnd,
-                              end: initialEnd.isAfter(initialStart)
-                                  ? initialEnd
-                                  : initialStart,
-                            ),
-                            helpText: 'Select date range',
+                          final today = DateTime(now.year, now.month, now.day);
+                          final weekStart = today.subtract(
+                            Duration(days: today.weekday - 1),
                           );
-                          if (range != null) {
+                          final weekEnd = weekStart.add(
+                            const Duration(days: 6),
+                          );
+                          final monthStart = DateTime(now.year, now.month, 1);
+                          final monthEnd = DateTime(now.year, now.month + 1, 0);
+
+                          bool sameDay(DateTime? a, DateTime? b) =>
+                              a != null &&
+                              b != null &&
+                              a.year == b.year &&
+                              a.month == b.month &&
+                              a.day == b.day;
+                          bool isRange(DateTime s, DateTime e) =>
+                              sameDay(tempStart, s) && sameDay(tempEnd, e);
+
+                          void selectRange(DateTime s, DateTime e) {
                             setBottomState(() {
-                              tempStart = range.start;
-                              tempEnd = range.end;
+                              tempStart = s;
+                              tempEnd = e;
                             });
                           }
+
+                          final isCustom =
+                              (tempStart != null || tempEnd != null) &&
+                              !isRange(today, today) &&
+                              !isRange(weekStart, weekEnd) &&
+                              !isRange(monthStart, monthEnd);
+
+                          return Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              ChoiceChip(
+                                label: const Text('Today'),
+                                selected: isRange(today, today),
+                                onSelected: (_) => selectRange(today, today),
+                              ),
+                              ChoiceChip(
+                                label: const Text('This Week'),
+                                selected: isRange(weekStart, weekEnd),
+                                onSelected: (_) =>
+                                    selectRange(weekStart, weekEnd),
+                              ),
+                              ChoiceChip(
+                                label: const Text('This Month'),
+                                selected: isRange(monthStart, monthEnd),
+                                onSelected: (_) =>
+                                    selectRange(monthStart, monthEnd),
+                              ),
+                              ChoiceChip(
+                                avatar: Icon(
+                                  Icons.date_range,
+                                  size: 18,
+                                  color: isCustom
+                                      ? colorScheme.onSecondaryContainer
+                                      : colorScheme.onSurfaceVariant,
+                                ),
+                                label: Text(isCustom ? dateText() : 'Custom'),
+                                selected: isCustom,
+                                onSelected: (_) async {
+                                  final base = DateTime.now();
+                                  final initialStart = tempStart ?? base;
+                                  final initialEnd =
+                                      tempEnd ?? tempStart ?? base;
+                                  final range = await showDateRangePicker(
+                                    context: ctx,
+                                    firstDate: DateTime(2020),
+                                    lastDate: base.add(
+                                      const Duration(days: 365),
+                                    ),
+                                    initialDateRange: DateTimeRange(
+                                      start: initialStart.isBefore(initialEnd)
+                                          ? initialStart
+                                          : initialEnd,
+                                      end: initialEnd.isAfter(initialStart)
+                                          ? initialEnd
+                                          : initialStart,
+                                    ),
+                                    helpText: 'Select date range',
+                                  );
+                                  if (range != null) {
+                                    setBottomState(() {
+                                      tempStart = range.start;
+                                      tempEnd = range.end;
+                                    });
+                                  }
+                                },
+                              ),
+                            ],
+                          );
                         },
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Status filter',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          FilterChip(
-                            label: Text(
-                              'In Progress (${_statusGroupCount('inProgress')})',
-                            ),
-                            selected: tempInProgress,
-                            onSelected: (v) => setBottomState(() => tempInProgress = v),
-                          ),
-                          FilterChip(
-                            label: Text('Hold (${_statusGroupCount('hold')})'),
-                            selected: tempHold,
-                            onSelected: (v) => setBottomState(() => tempHold = v),
-                          ),
-                          FilterChip(
-                            label: Text('Completed (${_statusGroupCount('completed')})'),
-                            selected: tempCompleted,
-                            onSelected: (v) => setBottomState(() => tempCompleted = v),
-                          ),
-                        ],
                       ),
                       const SizedBox(height: 20),
                       Row(
@@ -313,19 +462,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                 setBottomState(() {
                                   tempStart = null;
                                   tempEnd = null;
-                                  tempInProgress = false;
-                                  tempHold = false;
-                                  tempCompleted = false;
                                 });
                                 setState(() {
                                   _filterStartDate = null;
                                   _filterEndDate = null;
-                                  _filterInProgress = false;
-                                  _filterHold = false;
-                                  _filterCompleted = false;
                                   _tasksPage = 1;
                                 });
-                                _fetchTasks();
                               },
                               child: const Text('Reset'),
                             ),
@@ -337,13 +479,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                 setState(() {
                                   _filterStartDate = tempStart;
                                   _filterEndDate = tempEnd;
-                                  _filterInProgress = tempInProgress;
-                                  _filterHold = tempHold;
-                                  _filterCompleted = tempCompleted;
                                   _tasksPage = 1;
                                 });
                                 Navigator.of(ctx).pop();
-                                _fetchTasks();
                               },
                               child: const Text('Apply'),
                             ),
@@ -366,48 +504,28 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     return Container(
       color: colorScheme.surface,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Customer name, task name, task ID',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                filled: true,
-                fillColor: colorScheme.surfaceContainerLowest,
-              ),
-              onChanged: (_) {
-                setState(() {
-                  _searchQuery = _searchController.text;
-                  _tasksPage = 1;
-                });
-                _searchDebounce?.cancel();
-                _searchDebounce = Timer(const Duration(milliseconds: 350), () {
-                  if (mounted) _fetchTasks();
-                });
-              },
-            ),
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          hintText: 'Customer name, task name, task ID',
+          prefixIcon: const Icon(Icons.search, size: 20),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 10,
           ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh tasks and reset filters',
-            onPressed: _refreshAndResetAllFilters,
-            style: IconButton.styleFrom(
-              backgroundColor: colorScheme.surfaceContainerLowest,
-              side: BorderSide(color: colorScheme.outline),
-            ),
-          ),
-        ],
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          filled: true,
+          fillColor: colorScheme.surfaceContainerLowest,
+        ),
+        onChanged: (_) {
+          // Filtering is client-side, so the list updates as the user types
+          // without a network round-trip.
+          setState(() {
+            _searchQuery = _searchController.text;
+            _tasksPage = 1;
+          });
+        },
       ),
     );
   }
@@ -441,7 +559,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       final sheetName = excel.getDefaultSheet() ?? 'Tasks';
       final sheet = excel[sheetName];
 
-      // Headings row
+      // Headings row — important fields only.
       const headers = [
         'S.No',
         'Task ID',
@@ -449,7 +567,6 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         'Description',
         'Customer Name',
         'Customer Number',
-        'Customer Email',
         'Customer Address',
         'City',
         'Pincode',
@@ -457,31 +574,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         'Assigned Date',
         'Completed Date',
         'Status',
-        'Source Address',
         'Destination Address',
-        'Start Time',
-        'Arrival Time',
-        'Trip Distance (km)',
-        'Trip Duration (sec)',
-        'OTP Required',
-        'Geo Fence Required',
-        'Photo Required',
-        'Form Required',
-        'OTP Verified',
-        'OTP Verified At',
-        'Photo Proof Done',
-        'Form Filled',
-        'Photo Proof Link',
-        'Photo Proof Uploaded At',
-        'Photo Proof Address',
-        'OTP Verified Address',
-        'Exit Status',
-        'Require Approval',
-        'Auto Approve',
-        'Start Battery %',
-        'Arrival Battery %',
-        'Photo Proof Battery %',
-        'Completed Battery %',
       ];
       sheet.appendRow(headers.map((h) => TextCellValue(h)).toList());
 
@@ -495,61 +588,14 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           TextCellValue(_cellStr(t.description)),
           TextCellValue(_cellStr(c?.customerName)),
           TextCellValue(_cellStr(c?.customerNumber)),
-          TextCellValue(_cellStr(c?.effectiveEmail)),
           TextCellValue(_cellStr(c?.address)),
           TextCellValue(_cellStr(c?.city)),
           TextCellValue(_cellStr(c?.pincode)),
           TextCellValue(_cellStr(t.expectedCompletionDate)),
           TextCellValue(_cellStr(t.assignedDate)),
           TextCellValue(_cellStr(t.completedDate)),
-          TextCellValue(t.status.name),
-          TextCellValue(_cellStr(t.sourceLocation?.displayAddress)),
+          TextCellValue(_statusLabel(t.status)),
           TextCellValue(_cellStr(t.destinationLocation?.displayAddress)),
-          TextCellValue(_cellStr(t.startTime)),
-          TextCellValue(_cellStr(t.arrivalTime)),
-          TextCellValue(t.tripDistanceKm != null ? '${t.tripDistanceKm}' : ''),
-          TextCellValue(
-            t.tripDurationSeconds != null ? '${t.tripDurationSeconds}' : '',
-          ),
-          TextCellValue(t.isOtpRequired ? 'Yes' : 'No'),
-          TextCellValue(t.isGeoFenceRequired ? 'Yes' : 'No'),
-          TextCellValue(t.isPhotoRequired ? 'Yes' : 'No'),
-          TextCellValue(t.isFormRequired ? 'Yes' : 'No'),
-          TextCellValue(
-            t.isOtpVerified == true
-                ? 'Yes'
-                : (t.isOtpVerified == false ? 'No' : ''),
-          ),
-          TextCellValue(_cellStr(t.otpVerifiedAt)),
-          TextCellValue(
-            t.photoProof == true ? 'Yes' : (t.photoProof == false ? 'No' : ''),
-          ),
-          TextCellValue(
-            t.formFilled == true ? 'Yes' : (t.formFilled == false ? 'No' : ''),
-          ),
-          TextCellValue(_cellStr(t.photoProofUrl)),
-          TextCellValue(_cellStr(t.photoProofUploadedAt)),
-          TextCellValue(_cellStr(t.photoProofAddress)),
-          TextCellValue(_cellStr(t.otpVerifiedAddress)),
-          TextCellValue(_cellStr(t.taskExitStatus)),
-          TextCellValue(t.requireApprovalOnComplete ? 'Yes' : 'No'),
-          TextCellValue(t.autoApprove ? 'Yes' : 'No'),
-          TextCellValue(
-            t.startBatteryPercent != null ? '${t.startBatteryPercent}' : '',
-          ),
-          TextCellValue(
-            t.arrivalBatteryPercent != null ? '${t.arrivalBatteryPercent}' : '',
-          ),
-          TextCellValue(
-            t.photoProofBatteryPercent != null
-                ? '${t.photoProofBatteryPercent}'
-                : '',
-          ),
-          TextCellValue(
-            t.completedBatteryPercent != null
-                ? '${t.completedBatteryPercent}'
-                : '',
-          ),
         ];
         sheet.appendRow(row);
         sno++;
@@ -610,6 +656,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       if (mounted) {
         setState(() {
           _customers = customers;
+          _customersPage = 1;
           _isLoadingCustomers = false;
         });
       }
@@ -677,39 +724,23 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     }
   }
 
+  /// Loads the full assigned-task list in one shot. Search, date and status
+  /// filtering plus pagination are all applied client-side (see [_matchedTasks]
+  /// / [_filteredTasks]) so they stay consistent regardless of what the backend
+  /// filters server-side.
   Future<void> _fetchTasks() async {
     if (!mounted) return;
     try {
-      if (_loggedInStaffId != null && _loggedInStaffId!.isNotEmpty) {
-        final res = await TaskService().getAssignedTasksPaginated(
-          _loggedInStaffId!,
-          page: _tasksPage,
-          limit: _tasksPerPage,
-          search: _searchQuery,
-          startDate: _filterStartDate,
-          endDate: _filterEndDate,
-          statusGroups: _activeStatusGroups(),
-        );
-        if (!mounted) return;
-        setState(() {
-          _tasks = (res['tasks'] as List<Task>? ?? const []);
-          _tasksTotal = (res['total'] as int?) ?? _tasks.length;
-          _tasksTotalPages = (res['totalPages'] as int?) ?? 1;
-          _tasksPage = (res['page'] as int?) ?? _tasksPage;
-          _isLoading = false;
-          _errorMessage = null;
-        });
-      } else {
-        final assignedTasks = await TaskService().getAllTasks();
-        if (!mounted) return;
-        setState(() {
-          _tasks = assignedTasks;
-          _tasksTotal = assignedTasks.length;
-          _tasksTotalPages = 1;
-          _isLoading = false;
-          _errorMessage = null;
-        });
-      }
+      final List<Task> tasks =
+          (_loggedInStaffId != null && _loggedInStaffId!.isNotEmpty)
+          ? await TaskService().getAssignedTasks(_loggedInStaffId!)
+          : await TaskService().getAllTasks();
+      if (!mounted) return;
+      setState(() {
+        _tasks = tasks;
+        _isLoading = false;
+        _errorMessage = null;
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -725,9 +756,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Continue task?'),
-        content: const Text(
-          'Are you sure you want to continue this task?',
-        ),
+        content: const Text('Are you sure you want to continue this task?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -748,20 +777,19 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   /// reusing the existing status-group filter + fetch logic.
   void _applyQuickFilter(String? group) {
     setState(() {
-      _filterInProgress = group == 'inProgress';
-      _filterHold = group == 'hold';
-      _filterCompleted = group == 'completed';
+      _statusFilter = group;
       _tasksPage = 1;
     });
-    _fetchTasks();
   }
 
   /// Figma task-list header: Pending/Completed stat cards, New Task button,
   /// and horizontal status filter chips.
   Widget _buildTaskListHeader() {
-    final pending =
-        _statusGroupCount('inProgress') + _statusGroupCount('hold');
     final completed = _statusGroupCount('completed');
+    // Pending = every loaded task that isn't completed/waiting-for-approval.
+    // This covers pending, assigned, scheduled, in-progress, arrived and hold
+    // states, so any task whose badge isn't "Completed" is counted here.
+    final pending = _tasks.length - completed;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
@@ -792,73 +820,102 @@ class _MyTasksScreenState extends State<MyTasksScreen>
             ],
           ),
           const SizedBox(height: 12),
-          if (_loggedInStaffId != null && _loggedInStaffId!.isNotEmpty)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) =>
-                          AddTaskScreen(staffId: _loggedInStaffId!),
-                    ),
-                  ).then((_) => _fetchTasks());
-                },
-                icon: const Icon(Icons.add_rounded, color: Colors.white),
-                label: const Text(
-                  'New Task',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  elevation: 0,
-                ),
-              ),
-            ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 36,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
+          // New Task button and status filter share one row: the filter
+          // expands to fill the space, the button sits compact beside it.
+          // IntrinsicHeight bounds the row's height so CrossAxisAlignment.stretch
+          // has a finite constraint to stretch against — without it, the row
+          // inherits the Column's unbounded height and throws
+          // "BoxConstraints forces an infinite height".
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildFilterChip(
-                  'All Tasks',
-                  selected: !_filterInProgress &&
-                      !_filterHold &&
-                      !_filterCompleted,
-                  onTap: () => _applyQuickFilter(null),
-                ),
-                _buildFilterChip(
-                  'In Progress',
-                  selected: _filterInProgress &&
-                      !_filterHold &&
-                      !_filterCompleted,
-                  onTap: () => _applyQuickFilter('inProgress'),
-                ),
-                _buildFilterChip(
-                  'Hold',
-                  selected: _filterHold &&
-                      !_filterInProgress &&
-                      !_filterCompleted,
-                  onTap: () => _applyQuickFilter('hold'),
-                ),
-                _buildFilterChip(
-                  'Completed',
-                  selected: _filterCompleted &&
-                      !_filterInProgress &&
-                      !_filterHold,
-                  onTap: () => _applyQuickFilter('completed'),
-                ),
+                Expanded(child: _buildStatusFilterDropdown()),
+                if (_loggedInStaffId != null &&
+                    _loggedInStaffId!.isNotEmpty) ...[
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              AddTaskScreen(staffId: _loggedInStaffId!),
+                        ),
+                      ).then((_) => _fetchTasks());
+                    },
+                    icon: const Icon(
+                      Icons.add_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    label: const Text(
+                      'New Task',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ],
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Status filter as a dropdown (replaces the horizontal chip row).
+  Widget _buildStatusFilterDropdown() {
+    final isActive = _statusFilter != null;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.primary.withValues(alpha: isActive ? 0.5 : 0.25),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.filter_list_rounded, size: 18, color: AppColors.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String?>(
+                isExpanded: true,
+                value: _statusFilter,
+                borderRadius: BorderRadius.circular(12),
+                icon: Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: AppColors.primary,
+                ),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+                items: _statusFilterOptions
+                    .map(
+                      (o) => DropdownMenuItem<String?>(
+                        value: o.group,
+                        child: Text(o.label),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (val) => _applyQuickFilter(val),
+              ),
             ),
           ),
         ],
@@ -874,8 +931,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     required bool filled,
   }) {
     final bg = filled ? AppColors.primary : Colors.white;
-    final labelColor =
-        filled ? Colors.white.withValues(alpha: 0.9) : AppColors.textSecondary;
+    final labelColor = filled
+        ? Colors.white.withValues(alpha: 0.9)
+        : AppColors.textSecondary;
     final valueColor = filled ? Colors.white : AppColors.textPrimary;
     final iconBg = filled
         ? Colors.white.withValues(alpha: 0.2)
@@ -947,45 +1005,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     );
   }
 
-  Widget _buildFilterChip(
-    String label, {
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: selected
-                ? AppColors.primary
-                : AppColors.primary.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : AppColors.primary,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildTaskPaginationBar(ColorScheme colorScheme) {
     final totalPages = _totalTaskPages;
     if (_filteredTasks.isEmpty) return const SizedBox.shrink();
-    final startItem = ((_currentTaskPage - 1) * _tasksPerPage) + 1;
-    final endItem = math.min(_currentTaskPage * _tasksPerPage, _tasksTotal);
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      color: Colors.transparent,
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -996,24 +1021,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           child: Row(
             children: [
-              Icon(Icons.view_list_rounded, size: 16, color: colorScheme.primary),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  'Showing $startItem-$endItem of $_tasksTotal',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
+              const Spacer(),
               IconButton(
                 onPressed: _currentTaskPage > 1
-                    ? () {
-                        setState(() => _tasksPage = _currentTaskPage - 1);
-                        _fetchTasks();
-                      }
+                    ? () => setState(() => _tasksPage = _currentTaskPage - 1)
                     : null,
                 tooltip: 'Previous page',
                 visualDensity: VisualDensity.compact,
@@ -1029,15 +1040,250 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               ),
               IconButton(
                 onPressed: _currentTaskPage < totalPages
-                    ? () {
-                        setState(() => _tasksPage = _currentTaskPage + 1);
-                        _fetchTasks();
-                      }
+                    ? () => setState(() => _tasksPage = _currentTaskPage + 1)
                     : null,
                 tooltip: 'Next page',
                 visualDensity: VisualDensity.compact,
                 icon: const Icon(Icons.chevron_right_rounded),
               ),
+              const Spacer(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Pagination bar for the active tab, rendered as a fixed footer above the
+  /// bottom navigation. Returns an empty box while loading, in selection mode,
+  /// or when the active tab has no rows to page through.
+  Widget _buildBottomPaginationBar(ColorScheme colorScheme) {
+    final Widget bar;
+    if (_mainTabController.index == 0) {
+      if (_isLoading || _isSelectionMode || _filteredTasks.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      bar = _buildTaskPaginationBar(colorScheme);
+    } else {
+      if (_isLoadingCustomers || _customers.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      bar = _buildCustomerPaginationBar(colorScheme);
+    }
+    return Material(
+      color: colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+        child: bar,
+      ),
+    );
+  }
+
+  /// Opens a bottom sheet showing the full details of a customer when their
+  /// card is tapped.
+  Future<void> _showCustomerDetails(Customer customer) async {
+    final colorScheme = Theme.of(context).colorScheme;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              12,
+              20,
+              20 + MediaQuery.of(ctx).viewInsets.bottom,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: colorScheme.primary.withOpacity(0.1),
+                      child: Icon(
+                        Icons.person,
+                        color: colorScheme.primary,
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            customer.customerName,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          if (customer.companyName != null &&
+                              customer.companyName!.trim().isNotEmpty)
+                            Text(
+                              customer.companyName!.trim(),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                _buildCustomerDetailRow(
+                  Icons.phone_outlined,
+                  'Phone',
+                  _formatPhone(customer),
+                ),
+                _buildCustomerDetailRow(
+                  Icons.email_outlined,
+                  'Email',
+                  customer.effectiveEmail,
+                ),
+                _buildCustomerDetailRow(
+                  Icons.location_on_outlined,
+                  'Address',
+                  customer.address,
+                ),
+                _buildCustomerDetailRow(
+                  Icons.location_city_outlined,
+                  'City',
+                  customer.city,
+                ),
+                _buildCustomerDetailRow(
+                  Icons.pin_drop_outlined,
+                  'Pincode',
+                  customer.pincode,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Phone number prefixed with the customer's country dial code (e.g.
+  /// "+91 5856932568"). Returns an empty string when no number is set.
+  String _formatPhone(Customer customer) {
+    final number = customer.customerNumber?.trim() ?? '';
+    if (number.isEmpty) return '';
+    final code = customer.countryCode?.trim() ?? '';
+    if (code.isEmpty) return number;
+    final dial = code.startsWith('+') ? code : '+$code';
+    return '$dial $number';
+  }
+
+  /// A single labelled row inside the customer details sheet; hidden when the
+  /// value is empty.
+  Widget _buildCustomerDetailRow(IconData icon, String label, String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return const SizedBox.shrink();
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  text,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Page-number + arrow bar for the (client-side paginated) customer list.
+  Widget _buildCustomerPaginationBar(ColorScheme colorScheme) {
+    if (_customers.isEmpty) return const SizedBox.shrink();
+    final totalPages = _customersTotalPages;
+    return Container(
+      color: Colors.transparent,
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              const Spacer(),
+              IconButton(
+                onPressed: _currentCustomerPage > 1
+                    ? () => setState(
+                        () => _customersPage = _currentCustomerPage - 1,
+                      )
+                    : null,
+                tooltip: 'Previous page',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.chevron_left_rounded),
+              ),
+              Text(
+                '$_currentCustomerPage/$totalPages',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              IconButton(
+                onPressed: _currentCustomerPage < totalPages
+                    ? () => setState(
+                        () => _customersPage = _currentCustomerPage + 1,
+                      )
+                    : null,
+                tooltip: 'Next page',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.chevron_right_rounded),
+              ),
+              const Spacer(),
             ],
           ),
         ),
@@ -1211,125 +1457,118 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       child: Builder(
         builder: (context) {
           final colorScheme = Theme.of(context).colorScheme;
+          // Status-filtered view of the loaded page (see _filteredTasks).
+          final visibleTasks = _filteredTasks;
           return Scaffold(
-        drawer: const AppDrawer(),
-        backgroundColor: colorScheme.surfaceContainerHighest,
-        appBar: AppBar(
-          leading: _isSelectionMode
-              ? IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => setState(() {
-                    _isSelectionMode = false;
-                    _selectedTaskIds.clear();
-                  }),
-                )
-              : Builder(
-                  builder: (ctx) => IconButton(
-                    icon: const Icon(Icons.menu_rounded),
-                    onPressed: () => Scaffold.of(ctx).openDrawer(),
-                  ),
-                ),
-          title: Text(
-            _isSelectionMode
-                ? 'Select tasks to export (${_selectedTaskIds.length})'
-                : 'Tasks',
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          centerTitle: true,
-          elevation: 0,
-          bottom: _isSelectionMode
-              ? null
-              : TabBar(
-                  controller: _mainTabController,
-                  labelColor: colorScheme.primary,
-                  unselectedLabelColor: colorScheme.onSurfaceVariant,
-                  indicatorColor: colorScheme.primary,
-                  tabs: const [
-                    Tab(text: 'Tasks'),
-                    Tab(text: 'Customers'),
-                  ],
-                ),
-          actions: [
-            if (!_isSelectionMode &&
-                _mainTabController.index == 0 &&
-                _loggedInStaffId != null &&
-                _loggedInStaffId!.isNotEmpty)
-              IconButton(
-                icon: const Icon(Icons.add),
-                tooltip: 'Add Task',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => AddTaskScreen(staffId: _loggedInStaffId!),
-                    ),
-                  ).then((_) => _fetchTasks());
-                },
-              ),
-            if (!_isSelectionMode && _mainTabController.index == 0)
-              IconButton(
-                icon: Icon(
-                  _hasAnyFilters ? Icons.filter_alt : Icons.filter_alt_outlined,
-                  color: _hasAnyFilters ? colorScheme.primary : null,
-                ),
-                tooltip: 'Filter tasks',
-                onPressed: _openTaskFilterBottomSheet,
-              ),
-            if (_isSelectionMode || _mainTabController.index == 0)
-              IconButton(
-                icon: _exporting
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(
-                        _isSelectionMode
-                            ? Icons.file_download
-                            : Icons.download_outlined,
-                        color: _isSelectionMode ? colorScheme.primary : null,
+            drawer: const AppDrawer(),
+            backgroundColor: colorScheme.surfaceContainerHighest,
+            appBar: AppBar(
+              leading: _isSelectionMode
+                  ? IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => setState(() {
+                        _isSelectionMode = false;
+                        _selectedTaskIds.clear();
+                      }),
+                    )
+                  : Builder(
+                      builder: (ctx) => IconButton(
+                        icon: const Icon(Icons.menu_rounded),
+                        onPressed: () => Scaffold.of(ctx).openDrawer(),
                       ),
-                tooltip: _isSelectionMode
-                    ? 'Export selected tasks'
-                    : 'Select tasks to export',
-                onPressed: _exporting
-                    ? null
-                    : () {
-                        if (_isSelectionMode) {
-                          _exportSelectedToExcel();
-                        } else {
-                          setState(() => _isSelectionMode = true);
-                          SnackBarUtils.showSnackBar(
-                            context,
-                            'Select tasks to export, then tap Export again.',
-                          );
-                        }
-                      },
+                    ),
+              title: Text(
+                _isSelectionMode
+                    ? 'Select tasks to export (${_selectedTaskIds.length})'
+                    : 'Tasks',
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-          ],
-        ),
-        body: TabBarView(
-          controller: _mainTabController,
-          children: [
-            // Tasks Tab
-            _isLoading
-                ? const Center(child: AppTabLoader())
-                : _errorMessage != null
+              centerTitle: true,
+              elevation: 0,
+              bottom: _isSelectionMode
+                  ? null
+                  : TabBar(
+                      controller: _mainTabController,
+                      labelColor: colorScheme.primary,
+                      unselectedLabelColor: colorScheme.onSurfaceVariant,
+                      indicatorColor: colorScheme.primary,
+                      tabs: const [
+                        Tab(text: 'Tasks'),
+                        Tab(text: 'Customers'),
+                      ],
+                    ),
+              actions: [
+                if (!_isSelectionMode && _mainTabController.index == 0)
+                  IconButton(
+                    icon: Icon(
+                      _hasAnyFilters
+                          ? Icons.filter_alt
+                          : Icons.filter_alt_outlined,
+                      color: _hasAnyFilters ? colorScheme.primary : null,
+                    ),
+                    tooltip: 'Filter tasks',
+                    onPressed: _openTaskFilterBottomSheet,
+                  ),
+                if (_isSelectionMode || _mainTabController.index == 0)
+                  IconButton(
+                    icon: _exporting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            _isSelectionMode
+                                ? Icons.file_download
+                                : Icons.download_outlined,
+                            color: _isSelectionMode
+                                ? colorScheme.primary
+                                : null,
+                          ),
+                    tooltip: _isSelectionMode
+                        ? 'Export selected tasks'
+                        : 'Select tasks to export',
+                    onPressed: _exporting
+                        ? null
+                        : () {
+                            if (_isSelectionMode) {
+                              _exportSelectedToExcel();
+                            } else {
+                              setState(() => _isSelectionMode = true);
+                              SnackBarUtils.showSnackBar(
+                                context,
+                                'Select tasks to export, then tap Export again.',
+                              );
+                            }
+                          },
+                  ),
+              ],
+            ),
+            body: TabBarView(
+              controller: _mainTabController,
+              children: [
+                // Tasks Tab
+                _isLoading
+                    ? const Center(child: AppTabLoader())
+                    : _errorMessage != null
                     ? Center(child: Text(_errorMessage!))
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (!_isSelectionMode) _buildSearchAndRefreshRow(),
-                          if (!_isSelectionMode) _buildTaskListHeader(),
-                          Expanded(
-                    child: _tasks.isEmpty
-                        ? RefreshIndicator(
-                            onRefresh: _fetchTasks,
-                            child: SingleChildScrollView(
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              child: SizedBox(
-                                height:
-                                    MediaQuery.of(context).size.height * 0.6,
+                    : RefreshIndicator(
+                        onRefresh: _fetchTasks,
+                        // Whole tab scrolls as one: the search row and stats
+                        // header are slivers that scroll away with the task
+                        // list instead of staying pinned above it.
+                        child: CustomScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          slivers: [
+                            if (!_isSelectionMode)
+                              SliverToBoxAdapter(
+                                child: _buildSearchAndRefreshRow(),
+                              ),
+                            if (!_isSelectionMode)
+                              SliverToBoxAdapter(child: _buildTaskListHeader()),
+                            if (visibleTasks.isEmpty)
+                              SliverFillRemaining(
+                                hasScrollBody: false,
                                 child: Center(
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1352,409 +1591,436 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                     ],
                                   ),
                                 ),
-                              ),
-                            ),
-                          )
-                        : RefreshIndicator(
-                            onRefresh: _fetchTasks,
-                            child: ListView.builder(
-                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                              itemCount: _tasks.length,
-                              itemBuilder: (context, index) {
-                                final task = _tasks[index];
-                                final taskKey = task.id ?? task.taskId;
-                                final isCompleted =
-                                    task.status == TaskStatus.completed;
-                                final statusColor = _getStatusChipColor(
-                                  task.status,
-                                );
-                                final isSelected = _selectedTaskIds.contains(
-                                  taskKey,
-                                );
+                              )
+                            else
+                              SliverPadding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  8,
+                                  12,
+                                  12,
+                                ),
+                                // +1 for the pagination footer that scrolls
+                                // with the list instead of being pinned above
+                                // the nav.
+                                sliver: SliverList(
+                                  delegate: SliverChildBuilderDelegate((
+                                    context,
+                                    index,
+                                  ) {
+                                    final task = visibleTasks[index];
+                                    final taskKey = task.id ?? task.taskId;
+                                    final isCompleted =
+                                        task.status == TaskStatus.completed;
+                                    final statusColor = _getStatusChipColor(
+                                      task.status,
+                                    );
+                                    final isSelected = _selectedTaskIds
+                                        .contains(taskKey);
 
-                                return InkWell(
-                                  onTap: _isSelectionMode
-                                      ? () => setState(() {
-                                          if (_selectedTaskIds.contains(
-                                            taskKey,
-                                          )) {
-                                            _selectedTaskIds.remove(taskKey);
-                                          } else {
-                                            _selectedTaskIds.add(taskKey);
-                                          }
-                                        })
-                                      : () {
-                                          if (isCompleted) {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (context) =>
-                                                    CompletedTaskDetailScreen(
-                                                      task: task,
-                                                    ),
-                                              ),
-                                            );
-                                          } else if (task.status ==
-                                                  TaskStatus.arrived ||
-                                              task.status ==
-                                                  TaskStatus.holdOnArrival ||
-                                              task.status ==
-                                                  TaskStatus
-                                                      .reopenedOnArrival) {
-                                            void goArrived() {
-                                              Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (context) =>
-                                                      ArrivedScreen(
-                                                    taskMongoId: task.id,
-                                                    taskId: task.taskId,
-                                                    task: task,
-                                                    totalDuration: Duration(
-                                                      seconds:
-                                                          task.tripDurationSeconds ??
-                                                          0,
-                                                    ),
-                                                    totalDistanceKm:
-                                                        task.tripDistanceKm ??
-                                                        0.0,
-                                                    isWithinGeofence: false,
-                                                    arrivalTime:
-                                                        task.arrivalTime ??
-                                                        DateTime.now(),
-                                                    sourceLat: task
-                                                        .sourceLocation?.lat,
-                                                    sourceLng: task
-                                                        .sourceLocation?.lng,
-                                                    sourceAddress: task
-                                                        .sourceLocation
-                                                        ?.address,
-                                                    destLat: task
-                                                        .destinationLocation
-                                                        ?.lat,
-                                                    destLng: task
-                                                        .destinationLocation
-                                                        ?.lng,
-                                                    destAddress: task
-                                                        .destinationLocation
-                                                        ?.address,
-                                                    arrivalAtLat: task
-                                                        .arrivalLocation?.lat,
-                                                    arrivalAtLng: task
-                                                        .arrivalLocation?.lng,
-                                                    arrivalAtAddress: task
-                                                        .arrivalLocation
-                                                        ?.displayAddress,
+                                    return InkWell(
+                                      onTap: _isSelectionMode
+                                          ? () => setState(() {
+                                              if (_selectedTaskIds.contains(
+                                                taskKey,
+                                              )) {
+                                                _selectedTaskIds.remove(
+                                                  taskKey,
+                                                );
+                                              } else {
+                                                _selectedTaskIds.add(taskKey);
+                                              }
+                                            })
+                                          : () {
+                                              if (isCompleted) {
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                    builder: (context) =>
+                                                        CompletedTaskDetailScreen(
+                                                          task: task,
+                                                        ),
                                                   ),
-                                                ),
-                                              );
-                                            }
-                                            if (task.status ==
-                                                TaskStatus.holdOnArrival) {
-                                              _confirmContinueIncompleteTask(
-                                                goArrived,
-                                              );
-                                            } else {
-                                              goArrived();
-                                            }
-                                          } else {
-                                            void goTaskDetail() {
-                                              Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (context) =>
-                                                      TaskDetailScreen(
-                                                    task: task,
-                                                  ),
-                                                ),
-                                              );
-                                            }
-                                            if (task.status ==
-                                                TaskStatus.hold) {
-                                              _confirmContinueIncompleteTask(
-                                                goTaskDetail,
-                                              );
-                                            } else {
-                                              goTaskDetail();
-                                            }
-                                          }
-                                        },
-                                  borderRadius: BorderRadius.circular(14),
-                                  child: Container(
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.surface,
+                                                );
+                                              } else if (task.status ==
+                                                      TaskStatus.arrived ||
+                                                  task.status ==
+                                                      TaskStatus
+                                                          .holdOnArrival ||
+                                                  task.status ==
+                                                      TaskStatus
+                                                          .reopenedOnArrival) {
+                                                void goArrived() {
+                                                  Navigator.push(
+                                                    context,
+                                                    MaterialPageRoute(
+                                                      builder: (context) => ArrivedScreen(
+                                                        taskMongoId: task.id,
+                                                        taskId: task.taskId,
+                                                        task: task,
+                                                        totalDuration: Duration(
+                                                          seconds:
+                                                              task.tripDurationSeconds ??
+                                                              0,
+                                                        ),
+                                                        totalDistanceKm:
+                                                            task.tripDistanceKm ??
+                                                            0.0,
+                                                        isWithinGeofence: false,
+                                                        arrivalTime:
+                                                            task.arrivalTime ??
+                                                            DateTime.now(),
+                                                        sourceLat: task
+                                                            .sourceLocation
+                                                            ?.lat,
+                                                        sourceLng: task
+                                                            .sourceLocation
+                                                            ?.lng,
+                                                        sourceAddress: task
+                                                            .sourceLocation
+                                                            ?.address,
+                                                        destLat: task
+                                                            .destinationLocation
+                                                            ?.lat,
+                                                        destLng: task
+                                                            .destinationLocation
+                                                            ?.lng,
+                                                        destAddress: task
+                                                            .destinationLocation
+                                                            ?.address,
+                                                        arrivalAtLat: task
+                                                            .arrivalLocation
+                                                            ?.lat,
+                                                        arrivalAtLng: task
+                                                            .arrivalLocation
+                                                            ?.lng,
+                                                        arrivalAtAddress: task
+                                                            .arrivalLocation
+                                                            ?.displayAddress,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }
+
+                                                if (task.status ==
+                                                    TaskStatus.holdOnArrival) {
+                                                  _confirmContinueIncompleteTask(
+                                                    goArrived,
+                                                  );
+                                                } else {
+                                                  goArrived();
+                                                }
+                                              } else {
+                                                void goTaskDetail() {
+                                                  Navigator.push(
+                                                    context,
+                                                    MaterialPageRoute(
+                                                      builder: (context) =>
+                                                          TaskDetailScreen(
+                                                            task: task,
+                                                          ),
+                                                    ),
+                                                  );
+                                                }
+
+                                                if (task.status ==
+                                                    TaskStatus.hold) {
+                                                  _confirmContinueIncompleteTask(
+                                                    goTaskDetail,
+                                                  );
+                                                } else {
+                                                  goTaskDetail();
+                                                }
+                                              }
+                                            },
                                       borderRadius: BorderRadius.circular(14),
-                                      border: Border.all(
-                                        color: isSelected
-                                            ? colorScheme.primary
-                                            : colorScheme.outline,
-                                        width: isSelected ? 2 : 1,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: colorScheme.shadow.withOpacity(0.08),
-                                          blurRadius: 6,
-                                          offset: const Offset(0, 2),
+                                      child: Container(
+                                        margin: const EdgeInsets.only(
+                                          bottom: 8,
                                         ),
-                                      ],
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(12),
-                                      child: Opacity(
-                                        opacity: isCompleted ? 0.7 : 1.0,
-                                        child: Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                right: 10,
-                                                top: 2,
-                                              ),
-                                              child: Icon(
-                                                _isSelectionMode
-                                                    ? (isSelected
-                                                          ? Icons.check_circle
-                                                          : Icons
-                                                                .radio_button_unchecked)
-                                                    : Icons.assignment_rounded,
-                                                color: _isSelectionMode
-                                                    ? (isSelected
-                                                          ? colorScheme.primary
-                                                          : colorScheme.onSurfaceVariant)
-                                                    : colorScheme.primary,
-                                                size: _isSelectionMode
-                                                    ? 22
-                                                    : 20,
-                                              ),
+                                        decoration: BoxDecoration(
+                                          color: colorScheme.surface,
+                                          borderRadius: BorderRadius.circular(
+                                            14,
+                                          ),
+                                          border: Border.all(
+                                            color: isSelected
+                                                ? colorScheme.primary
+                                                : colorScheme.outline,
+                                            width: isSelected ? 2 : 1,
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: colorScheme.shadow
+                                                  .withOpacity(0.08),
+                                              blurRadius: 6,
+                                              offset: const Offset(0, 2),
                                             ),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
+                                          ],
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(12),
+                                          child: Opacity(
+                                            opacity: isCompleted ? 0.7 : 1.0,
+                                            child: Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        right: 10,
+                                                        top: 2,
+                                                      ),
+                                                  child: Icon(
+                                                    _isSelectionMode
+                                                        ? (isSelected
+                                                              ? Icons
+                                                                    .check_circle
+                                                              : Icons
+                                                                    .radio_button_unchecked)
+                                                        : Icons
+                                                              .assignment_rounded,
+                                                    color: _isSelectionMode
+                                                        ? (isSelected
+                                                              ? colorScheme
+                                                                    .primary
+                                                              : colorScheme
+                                                                    .onSurfaceVariant)
+                                                        : colorScheme.primary,
+                                                    size: _isSelectionMode
+                                                        ? 22
+                                                        : 20,
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
                                                     children: [
-                                                      Expanded(
-                                                        child: Text(
-                                                          'Task #${task.taskId}',
-                                                          style:
-                                                              TextStyle(
+                                                      Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .spaceBetween,
+                                                        children: [
+                                                          Expanded(
+                                                            child: Text(
+                                                              'Task #${task.taskId}',
+                                                              style: TextStyle(
                                                                 fontSize: 14,
                                                                 fontWeight:
                                                                     FontWeight
                                                                         .bold,
-                                                                color: colorScheme.onSurface,
+                                                                color: colorScheme
+                                                                    .onSurface,
                                                               ),
-                                                          maxLines: 1,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                        ),
-                                                      ),
-                                                      Text(
-                                                        DateDisplayUtil.formatShortDate(
-                                                          task.expectedCompletionDate,
-                                                        ),
-                                                        style: TextStyle(
-                                                          fontSize: 10,
-                                                          color: Colors
-                                                              .grey
-                                                              .shade700,
-                                                          fontWeight:
-                                                              FontWeight.w500,
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  const SizedBox(height: 4),
-                                                  Text(
-                                                    task.taskTitle,
-                                                    style: const TextStyle(
-                                                      fontSize: 15,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      color: Colors.black,
-                                                    ),
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
-                                                  const SizedBox(height: 4),
-                                                  Row(
-                                                    children: [
-                                                      Icon(
-                                                        Icons
-                                                            .calendar_today_outlined,
-                                                        size: 12,
-                                                        color: Colors
-                                                            .grey
-                                                            .shade600,
-                                                      ),
-                                                      const SizedBox(width: 4),
-                                                      Flexible(
-                                                        child: Text(
-                                                          'Expected: ${DateDisplayUtil.formatShortDate(task.expectedCompletionDate)}',
-                                                          style: TextStyle(
-                                                            fontSize: 11,
-                                                            color: Colors
-                                                                .grey
-                                                                .shade800,
-                                                            fontWeight:
-                                                                FontWeight.w500,
+                                                              maxLines: 1,
+                                                              overflow:
+                                                                  TextOverflow
+                                                                      .ellipsis,
+                                                            ),
                                                           ),
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                        ),
-                                                      ),
-                                                      if (isCompleted &&
-                                                          task.completedDate !=
-                                                              null) ...[
-                                                        const SizedBox(
-                                                          width: 12,
-                                                        ),
-                                                        Flexible(
-                                                          child: Text(
-                                                            'Completed: ${DateDisplayUtil.formatShortDate(task.completedDate!)}',
+                                                          Text(
+                                                            // Created date (assignedDate
+                                                            // falls back to createdAt in
+                                                            // the model); shown as-is.
+                                                            DateDisplayUtil.formatShortDate(
+                                                              task.assignedDate ??
+                                                                  task.expectedCompletionDate,
+                                                            ),
                                                             style: TextStyle(
-                                                              fontSize: 11,
+                                                              fontSize: 10,
                                                               color: Colors
                                                                   .grey
-                                                                  .shade800,
+                                                                  .shade700,
                                                               fontWeight:
                                                                   FontWeight
                                                                       .w500,
                                                             ),
-                                                            overflow:
-                                                                TextOverflow
-                                                                    .ellipsis,
                                                           ),
+                                                        ],
+                                                      ),
+                                                      const SizedBox(height: 4),
+                                                      Text(
+                                                        task.taskTitle,
+                                                        style: const TextStyle(
+                                                          fontSize: 15,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                          color: Colors.black,
                                                         ),
-                                                      ],
-                                                    ],
-                                                  ),
-                                                  if (task.customer !=
-                                                      null) ...[
-                                                    const SizedBox(height: 4),
-                                                    _buildTaskCardDetailRow(
-                                                      icon: Icons
-                                                          .person_outline_rounded,
-                                                      label: 'Customer',
-                                                      value:
-                                                          task
-                                                                      .customer!
-                                                                      .customerNumber !=
-                                                                  null &&
-                                                              task
-                                                                  .customer!
-                                                                  .customerNumber!
-                                                                  .isNotEmpty
-                                                          ? '${task.customer!.customerName} · ${task.customer!.customerNumber}'
-                                                          : task
-                                                                .customer!
-                                                                .customerName,
-                                                    ),
-                                                  ],
-                                                  _buildTaskCardDetailRow(
-                                                    icon: Icons
-                                                        .location_on_outlined,
-                                                    label: 'Destination',
-                                                    value:
-                                                        task
-                                                            .destinationLocation
-                                                            ?.displayAddress ??
-                                                        '${task.customer?.address ?? ''}, ${task.customer?.city ?? ''}, ${task.customer?.pincode ?? ''}'
-                                                            .trim(),
-                                                  ),
-                                                  const SizedBox(height: 8),
-                                                  Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    children: [
-                                                      Expanded(
-                                                        child: Wrap(
-                                                          spacing: 6,
-                                                          runSpacing: 4,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                      ),
+                                                      // Expected date dropped; show the
+                                                      // Completed date only for completed
+                                                      // tasks (created date sits top-right).
+                                                      if (isCompleted &&
+                                                          task.completedDate !=
+                                                              null) ...[
+                                                        const SizedBox(
+                                                          height: 4,
+                                                        ),
+                                                        Row(
                                                           children: [
-                                                            if (task
-                                                                .isOtpRequired)
-                                                              _buildRequirementChip(
-                                                                'OTP',
-                                                                Colors.blue,
+                                                            Icon(
+                                                              Icons
+                                                                  .calendar_today_outlined,
+                                                              size: 12,
+                                                              color: Colors
+                                                                  .grey
+                                                                  .shade600,
+                                                            ),
+                                                            const SizedBox(
+                                                              width: 4,
+                                                            ),
+                                                            Flexible(
+                                                              child: Text(
+                                                                'Completed: ${DateDisplayUtil.formatShortDate(task.completedDate!)}',
+                                                                style: TextStyle(
+                                                                  fontSize: 11,
+                                                                  color: Colors
+                                                                      .grey
+                                                                      .shade800,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w500,
+                                                                ),
+                                                                overflow:
+                                                                    TextOverflow
+                                                                        .ellipsis,
                                                               ),
-                                                            if (task
-                                                                .isGeoFenceRequired)
-                                                              _buildRequirementChip(
-                                                                'Geo',
-                                                                Colors.purple,
-                                                              ),
-                                                            if (task
-                                                                .isPhotoRequired)
-                                                              _buildRequirementChip(
-                                                                'Photo',
-                                                                Colors.orange,
-                                                              ),
-                                                            if (task
-                                                                .isFormRequired)
-                                                              _buildRequirementChip(
-                                                                'Form',
-                                                                Colors.teal,
-                                                              ),
+                                                            ),
                                                           ],
                                                         ),
+                                                      ],
+                                                      if (task.customer !=
+                                                          null) ...[
+                                                        const SizedBox(
+                                                          height: 4,
+                                                        ),
+                                                        _buildTaskCardDetailRow(
+                                                          icon: Icons
+                                                              .person_outline_rounded,
+                                                          label: 'Customer',
+                                                          value:
+                                                              task.customer!.customerNumber !=
+                                                                      null &&
+                                                                  task
+                                                                      .customer!
+                                                                      .customerNumber!
+                                                                      .isNotEmpty
+                                                              ? '${task.customer!.customerName} · ${task.customer!.customerNumber}'
+                                                              : task
+                                                                    .customer!
+                                                                    .customerName,
+                                                        ),
+                                                      ],
+                                                      _buildTaskCardDetailRow(
+                                                        icon: Icons
+                                                            .location_on_outlined,
+                                                        label: 'Destination',
+                                                        value:
+                                                            task
+                                                                .destinationLocation
+                                                                ?.displayAddress ??
+                                                            '${task.customer?.address ?? ''}, ${task.customer?.city ?? ''}, ${task.customer?.pincode ?? ''}'
+                                                                .trim(),
                                                       ),
-                                                      Container(
-                                                        padding:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 8,
-                                                              vertical: 4,
+                                                      const SizedBox(height: 8),
+                                                      Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .spaceBetween,
+                                                        children: [
+                                                          Expanded(
+                                                            child: Wrap(
+                                                              spacing: 6,
+                                                              runSpacing: 4,
+                                                              children: [
+                                                                if (task
+                                                                    .isOtpRequired)
+                                                                  _buildRequirementChip(
+                                                                    'OTP',
+                                                                    Colors.blue,
+                                                                  ),
+                                                                if (task
+                                                                    .isGeoFenceRequired)
+                                                                  _buildRequirementChip(
+                                                                    'Geo',
+                                                                    Colors
+                                                                        .purple,
+                                                                  ),
+                                                                if (task
+                                                                    .isPhotoRequired)
+                                                                  _buildRequirementChip(
+                                                                    'Photo',
+                                                                    Colors
+                                                                        .orange,
+                                                                  ),
+                                                                if (task
+                                                                    .isFormRequired)
+                                                                  _buildRequirementChip(
+                                                                    'Form',
+                                                                    Colors.teal,
+                                                                  ),
+                                                              ],
                                                             ),
-                                                        decoration: BoxDecoration(
-                                                          color: statusColor
-                                                              .withOpacity(0.1),
-                                                          borderRadius:
-                                                              BorderRadius.circular(
-                                                                12,
+                                                          ),
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets.symmetric(
+                                                                  horizontal: 8,
+                                                                  vertical: 4,
+                                                                ),
+                                                            decoration: BoxDecoration(
+                                                              color: statusColor
+                                                                  .withOpacity(
+                                                                    0.1,
+                                                                  ),
+                                                              borderRadius:
+                                                                  BorderRadius.circular(
+                                                                    12,
+                                                                  ),
+                                                            ),
+                                                            child: Text(
+                                                              _statusLabel(
+                                                                task.status,
                                                               ),
-                                                        ),
-                                                        child: Text(
-                                                          _statusLabel(
-                                                            task.status,
+                                                              style: TextStyle(
+                                                                fontSize: 11,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w600,
+                                                                color:
+                                                                    statusColor,
+                                                              ),
+                                                            ),
                                                           ),
-                                                          style: TextStyle(
-                                                            fontSize: 11,
-                                                            fontWeight:
-                                                                FontWeight.w600,
-                                                            color: statusColor,
-                                                          ),
-                                                        ),
+                                                        ],
                                                       ),
                                                     ],
                                                   ),
-                                                ],
-                                              ),
+                                                ),
+                                              ],
                                             ),
-                                          ],
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                  ),
-                ],
-              ),
-            
-            // Customers Tab
-            _isLoadingCustomers
-                ? const Center(child: AppTabLoader())
-                : _customers.isEmpty
+                                    );
+                                  }, childCount: visibleTasks.length),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+
+                // Customers Tab
+                _isLoadingCustomers
+                    ? const Center(child: AppTabLoader())
+                    : _customers.isEmpty
                     ? RefreshIndicator(
                         onRefresh: _fetchCustomers,
                         child: SingleChildScrollView(
@@ -1795,17 +2061,24 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                         onRefresh: _fetchCustomers,
                         child: ListView.builder(
                           padding: const EdgeInsets.all(12),
-                          itemCount: _customers.length,
+                          itemCount: _pagedCustomers.length,
                           itemBuilder: (context, index) {
-                            final customer = _customers[index];
+                            final customer = _pagedCustomers[index];
                             return Card(
                               elevation: 1,
                               margin: const EdgeInsets.only(bottom: 8),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                               child: ListTile(
+                                onTap: () => _showCustomerDetails(customer),
                                 leading: CircleAvatar(
-                                  backgroundColor: colorScheme.primary.withOpacity(0.1),
-                                  child: Icon(Icons.person, color: colorScheme.primary),
+                                  backgroundColor: colorScheme.primary
+                                      .withOpacity(0.1),
+                                  child: Icon(
+                                    Icons.person,
+                                    color: colorScheme.primary,
+                                  ),
                                 ),
                                 title: Text(
                                   customer.customerName,
@@ -1813,67 +2086,70 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                subtitle: Text(
-                                  [
-                                    if (customer.companyName != null &&
+                                subtitle: (customer.companyName != null &&
                                         customer.companyName!.trim().isNotEmpty)
-                                      customer.companyName!.trim(),
-                                    '${customer.customerNumber ?? 'No number'} · ${customer.city}, ${customer.pincode}',
-                                  ].join('\n'),
-                                  style: const TextStyle(fontSize: 12),
+                                    ? Text(
+                                        customer.companyName!.trim(),
+                                        style: const TextStyle(fontSize: 12),
+                                      )
+                                    : null,
+                                trailing: const Icon(
+                                  Icons.chevron_right_rounded,
                                 ),
-                                isThreeLine:
-                                    customer.companyName != null &&
-                                    customer.companyName!.trim().isNotEmpty,
                               ),
                             );
                           },
                         ),
                       ),
-          ],
-        ),
-        bottomNavigationBar: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_mainTabController.index == 0 && !_isSelectionMode)
-              _buildTaskPaginationBar(colorScheme),
-            AppBottomNavigationBar(
-              currentIndex: -1,
-              onTap: (index) {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        DashboardScreen(initialIndex: index.clamp(0, 4)),
-                  ),
-                  (route) => false,
-                );
-              },
+              ],
             ),
-          ],
-        ),
-        floatingActionButton: _mainTabController.index == 1
-            ? SizedBox(
-                height: 40,
-                child: FloatingActionButton.extended(
-                  foregroundColor: Colors.white,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
+            bottomNavigationBar: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Pagination bar for the active tab, pinned as a fixed footer
+                // just above the bottom navigation instead of scrolling away
+                // with the list.
+                _buildBottomPaginationBar(colorScheme),
+                AppBottomNavigationBar(
+                  currentIndex: -1,
+                  onTap: (index) {
+                    Navigator.of(context).pushAndRemoveUntil(
                       MaterialPageRoute(
-                        builder: (context) => const AddCustomerScreen(),
+                        builder: (_) =>
+                            DashboardScreen(initialIndex: index.clamp(0, 4)),
                       ),
-                    ).then((_) => _fetchCustomers());
+                      (route) => false,
+                    );
                   },
-                  label: const Text(
-                    'Add Customer',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                  ),
-                  icon: const Icon(Icons.person_add, size: 18),
-                  backgroundColor: colorScheme.secondary,
                 ),
-              )
-            : null,
-      );
+              ],
+            ),
+            floatingActionButton: _mainTabController.index == 1
+                ? SizedBox(
+                    height: 40,
+                    child: FloatingActionButton.extended(
+                      foregroundColor: Colors.white,
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AddCustomerScreen(),
+                          ),
+                        ).then((_) => _fetchCustomers());
+                      },
+                      label: const Text(
+                        'Add Customer',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      icon: const Icon(Icons.person_add, size: 18),
+                      backgroundColor: colorScheme.secondary,
+                    ),
+                  )
+                : null,
+          );
         },
       ),
     );

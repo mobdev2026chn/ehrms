@@ -11,7 +11,7 @@ import '../../widgets/app_tab_loader.dart';
 
 /// Full, filterable + paginated asset list. Reached from the "VIEW ALL" action
 /// on the My Assets overview. Preserves the original search / status-filter /
-/// branch / asset-type / pagination behaviour.
+/// asset-type / pagination behaviour.
 class AssetsAllListScreen extends StatefulWidget {
   /// When non-null, only assets matching this software/hardware split are shown
   /// (classification is client-side via [Asset.isSoftware]).
@@ -40,9 +40,7 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
   // Filter state
   bool _showFilterCard = false;
   String? _selectedAssetType;
-  String? _selectedBranchId;
   List<Map<String, dynamic>> _assetTypes = [];
-  List<Map<String, dynamic>> _branches = [];
   bool _isFetchingFilters = false; // Prevent concurrent fetches
 
   // Pagination state
@@ -82,9 +80,6 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
     try {
       final assetTypesResult =
           await _assetService.getAssetTypes(forceRefresh: forceRefresh);
-      await Future.delayed(const Duration(milliseconds: 300));
-      final branchesResult =
-          await _assetService.getBranches(forceRefresh: forceRefresh);
 
       if (mounted) {
         setState(() {
@@ -95,15 +90,6 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                 data is List ? List<Map<String, dynamic>>.from(data) : [];
           } else if (_assetTypes.isEmpty) {
             _assetTypes = [];
-          }
-
-          if (branchesResult['success'] == true &&
-              branchesResult['data'] != null) {
-            final data = branchesResult['data'];
-            _branches =
-                data is List ? List<Map<String, dynamic>>.from(data) : [];
-          } else if (_branches.isEmpty) {
-            _branches = [];
           }
         });
       }
@@ -156,7 +142,6 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
       status: _selectedStatus == 'All Assets' ? null : _selectedStatus,
       search: _searchQuery.isNotEmpty ? _searchQuery : null,
       type: _selectedAssetType,
-      branchId: _selectedBranchId,
       page: pageToFetch,
       limit: _limit,
     );
@@ -381,51 +366,6 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                               ],
                               onChanged: (value) {
                                 setState(() => _selectedAssetType = value);
-                                _fetchAssets(refresh: true);
-                              },
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Container(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            border:
-                                Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _selectedBranchId,
-                              isExpanded: true,
-                              hint: const Text('All Branches',
-                                  style: TextStyle(fontSize: 13)),
-                              items: [
-                                const DropdownMenuItem<String>(
-                                  value: null,
-                                  child: Text('All Branches',
-                                      style: TextStyle(fontSize: 13)),
-                                ),
-                                ..._branches.map((branch) {
-                                  final branchId =
-                                      branch['_id']?.toString() ??
-                                          branch['id']?.toString();
-                                  final branchName =
-                                      branch['branchName']?.toString() ?? '';
-                                  return DropdownMenuItem<String>(
-                                    value: branchId,
-                                    child: Text(
-                                      branchName.isEmpty ? 'N/A' : branchName,
-                                      style: const TextStyle(fontSize: 13),
-                                    ),
-                                  );
-                                }),
-                              ],
-                              onChanged: (value) {
-                                setState(() => _selectedBranchId = value);
                                 _fetchAssets(refresh: true);
                               },
                             ),

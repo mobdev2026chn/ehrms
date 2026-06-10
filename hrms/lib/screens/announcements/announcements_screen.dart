@@ -49,8 +49,16 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
         } else if (unseen['total'] is num) {
           unseenTotal = (unseen['total'] as num).toInt();
         }
+        final list = data is List ? List<dynamic>.from(data) : <dynamic>[];
+        // Keep expired announcements visible (marked "Expired" on the card) but
+        // sort them below the active ones so live announcements stay prominent.
+        list.sort((a, b) {
+          final ae = _isExpired(a) ? 1 : 0;
+          final be = _isExpired(b) ? 1 : 0;
+          return ae - be;
+        });
         setState(() {
-          _announcements = data is List ? List<dynamic>.from(data) : [];
+          _announcements = list;
           _unseenEngagementTotal = unseenTotal;
           _isLoading = false;
         });
@@ -319,8 +327,15 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
     final dateStr = date != null
         ? DateFormat('d MMM y, h:mm a').format(date)
         : '';
+    final expiry = _parseDate(a['expiryDate']) ?? _parseDate(a['endDate']);
+    final expiryStr = expiry != null
+        ? DateFormat('d MMM y, h:mm a').format(expiry)
+        : '';
+    final isExpired = _isExpired(a);
 
-    return Container(
+    return Opacity(
+      opacity: isExpired ? 0.6 : 1.0,
+      child: Container(
       decoration: BoxDecoration(
         color: colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
@@ -381,6 +396,38 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                               height: 1.3,
                             ),
                           ),
+                          if (isExpired) ...[
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: colorScheme.errorContainer,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.lock_clock_outlined,
+                                    size: 13,
+                                    color: colorScheme.onErrorContainer,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Expired',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: colorScheme.onErrorContainer,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                           if (fromName != null && fromName.isNotEmpty) ...[
                             const SizedBox(height: 4),
                             Text(
@@ -406,6 +453,33 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: colorScheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          if (expiryStr.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.event_busy_rounded,
+                                  size: 14,
+                                  color: isExpired
+                                      ? colorScheme.error
+                                      : colorScheme.onSurfaceVariant,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  isExpired
+                                      ? 'Expired on: $expiryStr'
+                                      : 'Expires: $expiryStr',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: isExpired
+                                        ? colorScheme.error
+                                        : colorScheme.onSurfaceVariant,
                                     fontWeight: FontWeight.w500,
                                   ),
                                 ),
@@ -440,7 +514,34 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
           ),
         ),
       ),
+      ),
     );
+  }
+
+  /// Whether an announcement's expiry/end date has passed. Expired announcements
+  /// stay visible in the list (marked "Expired" on the card) but engagement is
+  /// disabled in the detail screen. Mirrors the dashboard expiry check.
+  static bool _isExpired(dynamic item) {
+    if (item is! Map) return false;
+
+    DateTime? parseLocal(dynamic value) {
+      final raw = value?.toString().trim() ?? '';
+      if (raw.isEmpty) return null;
+      return DateTime.tryParse(raw)?.toLocal();
+    }
+
+    final now = DateTime.now();
+    final expiryDate = parseLocal(item['expiryDate']);
+    if (expiryDate != null && expiryDate.isBefore(now)) {
+      return true;
+    }
+
+    final endDate = parseLocal(item['endDate']);
+    if (endDate != null && endDate.isBefore(now)) {
+      return true;
+    }
+
+    return false;
   }
 
   static DateTime? _parseDate(dynamic value) {

@@ -1,5 +1,7 @@
 const Staff = require('../models/Staff');
+const Company = require('../models/Company');
 const { getHolidayTemplateForStaff } = require('../utils/holidayTemplateHelper');
+const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
 
 // @desc    Get holidays for employee
 // @route   GET /api/holidays/employee
@@ -103,6 +105,45 @@ const getEmployeeHolidays = async (req, res) => {
     }
 };
 
+// @desc    Get weekly-off configuration for the logged-in employee
+// @route   GET /api/holidays/weekoff-config
+// @access  Private
+// Returns the recurring week-off rule so clients can compute which weekdays/Saturdays are
+// off without one request per month: { weeklyOffPattern, weeklyHolidays: [{ day, name }] }.
+// day uses JS getDay() numbering: 0 = Sunday ... 6 = Saturday.
+const getWeekOffConfig = async (req, res) => {
+    try {
+        if (!req.staff) {
+            return res.status(404).json({ success: false, message: 'Staff record not found' });
+        }
+        const staff = await Staff.findById(req.staff._id)
+            .select('businessId weeklyHolidayTemplateId')
+            .populate('weeklyHolidayTemplateId')
+            .lean();
+        const company = staff?.businessId
+            ? await Company.findById(staff.businessId).select('settings.business').lean()
+            : null;
+        const config = await getWeekOffConfigForStaff(staff || req.staff, company);
+        res.json({
+            success: true,
+            data: {
+                weeklyOffPattern: config.weeklyOffPattern,
+                weeklyHolidays: (config.weeklyHolidays || []).map((h) => ({
+                    day: h.day,
+                    name: h.name || null
+                }))
+            }
+        });
+    } catch (error) {
+        console.error('Get WeekOff Config Error:', error);
+        res.status(500).json({
+            success: false,
+            error: { message: error.message || 'Failed to fetch week-off config' }
+        });
+    }
+};
+
 module.exports = {
-    getEmployeeHolidays
+    getEmployeeHolidays,
+    getWeekOffConfig
 };

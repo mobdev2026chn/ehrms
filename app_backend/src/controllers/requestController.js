@@ -31,6 +31,43 @@ const toMonthRange = (year, monthOneBased) => {
     return { start, end };
 };
 
+// Resolve an employee's effective permission policy for a given month.
+// - `configured`: the resolved shift defines a permissionPolicy object (whether enabled or disabled).
+// - `enabled`: the policy toggle is on (permission waives applicable fines).
+// When the staff-shift can't be resolved (legacy data), fall back to any business shift that
+// defines a policy so employees with valid configuration are not wrongly treated as unconfigured.
+const resolvePermissionConfig = async (businessId, staff, year, month) => {
+    const result = { configured: false, enabled: false, monthlyQuotaMinutes: 0 };
+    if (!businessId) return result;
+    try {
+        // .lean() so the fallback loop below can read shift.permissionPolicy directly
+        // (on a hydrated doc, undeclared/strict fields are not exposed via dot access).
+        const company = await Company.findById(businessId).select('settings.attendance').lean();
+        const anchorDay = new Date(year, month - 1, 1);
+        const shiftTiming = getShiftTimings(company, staff, anchorDay, staff?.joiningDate);
+        const policy = shiftTiming?.permissionPolicy;
+        if (policy && typeof policy === 'object') {
+            result.configured = true;
+            result.enabled = policy.enabled === true;
+            result.monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
+        }
+        if (!result.configured) {
+            const shifts = company?.settings?.attendance?.shifts || [];
+            for (const shift of shifts) {
+                if (shift?.permissionPolicy && typeof shift.permissionPolicy === 'object') {
+                    result.configured = true;
+                    if (shift.permissionPolicy.enabled === true) result.enabled = true;
+                    const value = Math.max(0, Number(shift.permissionPolicy.monthlyQuotaMinutes || 0));
+                    if (value > result.monthlyQuotaMinutes) result.monthlyQuotaMinutes = value;
+                }
+            }
+        }
+    } catch (err) {
+        console.error('[Permission][Config Resolve] failed:', err?.message);
+    }
+    return result;
+};
+
 // Helper function to generate payroll dynamically for payslip requests
 // ALWAYS recalculates from scratch - does not use existing payroll records
 const _generatePayrollForPayslip = async (employeeId, month, year, businessId) => {
@@ -1132,6 +1169,22 @@ const createPermissionRequest = async (req, res) => {
         const attendanceDate = new Date(date);
         attendanceDate.setHours(0, 0, 0, 0);
 
+        // Block submission when Permission is not configured for the employee's shift.
+        // A disabled-but-configured policy still allows submission (fines are deducted later).
+        const staff = await Staff.findById(employeeId).select('shiftId shiftName joiningDate');
+        const permissionConfig = await resolvePermissionConfig(
+            businessId,
+            staff,
+            attendanceDate.getFullYear(),
+            attendanceDate.getMonth() + 1
+        );
+        if (!permissionConfig.configured) {
+            return res.status(400).json({
+                success: false,
+                error: { message: 'Permission is not configured. Please contact HR.' }
+            });
+        }
+
         const created = await PermissionRequest.create({
             employeeId,
             businessId,
@@ -1234,25 +1287,9 @@ const getPermissionBalance = async (req, res) => {
         const { start, end } = toMonthRange(y, m);
 
         // Keep parity with web backend: resolve employee's effective shift and its permissionPolicy.
-        let monthlyQuotaMinutes = 0;
         const staff = await Staff.findById(employeeId).select('shiftId shiftName joiningDate');
-        if (businessId) {
-            const company = await Company.findById(businessId).select('settings.attendance');
-            const anchorDay = new Date(y, m - 1, 1);
-            const shiftTiming = getShiftTimings(company, staff, anchorDay, staff?.joiningDate);
-            const policy = shiftTiming?.permissionPolicy || {};
-            monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
-
-            // Fallback for legacy data where staff-shift resolution fails:
-            // use maximum configured permission quota among business shifts.
-            if (monthlyQuotaMinutes <= 0) {
-                const shifts = company?.settings?.attendance?.shifts || [];
-                for (const shift of shifts) {
-                    const value = Math.max(0, Number(shift?.permissionPolicy?.monthlyQuotaMinutes || 0));
-                    if (value > monthlyQuotaMinutes) monthlyQuotaMinutes = value;
-                }
-            }
-        }
+        const permissionConfig = await resolvePermissionConfig(businessId, staff, y, m);
+        let monthlyQuotaMinutes = permissionConfig.monthlyQuotaMinutes;
 
         // Primary source for app permission balance:
         // latest attendance record of selected month that already stores
@@ -1327,19 +1364,42 @@ const getPermissionBalance = async (req, res) => {
             });
         }
 
+        // Pending permission minutes for the month (requests awaiting approval).
+        const pendingAgg = await PermissionRequest.aggregate([
+            { $match: { employeeId, date: { $gte: start, $lte: end }, status: 'Pending' } },
+            { $group: { _id: null, total: { $sum: { $ifNull: ['$requestedMinutes', 0] } } } }
+        ]);
+        const pendingMinutes = Math.max(0, Number(pendingAgg?.[0]?.total || 0));
+
+        // Pending requests are committed against the quota even before approval,
+        // so subtract them from remaining so the employee cannot over-apply.
+        remainingMinutes = Math.max(0, remainingMinutes - pendingMinutes);
+
         console.log('[PermissionBalance][Response]', {
             employeeId: employeeId?.toString?.() || String(employeeId || ''),
             businessId: businessId?.toString?.() || String(businessId || ''),
             month: m,
             year: y,
+            configured: permissionConfig.configured,
+            enabled: permissionConfig.enabled,
             monthlyQuotaMinutes,
             consumedMinutes,
-            remainingMinutes
+            remainingMinutes,
+            pendingMinutes
         });
 
         return res.json({
             success: true,
-            data: { month: m, year: y, monthlyQuotaMinutes, consumedMinutes, remainingMinutes }
+            data: {
+                month: m,
+                year: y,
+                configured: permissionConfig.configured,
+                enabled: permissionConfig.enabled,
+                monthlyQuotaMinutes,
+                consumedMinutes,
+                remainingMinutes,
+                pendingMinutes
+            }
         });
     } catch (error) {
         console.error('Get Permission Balance Error:', error);

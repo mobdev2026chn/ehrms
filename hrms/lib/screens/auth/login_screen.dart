@@ -232,14 +232,31 @@ class _LoginScreenState extends State<LoginScreen>
     final isLoading =
         context.select<AuthBloc, bool>((b) => b.state is AuthLoadInProgress) ||
         _loginSubmitLocked;
+
+    // Responsive keyboard handling: when the keyboard is open, shrink the
+    // hero/logo banner (keeps the logo visible, just smaller) and lift the
+    // card. viewInsetsOf subscribes to the keyboard inset so the layout
+    // rebuilds as it slides in/out; the AnimatedContainers make it smooth.
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    final isKeyboardOpen = keyboardInset > 0;
+    final bannerHeight =
+        screenHeight * (isKeyboardOpen ? 0.26 : 0.55);
+    final cardTopSpace =
+        screenHeight * (isKeyboardOpen ? 0.20 : 0.40);
+
     return BlocListener<AuthBloc, AuthState>(
       listener: _onAuthStateChanged,
       child: Scaffold(
+        // Keep the body full-height; the keyboard inset is handled manually
+        // (logo banner shrinks smoothly, card scrolls up) so the logo never
+        // gets clipped when the keyboard opens.
         resizeToAvoidBottomInset: false,
         backgroundColor:  AppColors.primary,
         body: Stack(
           children: [
-              // Animated background
+              // Animated background — hero/logo banner. Shrinks smoothly when
+              // the keyboard opens so the logo stays visible (never clipped).
               AnimatedBuilder(
                 animation: _entranceController,
                 builder: (context, child) {
@@ -247,19 +264,19 @@ class _LoginScreenState extends State<LoginScreen>
                     opacity: _bgOpacity.value,
                     child: Transform.scale(
                       scale: _bgScale.value,
-                      alignment: Alignment.center,
-                      child: Container(
-                        height: MediaQuery.sizeOf(context).height * 0.55,
+                      alignment: Alignment.topCenter,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOutCubic,
+                        height: bannerHeight,
                         width: double.infinity,
                         decoration: const BoxDecoration(
-                                    color: Color(0xFF1A1A1A),
-
+                          color: Color(0xFF1A1A1A),
                           image: DecorationImage(
                             image: AssetImage(
                               'assets/images/ektahr_logo_white.png',
                             ),
                             fit: BoxFit.cover,
-                            
                           ),
                           borderRadius: BorderRadius.only(
                             bottomLeft: Radius.circular(40),
@@ -272,55 +289,60 @@ class _LoginScreenState extends State<LoginScreen>
                 },
               ),
 
-              // Main content with entrance animation
+              // Main content with entrance animation. Top spacer matches the
+              // banner so the card floats just below the logo and lifts with
+              // it when the keyboard opens; the keyboard inset is added as
+              // bottom padding so the card can scroll fully into view.
               SafeArea(
-                child: Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                    child: AnimatedBuilder(
-                      animation: _entranceController,
-                      builder: (context, child) {
-                        return Transform.translate(
-                          offset: Offset(0, _cardSlide.value),
-                          child: Opacity(
-                            opacity: _cardOpacity.value,
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const SizedBox(height: 100),
-                                const SizedBox(height: 32),
-                                AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 350),
-                                  switchInCurve: Curves.easeOutCubic,
-                                  switchOutCurve: Curves.easeInCubic,
-                                  transitionBuilder: (child, animation) {
-                                    return FadeTransition(
-                                      opacity: animation,
-                                      child: SlideTransition(
-                                        position: Tween<Offset>(
-                                          begin: const Offset(0, 0.05),
-                                          end: Offset.zero,
-                                        ).animate(animation),
-                                        child: child,
-                                      ),
-                                    );
-                                  },
-                                  child: _show2FAInput
-                                      ? KeyedSubtree(
-                                          key: const ValueKey<bool>(true),
-                                          child: _build2FACard(isLoading),
-                                        )
-                                      : KeyedSubtree(
-                                          key: const ValueKey<bool>(false),
-                                          child: _buildLoginCard(isLoading),
-                                        ),
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(24, 0, 24, 32 + keyboardInset),
+                  child: AnimatedBuilder(
+                    animation: _entranceController,
+                    builder: (context, child) {
+                      return Transform.translate(
+                        offset: Offset(0, _cardSlide.value),
+                        child: Opacity(
+                          opacity: _cardOpacity.value,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeOutCubic,
+                          height: cardTopSpace,
+                        ),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 350),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) {
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: const Offset(0, 0.05),
+                                  end: Offset.zero,
+                                ).animate(animation),
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: _show2FAInput
+                              ? KeyedSubtree(
+                                  key: const ValueKey<bool>(true),
+                                  child: _build2FACard(isLoading),
+                                )
+                              : KeyedSubtree(
+                                  key: const ValueKey<bool>(false),
+                                  child: _buildLoginCard(isLoading),
                                 ),
-                                const SizedBox(height: 24),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
+                        ),
+                        const SizedBox(height: 24),
+                      ],
                     ),
                   ),
                 ),

@@ -124,11 +124,9 @@ const sendOTPEmail = async (toEmail, otp, type = 'password-reset') => {
                 console.log(`[EmailService] ✅ OTP email sent via SendPulse to ${normalizedTo}`);
                 return { success: true, messageId: result.messageId };
             }
-            console.error(`[EmailService] ❌ SendPulse failed: ${result.error}`);
-            return { success: false, error: result.error };
+            console.warn(`[EmailService] SendPulse failed, falling back to next provider. Error: ${result.error}`);
         } catch (error) {
-            console.error('[EmailService] ❌ SendPulse error:', error.message);
-            return { success: false, error: error.message };
+            console.warn('[EmailService] SendPulse exception, falling back to next provider. Error:', error.message);
         }
     }
 
@@ -140,11 +138,7 @@ const sendOTPEmail = async (toEmail, otp, type = 'password-reset') => {
             console.log(`[EmailService] ✅ OTP email sent via SendGrid to ${normalizedTo}`);
             return { success: true };
         } catch (error) {
-            console.error('[EmailService] ❌ SendGrid failed:', error.message);
-            if (error.response && error.response.body) {
-                console.error('[EmailService] SendGrid response:', JSON.stringify(error.response.body));
-            }
-            return { success: false, error: error.message, code: error.code };
+            console.warn('[EmailService] SendGrid failed, falling back to SMTP. Error:', error.message);
         }
     }
 
@@ -153,8 +147,9 @@ const sendOTPEmail = async (toEmail, otp, type = 'password-reset') => {
         return { success: false, error: 'Email service not configured' };
     }
 
+    const smtpFromEmail = process.env.EMAIL_FROM || process.env.EMAIL_USER;
     const mailOptions = {
-        from: `"${fromName}" <${fromEmail}>`,
+        from: `"${fromName}" <${smtpFromEmail}>`,
         to: normalizedTo,
         subject,
         html
@@ -195,9 +190,9 @@ const sendTaskOtpEmail = async (toEmail, subject, html) => {
         try {
             const result = await sendpulseService.sendEmail(toEmail, subject, html, fromEmail, fromName);
             if (result.success) return { success: true, messageId: result.messageId };
-            return { success: false, error: result.error };
+            console.warn('[EmailService] SendPulse failed, falling back to next provider. Error:', result.error);
         } catch (e) {
-            return { success: false, error: e.message };
+            console.warn('[EmailService] SendPulse exception, falling back to next provider. Error:', e.message);
         }
     }
     if (sgMail) {
@@ -205,13 +200,14 @@ const sendTaskOtpEmail = async (toEmail, subject, html) => {
             await sgMail.send({ to: toEmail, from: { email: fromEmail, name: fromName }, subject, html });
             return { success: true };
         } catch (e) {
-            return { success: false, error: e.message };
+            console.warn('[EmailService] SendGrid failed, falling back to SMTP. Error:', e.message);
         }
     }
     if (transporter?.options?.auth) {
         try {
+            const smtpFrom = process.env.EMAIL_FROM || process.env.EMAIL_USER;
             await transporter.sendMail({
-                from: `"${fromName}" <${fromEmail}>`,
+                from: `"${fromName}" <${smtpFrom}>`,
                 to: toEmail,
                 subject,
                 html

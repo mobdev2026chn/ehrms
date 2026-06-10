@@ -11,12 +11,20 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_client.dart';
 import 'alarm_service.dart';
+import 'break_reminder_service.dart';
 import '../config/app_colors.dart';
 import '../screens/requests/my_requests_screen.dart';
 import '../screens/attendance/attendance_screen.dart';
+import '../screens/attendance/break_screen.dart';
 import '../screens/performance/performance_module_screen.dart';
 import '../screens/announcements/announcements_screen.dart';
 import '../screens/announcements/announcement_detail_screen.dart';
+import '../screens/salary/all_payslips_screen.dart';
+import '../screens/grievance/grievance_shell_screen.dart';
+import '../screens/interaction/interaction_shell_screen.dart';
+import '../screens/assets/assets_listing_screen.dart';
+import '../screens/lms/lms_shell_screen.dart';
+import '../screens/geo/my_tasks_screen.dart';
 import '../widgets/notification_reaction_overlay.dart';
 import 'interaction_service.dart';
 
@@ -144,6 +152,17 @@ Future<void> _showBackgroundNotification({
   );
 }
 
+/// Background-isolate handler for taps on locally-shown notification actions
+/// (e.g. the break reminder's "End Break" while the app is not in the
+/// foreground). The plugin invokes this from its own isolate, where there is no
+/// UI to navigate; with `showsUserInterface: true` the OS brings the app
+/// forward, and the foreground response / launch-details path then opens the
+/// break screen. Must be a top-level vm:entry-point.
+@pragma('vm:entry-point')
+void fcmLocalNotificationBackgroundResponse(NotificationResponse response) {
+  // Intentionally no navigation here — handled on resume/launch.
+}
+
 /// Handles FCM: permission, token, foreground/background/terminated messages.
 /// Receives notifications sent from web backend (leave/expense/payslip/loan/attendance approve/reject).
 ///
@@ -168,6 +187,41 @@ class FcmService {
     final key = dedupeKeyFromData(data);
     if (key.isEmpty) return DateTime.now().millisecondsSinceEpoch % 100000;
     return key.hashCode.abs() % 100000;
+  }
+
+  /// The current logged-in user's stable id. Stored notifications are stamped
+  /// with this as their `owner` so personal items (break/leave/permission/etc.)
+  /// only surface for the user they belong to — never for whoever logs in next
+  /// on the same device. Null when no one is logged in.
+  static Future<String?> currentOwnerId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userStr = prefs.getString('user');
+      if (userStr != null) {
+        final user = jsonDecode(userStr) as Map<String, dynamic>?;
+        if (user != null) {
+          final id =
+              user['staffId']?.toString() ??
+              user['_id']?.toString() ??
+              user['id']?.toString();
+          if (id != null && id.trim().isNotEmpty) return id.trim();
+        }
+      }
+      final staffId = prefs.getString('staffId');
+      if (staffId != null && staffId.trim().isNotEmpty) return staffId.trim();
+    } catch (_) {}
+    return null;
+  }
+
+  /// True when a stored notification (stamped with [owner]) should be visible to
+  /// the user identified by [currentOwner]. Owner-less entries (legacy items
+  /// stored before scoping, or company-wide broadcasts) stay visible to all;
+  /// an owned entry shows only for its owner, so personal notifications never
+  /// leak to a different user on the same device.
+  static bool _isVisibleToOwner(String? owner, String? currentOwner) {
+    if (owner == null || owner.isEmpty) return true;
+    if (currentOwner == null || currentOwner.isEmpty) return false;
+    return owner == currentOwner;
   }
 
   /// Key to dedupe the same notification (module+type+entityId). Used for storage dedupe and Android notification tag.
@@ -343,6 +397,24 @@ class FcmService {
     } else {
       _log('getInitialMessage: none (normal launch)');
     }
+    // App launched from a tap on a local notification (e.g. the break reminder's
+    // "End Break" action while terminated): route once the navigator is ready.
+    try {
+      final launchDetails = await _localNotifications
+          .getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        final resp = launchDetails!.notificationResponse;
+        if (resp != null) {
+          _logAlways(
+            'getNotificationAppLaunchDetails: launched via local notification '
+            'action=${resp.actionId}',
+          );
+          _onLocalNotificationResponse(resp);
+        }
+      }
+    } catch (e) {
+      _logAlways('getNotificationAppLaunchDetails failed (continuing): $e');
+    }
     _logAlways(
       'init completed – foreground/background/terminated handlers attached. Background/closed notifications show in-app ONLY if server sends DATA-ONLY (no top-level notification payload).',
     );
@@ -362,16 +434,9 @@ class FcmService {
     );
     await _localNotifications.initialize(
       initSettings,
-      onDidReceiveNotificationResponse: (response) {
-        if (response.payload != null && response.payload!.isNotEmpty) {
-          try {
-            final data = jsonDecode(response.payload!) as Map<String, dynamic>?;
-            if (data != null) {
-              unawaited(_handleNotificationData(data));
-            }
-          } catch (_) {}
-        }
-      },
+      onDidReceiveNotificationResponse: _onLocalNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse:
+          fcmLocalNotificationBackgroundResponse,
     );
     if (Platform.isAndroid) {
       await _localNotifications
@@ -388,6 +453,30 @@ class FcmService {
           );
       // Alarm channel for scheduled reminders (works when app is closed)
       await AlarmService.ensureAlarmChannel(_localNotifications);
+    }
+  }
+
+  /// Foreground/background-resumed handler for taps on locally-shown
+  /// notifications (FCM tray copies and the break reminder). Routes the break
+  /// reminder's "End Break" action to the break screen; otherwise decodes the
+  /// JSON payload and navigates by module/type.
+  static void _onLocalNotificationResponse(NotificationResponse response) {
+    if (response.actionId == BreakReminderService.endBreakActionId) {
+      unawaited(
+        _handleNotificationData(const {
+          'module': 'break',
+          'type': 'break_reminder',
+        }),
+      );
+      return;
+    }
+    if (response.payload != null && response.payload!.isNotEmpty) {
+      try {
+        final data = jsonDecode(response.payload!) as Map<String, dynamic>?;
+        if (data != null) {
+          unawaited(_handleNotificationData(data));
+        }
+      } catch (_) {}
     }
   }
 
@@ -667,6 +756,177 @@ class FcmService {
     return _NotificationReaction(emoji: '😔');
   }
 
+  /// Shows a local tray notification + in-app overlay banner when the employee
+  /// exceeds their leave or permission quota.
+  /// [type] must be `'leave'` or `'permission'`.
+  /// Tapping the notification navigates to [AttendanceScreen].
+  static Future<void> showLimitExceededLocalNotification({
+    required String type,
+    required String message,
+  }) async {
+    final title = type == 'permission'
+        ? 'Permission Quota Exceeded'
+        : 'Leave Balance Exceeded';
+    const data = <String, dynamic>{
+      'module': 'attendance',
+      'type': 'limit_exceeded',
+    };
+    try {
+      final id = 'limit_$type'.hashCode.abs() % 100000;
+      final androidDetails = AndroidNotificationDetails(
+        _kLocalNotificationChannelId,
+        'HRMS Notifications',
+        channelDescription:
+            'Notifications for leave, attendance, requests, etc.',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@drawable/ic_notification',
+      );
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      await _localNotifications.show(
+        id,
+        title,
+        message,
+        NotificationDetails(android: androidDetails, iOS: iosDetails),
+        payload: jsonEncode(data),
+      );
+      await storeNotification(title: title, body: message, data: data);
+      _logAlways('showLimitExceededLocalNotification: shown ($type)');
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('$_logTag showLimitExceededLocalNotification: $e');
+      }
+    }
+
+    // In-app foreground overlay banner (orange warning theme)
+    final context = navigatorKey?.currentContext;
+    if (context != null && context.mounted) {
+      SystemSound.play(SystemSoundType.alert);
+      final overlay = Navigator.of(context, rootNavigator: true).overlay;
+      if (overlay != null) {
+        OverlayEntry? entry;
+        void remove() {
+          entry?.remove();
+          entry = null;
+        }
+
+        entry = OverlayEntry(
+          builder: (ctx) => Positioned(
+            top: MediaQuery.of(context).padding.top + 12,
+            left: 16,
+            right: 16,
+            child: Material(
+              color:AppColors.primary,
+              child: GestureDetector(
+                onTap: () {
+                  remove();
+                  unawaited(_handleNotificationData(data));
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 14,
+                  ),
+                  // decoration: BoxDecoration(
+                  //   gradient: LinearGradient(
+                  //     colors: [
+                  //       Colors.orange.shade700,
+                  //       Colors.orange.shade600,
+                  //     ],
+                  //     begin: Alignment.topLeft,
+                  //     end: Alignment.bottomRight,
+                  //   ),
+                  //   borderRadius: BorderRadius.circular(20),
+                  //   boxShadow: [
+                  //     BoxShadow(
+                  //       color: Colors.orange.withOpacity(0.4),
+                  //       blurRadius: 20,
+                  //       offset: const Offset(0, 10),
+                  //     ),
+                  //   ],
+                  //   border: Border.all(
+                  //     color: Colors.white.withOpacity(0.2),
+                  //     width: 1.5,
+                  //   ),
+                  // ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              message,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w500,
+                                fontSize: 12,
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.close,
+                          size: 20,
+                          color: Colors.white,
+                        ),
+                        onPressed: remove,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
+                        style: IconButton.styleFrom(
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        overlay.insert(entry!);
+        Future.delayed(const Duration(seconds: 6), () {
+          if (entry != null) remove();
+        });
+      }
+    }
+  }
+
   static Future<void> _showForegroundSystemNotification({
     required String title,
     required String body,
@@ -721,6 +981,22 @@ class FcmService {
       '$_logTag storeNotification: called title="$title" bodyLength=${body.length}',
     );
     try {
+      final owner = await currentOwnerId();
+      // If the payload is explicitly addressed to a staff member who is NOT the
+      // user currently logged in on this device, don't store it — a personal
+      // notification (break/leave/permission/etc.) must never surface for
+      // anyone but its recipient.
+      final payloadStaffId = data['staffId']?.toString().trim();
+      if (payloadStaffId != null &&
+          payloadStaffId.isNotEmpty &&
+          owner != null &&
+          owner.isNotEmpty &&
+          payloadStaffId != owner) {
+        debugPrint(
+          '$_logTag storeNotification: SKIP — addressed to staffId=$payloadStaffId, current owner=$owner',
+        );
+        return;
+      }
       final now = DateTime.now();
       final cutoff = now.subtract(_kFcmNotificationRetention);
       final list = await _loadRawListFromFile();
@@ -758,6 +1034,7 @@ class FcmService {
         'title': title,
         'body': body,
         'data': data,
+        'owner': owner,
         'receivedAt': now.toUtc().toIso8601String(),
       });
       await _saveRawListToFile(pruned);
@@ -837,13 +1114,38 @@ class FcmService {
       if (dt == null || dt.isBefore(cutoff)) continue;
       pruned.add(map);
     }
+    // Persist only the time-based prune — the file holds every user's items so a
+    // different user's valid notifications are never dropped from the device.
     if (pruned.length != list.length) {
       await _saveRawListToFile(pruned);
     }
+    // Scope to the current user: personal notifications stamped with another
+    // user's `owner` are hidden, so break/leave/permission and other personal
+    // items only show for the concerned user (and never on a shared device).
+    final owner = await currentOwnerId();
+    final visible = pruned
+        .where((m) => _isVisibleToOwner(m['owner']?.toString(), owner))
+        .toList();
     debugPrint(
-      '$_logTag getStoredNotifications: returning ${pruned.length} item(s)',
+      '$_logTag getStoredNotifications: returning ${visible.length} item(s) '
+      'for owner=$owner (of ${pruned.length} stored)',
     );
-    return pruned;
+    return visible;
+  }
+
+  /// Removes every stored notification from this device. Call on logout so a
+  /// user's personal notifications never linger for the next person to sign in.
+  static Future<void> clearStoredNotifications() async {
+    try {
+      final path = await _getNotificationsFilePath();
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kFcmNotificationsKey);
+      debugPrint('$_logTag clearStoredNotifications: cleared');
+    } catch (e) {
+      debugPrint('$_logTag clearStoredNotifications: $e');
+    }
   }
 
   static Future<void> _onNotificationOpened(RemoteMessage message) async {
@@ -880,6 +1182,52 @@ class FcmService {
     return null;
   }
 
+  /// Infers the canonical module from notification title/body when FCM `data` omits
+  /// `module`/`type`, so tapping a stored notification still routes to the right screen.
+  /// Most-specific keywords first (e.g. "reimbursement" → expense before generic checks).
+  static String _inferModuleFromText(String text) {
+    if (text.contains('reimbursement') ||
+        text.contains('expense') ||
+        text.contains('claim')) {
+      return 'expense';
+    }
+    if (text.contains('loan')) return 'loan';
+    if (text.contains('payslip') ||
+        text.contains('pay slip') ||
+        text.contains('salary slip')) {
+      return 'payslip';
+    }
+    if (text.contains('permission')) return 'permission';
+    if (text.contains('leave')) return 'leave';
+    if (text.contains('attendance')) return 'attendance';
+    if (text.contains('grievance') || text.contains('complaint')) {
+      return 'grievance';
+    }
+    if (text.contains('poll') ||
+        text.contains('message') ||
+        text.contains('chat')) {
+      return 'chat';
+    }
+    if (text.contains('license') ||
+        text.contains('asset')) {
+      return 'asset';
+    }
+    if (text.contains('course') ||
+        text.contains('quiz') ||
+        text.contains('assessment') ||
+        text.contains('learning') ||
+        text.contains('lms')) {
+      return 'lms';
+    }
+    if (text.contains('task')) return 'task';
+    if (text.contains('performance') ||
+        text.contains('appraisal') ||
+        text.contains('review')) {
+      return 'performance';
+    }
+    return '';
+  }
+
   static bool _isAnnouncementNotification(
     Map<String, dynamic> data, {
     String? notificationTitle,
@@ -887,8 +1235,10 @@ class FcmService {
   }) {
     final module = (data['module'] ?? '').toString().toLowerCase();
     final type = (data['type'] ?? '').toString().toLowerCase();
+    final screen = (data['screen'] ?? data['route'] ?? '').toString().toLowerCase();
     final text =
         '${notificationTitle ?? ''} ${notificationBody ?? ''}'.toLowerCase();
+    if (screen == 'announcement' || screen == 'announcements') return true;
     if (type == 'announcement' ||
         module == 'announcement' ||
         module == 'announcements') {
@@ -906,11 +1256,81 @@ class FcmService {
     return false;
   }
 
-  /// Returns `true` if a route was pushed (so callers can pop overlays, e.g. NotificationsScreen).
+  /// Maps an explicit `screen`/`route` value from the notification payload to a
+  /// Flutter screen, so a notification can target a screen directly (independent
+  /// of `module`). Returns null for unknown keys — the caller then falls back to
+  /// module routing — and for announcements, which are handled separately so an
+  /// id can open the detail view instead of the list.
+  static Widget? _screenForKey(String key, Map<String, dynamic> data) {
+    switch (key) {
+      case 'attendance':
+        return AttendanceScreen();
+      case 'break':
+        return const BreakScreen();
+      case 'leave':
+        return MyRequestsScreen(initialTabIndex: 0);
+      case 'loan':
+        return MyRequestsScreen(initialTabIndex: 1);
+      case 'expense':
+        return MyRequestsScreen(initialTabIndex: 2);
+      case 'permission':
+        return MyRequestsScreen(initialTabIndex: 3);
+      case 'requests':
+      case 'my_requests':
+      case 'myrequests':
+        {
+          final tab =
+              int.tryParse('${data['tab'] ?? data['tabIndex'] ?? 0}') ?? 0;
+          return MyRequestsScreen(initialTabIndex: tab);
+        }
+      case 'payslip':
+      case 'payslips':
+      case 'salary':
+        return const AllPayslipsScreen();
+      case 'performance':
+        return PerformanceModuleScreen();
+      case 'grievance':
+      case 'grievances':
+        return const GrievanceShellScreen();
+      case 'interaction':
+      case 'chat':
+      case 'chats':
+      case 'message':
+      case 'messages':
+      case 'poll':
+      case 'polls':
+        return const InteractionShellScreen();
+      case 'asset':
+      case 'assets':
+      case 'license':
+      case 'licenses':
+        return const AssetsListingScreen();
+      case 'lms':
+      case 'learning':
+      case 'course':
+      case 'courses':
+        return const LmsShellScreen();
+      case 'task':
+      case 'tasks':
+      case 'geo':
+        return const MyTasksScreen();
+      default:
+        return null;
+    }
+  }
+
+  /// Returns `true` if a route was pushed.
+  ///
+  /// [replaceCurrent]: when the tap originates from a screen that should be left
+  /// behind (e.g. the NotificationsScreen), the target replaces the current top
+  /// route instead of stacking on top of it. This avoids the push-then-pop race
+  /// where popping the source screen would pop the freshly-pushed target right
+  /// back off the shared root navigator.
   static Future<bool> _handleNotificationData(
     Map<String, dynamic> data, {
     String? notificationTitle,
     String? notificationBody,
+    bool replaceCurrent = false,
   }) async {
     _log(
       'handleNotificationData: module=${data['module']} type=${data['type']} data=$data',
@@ -922,6 +1342,21 @@ class FcmService {
 
     final module = data['module']?.toString() ?? data['type']?.toString() ?? '';
     final type = data['type']?.toString() ?? '';
+
+    // When the backend sends only a title/body (no module/type in data), infer the target
+    // screen from the notification text so tapping still routes. Skip for announcements
+    // (handled separately below) and whenever data already carries module/type.
+    final combinedText =
+        '${notificationTitle ?? ''} ${notificationBody ?? ''}'.toLowerCase();
+    final isAnnouncement = _isAnnouncementNotification(
+      data,
+      notificationTitle: notificationTitle,
+      notificationBody: notificationBody,
+    );
+    final inferred = (module.isEmpty && type.isEmpty && !isAnnouncement)
+        ? _inferModuleFromText(combinedText)
+        : '';
+    final effModule = module.isNotEmpty ? module : inferred;
 
     // Check staffId match for user-specific notifications
     final payloadStaffId = data['staffId']?.toString();
@@ -951,16 +1386,51 @@ class FcmService {
 
     if (!navigatorKey!.currentContext!.mounted) return false;
 
+    // Single navigation entry point: replace the current route (e.g. the
+    // NotificationsScreen) when [replaceCurrent] is set, otherwise stack on top.
+    final nav = navigatorKey?.currentState;
+    void navPush(MaterialPageRoute<void> route) {
+      if (replaceCurrent) {
+        nav?.pushReplacement(route);
+      } else {
+        nav?.push(route);
+      }
+    }
+
+    // Screen-based routing (preferred): the payload may name a Flutter screen
+    // directly via `screen`/`route`, so navigation is driven by the screen rather
+    // than the `module`. Unknown keys fall through to module routing below.
+    final screenKey =
+        (data['screen'] ?? data['route'] ?? '').toString().trim().toLowerCase();
+    if (screenKey.isNotEmpty) {
+      final target = _screenForKey(screenKey, data);
+      if (target != null) {
+        _log('handleNotificationData: screen-routing to "$screenKey"');
+        navPush(MaterialPageRoute<void>(builder: (_) => target));
+        return true;
+      }
+    }
+
+    // Break reminder ("End Break" action or a tap on the 10-min reminder):
+    // open the break screen so the user ends the break with the same selfie +
+    // location flow as the on-screen button. The screen loads the active break.
+    if (effModule == 'break' || type == 'break_reminder') {
+      _log('handleNotificationData: navigating to BreakScreen (break reminder)');
+      navPush(
+        MaterialPageRoute<void>(builder: (_) => const BreakScreen()),
+      );
+      return true;
+    }
     // Leave: My Requests, tab 0
-    if (module == 'leave' ||
+    if (effModule == 'leave' ||
         type == 'leave_approved' ||
         type == 'leave_rejected' ||
-        module == 'requests' &&
+        effModule == 'requests' &&
             (type == 'leave_approved' || type == 'leave_rejected')) {
       _log(
         'handleNotificationData: navigating to MyRequestsScreen tab 0 (leave)',
       );
-      navigatorKey?.currentState?.push(
+      navPush(
         MaterialPageRoute<void>(
           builder: (_) => MyRequestsScreen(initialTabIndex: 0),
         ),
@@ -968,13 +1438,13 @@ class FcmService {
       return true;
     }
     // Loan: My Requests, tab 1
-    if (module == 'loan' ||
+    if (effModule == 'loan' ||
         type == 'loan_approved' ||
         type == 'loan_rejected') {
       _log(
         'handleNotificationData: navigating to MyRequestsScreen tab 1 (loan)',
       );
-      navigatorKey?.currentState?.push(
+      navPush(
         MaterialPageRoute<void>(
           builder: (_) => MyRequestsScreen(initialTabIndex: 1),
         ),
@@ -982,41 +1452,39 @@ class FcmService {
       return true;
     }
     // Expense: My Requests, tab 2
-    if (module == 'expense' ||
+    if (effModule == 'expense' ||
         type == 'expense_approved' ||
         type == 'expense_rejected') {
       _log(
         'handleNotificationData: navigating to MyRequestsScreen tab 2 (expense)',
       );
-      navigatorKey?.currentState?.push(
+      navPush(
         MaterialPageRoute<void>(
           builder: (_) => MyRequestsScreen(initialTabIndex: 2),
         ),
       );
       return true;
     }
-    // Payslip: My Requests, tab 4
-    if (module == 'payslip' ||
+    // Payslip: lives under Salary, not in My Requests (which only has tabs 0–3:
+    // Leave/Loan/Expense/Permission). Open the payslips list directly.
+    if (effModule == 'payslip' ||
         type == 'payslip_approved' ||
-        type == 'payslip_rejected') {
-      _log(
-        'handleNotificationData: navigating to MyRequestsScreen tab 4 (payslip)',
-      );
-      navigatorKey?.currentState?.push(
-        MaterialPageRoute<void>(
-          builder: (_) => MyRequestsScreen(initialTabIndex: 4),
-        ),
+        type == 'payslip_rejected' ||
+        effModule == 'salary') {
+      _log('handleNotificationData: navigating to AllPayslipsScreen (payslip)');
+      navPush(
+        MaterialPageRoute<void>(builder: (_) => const AllPayslipsScreen()),
       );
       return true;
     }
     // Permission: My Requests, tab 3
-    if (module == 'permission' ||
+    if (effModule == 'permission' ||
         type == 'permission_approved' ||
         type == 'permission_rejected') {
       _log(
         'handleNotificationData: navigating to MyRequestsScreen tab 3 (permission)',
       );
-      navigatorKey?.currentState?.push(
+      navPush(
         MaterialPageRoute<void>(
           builder: (_) => MyRequestsScreen(initialTabIndex: 3),
         ),
@@ -1024,23 +1492,81 @@ class FcmService {
       return true;
     }
     // Attendance: Attendance screen
-    if (module == 'attendance' ||
+    if (effModule == 'attendance' ||
         type == 'attendance_approved' ||
         type == 'attendance_rejected') {
       _log('handleNotificationData: navigating to AttendanceScreen');
-      navigatorKey?.currentState?.push(
+      navPush(
         MaterialPageRoute<void>(builder: (_) => AttendanceScreen()),
       );
       return true;
     }
     // Performance: Performance module
-    if (module == 'performance' ||
+    if (effModule == 'performance' ||
         type.startsWith('self_review') ||
         type.startsWith('manager_review') ||
         type.startsWith('hr_review')) {
       _log('handleNotificationData: navigating to PerformanceModuleScreen');
-      navigatorKey?.currentState?.push(
+      navPush(
         MaterialPageRoute<void>(builder: (_) => PerformanceModuleScreen()),
+      );
+      return true;
+    }
+    // Grievance: grievance shell (My Grievances / Raise)
+    if (effModule == 'grievance' ||
+        type.startsWith('grievance')) {
+      _log('handleNotificationData: navigating to GrievanceShellScreen');
+      navPush(
+        MaterialPageRoute<void>(builder: (_) => const GrievanceShellScreen()),
+      );
+      return true;
+    }
+    // Interaction: chat messages and polls live in the interaction shell.
+    if (effModule == 'interaction' ||
+        effModule == 'chat' ||
+        effModule == 'message' ||
+        effModule == 'poll' ||
+        type.startsWith('chat') ||
+        type.startsWith('message') ||
+        type.startsWith('poll')) {
+      _log('handleNotificationData: navigating to InteractionShellScreen');
+      navPush(
+        MaterialPageRoute<void>(builder: (_) => const InteractionShellScreen()),
+      );
+      return true;
+    }
+    // Assets / software licenses
+    if (effModule == 'asset' ||
+        effModule == 'assets' ||
+        effModule == 'license' ||
+        type.startsWith('asset') ||
+        type.startsWith('license')) {
+      _log('handleNotificationData: navigating to AssetsListingScreen');
+      navPush(
+        MaterialPageRoute<void>(builder: (_) => const AssetsListingScreen()),
+      );
+      return true;
+    }
+    // LMS: courses, assessments, live sessions
+    if (effModule == 'lms' ||
+        effModule == 'learning' ||
+        effModule == 'course' ||
+        type.startsWith('lms') ||
+        type.startsWith('course') ||
+        type.startsWith('assessment')) {
+      _log('handleNotificationData: navigating to LmsShellScreen');
+      navPush(
+        MaterialPageRoute<void>(builder: (_) => const LmsShellScreen()),
+      );
+      return true;
+    }
+    // Geo / field tasks
+    if (effModule == 'task' ||
+        effModule == 'geo' ||
+        type.startsWith('task')) {
+      _log('handleNotificationData: navigating to MyTasksScreen');
+      navPush(
+        MaterialPageRoute<void>(builder: (_) => const MyTasksScreen()),
       );
       return true;
     }
@@ -1065,7 +1591,7 @@ class FcmService {
           }
           if (ann != null && ann.isNotEmpty) {
             final announcementMap = Map<String, dynamic>.from(ann);
-            navigatorKey?.currentState?.push(
+            navPush(
               MaterialPageRoute<void>(
                 builder: (_) => AnnouncementDetailScreen(
                   announcement: announcementMap,
@@ -1083,26 +1609,32 @@ class FcmService {
         }
       }
       if (!navigatorKey!.currentContext!.mounted) return false;
-      navigatorKey?.currentState?.push(
+      navPush(
         MaterialPageRoute<void>(builder: (_) => const AnnouncementsScreen()),
       );
       _log('handleNotificationData: navigating to AnnouncementsScreen');
       return true;
     }
-    _log('handleNotificationData: no route matched module=$module type=$type');
+    _log('handleNotificationData: no route matched module=$module effModule=$effModule type=$type');
     return false;
   }
 
   /// Call when user taps a stored notification (e.g. from NotificationsScreen). Navigates by module/type.
+  ///
+  /// [replaceCurrent]: pass `true` from a screen that should be left behind (the
+  /// NotificationsScreen) so the target replaces it on the shared root navigator
+  /// instead of stacking on top — the caller must then NOT pop afterwards.
   static Future<bool> handleNotificationTap(
     Map<String, dynamic> data, {
     String? title,
     String? body,
+    bool replaceCurrent = false,
   }) {
     return _handleNotificationData(
       data,
       notificationTitle: title,
       notificationBody: body,
+      replaceCurrent: replaceCurrent,
     );
   }
 

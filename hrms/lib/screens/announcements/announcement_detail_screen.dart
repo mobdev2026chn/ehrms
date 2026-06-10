@@ -30,6 +30,11 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
   bool _sendingMessage = false;
   List<Map<String, dynamic>> _myReplies = [];
 
+  /// Freshly-fetched announcement doc (from getAnnouncementById). Used to
+  /// evaluate expiry so the check works even when this screen is opened from a
+  /// notification/deep link whose payload lacks expiryDate/endDate.
+  Map<String, dynamic>? _detail;
+
   @override
   void initState() {
     super.initState();
@@ -63,6 +68,11 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
       final detailRes = await InteractionService.instance.getAnnouncementById(
         id,
       );
+      final detailDoc =
+          _asStringMap(detailRes['data']) ?? _asStringMap(detailRes);
+      if (detailDoc != null && mounted) {
+        setState(() => _detail = detailDoc);
+      }
 
       if (kDebugMode) {
         debugPrint(
@@ -405,10 +415,34 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
       widget.announcement['id']?.toString() ??
       '';
 
+  static DateTime? _parseLocalDate(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    return DateTime.tryParse(raw)?.toLocal();
+  }
+
+  /// The announcement's expiry instant (prefers `expiryDate`, falls back to the
+  /// legacy `endDate`). Reads the freshly-fetched doc first so it works even
+  /// when opened from a notification/deep link whose payload lacks the dates.
+  /// Null means the announcement never expires.
+  DateTime? get _expiryDate {
+    dynamic field(String key) => _detail?[key] ?? widget.announcement[key];
+    return _parseLocalDate(field('expiryDate')) ??
+        _parseLocalDate(field('endDate'));
+  }
+
+  /// True once the announcement's expiry/end date has passed. Mirrors the list
+  /// screen's expiry check so an expired announcement opened from any entry
+  /// point (notification, deep link) can no longer be engaged with.
+  bool get _isExpired {
+    final expiry = _expiryDate;
+    return expiry != null && expiry.isBefore(DateTime.now());
+  }
+
   Future<void> _sendEngagementMessage() async {
     final id = _announcementId;
     final message = _messageController.text.trim();
-    if (id.isEmpty || message.isEmpty || _sendingMessage) return;
+    if (id.isEmpty || message.isEmpty || _sendingMessage || _isExpired) return;
     setState(() => _sendingMessage = true);
     try {
       final res = await InteractionService.instance
@@ -520,7 +554,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: colorScheme.surfaceContainerHighest.withOpacity(0.5),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -532,7 +566,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: accent.withOpacity(0.12),
+                    color: accent.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(icon, color: accent, size: 22),
@@ -634,7 +668,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: widget.accent.withOpacity(0.1),
+                        color: widget.accent.withValues(alpha: 0.1),
                         blurRadius: 12,
                         offset: const Offset(0, 4),
                       ),
@@ -646,7 +680,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: widget.accent.withOpacity(0.12),
+                          color: widget.accent.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Icon(
@@ -668,6 +702,38 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                 color: widget.accent,
                               ),
                             ),
+                            if (_isExpired) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.errorContainer,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.lock_clock_outlined,
+                                      size: 14,
+                                      color: colorScheme.onErrorContainer,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Expired',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: colorScheme.onErrorContainer,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                             if (fromName != null && fromName.isNotEmpty) ...[
                               const SizedBox(height: 6),
                               Text(
@@ -685,13 +751,35 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                   Icon(
                                     Icons.schedule_rounded,
                                     size: 18,
-                                    color: widget.accent.withOpacity(0.9),
+                                    color: widget.accent.withValues(alpha: 0.9),
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
                                     dateStr,
                                     style: TextStyle(
-                                      color: widget.accent.withOpacity(0.9),
+                                      color: widget.accent.withValues(alpha: 0.9),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            if (!_isExpired && _expiryDate != null) ...[
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.event_busy_rounded,
+                                    size: 18,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Expires: '
+                                    '${DateFormat('d MMM y, h:mm a').format(_expiryDate!)}',
+                                    style: TextStyle(
+                                      color: colorScheme.onSurfaceVariant,
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
                                     ),
@@ -734,7 +822,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: colorScheme.shadow.withOpacity(0.08),
+                          color: colorScheme.shadow.withValues(alpha: 0.08),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
                         ),
@@ -774,7 +862,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: colorScheme.shadow.withOpacity(0.08),
+                          color: colorScheme.shadow.withValues(alpha: 0.08),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
                         ),
@@ -925,7 +1013,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                             fontSize: 11,
                                             color: colorScheme
                                                 .onPrimaryContainer
-                                                .withOpacity(0.8),
+                                                .withValues(alpha: 0.8),
                                           ),
                                         ),
                                       ],
@@ -948,8 +1036,9 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                   hr['reply']?.toString() ??
                                   hr['answer']?.toString() ??
                                   '';
-                              if (hrText.isEmpty)
+                              if (hrText.isEmpty) {
                                 return const SizedBox.shrink();
+                              }
                               final hrDate = _parseDate(
                                 hr['responseTime'] ??
                                     hr['createdAt'] ??
@@ -1029,44 +1118,78 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                   }),
                 ],
                 const SizedBox(height: 10),
-                Text(
-                  'Send another message',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: colorScheme.onSurface,
-                    fontSize: 18,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _messageController,
-                  minLines: 3,
-                  maxLines: 5,
-                  textInputAction: TextInputAction.newline,
-                  decoration: InputDecoration(
-                    hintText: 'Write your feedback or questions for HR...',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
+                if (_isExpired)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: colorScheme.outlineVariant),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.lock_clock_outlined,
+                          size: 20,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'This announcement has expired. You can no longer '
+                            'send messages or engage with it.',
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else ...[
+                  Text(
+                    'Send another message',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: colorScheme.onSurface,
+                      fontSize: 18,
                     ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: _sendingMessage ? null : _sendEngagementMessage,
-                    child: _sendingMessage
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text('Send'),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _messageController,
+                    minLines: 3,
+                    maxLines: 5,
+                    textInputAction: TextInputAction.newline,
+                    decoration: InputDecoration(
+                      hintText: 'Write your feedback or questions for HR...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: _sendingMessage
+                          ? null
+                          : _sendEngagementMessage,
+                      child: _sendingMessage
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text('Send'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

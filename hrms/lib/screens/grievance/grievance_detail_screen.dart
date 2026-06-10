@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_colors.dart';
 import '../../services/grievance_service.dart';
 import '../../utils/error_message_utils.dart';
+import '../../utils/snackbar_utils.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -89,15 +90,15 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
     });
     if (result['success'] == true) {
       _load();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Note added'), backgroundColor: AppColors.success),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Note added',
       );
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(ErrorMessageUtils.sanitizeForDisplay(result['message'], fallback: 'Failed to add note')),
-          backgroundColor: AppColors.error,
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.sanitizeForDisplay(result['message'], fallback: 'Failed to add note'),
+        isError: true,
       );
     }
   }
@@ -107,15 +108,15 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
     if (!mounted) return;
     if (result['success'] == true) {
       _load();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('File uploaded'), backgroundColor: AppColors.success),
+      SnackBarUtils.showSnackBar(
+        context,
+        'File uploaded',
       );
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(ErrorMessageUtils.sanitizeForDisplay(result['message'], fallback: 'Upload failed')),
-          backgroundColor: AppColors.error,
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.sanitizeForDisplay(result['message'], fallback: 'Upload failed'),
+        isError: true,
       );
     }
   }
@@ -388,8 +389,10 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
     final size = await file.length();
     if (size > 20 * 1024 * 1024) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('File must be under 20MB'), backgroundColor: AppColors.error),
+        SnackBarUtils.showSnackBar(
+          context,
+          'File must be under 20MB',
+          isError: true,
         );
       }
       return;
@@ -710,8 +713,10 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                       final r = rating.value;
                       final f = controller.text.trim();
                       if (r < 1 || f.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Please provide rating and feedback')),
+                        SnackBarUtils.showSnackBar(
+                          context,
+                          'Please provide rating and feedback',
+                          isError: true,
                         );
                         return;
                       }
@@ -721,15 +726,15 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                       Navigator.of(ctx2).pop();
                       if (result['success'] == true) {
                         _load();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Feedback submitted'), backgroundColor: AppColors.success),
+                        SnackBarUtils.showSnackBar(
+                          context,
+                          'Feedback submitted',
                         );
                       } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(ErrorMessageUtils.sanitizeForDisplay(result['message'], fallback: 'Failed')),
-                            backgroundColor: AppColors.error,
-                          ),
+                        SnackBarUtils.showSnackBar(
+                          context,
+                          ErrorMessageUtils.sanitizeForDisplay(result['message'], fallback: 'Failed'),
+                          isError: true,
                         );
                       }
                       if (mounted) setState(() => _isSubmittingFeedback = false);

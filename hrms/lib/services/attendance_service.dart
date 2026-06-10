@@ -52,9 +52,17 @@ class AttendanceService {
   static Map<String, dynamic>? _cachedTodayAttendance;
   static DateTime? _lastTodayAttendanceFetch;
 
-  // Cache for month attendance: key = "year-month", value = cached data
-  final Map<String, Map<String, dynamic>> _cachedMonthAttendance = {};
-  final Map<String, DateTime> _lastMonthAttendanceFetch = {};
+  // Cache for month attendance: key = "year-month", value = cached data.
+  // STATIC (shared across instances) — same as the today cache above and the
+  // _lastCallTimestamps throttle below. This is the fix for "current month loads
+  // blank but last month works": the Dashboard and Attendance screens each build
+  // their own AttendanceService. The throttle is shared, so the Dashboard's
+  // current-month fetch throttles the URL for everyone — but when this cache was
+  // per-instance, the Attendance screen's empty instance cache had nothing to fall
+  // back on while throttled, so its current-month fetch failed. Sharing the cache
+  // lets the Attendance screen reuse the data the Dashboard already fetched.
+  static final Map<String, Map<String, dynamic>> _cachedMonthAttendance = {};
+  static final Map<String, DateTime> _lastMonthAttendanceFetch = {};
 
   /// [SalaryOverviewScreen] only — web HRMS month payload (isolated from geo cache above).
   final Map<String, Map<String, dynamic>> _cachedWebMonthAttendance = {};
@@ -111,11 +119,23 @@ class AttendanceService {
   /// Call after check-in/check-out so Recent Activity and History never show
   /// cached data. Also call from the attendance screen before a forced refresh.
   /// Clears throttle for today endpoint so the next getAttendanceByDate(today) gets fresh data (e.g. punch out).
-  void clearCachesForRefresh({bool clearWebHrmsSalaryCaches = false}) {
+  ///
+  /// [clearMonth] controls whether the month-attendance cache (calendar coloring) is
+  /// wiped. Default true (post-punch / explicit refresh). Pass false when only the
+  /// today/profile data needs to be fresh — e.g. the routine template fetch on every
+  /// tab open. Wiping the month cache there threw away data the Dashboard had just
+  /// loaded, forcing the Attendance calendar to re-fetch from scratch and sit blank
+  /// for a few seconds on open.
+  void clearCachesForRefresh({
+    bool clearWebHrmsSalaryCaches = false,
+    bool clearMonth = true,
+  }) {
     AttendanceService._cachedTodayAttendance = null;
     AttendanceService._lastTodayAttendanceFetch = null;
-    _cachedMonthAttendance.clear();
-    _lastMonthAttendanceFetch.clear();
+    if (clearMonth) {
+      _cachedMonthAttendance.clear();
+      _lastMonthAttendanceFetch.clear();
+    }
     if (clearWebHrmsSalaryCaches) {
       _cachedWebMonthAttendance.clear();
       _lastWebMonthAttendanceFetch.clear();
@@ -149,6 +169,7 @@ class AttendanceService {
     int? lateMinutes,
     int? earlyMinutes,
     double? fineAmount,
+    String? clientTime,
     int retryCount = 0,
   }) async {
     try {
@@ -163,6 +184,12 @@ class AttendanceService {
             await AttendanceSelfieCompress.compressDataUrlForPunch(selfiePayload);
       }
 
+      // Button-tap instant; the server stores this as punchIn so selfie/network
+      // latency does not push the saved time forward. Falls back to now if absent.
+      final punchInTime = (clientTime != null && clientTime.isNotEmpty)
+          ? clientTime
+          : DateTime.now().toUtc().toIso8601String();
+
       final jsonFields = <String, dynamic>{
         'latitude': lat,
         'longitude': lng,
@@ -172,10 +199,18 @@ class AttendanceService {
         'pincode': pincode,
         'movementType': movementType,
         'source': 'app',
-        'forceAppFine': true,
+        // Backend is the single source of truth for fine: it recomputes late
+        // minutes from the punch instant using the business timezone, so the
+        // stored fine matches payroll/web. The device-local values below are
+        // sent for diagnostics/preview only and are ignored when forceAppFine
+        // is false. (Previously true => device-local time caused fine
+        // mismatches when device TZ differed from the business timezone.)
+        'forceAppFine': false,
         'lateMinutes': lateMinutes,
         'earlyMinutes': earlyMinutes,
         'fineAmount': fineAmount,
+        'punchInTime': punchInTime,
+        'clientTime': punchInTime,
       };
       if (businessId != null && businessId.isNotEmpty) {
         jsonFields['businessId'] = businessId;
@@ -224,6 +259,7 @@ class AttendanceService {
           lateMinutes: lateMinutes,
           earlyMinutes: earlyMinutes,
           fineAmount: fineAmount,
+          clientTime: clientTime,
           retryCount: 1,
         );
       }
@@ -256,6 +292,7 @@ class AttendanceService {
     int? lateMinutes,
     int? earlyMinutes,
     double? fineAmount,
+    String? clientTime,
     int retryCount = 0,
   }) async {
     try {
@@ -272,6 +309,12 @@ class AttendanceService {
             await AttendanceSelfieCompress.compressDataUrlForPunch(selfiePayload);
       }
 
+      // Button-tap instant; the server stores this as punchOut so selfie/network
+      // latency does not push the saved time (and work hours) forward.
+      final punchOutTime = (clientTime != null && clientTime.isNotEmpty)
+          ? clientTime
+          : DateTime.now().toUtc().toIso8601String();
+
       final jsonFields = <String, dynamic>{
         'latitude': lat,
         'longitude': lng,
@@ -281,10 +324,18 @@ class AttendanceService {
         'pincode': pincode,
         'movementType': movementType,
         'source': 'app',
-        'forceAppFine': true,
+        // Backend is the single source of truth for fine: it recomputes early
+        // minutes from the punch instant using the business timezone, so the
+        // stored fine matches payroll/web. The device-local values below are
+        // sent for diagnostics/preview only and are ignored when forceAppFine
+        // is false. (Previously true => device-local time caused fine
+        // mismatches when device TZ differed from the business timezone.)
+        'forceAppFine': false,
         'lateMinutes': lateMinutes,
         'earlyMinutes': earlyMinutes,
         'fineAmount': fineAmount,
+        'punchOutTime': punchOutTime,
+        'clientTime': punchOutTime,
         if (businessId != null && businessId.isNotEmpty) 'businessId': businessId,
         if (appPerDayNetSalary != null && appPerDayNetSalary > 0)
           'appPerDayNetSalary': appPerDayNetSalary,
@@ -339,6 +390,7 @@ class AttendanceService {
           lateMinutes: lateMinutes,
           earlyMinutes: earlyMinutes,
           fineAmount: fineAmount,
+          clientTime: clientTime,
           retryCount: 1,
         );
       }
@@ -625,19 +677,51 @@ class AttendanceService {
     }
   }
 
+  // In-flight month requests keyed by "year-month-(app|web)". The Attendance
+  // screen fires several month fetches at once on open (_initData + the
+  // didUpdateWidget refresh), on filter taps, and on month navigation. Without
+  // coalescing, the 2nd+ identical call hit the 2s client throttle and came back
+  // as a hard "Too many requests" failure, leaving the calendar with no colored
+  // markings until the user interacted again. Sharing one in-flight Future makes
+  // the calendar populate on a single pass.
+  // STATIC so concurrent fetches from DIFFERENT screens (Dashboard + Attendance,
+  // which each build their own AttendanceService) coalesce onto a single network
+  // request instead of the second one tripping the shared throttle and failing.
+  static final Map<String, Future<Map<String, dynamic>>> _inFlightMonthRequests =
+      {};
+
   Future<Map<String, dynamic>> getMonthAttendance(
     int year,
     int month, {
     bool forceRefresh = false,
     bool useWebHrmsApi = false,
-  }) async {
-    return _getMonthAttendanceWithRetry(
+  }) {
+    final key = '$year-$month-${useWebHrmsApi ? 'web' : 'app'}';
+
+    // Reuse an in-flight identical request. A forceRefresh (after punch in/out)
+    // must not piggy-back on a possibly-stale in-flight read, so it always starts
+    // its own call.
+    final existing = _inFlightMonthRequests[key];
+    if (existing != null && !forceRefresh) {
+      return existing;
+    }
+
+    final future = _getMonthAttendanceWithRetry(
       year,
       month,
       forceRefresh: forceRefresh,
       retryCount: 0,
       useWebHrmsApi: useWebHrmsApi,
     );
+    _inFlightMonthRequests[key] = future;
+    // Only clear the slot if this exact future still owns it (a later forceRefresh
+    // may have replaced it).
+    future.whenComplete(() {
+      if (identical(_inFlightMonthRequests[key], future)) {
+        _inFlightMonthRequests.remove(key);
+      }
+    });
+    return future;
   }
 
   Future<Map<String, dynamic>> getEmployeeAttendance({
@@ -719,9 +803,16 @@ class AttendanceService {
         }
       }
 
-      // Throttle repeated calls — when forceRefresh, never return cached data
+      // Throttle repeated calls. When throttled we cannot fetch fresh right now, so
+      // serve cached data for this month if we have any — a few-minutes-old calendar
+      // beats a blank one. This is the fix for the "current month loads blank but last
+      // month works" report: the dashboard fetches the current month on app open, so
+      // when the user taps the Attendance tab seconds later this URL is throttled while
+      // other months (different URLs) are not. Safe on forceRefresh too — a forced
+      // refresh after punch in/out first calls clearCachesForRefresh(), which empties
+      // the month cache, so there is nothing stale to serve here.
       if (_isThrottled(url)) {
-        if (!forceRefresh && cacheMap.containsKey(cacheKey)) {
+        if (cacheMap.containsKey(cacheKey)) {
           return {'success': true, 'data': cacheMap[cacheKey]};
         }
         if (retryCount == 0) {

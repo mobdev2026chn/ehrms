@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:hrms/screens/performance/my_performance_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -21,6 +22,8 @@ import '../../widgets/notification_reaction_overlay.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/attendance_service.dart';
 import '../../services/break_service.dart';
+import '../../services/break_reminder_service.dart';
+import '../../models/break_summary.dart';
 import '../../services/attendance_template_store.dart';
 import '../../services/auth_service.dart';
 import '../../services/request_service.dart';
@@ -72,6 +75,13 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isPunchActionInProgress = false;
   bool _isBreakActionInProgress = false;
 
+  /// UTC instant captured the moment the punch / break button is tapped, before
+  /// any camera, location or network work. Sent as the server-saved time so the
+  /// recorded punch/break time is the tap moment, not when the (possibly slow)
+  /// selfie + upload finishes. Single-flight: guarded by the *InProgress flags.
+  String? _pendingPunchClickTime;
+  String? _pendingBreakClickTime;
+
   /// Starts false so the bottom bar matches the today card (no stale prefs via null).
   bool _isPunchedInToday = false;
   bool _isPunchCompletedToday = false;
@@ -79,6 +89,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   /// From company shift [breakPolicy.enabled] for today's [appliedShiftId] (tea-break icon).
   bool _showBreakNavForShiftPolicy = true;
   Map<String, dynamic>? _activeBreak;
+
+  /// Last-known break balance, shown instantly on the selfie screen.
+  BreakSummary? _breakSummary;
   bool _openBreakAfterBuild = false;
   Map<String, dynamic>? _fineCalculation;
 
@@ -189,6 +202,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     _attendanceService.clearCachesForRefresh();
     _fetchPunchStatusForNavBar();
     _fetchActiveBreak();
+    // Refresh the break card whenever a break is started/ended anywhere —
+    // including from the break screen opened by the reminder notification.
+    BreakService.stateRevision.addListener(_onBreakStateChanged);
+    unawaited(_fetchBreakSummary());
     unawaited(_fetchFineCalculation());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _showLocationCardsAfterDelay();
@@ -202,6 +219,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    BreakService.stateRevision.removeListener(_onBreakStateChanged);
     _dashboardRefreshTrigger.dispose();
     super.dispose();
   }
@@ -209,7 +227,14 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      BreakReminderService.setAppInForeground(true);
       unawaited(_fetchPunchStatusForNavBar());
+      // Surface any break reminders the OS delivered to the tray while the app
+      // was backgrounded/closed into the in-app Notifications list.
+      unawaited(BreakReminderService.onAppResumed());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      BreakReminderService.setAppInForeground(false);
     }
   }
 
@@ -945,6 +970,21 @@ class _DashboardScreenState extends State<DashboardScreen>
     };
   }
 
+  /// Re-syncs the break card after a start/end that happened outside the
+  /// dashboard's own flow (e.g. ending the break from the reminder
+  /// notification's break screen), so a stale "break ongoing" card cannot linger.
+  void _onBreakStateChanged() {
+    if (!mounted) return;
+    // Optimistically hide the foreground break bar immediately when we know the
+    // break just ended — avoids the one-second flash while the API round-trip
+    // completes. The subsequent _fetchActiveBreak() confirms the server state.
+    if (BreakService.lastKnownHasOpenBreak == false) {
+      setState(() => _activeBreak = null);
+    }
+    unawaited(_fetchActiveBreak());
+    unawaited(_fetchBreakSummary());
+  }
+
   Future<Map<String, dynamic>?> _fetchActiveBreak() async {
     final result = await _breakService.getCurrentBreak();
     if (!mounted) return null;
@@ -959,6 +999,36 @@ class _DashboardScreenState extends State<DashboardScreen>
       _activeBreak = activeBreak;
     });
     return activeBreak;
+  }
+
+  /// Fetches today's break balance, caches it, and returns it. Used to show the
+  /// remaining break time on the selfie screen.
+  Future<BreakSummary?> _fetchBreakSummary() async {
+    try {
+      final result = await _breakService.getTodayBreakSummary();
+      if (!mounted) return _breakSummary;
+      if (result['success'] == true && result['data'] is Map) {
+        final summary = BreakSummary.fromJson(
+          Map<String, dynamic>.from(result['data'] as Map),
+        );
+        setState(() => _breakSummary = summary);
+        return summary;
+      }
+    } catch (_) {
+      // Non-fatal: the selfie pill simply won't show a balance.
+    }
+    return _breakSummary;
+  }
+
+  /// Short remaining-break label for the selfie screen, e.g.
+  /// "Break left: 12m 30s" or "Break: Unlimited". Null when unknown.
+  String? _remainingBreakText(BreakSummary? summary) {
+    if (summary == null) return null;
+    if (summary.isUnlimited) return 'Break: Unlimited';
+    final remainingSec =
+        summary.remainingSeconds ?? (summary.remainingMin ?? 0) * 60;
+    if (remainingSec <= 0) return 'Break limit reached';
+    return 'Break left: ${BreakSummary.formatDuration(remainingSec)}';
   }
 
   String _formatLocationText(_ResolvedLocation location) {
@@ -1074,7 +1144,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   ///
   /// When [preferServer] is true, skips prefs short-circuit so GET /auth/profile always runs
   /// (dashboard refresh / tab focus reflects HR toggles without re-login).
-  Future<bool> _loadSalaryDetailsAccessEnabled({bool preferServer = false}) async {
+  Future<bool> _loadSalaryDetailsAccessEnabled({
+    bool preferServer = false,
+  }) async {
     bool result(bool value, String reason) {
       _logSalaryAccessTest(
         '_loadSalaryDetailsAccessEnabled -> salaryOverviewEnabled=$value ($reason)',
@@ -1109,7 +1181,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           if (flat == true) {
             return result(true, 'prefs:user_root==true');
           }
-          if (staffMap != null && staffMap['salaryDetailsAccessEnabled'] == false) {
+          if (staffMap != null &&
+              staffMap['salaryDetailsAccessEnabled'] == false) {
             return result(false, 'prefs:staffData==false');
           }
           if (flat == false) {
@@ -1121,7 +1194,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           );
         }
       } catch (e) {
-        _logSalaryAccessTest('_loadSalaryDetailsAccessEnabled prefs | error=$e');
+        _logSalaryAccessTest(
+          '_loadSalaryDetailsAccessEnabled prefs | error=$e',
+        );
       }
     } else {
       _logSalaryAccessTest(
@@ -1154,7 +1229,9 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
       }
     } catch (e) {
-      _logSalaryAccessTest('_loadSalaryDetailsAccessEnabled profile | error=$e');
+      _logSalaryAccessTest(
+        '_loadSalaryDetailsAccessEnabled profile | error=$e',
+      );
     }
     return result(false, 'fallback:no_decisive_prefs_and_no_staff_true');
   }
@@ -1308,8 +1385,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     final selfieBytes = await file.readAsBytes();
     if (!mounted) return;
-    final selfie =
-        await AttendanceSelfieCompress.compressRawBytesToDataUrl(selfieBytes);
+    final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(
+      selfieBytes,
+    );
     if (!mounted) return;
     showDialog(
       context: context,
@@ -1341,6 +1419,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               city: location.city,
               pincode: location.pincode,
               selfie: selfie,
+              clientTime: _pendingBreakClickTime,
             )
           : await _breakService.startBreak(
               lat: position.latitude,
@@ -1350,6 +1429,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               city: location.city,
               pincode: location.pincode,
               selfie: selfie,
+              clientTime: _pendingBreakClickTime,
             );
     } finally {
       if (mounted) {
@@ -1361,6 +1441,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (result['success'] == true) {
       await _fetchActiveBreak();
       if (!mounted) return;
+      // Refresh cached balance so the next selfie pill / dashboard card is current.
+      _fetchBreakSummary();
       SnackBarUtils.showSnackBar(
         context,
         isEnding ? 'Break ended successfully' : 'Break started successfully',
@@ -1385,12 +1467,17 @@ class _DashboardScreenState extends State<DashboardScreen>
   Future<void> _captureBreakSelfieAndSubmit({
     required bool isEnding,
     required Map<String, dynamic>? activeBreak,
+    Future<String?>? preSubmitGate,
+    String? infoText,
+    Future<String?>? infoTextFuture,
   }) async {
     _ResolvedLocation? latestLocation;
     final result = await SelfieCameraScreen.captureSelfie(
       context,
       title: isEnding ? 'End Break' : 'Start Break',
       loadLocationOnOpen: true,
+      infoText: infoText,
+      infoTextFuture: infoTextFuture,
       onRefreshLocation: () async {
         final location = await _getCurrentLocation();
         latestLocation = location;
@@ -1417,6 +1504,17 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
     if (file == null) return;
 
+    // Authoritative validation ran WHILE the camera was initializing; enforce it
+    // now (before submit) so the camera could open instantly without waiting.
+    if (preSubmitGate != null) {
+      final err = await preSubmitGate;
+      if (!mounted) return;
+      if (err != null) {
+        SnackBarUtils.showSnackBar(context, err, isError: true);
+        return;
+      }
+    }
+
     await _submitBreakFromFile(
       file,
       isEnding: isEnding,
@@ -1425,21 +1523,79 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+  /// Returns a reason string when a break may NOT be started given the current
+  /// punch state, or null when it is allowed. A break is only valid while the
+  /// employee is punched in: not before punch-in, and not after punch-out.
+  String? _breakNotAllowedReason() {
+    if (_isPunchCompletedToday) {
+      return 'You have already punched out. Breaks are not allowed after punch-out.';
+    }
+    if (!_isPunchedInToday) {
+      return 'Please punch in before starting a break.';
+    }
+    return null;
+  }
+
+  /// Authoritative start-break validation. Runs concurrently with camera init;
+  /// returns an error message to block the submit, or null when OK.
+  Future<String?> _validateBreakStart() async {
+    final breakFuture = _fetchActiveBreak();
+    await _fetchPunchStatusForNavBar();
+    if (!mounted) {
+      await breakFuture;
+      return null;
+    }
+    final blockReason = _breakNotAllowedReason();
+    if (blockReason != null) {
+      await breakFuture; // settle the in-flight request
+      return blockReason;
+    }
+    final activeBreak = await breakFuture;
+    if (activeBreak != null) {
+      return 'You are already on break. End that break to start a new one.';
+    }
+    return null;
+  }
+
+  /// Authoritative end-break validation. Runs concurrently with camera init.
+  Future<String?> _validateBreakEnd() async {
+    final activeBreak = await _fetchActiveBreak();
+    if (!mounted) return null;
+    if (activeBreak == null) return 'No active break found.';
+    return null;
+  }
+
   Future<void> _startBreakFlow() async {
     if (_isBreakActionInProgress) return;
+    // Capture the tap instant before camera/location/network so the saved break
+    // start time is the button-tap moment, not when the selfie + upload settles.
+    _pendingBreakClickTime = DateTime.now().toUtc().toIso8601String();
+    // Instant gate from cached state — blocks the obvious cases with zero network
+    // wait so the camera can open immediately for the normal (valid) case.
+    final cachedBlock = _breakNotAllowedReason();
+    if (cachedBlock != null) {
+      SnackBarUtils.showSnackBar(context, cachedBlock, isError: true);
+      return;
+    }
+    if (_activeBreak != null) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'You are already on break. End that break to start a new one.',
+        isError: true,
+      );
+      return;
+    }
     setState(() => _isBreakActionInProgress = true);
     try {
-      final activeBreak = await _fetchActiveBreak();
-      if (!mounted) return;
-      if (activeBreak != null) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'You are already on break. End that break to start a new one.',
-          isError: true,
-        );
-        return;
-      }
-      await _captureBreakSelfieAndSubmit(isEnding: false, activeBreak: null);
+      // Open the selfie screen NOW; validate + refresh balance in the background
+      // (overlapping camera init). The gate is enforced before submit.
+      await _captureBreakSelfieAndSubmit(
+        isEnding: false,
+        activeBreak: null,
+        preSubmitGate: _validateBreakStart(),
+        infoText: _remainingBreakText(_breakSummary),
+        infoTextFuture: _fetchBreakSummary().then(_remainingBreakText),
+      );
     } finally {
       if (mounted) {
         setState(() => _isBreakActionInProgress = false);
@@ -1449,21 +1605,39 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Future<void> _endBreakFlow() async {
     if (_isBreakActionInProgress) return;
+    // Capture the tap instant before camera/location/network so the saved break
+    // end time is the button-tap moment, not when the selfie + upload settles.
+    _pendingBreakClickTime = DateTime.now().toUtc().toIso8601String();
+    final cachedBreak = _activeBreak;
     setState(() => _isBreakActionInProgress = true);
     try {
-      final activeBreak = await _fetchActiveBreak();
-      if (!mounted) return;
-      if (activeBreak == null) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'No active break found.',
-          isError: true,
+      if (cachedBreak == null) {
+        // No cached break to end — must confirm with the server first.
+        final activeBreak = await _fetchActiveBreak();
+        if (!mounted) return;
+        if (activeBreak == null) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'No active break found.',
+            isError: true,
+          );
+          return;
+        }
+        await _captureBreakSelfieAndSubmit(
+          isEnding: true,
+          activeBreak: activeBreak,
+          infoText: _remainingBreakText(_breakSummary),
+          infoTextFuture: _fetchBreakSummary().then(_remainingBreakText),
         );
         return;
       }
+      // Cached active break -> open the camera immediately and confirm in parallel.
       await _captureBreakSelfieAndSubmit(
         isEnding: true,
-        activeBreak: activeBreak,
+        activeBreak: cachedBreak,
+        preSubmitGate: _validateBreakEnd(),
+        infoText: _remainingBreakText(_breakSummary),
+        infoTextFuture: _fetchBreakSummary().then(_remainingBreakText),
       );
     } finally {
       if (mounted) {
@@ -1513,7 +1687,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         'profileSuccess=${profileResult['success']} | todaySuccess=${result['success']}',
       );
       Map<String, dynamic> effectiveResult = Map<String, dynamic>.from(result);
-      if (effectiveResult['success'] != true || effectiveResult['data'] == null) {
+      if (effectiveResult['success'] != true ||
+          effectiveResult['data'] == null) {
         punchFlowLog(
           '[PunchFlow] primary today fetch failed; trying getAttendanceByDate fallback | '
           'message=${effectiveResult['message'] ?? '(none)'}',
@@ -1523,7 +1698,10 @@ class _DashboardScreenState extends State<DashboardScreen>
               .getAttendanceByDate(todayStr)
               .timeout(
                 validationTimeout,
-                onTimeout: () => {'success': false, 'message': 'today fallback timeout'},
+                onTimeout: () => {
+                  'success': false,
+                  'message': 'today fallback timeout',
+                },
               );
           if (fallback['success'] == true && fallback['data'] != null) {
             effectiveResult = Map<String, dynamic>.from(fallback);
@@ -1541,14 +1719,18 @@ class _DashboardScreenState extends State<DashboardScreen>
           punchFlowLog('[PunchFlow] getAttendanceByDate fallback error: $e');
         }
       }
-      if (effectiveResult['success'] != true || effectiveResult['data'] == null) {
+      if (effectiveResult['success'] != true ||
+          effectiveResult['data'] == null) {
         // One final short retry helps when backend is momentarily busy.
         await Future.delayed(const Duration(milliseconds: 450));
         final retry = await _attendanceService
             .getTodayAttendance(forceRefresh: true, date: todayStr)
             .timeout(
               validationTimeout,
-              onTimeout: () => {'success': false, 'message': 'today retry timeout'},
+              onTimeout: () => {
+                'success': false,
+                'message': 'today retry timeout',
+              },
             );
         if (retry['success'] == true && retry['data'] != null) {
           effectiveResult = Map<String, dynamic>.from(retry);
@@ -1563,7 +1745,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           );
         }
       }
-      if (effectiveResult['success'] != true || effectiveResult['data'] == null) {
+      if (effectiveResult['success'] != true ||
+          effectiveResult['data'] == null) {
         punchFlowLog(
           '[PunchFlow] validation data unavailable after retries in '
           '${sw.elapsedMilliseconds}ms',
@@ -2128,7 +2311,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         data['isCompensationCompOff'] as bool? ?? false;
     final isPaidLeaveToday = data['isPaidLeaveToday'] as bool? ?? false;
     final isPaidLeaveOnTodayRow = attendanceData?['isPaidLeave'] == true;
-    final isPaidLeaveContext = isPaidLeaveToday || isPaidLeaveOnTodayRow;
+    // Half-day leave days are excluded: the web/admin backend stamps `isPaidLeave: true` on a
+    // half-day leave's attendance row, but the employee must still punch in/out for their working
+    // half. The dedicated half-day logic (checkInAllowed) governs those days, so the full-day
+    // paid-leave block below must not pre-empt it.
+    final isPaidLeaveContext =
+        halfDayLeave == null && (isPaidLeaveToday || isPaidLeaveOnTodayRow);
     final isCheckedIn = _isAttendancePunchedIn(attendanceData);
     final isCompleted = _isAttendanceCompleted(attendanceData);
     final status = attendanceData?['status'] ?? '';
@@ -2147,6 +2335,22 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
     if (isAdminMarked) return false;
 
+    // Punch-out with an ongoing break: validate immediately, before fetching
+    // location/selfie, so the user is told to end the break up front instead of
+    // hitting "Kindly end the break" only after the whole punch flow runs.
+    if (isCheckedIn) {
+      final activeBreak = await _fetchActiveBreak();
+      if (!mounted) return false;
+      if (activeBreak != null) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Please end your break before punching out.',
+          isError: true,
+        );
+        return false;
+      }
+    }
+
     if (staffHasTemplate != true) {
       await _showValidationAlertDialog(
         'Attendance template is not assigned. Contact HR.',
@@ -2162,8 +2366,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     final companyDocRaw = data['companyDocForShift'] as Map<String, dynamic>?;
     EffectiveShiftDay? todayEffectiveShift;
     if (staffData != null && shiftsListFromCompany(companyDocRaw) != null) {
-      final templateLabel =
-          (tmpl['name'] ?? tmpl['shiftName'] ?? '').toString().trim();
+      final templateLabel = (tmpl['name'] ?? tmpl['shiftName'] ?? '')
+          .toString()
+          .trim();
       final shiftKey = staffShiftKeyFromProfileMap(
         staffData,
         attendanceTemplateName: templateLabel.isEmpty ? null : templateLabel,
@@ -2176,9 +2381,9 @@ class _DashboardScreenState extends State<DashboardScreen>
         attendanceTodayTemplate: tmpl,
       );
     }
-    final staffShiftIdLog =
-        objectIdHexLoose(staffData?['shiftId']) ?? '(none)';
-    final effWin = todayEffectiveShift != null &&
+    final staffShiftIdLog = objectIdHexLoose(staffData?['shiftId']) ?? '(none)';
+    final effWin =
+        todayEffectiveShift != null &&
             !todayEffectiveShift.isWeekOff &&
             !todayEffectiveShift.isOpen
         ? '${todayEffectiveShift.startTime ?? ''}-${todayEffectiveShift.endTime ?? ''}'
@@ -2210,7 +2415,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (requireTemplateGeolocation == true) {
       final geofenceEnabled = geofence?['enabled'] == true;
       if (!geofenceEnabled) {
-        await _showValidationAlertDialog('Geo fence is not set for your branch.');
+        await _showValidationAlertDialog(
+          'Geo fence is not set for your branch.',
+        );
         return false;
       }
       final branchLat = geofence?['latitude'];
@@ -2219,7 +2426,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           branchLat != null &&
           branchLng != null &&
           (branchLat is num ||
-              (branchLat is String && branchLat.toString().trim().isNotEmpty)) &&
+              (branchLat is String &&
+                  branchLat.toString().trim().isNotEmpty)) &&
           (branchLng is num ||
               (branchLng is String && branchLng.toString().trim().isNotEmpty));
       if (!latLngSet) {
@@ -2238,7 +2446,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!_templateIsOpenShift(tmpl)) {
       final shiftStart = _getShiftStartTimeFromDb(tmpl);
       final shiftEnd = _getShiftEndTimeFromDb(tmpl);
-      final fromEffective = todayEffectiveShift != null &&
+      final fromEffective =
+          todayEffectiveShift != null &&
           !todayEffectiveShift.isWeekOff &&
           (todayEffectiveShift.isOpen ||
               ((todayEffectiveShift.startTime ?? '').isNotEmpty &&
@@ -2816,7 +3025,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     bool? precomputedIsCheckedIn,
   }) async {
     // Overlap today's attendance fetch with face detection + template/location.
-    final todayFuture = _attendanceService.getTodayAttendance(forceRefresh: true);
+    final todayFuture = _attendanceService.getTodayAttendance(
+      forceRefresh: true,
+    );
     final result = await FaceDetectionHelper.detectFromFile(file);
     if (!mounted) return;
     if (!result.valid) {
@@ -2964,6 +3175,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           lateMinutes: finePayload['lateMinutes'] as int?,
           earlyMinutes: finePayload['earlyMinutes'] as int?,
           fineAmount: finePayload['fineAmount'] as double?,
+          clientTime: _pendingPunchClickTime,
         ),
       );
     } else {
@@ -2983,6 +3195,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           lateMinutes: finePayload['lateMinutes'] as int?,
           earlyMinutes: finePayload['earlyMinutes'] as int?,
           fineAmount: finePayload['fineAmount'] as double?,
+          clientTime: _pendingPunchClickTime,
         ),
       );
     }
@@ -3009,7 +3222,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     // One GET /attendance/today overlaps template + optional location (avoids a
     // second sequential fetch when precomputedIsCheckedIn was null).
-    final todayFuture = _attendanceService.getTodayAttendance(forceRefresh: true);
+    final todayFuture = _attendanceService.getTodayAttendance(
+      forceRefresh: true,
+    );
 
     final stored = await AttendanceTemplateStore.loadTemplateDetails();
     final template = stored != null && stored['template'] != null
@@ -3097,6 +3312,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           lateMinutes: finePayload['lateMinutes'] as int?,
           earlyMinutes: finePayload['earlyMinutes'] as int?,
           fineAmount: finePayload['fineAmount'] as double?,
+          clientTime: _pendingPunchClickTime,
         ),
       );
     } else {
@@ -3112,6 +3328,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           lateMinutes: finePayload['lateMinutes'] as int?,
           earlyMinutes: finePayload['earlyMinutes'] as int?,
           fineAmount: finePayload['fineAmount'] as double?,
+          clientTime: _pendingPunchClickTime,
         ),
       );
     }
@@ -3307,6 +3524,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 if (_isPunchActionInProgress) return;
                 final punchFlowSw = Stopwatch()..start();
                 punchFlowLog('[PunchFlow] tap received');
+                // Capture the tap instant up front so the saved punch time is
+                // the button-tap moment, not when the selfie + upload settles.
+                _pendingPunchClickTime = DateTime.now().toUtc().toIso8601String();
                 _setPunchActionInProgress(true);
                 // Same validations as attendance screen before check-in/check-out
                 final validationData = await _fetchAttendanceValidationData();

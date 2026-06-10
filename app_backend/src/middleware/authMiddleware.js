@@ -80,4 +80,20 @@ const protect = async (req, res, next) => {
     }
 };
 
-module.exports = { protect };
+// Restrict a route to specific roles. Reads role from req.user (set by `protect`).
+// Case-insensitive match; "Employee" fallback users are never admins.
+const authorizeRoles = (...allowed) => {
+    const allowedLc = allowed.map((r) => String(r).toLowerCase());
+    return (req, res, next) => {
+        const role = String(req.user?.role || req.staff?.role || '').toLowerCase();
+        if (!role || !allowedLc.includes(role)) {
+            return res.status(403).json({
+                success: false,
+                error: { message: 'Forbidden: requires one of [' + allowed.join(', ') + ']' }
+            });
+        }
+        next();
+    };
+};
+
+module.exports = { protect, authorizeRoles };

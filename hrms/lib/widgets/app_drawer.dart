@@ -1,5 +1,6 @@
 // hrms/lib/widgets/app_drawer.dart
 import 'dart:convert';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hrms/screens/holidays/holidays_screen.dart';
@@ -49,13 +50,19 @@ class _AppDrawerState extends State<AppDrawer> {
 
       final needsLocationAccess = !data.containsKey('locationAccess');
       final needsBranchName = !data.containsKey('branchName') || data['branchName'] == null;
-      if (needsLocationAccess || needsBranchName) {
+      // Older cached sessions predate employeeId in the login response; backfill it.
+      final needsEmployeeId = data['employeeId'] == null ||
+          data['employeeId'].toString().trim().isEmpty;
+      if (needsLocationAccess || needsBranchName || needsEmployeeId) {
         try {
           final result = await AuthService().getProfile();
           if (result['success'] == true && mounted) {
             final profileData = result['data'] as Map<String, dynamic>?;
             final staffData = profileData?['staffData'] as Map<String, dynamic>?;
             if (needsLocationAccess) data['locationAccess'] = staffData?['locationAccess'] == true;
+            if (needsEmployeeId && staffData?['employeeId'] != null) {
+              data['employeeId'] = staffData!['employeeId'];
+            }
             if (needsBranchName) {
               final bn = profileData?['branchName']?.toString() ??
                   (staffData?['branchId'] is Map ? (staffData!['branchId'] as Map)['branchName']?.toString() : null);
@@ -180,15 +187,15 @@ class _AppDrawerState extends State<AppDrawer> {
                     Navigator.pop(context);
                     Future.microtask(() => _push(const GrievanceShellScreen()));
                   }),
-                  _item(Icons.school_outlined, 'My Learning', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const LmsShellScreen()));
-                  }),
-               //   if (_isAdminLike)
-                    _item(Icons.admin_panel_settings_outlined, 'LMS Admin', () {
-                      Navigator.pop(context);
-                      Future.microtask(() => _push(const LmsAdminShellScreen()));
-                    }),
+              //     _item(Icons.school_outlined, 'My Learning', () {
+              //       Navigator.pop(context);
+              //       Future.microtask(() => _push(const LmsShellScreen()));
+              //     }),
+              //  //   if (_isAdminLike)
+              //       _item(Icons.admin_panel_settings_outlined, 'LMS Admin', () {
+              //         Navigator.pop(context);
+              //         Future.microtask(() => _push(const LmsAdminShellScreen()));
+              //       }),
                   _item(Icons.settings_outlined, 'Settings', () {
                     Navigator.pop(context);
                     Future.microtask(() => _push(const SettingsScreen()));
@@ -212,7 +219,7 @@ class _AppDrawerState extends State<AppDrawer> {
   Widget _buildHeaderCard() {
     final name     = _userData?['name']      ?? 'Employee';
     final role     = _userData?['role']      ?? '';
-    final empId    = _userData?['staffId']   ?? _userData?['id'] ?? '';
+    final empId    = _userData?['employeeId']?.toString() ?? '';
     final avatarUrl = _userData?['avatar']   ?? _userData?['photoUrl'];
     final showAvatar = avatarUrl != null &&
         avatarUrl.toString().trim().isNotEmpty &&
@@ -238,7 +245,7 @@ class _AppDrawerState extends State<AppDrawer> {
             child: CircleAvatar(
               radius: 32,
               backgroundColor: Colors.white.withValues(alpha: 0.25),
-              backgroundImage: showAvatar ? NetworkImage(avatarUrl.toString().trim()) : null,
+              backgroundImage: showAvatar ? CachedNetworkImageProvider(avatarUrl.toString().trim()) : null,
               child: showAvatar
                   ? null
                   : Text(initial,

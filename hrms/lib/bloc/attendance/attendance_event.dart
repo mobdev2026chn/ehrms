@@ -28,6 +28,10 @@ class AttendanceCheckInRequested extends AttendanceEvent {
   final int? lateMinutes;
   final int? earlyMinutes;
   final double? fineAmount;
+
+  /// UTC instant captured the moment the punch button was tapped, so location/selfie/
+  /// network latency does not push the saved punch-in time forward. ISO-8601 string.
+  final String? clientTime;
   const AttendanceCheckInRequested({
     required this.lat,
     required this.lng,
@@ -40,6 +44,7 @@ class AttendanceCheckInRequested extends AttendanceEvent {
     this.lateMinutes,
     this.earlyMinutes,
     this.fineAmount,
+    this.clientTime,
   });
   @override
   List<Object?> get props => [
@@ -54,6 +59,7 @@ class AttendanceCheckInRequested extends AttendanceEvent {
     lateMinutes,
     earlyMinutes,
     fineAmount,
+    clientTime,
   ];
 }
 
@@ -70,6 +76,10 @@ class AttendanceCheckOutRequested extends AttendanceEvent {
   final int? lateMinutes;
   final int? earlyMinutes;
   final double? fineAmount;
+
+  /// UTC instant captured the moment the punch button was tapped, so location/selfie/
+  /// network latency does not push the saved punch-out time forward. ISO-8601 string.
+  final String? clientTime;
   const AttendanceCheckOutRequested({
     required this.lat,
     required this.lng,
@@ -82,6 +92,7 @@ class AttendanceCheckOutRequested extends AttendanceEvent {
     this.lateMinutes,
     this.earlyMinutes,
     this.fineAmount,
+    this.clientTime,
   });
   @override
   List<Object?> get props => [
@@ -96,5 +107,6 @@ class AttendanceCheckOutRequested extends AttendanceEvent {
     lateMinutes,
     earlyMinutes,
     fineAmount,
+    clientTime,
   ];
 }

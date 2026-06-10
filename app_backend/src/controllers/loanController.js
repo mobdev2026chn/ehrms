@@ -111,6 +111,59 @@ const getLoans = async (req, res) => {
     }
 };
 
+// @desc    Get loan stats for the logged-in employee (all-time, ignores pagination/filters)
+// @route   GET /api/requests/loan/summary
+// @access  Private (Employee)
+const getLoanSummary = async (req, res) => {
+    try {
+        let employeeId;
+        if (req.staff) {
+            employeeId = req.staff._id;
+        } else if (req.user) {
+            const staff = await Staff.findOne({ userId: req.user._id });
+            employeeId = staff?._id;
+        }
+
+        if (!employeeId) {
+            return res.json({
+                success: true,
+                data: { activeCount: 0, pendingCount: 0, totalOutstanding: 0 }
+            });
+        }
+
+        const results = await Loan.aggregate([
+            { $match: { employeeId: new mongoose.Types.ObjectId(employeeId) } },
+            {
+                $group: {
+                    _id: '$status',
+                    count: { $sum: 1 },
+                    remaining: { $sum: '$remainingAmount' }
+                }
+            }
+        ]);
+
+        let activeCount = 0;
+        let pendingCount = 0;
+        let totalOutstanding = 0;
+        for (const r of results) {
+            if (r._id === 'Active' || r._id === 'Approved') {
+                activeCount += r.count;
+                totalOutstanding += r.remaining;
+            } else if (r._id === 'Pending') {
+                pendingCount += r.count;
+            }
+        }
+
+        res.json({
+            success: true,
+            data: { activeCount, pendingCount, totalOutstanding }
+        });
+    } catch (error) {
+        console.error('getLoanSummary Error:', error);
+        res.status(500).json({ success: false, error: { message: error.message } });
+    }
+};
+
 // @desc    Create Loan Request
 // @route   POST /api/loans
 // @access  Private (Employee)
@@ -163,4 +216,4 @@ const createLoan = async (req, res) => {
     }
 };
 
-module.exports = { getLoans, createLoan };
+module.exports = { getLoans, createLoan, getLoanSummary };

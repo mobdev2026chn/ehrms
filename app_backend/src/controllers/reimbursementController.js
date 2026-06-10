@@ -68,6 +68,52 @@ const getReimbursements = async (req, res) => {
     }
 };
 
+// @desc    Get reimbursement totals for the logged-in employee (all-time, ignores pagination/filters)
+// @route   GET /api/requests/expense/summary
+// @access  Private (Employee)
+const getReimbursementSummary = async (req, res) => {
+    try {
+        const currentStaff = req.staff;
+        if (!currentStaff) {
+            return res.json({
+                success: true,
+                data: { totalReimbursed: 0, totalPending: 0, pendingCount: 0 }
+            });
+        }
+
+        const results = await Reimbursement.aggregate([
+            { $match: { employeeId: currentStaff._id } },
+            {
+                $group: {
+                    _id: '$status',
+                    total: { $sum: '$amount' },
+                    count: { $sum: 1 }
+                }
+            }
+        ]);
+
+        let totalReimbursed = 0;
+        let totalPending = 0;
+        let pendingCount = 0;
+        for (const r of results) {
+            if (r._id === 'Approved' || r._id === 'Paid') {
+                totalReimbursed += r.total;
+            } else if (r._id === 'Pending') {
+                totalPending += r.total;
+                pendingCount += r.count;
+            }
+        }
+
+        res.json({
+            success: true,
+            data: { totalReimbursed, totalPending, pendingCount }
+        });
+    } catch (error) {
+        console.error('getReimbursementSummary Error:', error);
+        res.status(500).json({ success: false, error: { message: error.message } });
+    }
+};
+
 const createReimbursement = async (req, res) => {
     try {
         const { type, amount, date, description, proofFiles } = req.body;
@@ -171,5 +217,6 @@ const createReimbursement = async (req, res) => {
 
 module.exports = {
     getReimbursements,
+    getReimbursementSummary,
     createReimbursement
 };

@@ -24,6 +24,14 @@ function buildBreakLocation(payload = {}) {
 /** Client clocks may skew; ISO may parse oddly. All stored instants are authoritative UTC on server. */
 const MAX_CLIENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
+/**
+ * Fallback daily break allowance (minutes) used when the shift break policy does not
+ * configure one (policy disabled or allowedMinutes=0). Keeps the app showing a concrete
+ * break balance (default 1 hour/day) instead of "Unlimited". Fines stay OFF unless the
+ * admin explicitly enables them on the shift break policy.
+ */
+const DEFAULT_BREAK_ALLOWED_MINUTES = 60;
+
 function resolveServerBreakStartTime(clientStartInput) {
     const nowMs = Date.now();
     if (clientStartInput == null || clientStartInput === '') {
@@ -198,6 +206,27 @@ function resolveBreakDurationMinutes(breakDoc) {
     return Math.max(0, Math.round((end - start) / (1000 * 60)));
 }
 
+/**
+ * Tri-state parse of a shift `breakPolicy.enabled` flag coming from API / Mongo.
+ * Mirrors the app's readBreakPolicyEnabledFromMap (bool, int 0/1, string "true"/"false").
+ * Returns:
+ *   true  -> breaks explicitly enabled for the shift
+ *   false -> breaks explicitly disabled for the shift (block start)
+ *   null  -> not configured / legacy row (caller preserves prior behaviour)
+ */
+function parseBreakPolicyEnabled(breakPolicy) {
+    if (!breakPolicy || typeof breakPolicy !== 'object') return null;
+    const e = breakPolicy.enabled;
+    if (typeof e === 'boolean') return e;
+    if (typeof e === 'number') return e !== 0;
+    if (typeof e === 'string') {
+        const s = e.trim().toLowerCase();
+        if (s === 'true' || s === '1' || s === 'yes') return true;
+        if (s === 'false' || s === '0' || s === 'no') return false;
+    }
+    return null;
+}
+
 async function getBreakFineContext(staff, dayDate) {
     const company = await Company.findById(staff.businessId)
         .select('settings.payroll.fineCalculation settings.attendance.shifts settings.business.timezone settings.attendance.timezone timezone')
@@ -217,17 +246,27 @@ async function getBreakFineContext(staff, dayDate) {
 
     const shiftTiming = getShiftTimings(company || {}, staff, dayDate, staff?.joiningDate || null, null);
     const shiftBreakPolicy = shiftTiming?.breakPolicy || {};
+    const policyEnabledExplicit = parseBreakPolicyEnabled(shiftBreakPolicy);
     const policyEnabled = shiftBreakPolicy?.enabled === true;
     const configuredAllowedBreakMin = Math.max(0, Number(shiftBreakPolicy?.allowedMinutes || 0));
     // Business rule:
-    // - breakPolicy.enabled=false -> unrestricted break, no fine.
-    // - breakPolicy.allowedMinutes=0 -> unrestricted break, no fine.
-    const isUnlimitedBreak = !policyEnabled || configuredAllowedBreakMin === 0;
+    // - An explicit allowance is configured only when the policy is enabled AND
+    //   allowedMinutes > 0; that value is honoured as-is.
+    // - Otherwise (policy disabled or allowedMinutes=0) we fall back to a default
+    //   1 hour/day allowance so the app always shows a concrete break balance.
+    //   Breaks are therefore never treated as "unlimited".
+    const hasConfiguredAllowance = policyEnabled && configuredAllowedBreakMin > 0;
+    const effectiveAllowedBreakMin = hasConfiguredAllowance
+        ? configuredAllowedBreakMin
+        : DEFAULT_BREAK_ALLOWED_MINUTES;
+    const isUnlimitedBreak = false;
+    // Fines only apply when the admin both configured a real allowance and enabled fines.
+    // The default 1-hour allowance shows a balance but never charges a fine on its own.
     const breakFineEnabled =
         policyEnabled &&
-        !isUnlimitedBreak &&
+        hasConfiguredAllowance &&
         shiftBreakPolicy?.fineEnabled === true;
-    const allowedBreakMin = isUnlimitedBreak ? Number.POSITIVE_INFINITY : configuredAllowedBreakMin;
+    const allowedBreakMin = effectiveAllowedBreakMin;
 
     let fineConfig = payrollFineConfig;
     if (breakFineEnabled) {
@@ -266,8 +305,12 @@ async function getBreakFineContext(staff, dayDate) {
         fineConfig,
         breakPolicy: {
             enabled: policyEnabled,
+            // Tri-state: false only when the shift explicitly disables breaks.
+            // Legacy shifts without a configured policy stay null so startBreak
+            // preserves prior behaviour instead of blocking them.
+            enabledExplicit: policyEnabledExplicit,
             isUnlimitedBreak,
-            allowedMinutes: configuredAllowedBreakMin,
+            allowedMinutes: effectiveAllowedBreakMin,
             fineEnabled: breakFineEnabled,
             fineType: String(shiftBreakPolicy?.fineType || '1xSalary'),
             customFinePerHour: Math.max(0, Number(shiftBreakPolicy?.customFinePerHour || 0))
@@ -425,6 +468,109 @@ exports.getCurrentBreak = async (req, res) => {
     }
 };
 
+/**
+ * GET /api/breaks/today
+ * Authoritative daily break summary for the logged-in employee:
+ * - today's breaks (UTC day, ascending by startTime, including the live ongoing one)
+ * - total break time used today (completed + live elapsed)
+ * - allowed break minutes from the shift break policy + remaining balance
+ * Used by the dashboard punch card (list + total) and the break screen (balance).
+ */
+exports.getTodayBreakSummary = async (req, res) => {
+    try {
+        if (!req.staff?._id) {
+            return res.status(404).json({ success: false, message: 'Staff record not found' });
+        }
+        const staff = await Staff.findById(req.staff._id)
+            .select('_id businessId appPerDayNetSalary appPerdayGrossSalary salary joiningDate shiftId shiftName');
+        if (!staff?.businessId) {
+            return res.status(404).json({ success: false, message: 'Staff business not found' });
+        }
+
+        await exports.closeStaleOpenBreaksForStaff(staff);
+
+        const now = new Date();
+        const dayStart = startOfUtcDay(now);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+        const [rows, fineCtx] = await Promise.all([
+            Break.find({
+                employeeID: staff._id,
+                tenantId: staff.businessId,
+                startTime: { $gte: dayStart, $lt: dayEnd }
+            }).sort({ startTime: 1 }).lean(),
+            getBreakFineContext(staff, now)
+        ]);
+
+        const nowMs = now.getTime();
+        let totalSeconds = 0;
+        let activeBreak = null;
+        const breaks = rows.map((doc) => {
+            const startTime = doc.startTime ? new Date(doc.startTime) : null;
+            const endTime = doc.endTime ? new Date(doc.endTime) : null;
+            const ongoing = !endTime;
+            let durationSeconds;
+            if (ongoing) {
+                durationSeconds = startTime
+                    ? Math.max(0, Math.floor((nowMs - startTime.getTime()) / 1000))
+                    : 0;
+            } else if (Number.isFinite(Number(doc.totalSeconds)) && Number(doc.totalSeconds) >= 0) {
+                durationSeconds = Number(doc.totalSeconds);
+            } else if (startTime && endTime) {
+                durationSeconds = Math.max(0, Math.floor((endTime.getTime() - startTime.getTime()) / 1000));
+            } else {
+                durationSeconds = 0;
+            }
+            totalSeconds += durationSeconds;
+            const entry = {
+                id: doc._id?.toString?.() || doc.id,
+                startTime,
+                endTime,
+                ongoing,
+                durationSeconds,
+                durationMin: Math.round(durationSeconds / 60)
+            };
+            if (ongoing) activeBreak = serializeBreak(doc);
+            return entry;
+        });
+
+        const totalBreakMin = Math.round(totalSeconds / 60);
+        const isUnlimited = fineCtx.breakPolicy.isUnlimitedBreak;
+        const allowedMinutes = fineCtx.breakPolicy.allowedMinutes;
+        const allowedSeconds = isUnlimited ? null : allowedMinutes * 60;
+        const remainingMin = isUnlimited
+            ? null
+            : Math.max(0, allowedMinutes - totalBreakMin);
+        const remainingSeconds = isUnlimited
+            ? null
+            : Math.max(0, (allowedMinutes * 60) - totalSeconds);
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                breaks,
+                totalBreakSeconds: totalSeconds,
+                totalBreakMin,
+                totalBreakCount: breaks.length,
+                policyEnabled: fineCtx.breakPolicy.enabled,
+                // True only when the shift explicitly disabled breaks (not legacy).
+                // The app uses this to block starting a new break.
+                policyDisabled: fineCtx.breakPolicy.enabledExplicit === false,
+                isUnlimited,
+                allowedMinutes,
+                allowedSeconds,
+                remainingMin,
+                remainingSeconds,
+                hasActiveBreak: !!activeBreak,
+                activeBreak
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 exports.startBreak = async (req, res) => {
     try {
         const { latitude, longitude, selfie, startTime } = req.body;
@@ -457,6 +603,41 @@ exports.startBreak = async (req, res) => {
         // user is not blocked on S3 latency. The Break doc starts with an empty selfie
         // and is back-filled once the upload finishes.
         const resolvedStartTime = resolveServerBreakStartTime(startTime);
+
+        // Authoritative break-policy gate: the shift's breakPolicy decides whether
+        // breaks are allowed at all. The app already hides the break button when the
+        // policy is disabled, but enforce it server-side too so a break can never be
+        // started for a shift that explicitly turned breaks off.
+        const startFineCtx = await getBreakFineContext(staff, resolvedStartTime);
+        if (startFineCtx.breakPolicy.enabledExplicit === false) {
+            return res.status(403).json({
+                success: false,
+                message: 'Breaks are not enabled for your shift.'
+            });
+        }
+
+        // Breaks are only valid while the employee is actively punched in for that day:
+        // a break cannot start before punch-in, nor after punch-out has happened.
+        const breakDayStart = startOfUtcDay(resolvedStartTime);
+        const breakDayEnd = new Date(breakDayStart);
+        breakDayEnd.setUTCDate(breakDayEnd.getUTCDate() + 1);
+        const todayAttendance = await Attendance.findOne({
+            employeeId: staff._id,
+            date: { $gte: breakDayStart, $lt: breakDayEnd }
+        }).select('punchIn punchOut').lean();
+        if (!todayAttendance || !todayAttendance.punchIn) {
+            return res.status(409).json({
+                success: false,
+                message: 'Please punch in before starting a break.'
+            });
+        }
+        if (todayAttendance.punchOut) {
+            return res.status(409).json({
+                success: false,
+                message: 'You have already punched out. Breaks are not allowed after punch-out.'
+            });
+        }
+
         // Creating the break row and looking up today's attendance id are independent
         // (both keyed only off resolvedStartTime), so run them concurrently.
         const [doc, attendanceId] = await Promise.all([

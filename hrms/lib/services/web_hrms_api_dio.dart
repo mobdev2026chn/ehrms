@@ -9,7 +9,17 @@ import 'interaction_service.dart';
 /// Dio client for [AppConstants.webBaseUrl] (HRMS web API).
 /// Auth: `interaction_access_token` (web JWT) when present, else `token` / ApiClient header.
 /// Used by Salary Overview and [SalaryService] payroll routes so data matches the web app.
+///
+/// Returns a single shared instance (built once on first use). The auth header is
+/// resolved per-request in the onRequest interceptor, so the cached client always
+/// sends the current token. Sharing the instance preserves the HTTP connection pool
+/// (keep-alive / TLS reuse) instead of paying a fresh handshake on every call.
+Dio? _sharedWebHrmsDio;
+
 Dio webHrmsApiDio() {
+  final existing = _sharedWebHrmsDio;
+  if (existing != null) return existing;
+
   var base = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
   if (base.endsWith('/')) base = base.substring(0, base.length - 1);
   final dio = Dio(
@@ -50,5 +60,6 @@ Dio webHrmsApiDio() {
       },
     ),
   );
+  _sharedWebHrmsDio = dio;
   return dio;
 }

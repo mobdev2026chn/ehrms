@@ -6,6 +6,7 @@ const {
   getPerformanceReviews,
   getPerformanceReviewById,
   submitSelfReview,
+  createSelfAssessment,
   getEmployeePerformanceSummary,
 } = require('../controllers/performanceReviewController');
 
@@ -18,6 +19,8 @@ router.get('/kra', getKRAs);
 // Order: specific paths before :id (otherwise "employee" would match :id)
 router.get('/reviews', getPerformanceReviews);
 router.get('/reviews/employee/summary', getEmployeePerformanceSummary);
+// Employee-initiated self assessment (create own review).
+router.post('/reviews/self-assessment', createSelfAssessment);
 router.get('/reviews/:id', getPerformanceReviewById);
 router.patch('/reviews/:id/self-review', submitSelfReview);
 

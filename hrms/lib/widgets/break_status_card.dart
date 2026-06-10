@@ -8,12 +8,18 @@ class BreakStatusCard extends StatefulWidget {
   final bool isBusy;
   final bool showSuccessBanner;
 
+  /// Seconds of COMPLETED breaks taken earlier today (excludes the ongoing one).
+  /// When non-null, the card shows a live "Taken today" total = this + the
+  /// current break's running elapsed. Null hides that line.
+  final int? completedBreakSecondsToday;
+
   const BreakStatusCard({
     super.key,
     required this.startTime,
     this.onEndBreak,
     this.isBusy = false,
     this.showSuccessBanner = false,
+    this.completedBreakSecondsToday,
   });
 
   @override
@@ -88,13 +94,23 @@ class _BreakStatusCardState extends State<BreakStatusCard>
     }
   }
 
-  String get _timerText {
-    final totalSeconds = _elapsed.inSeconds;
-    final hours = totalSeconds ~/ 3600;
-    final minutes = (totalSeconds % 3600) ~/ 60;
-    final seconds = totalSeconds % 60;
-    // No trailing " hrs" — saves width next to [End Break] on narrow screens.
+  String _hms(int totalSeconds) {
+    final s = totalSeconds < 0 ? 0 : totalSeconds;
+    final hours = s ~/ 3600;
+    final minutes = (s % 3600) ~/ 60;
+    final seconds = s % 60;
     return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  // No trailing " hrs" — saves width next to [End Break] on narrow screens.
+  String get _timerText => _hms(_elapsed.inSeconds);
+
+  /// Running total break taken today = completed-earlier + current elapsed.
+  /// Null when the caller did not supply today's completed total.
+  String? get _takenTodayText {
+    final prior = widget.completedBreakSecondsToday;
+    if (prior == null) return null;
+    return _hms(prior + _elapsed.inSeconds);
   }
 
   @override
@@ -173,6 +189,19 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                   fontWeight: FontWeight.bold,
                   color: Color(0xFF1E293B),
                 );
+                final takenToday = _takenTodayText;
+                final takenTodayLabel = takenToday == null
+                    ? null
+                    : Text(
+                        'Break taken today: $takenToday',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      );
 
                 if (narrow) {
                   return Column(
@@ -191,6 +220,10 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      if (takenTodayLabel != null) ...[
+                        const SizedBox(height: 4),
+                        takenTodayLabel,
+                      ],
                       const SizedBox(height: 12),
                       btn,
                     ],
@@ -217,6 +250,10 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
+                          if (takenTodayLabel != null) ...[
+                            const SizedBox(height: 4),
+                            takenTodayLabel,
+                          ],
                         ],
                       ),
                     ),

@@ -9,6 +9,7 @@ import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/dashboard/dashboard_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/services/task_service.dart';
+import 'package:hrms/services/geo/route_snapping_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
@@ -28,13 +29,28 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   bool _loading = true;
   String? _error;
 
+  /// Road-snapped travelled route (the "exact" path along roads). Null until
+  /// snapping completes; the map falls back to cleaned raw points meanwhile.
+  List<LatLng>? _snappedRoute;
+
   @override
   void initState() {
     super.initState();
     _fetchReport();
   }
 
+  /// Snap the raw tracking points to the road network so the map shows the
+  /// exact path travelled (not corner-cutting straight lines).
+  Future<void> _computeSnappedRoute(List<RoutePoint> routePoints) async {
+    if (routePoints.length < 2) return;
+    final snapped = await RouteSnappingService.buildExactRoute(routePoints);
+    if (mounted && snapped.length > 1) {
+      setState(() => _snappedRoute = snapped);
+    }
+  }
+
   Future<void> _fetchReport() async {
+    _snappedRoute = null;
     if (widget.task.id == null || widget.task.id!.isEmpty) {
       setState(() {
         _report = TaskCompletionReport(
@@ -55,6 +71,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           _report = report;
           _loading = false;
         });
+        _computeSnappedRoute(report.routePoints);
       }
     } catch (e) {
       if (mounted) {
@@ -818,29 +835,35 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       );
     }
 
-    final bounds = _computeBounds(routePoints);
+    // Prefer the road-snapped route (exact path along roads) once available;
+    // fall back to the raw tracking points until snapping completes.
+    final displayRoute = (_snappedRoute != null && _snappedRoute!.length > 1)
+        ? _snappedRoute!
+        : routePoints;
+
+    final bounds = _computeBounds(displayRoute);
     final center = LatLng(
       (bounds.southwest.latitude + bounds.northeast.latitude) / 2,
       (bounds.southwest.longitude + bounds.northeast.longitude) / 2,
     );
 
     final markers = <Marker>{};
-    if (routePoints.isNotEmpty) {
+    if (displayRoute.isNotEmpty) {
       markers.add(
         Marker(
           markerId: const MarkerId('start'),
-          position: routePoints.first,
+          position: displayRoute.first,
           icon: BitmapDescriptor.defaultMarkerWithHue(
             BitmapDescriptor.hueGreen,
           ),
           infoWindow: const InfoWindow(title: 'Start'),
         ),
       );
-      if (routePoints.length > 1) {
+      if (displayRoute.length > 1) {
         markers.add(
           Marker(
             markerId: const MarkerId('end'),
-            position: routePoints.last,
+            position: displayRoute.last,
             icon: BitmapDescriptor.defaultMarkerWithHue(
               BitmapDescriptor.hueRed,
             ),
@@ -866,13 +889,26 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         borderRadius: BorderRadius.circular(16),
         child: GoogleMap(
           initialCameraPosition: CameraPosition(target: center, zoom: 14),
-          polylines: routePoints.length > 1
+          onMapCreated: (controller) {
+            if (displayRoute.length > 1) {
+              Future.delayed(const Duration(milliseconds: 300), () {
+                controller.animateCamera(
+                  CameraUpdate.newLatLngBounds(_computeBounds(displayRoute), 40),
+                );
+              });
+            }
+          },
+          polylines: displayRoute.length > 1
               ? {
                   Polyline(
                     polylineId: const PolylineId('route'),
-                    points: routePoints,
+                    points: displayRoute,
                     color: AppColors.primary,
-                    width: 4,
+                    width: 5,
+                    geodesic: true,
+                    startCap: Cap.roundCap,
+                    endCap: Cap.roundCap,
+                    jointType: JointType.round,
                   ),
                 }
               : {},

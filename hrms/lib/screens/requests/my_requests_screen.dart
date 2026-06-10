@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:intl/intl.dart';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/request_success_dialog.dart';
@@ -18,10 +19,12 @@ import '../../config/app_colors.dart';
 import '../../config/app_text_styles.dart';
 import '../../services/request_service.dart';
 import '../../services/auth_service.dart';
+import '../../utils/holiday_off_util.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
+import '../../services/fcm_service.dart';
 
 /// Returns true if [s] is half-day leave type (case and space insensitive).
 /// Backend may send "half day", "Half Day", "halfday", "half", "Half", etc.
@@ -29,6 +32,221 @@ bool _isHalfDayLeave(String? s) {
   if (s == null || s.isEmpty) return false;
   final n = s.toLowerCase().replaceAll(RegExp(r'\s+'), '');
   return n == 'halfday' || n == 'half';
+}
+
+/// True when [a] and [b] fall on the same calendar day (ignores time).
+bool _isSameCalendarDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
+
+/// Normalises a single `proofFiles` entry (a URL string, or a Map with a
+/// `url`/`fileUrl` key) into a plain URL string.
+String _proofUrlOf(dynamic proof) {
+  if (proof is Map) {
+    return proof['url']?.toString() ??
+        proof['fileUrl']?.toString() ??
+        proof.toString();
+  }
+  return proof.toString();
+}
+
+/// Builds the "Proof Files" section for an expense detail sheet: a header plus
+/// one tappable "View Proof" row per uploaded document. Tapping a row opens the
+/// document via [showProofDocument]. Returns an empty list when [proofs] is
+/// empty so callers can spread it unconditionally.
+List<Widget> buildProofFileRows(
+  BuildContext context,
+  RequestService requestService,
+  List<dynamic> proofs,
+) {
+  if (proofs.isEmpty) return const [];
+  return <Widget>[
+    const SizedBox(height: 12),
+    Text(
+      'Proof Files:',
+      style: TextStyle(
+        fontWeight: FontWeight.bold,
+        color: AppColors.textPrimary,
+      ),
+    ),
+    const SizedBox(height: 6),
+    ...proofs.map((proof) {
+      final proofUrl = _proofUrlOf(proof);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: InkWell(
+          onTap: () => showProofDocument(context, requestService, proofUrl),
+          borderRadius: BorderRadius.circular(8),
+          child: Row(
+            children: [
+              Icon(Icons.attach_file, size: 18, color: AppColors.primary),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'View Proof',
+                  style: TextStyle(
+                    color: Colors.blue,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }),
+  ];
+}
+
+/// Opens an uploaded expense proof. Downloads the file, then displays images
+/// inline (zoomable) and opens PDFs (or any non-image file) with the device's
+/// default viewer. Falls back to the browser if the file can't be downloaded.
+Future<void> showProofDocument(
+  BuildContext context,
+  RequestService requestService,
+  String url,
+) async {
+  final trimmed = url.trim();
+  final uri = Uri.tryParse(trimmed);
+  if (trimmed.isEmpty || uri == null || !uri.hasScheme) {
+    if (context.mounted) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Document link is not available.',
+        isError: true,
+      );
+    }
+    return;
+  }
+
+  bool loadingShown = false;
+  try {
+    loadingShown = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: AppTabLoader()),
+    );
+
+    final result = await requestService.getPdfBytesFromUrl(trimmed);
+    if (context.mounted && loadingShown) {
+      Navigator.pop(context);
+      loadingShown = false;
+    }
+
+    if (result['success'] != true || result['data'] == null) {
+      // Couldn't download the bytes; fall back to opening in the browser.
+      await _openProofInBrowser(context, trimmed);
+      return;
+    }
+
+    final bytes = List<int>.from(result['data'] as List);
+    final isPdf =
+        bytes.length >= 4 &&
+        bytes[0] == 0x25 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x44 &&
+        bytes[3] == 0x46; // %PDF magic number
+
+    if (isPdf) {
+      await _openProofFile(context, bytes, 'pdf');
+    } else if (context.mounted) {
+      _showProofImageDialog(context, bytes);
+    }
+  } catch (_) {
+    if (context.mounted && loadingShown) {
+      Navigator.pop(context);
+    }
+    await _openProofInBrowser(context, trimmed);
+  }
+}
+
+void _showProofImageDialog(BuildContext context, List<int> bytes) {
+  showDialog(
+    context: context,
+    builder: (ctx) => Dialog(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppBar(
+            title: const Text('Proof Document'),
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.close, color: Colors.black),
+              onPressed: () => Navigator.pop(ctx),
+            ),
+          ),
+          Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+            ),
+            child: InteractiveViewer(
+              child: Image.memory(
+                Uint8List.fromList(bytes),
+                errorBuilder: (ctx, error, stackTrace) => const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20.0),
+                    child: Text('Unable to display this document.'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+      ),
+    ),
+  );
+}
+
+Future<void> _openProofFile(
+  BuildContext context,
+  List<int> bytes,
+  String extension,
+) async {
+  try {
+    final dir = await getTemporaryDirectory();
+    final file = File(
+      '${dir.path}/Expense_Proof_'
+      '${DateTime.now().millisecondsSinceEpoch}.$extension',
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    final result = await OpenFilex.open(file.path);
+    if (result.type != ResultType.done && context.mounted) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Unable to open document: ${result.message}',
+        isError: true,
+      );
+    }
+  } catch (e) {
+    if (context.mounted) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Error opening document: ${e.toString()}',
+        isError: true,
+      );
+    }
+  }
+}
+
+Future<void> _openProofInBrowser(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url);
+  if (uri != null && uri.hasScheme) {
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
+      }
+    } catch (_) {}
+  }
+  if (context.mounted) {
+    SnackBarUtils.showSnackBar(
+      context,
+      'Unable to open document.',
+      isError: true,
+    );
+  }
 }
 
 class MyRequestsScreen extends StatefulWidget {
@@ -55,702 +273,194 @@ class MyRequestsScreen extends StatefulWidget {
   State<MyRequestsScreen> createState() => _MyRequestsScreenState();
 }
 
-/// The kind of request a feed item represents.
-enum _RequestKind { leave, loan, expense, permission }
-
-/// A single unified entry in the combined "Recent Submissions" feed.
-class _RequestItem {
-  final _RequestKind kind;
-  final String title;
-  final String status;
-  final DateTime createdAt;
-  final Map<String, dynamic> raw;
-
-  const _RequestItem({
-    required this.kind,
-    required this.title,
-    required this.status,
-    required this.createdAt,
-    required this.raw,
-  });
+/// Label + icon for one segment of the top tab strip.
+class _RequestTabSpec {
+  final String label;
+  final IconData icon;
+  const _RequestTabSpec(this.label, this.icon);
 }
 
-class _MyRequestsScreenState extends State<MyRequestsScreen> {
-  final RequestService _requestService = RequestService();
-  bool _isLoading = true;
-  bool _showAll = false;
-  List<_RequestItem> _items = [];
+class _MyRequestsScreenState extends State<MyRequestsScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
 
-  /// Items shown in the feed before the user taps "View All".
-  static const int _recentCount = 5;
+  /// Tab specs in display order. Index maps 1:1 to the [TabBarView] children.
+  static const List<_RequestTabSpec> _tabSpecs = [
+    _RequestTabSpec('Leave', Icons.event_available_rounded),
+    _RequestTabSpec('Permission', Icons.fact_check_outlined),
+    _RequestTabSpec('Expense', Icons.receipt_long_rounded),
+    _RequestTabSpec('Loan', Icons.account_balance_wallet_rounded),
+  ];
+
+  // Keys let the app-bar filter button and the create FAB drive whichever tab
+  // is currently visible (each tab exposes toggleFilters / show…Dialog).
+  final GlobalKey<_LeaveRequestsTabState> _leaveKey = GlobalKey();
+  final GlobalKey<_LoanRequestsTabState> _loanKey = GlobalKey();
+  final GlobalKey<_ExpenseRequestsTabState> _expenseKey = GlobalKey();
+  final GlobalKey<_PermissionRequestsTabState> _permissionKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
-    _fetchAll();
+    final initial = widget.initialTabIndex
+        .clamp(0, _tabSpecs.length - 1)
+        .toInt();
+    _tabController = TabController(
+      length: _tabSpecs.length,
+      vsync: this,
+      initialIndex: initial,
+    );
+    _tabController.addListener(() {
+      // Rebuild immediately so the IndexedStack swaps to the tapped tab without
+      // waiting for the indicator animation to settle, and the FAB label tracks
+      // the active tab. Notify the dashboard only once the change has settled.
+      setState(() {});
+      if (!_tabController.indexIsChanging) {
+        widget.onTabIndexChanged?.call(_tabController.index);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   @override
   void didUpdateWidget(MyRequestsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.isActiveTab == true && oldWidget.isActiveTab != true) {
-      _fetchAll();
+      _refreshActiveTab();
     }
   }
 
-  /// Fetches every request type in parallel and merges them into one
-  /// reverse-chronological feed (newest first).
-  Future<void> _fetchAll() async {
-    setState(() => _isLoading = true);
-    final results = await Future.wait([
-      _requestService.getLeaveRequests(limit: 50),
-      _requestService.getLoanRequests(limit: 50),
-      _requestService.getExpenseRequests(limit: 50),
-      _requestService.getPermissionRequests(),
-    ]);
-    if (!mounted) return;
-
-    final items = <_RequestItem>[];
-    items.addAll(_parseList(results[0], 'leaves').map(_leaveItem));
-    items.addAll(_parseList(results[1], 'loans').map(_loanItem));
-    items.addAll(_parseList(results[2], 'reimbursements').map(_expenseItem));
-    items.addAll(_parseList(results[3], 'permissions').map(_permissionItem));
-    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-    setState(() {
-      _items = items;
-      _isLoading = false;
-    });
-  }
-
-  /// Extracts the record list from a service result whose `data` is either a
-  /// List or a Map keyed by [listKey].
-  List<Map<String, dynamic>> _parseList(
-    Map<String, dynamic> result,
-    String listKey,
-  ) {
-    if (result['success'] != true) return const [];
-    final data = result['data'];
-    List<dynamic> raw;
-    if (data is List) {
-      raw = data;
-    } else if (data is Map) {
-      raw = (data[listKey] as List?) ?? const [];
-    } else {
-      raw = const [];
-    }
-    return raw
-        .map(
-          (e) => e is Map<String, dynamic>
-              ? e
-              : Map<String, dynamic>.from(e as Map),
-        )
-        .toList();
-  }
-
-  DateTime _parseDate(dynamic v) =>
-      DateTime.tryParse(v?.toString() ?? '')?.toLocal() ?? DateTime(1970);
-
-  // ── Per-type → unified item mappers ──────────────────────────────────────
-  _RequestItem _leaveItem(Map<String, dynamic> m) => _RequestItem(
-    kind: _RequestKind.leave,
-    title: (m['leaveType'] ?? 'Leave').toString(),
-    status: (m['status'] ?? '').toString(),
-    createdAt: _parseDate(m['createdAt']),
-    raw: m,
-  );
-
-  _RequestItem _loanItem(Map<String, dynamic> m) => _RequestItem(
-    kind: _RequestKind.loan,
-    title: (m['loanType'] ?? 'Loan').toString(),
-    status: (m['status'] ?? '').toString(),
-    createdAt: _parseDate(m['createdAt']),
-    raw: m,
-  );
-
-  _RequestItem _expenseItem(Map<String, dynamic> m) => _RequestItem(
-    kind: _RequestKind.expense,
-    title: (m['type'] ?? m['expenseType'] ?? 'Expense').toString(),
-    status: (m['status'] ?? '').toString(),
-    createdAt: _parseDate(m['createdAt'] ?? m['date']),
-    raw: m,
-  );
-
-  _RequestItem _permissionItem(Map<String, dynamic> m) => _RequestItem(
-    kind: _RequestKind.permission,
-    title: _permissionTypeLabel(m['type']?.toString()),
-    status: (m['status'] ?? '').toString(),
-    createdAt: _parseDate(m['createdAt'] ?? m['date']),
-    raw: m,
-  );
-
-  static String _permissionTypeLabel(String? type) {
-    switch (type) {
-      case 'lateArrival':
-        return 'Late Arrival Permission';
-      case 'earlyExit':
-        return 'Early Exit Permission';
-      default:
-        return 'Permission Request';
+  /// Refreshes whichever tab is currently visible.
+  void _refreshActiveTab() {
+    switch (_tabController.index) {
+      case 0:
+        _leaveKey.currentState?.refresh();
+        break;
+      case 1:
+        _permissionKey.currentState?.refresh();
+        break;
+      case 2:
+        _expenseKey.currentState?.refresh();
+        break;
+      case 3:
+        _loanKey.currentState?.refresh();
+        break;
     }
   }
 
-  IconData _iconFor(_RequestKind kind) {
-    switch (kind) {
-      case _RequestKind.leave:
-        return Icons.event_available_rounded;
-      case _RequestKind.loan:
-        return Icons.account_balance_wallet_rounded;
-      case _RequestKind.expense:
-        return Icons.receipt_long_rounded;
-      case _RequestKind.permission:
-        return Icons.fact_check_outlined;
+  /// App-bar funnel → toggle the active tab's filter panel.
+  void _toggleActiveFilters() {
+    switch (_tabController.index) {
+      case 0:
+        _leaveKey.currentState?.toggleFilters();
+        break;
+      case 1:
+        _permissionKey.currentState?.toggleFilters();
+        break;
+      case 2:
+        _expenseKey.currentState?.toggleFilters();
+        break;
+      case 3:
+        _loanKey.currentState?.toggleFilters();
+        break;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final pending =
-        _items.where((e) => e.status.toLowerCase() == 'pending').length;
-    final totalYtd =
-        _items.where((e) => e.createdAt.year == now.year).length;
-    final visible = _showAll || _items.length <= _recentCount
-        ? _items
-        : _items.take(_recentCount).toList();
-
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: const MenuIconButton(),
         title: const Text('My Requests', style: AppTextStyles.headingMedium),
         elevation: 0,
-        centerTitle: false,
+        centerTitle: true,
         backgroundColor: AppColors.background,
         foregroundColor: AppColors.textPrimary,
         surfaceTintColor: Colors.transparent,
+        actions: [
+          IconButton(
+            tooltip: 'Filter',
+            onPressed: _toggleActiveFilters,
+            icon: const Icon(Icons.filter_alt_outlined),
+            color: AppColors.primary,
+          ),
+        ],
       ),
       drawer: AppDrawer(
         currentIndex: widget.dashboardTabIndex ?? 1,
         onNavigateToIndex: widget.onNavigateToIndex,
       ),
-      floatingActionButton: SizedBox(
-        height: 44,
-        child: FloatingActionButton.extended(
-          foregroundColor: Colors.white,
-          backgroundColor: AppColors.primary,
-          onPressed: _showCreateRequestMenu,
-          icon: const Icon(Icons.add, size: 20),
-          label: const Text(
-            'New Request',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-          ),
-        ),
-      ),
-      body: RefreshIndicator(
-        onRefresh: _fetchAll,
-        child: _isLoading
-            ? const Center(child: AppTabLoader())
-            : ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-                children: [
-                  FadeSlideIn(child: _buildOverviewCard(pending, totalYtd)),
-                  const SizedBox(height: 20),
-                  _buildRecentHeader(),
-                  const SizedBox(height: 12),
-                  if (_items.isEmpty)
-                    _buildEmptyState()
-                  else
-                    ...visible.asMap().entries.map(
-                      (e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: FadeSlideIn(
-                          delay: Duration(
-                            milliseconds: (e.key * 45).clamp(0, 270),
-                          ),
-                          child: _buildRequestCard(e.value),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-      ),
-    );
-  }
-
-  /// Amber "Active Requests" hero with Pending / Total YTD stat tiles.
-  Widget _buildOverviewCard(int pending, int totalYtd) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFEFAA1F), Color(0xFFF6C04A)],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x33EFAA1F),
-            blurRadius: 16,
-            offset: Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
+      // The create-request action now lives in each tab's bottom bar
+      // (_PaginationBar), next to the page numbers — no floating FAB.
+      body: Column(
         children: [
+          _buildTabStrip(),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            // IndexedStack (not TabBarView) builds all four tabs up front, so
+            // each one fetches its data at screen open and switching between
+            // them is instant — no per-tab loading spinner. Tab taps drive the
+            // visible index via the TabController listener above.
+            child: IndexedStack(
+              index: _tabController.index,
+              sizing: StackFit.expand,
               children: [
-                const Text(
-                  'OVERVIEW',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.8,
-                    color: Colors.white70,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Active Requests',
-                  style: TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  pending == 0
-                      ? 'You have no requests pending review.'
-                      : 'You have $pending request${pending == 1 ? '' : 's'} '
-                            'currently pending review or action.',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.white,
-                    height: 1.3,
-                  ),
-                ),
+                LeaveRequestsTab(key: _leaveKey),
+                PermissionRequestsTab(key: _permissionKey),
+                ExpenseRequestsTab(key: _expenseKey),
+                LoanRequestsTab(key: _loanKey),
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          _overviewStat('$pending', 'Pending'),
-          const SizedBox(width: 10),
-          _overviewStat('$totalYtd', 'Total YTD'),
         ],
       ),
     );
   }
 
-  Widget _overviewStat(String value, String label) {
+  /// The Figma-style top tab strip: four equal segments, icon over label,
+  /// the active segment filled with a soft amber pill.
+  Widget _buildTabStrip() {
     return Container(
-      width: 64,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.22),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        children: [
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 10,
-              color: Colors.white,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecentHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text('Recent Submissions', style: AppTextStyles.headingSmall),
-        if (_items.length > _recentCount)
-          GestureDetector(
-            onTap: () => setState(() => _showAll = !_showAll),
-            child: Text(
-              _showAll ? 'Show Less' : 'View All',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primary,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 60),
-      child: Center(
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: AppColors.primaryLight,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.inbox_outlined,
-                size: 44,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No requests yet',
-              style: AppTextStyles.headingSmall.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Tap "New Request" to submit one.',
-              style: TextStyle(fontSize: 13, color: AppColors.textCaption),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// A Figma-style feed row: icon tile · title + date · status pill.
-  Widget _buildRequestCard(_RequestItem item) {
-    final s = AppColors.statusStyle(item.status);
-    final dateLabel = DateFormat('MMM dd, yyyy').format(item.createdAt);
-    return InkWell(
-      onTap: () => _showDetails(item),
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0F000000),
-              blurRadius: 10,
-              offset: Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: AppColors.primaryLight,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(
-                _iconFor(item.kind),
-                color: AppColors.primary,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Text(
-                        dateLabel,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Container(
-                        width: 4,
-                        height: 4,
-                        decoration: const BoxDecoration(
-                          color: AppColors.textHint,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: s.bg,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                item.status.isEmpty ? 'â€”' : item.status,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: s.fg,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── New-request menu (launches the existing create dialogs) ───────────────
-  void _showCreateRequestMenu() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.divider,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('New Request', style: AppTextStyles.headingSmall),
-              ),
-            ),
-            _createTile(
-              Icons.event_available_rounded,
-              'Apply Leave',
-              () => _openCreate(_RequestKind.leave),
-            ),
-            _createTile(
-              Icons.account_balance_wallet_rounded,
-              'Request Loan',
-              () => _openCreate(_RequestKind.loan),
-            ),
-            _createTile(
-              Icons.receipt_long_rounded,
-              'Claim Expense',
-              () => _openCreate(_RequestKind.expense),
-            ),
-            _createTile(
-              Icons.fact_check_outlined,
-              'Request Permission',
-              () => _openCreate(_RequestKind.permission),
-            ),
-            const SizedBox(height: 12),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _createTile(IconData icon, String label, VoidCallback onTap) {
-    return ListTile(
-      leading: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: AppColors.primaryLight,
+      color: AppColors.background,
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      child: TabBar(
+        controller: _tabController,
+        isScrollable: false,
+        indicatorSize: TabBarIndicatorSize.tab,
+        indicatorPadding: const EdgeInsets.all(4),
+        indicator: BoxDecoration(
+          color: AppColors.primary.withOpacity(0.15),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Icon(icon, color: AppColors.primary, size: 22),
-      ),
-      title: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 15,
+        dividerColor: Colors.transparent,
+        labelColor: AppColors.primary,
+        unselectedLabelColor: AppColors.textSecondary,
+        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        unselectedLabelStyle: const TextStyle(
+          fontSize: 12,
           fontWeight: FontWeight.w600,
-          color: AppColors.textPrimary,
         ),
-      ),
-      trailing: const Icon(Icons.chevron_right, color: AppColors.textCaption),
-      onTap: onTap,
-    );
-  }
-
-  void _openCreate(_RequestKind kind) {
-    Navigator.pop(context); // close the menu first
-    switch (kind) {
-      case _RequestKind.leave:
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          builder: (ctx) => ApplyLeaveDialog(onSuccess: _fetchAll),
-        );
-        break;
-      case _RequestKind.loan:
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          builder: (ctx) => RequestLoanDialog(onSuccess: _fetchAll),
-        );
-        break;
-      case _RequestKind.expense:
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          builder: (ctx) => ClaimExpenseDialog(onSuccess: _fetchAll),
-        );
-        break;
-      case _RequestKind.permission:
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          builder: (ctx) => RequestPermissionDialog(onSuccess: _fetchAll),
-        );
-        break;
-    }
-  }
-
-  // ── Detail bottom sheet (reuses _RequestDetailBottomSheet) ────────────────
-  void _showDetails(_RequestItem item) {
-    final m = item.raw;
-    late String title;
-    late IconData icon;
-    final children = <Widget>[];
-    switch (item.kind) {
-      case _RequestKind.leave:
-        title = 'Leave Details';
-        icon = Icons.event_available_rounded;
-        children.addAll([
-          _kv('Leave Type', m['leaveType']?.toString() ?? 'â€”'),
-          _kv('Start Date', _fmtDate(m['startDate'])),
-          _kv('End Date', _fmtDate(m['endDate'])),
-          _kv('Days', '${m['days'] ?? 'â€”'}'),
-          _kv('Applied Date', _fmtDate(m['createdAt'])),
-          _kv('Status', item.status),
-          if ((m['reason'] ?? '').toString().trim().isNotEmpty)
-            _kv('Reason', m['reason'].toString()),
-        ]);
-        break;
-      case _RequestKind.loan:
-        title = 'Loan Details';
-        icon = Icons.account_balance_wallet_rounded;
-        children.addAll([
-          _kv('Type', m['loanType']?.toString() ?? 'â€”'),
-          _kv('Amount', 'â‚¹${m['amount'] ?? 0}'),
-          _kv('Tenure', '${m['tenure'] ?? m['tenureMonths'] ?? 'â€”'} Months'),
-          _kv('EMI', 'â‚¹${m['emi'] ?? 0}'),
-          if (m['interestRate'] != null)
-            _kv('Interest Rate', '${m['interestRate']}%'),
-          if ((m['purpose'] ?? '').toString().trim().isNotEmpty)
-            _kv('Purpose', m['purpose'].toString()),
-          _kv('Status', item.status),
-          _kv('Requested On', _fmtDate(m['createdAt'])),
-        ]);
-        break;
-      case _RequestKind.expense:
-        title = 'Expense Details';
-        icon = Icons.receipt_long_rounded;
-        children.addAll([
-          _kv('Type', (m['type'] ?? m['expenseType'] ?? 'Expense').toString()),
-          _kv('Amount', 'â‚¹${m['amount'] ?? 0}'),
-          _kv('Date', _fmtDate(m['date'])),
-          _kv('Applied Date', _fmtDate(m['createdAt'])),
-          if ((m['description'] ?? '').toString().trim().isNotEmpty)
-            _kv('Description', m['description'].toString()),
-          _kv('Status', item.status),
-        ]);
-        break;
-      case _RequestKind.permission:
-        title = 'Permission Details';
-        icon = Icons.fact_check_outlined;
-        children.addAll([
-          _kv('Type', _permissionTypeLabel(m['type']?.toString())),
-          _kv('Date', _fmtDate(m['date'])),
-          _kv('Requested Minutes', '${m['requestedMinutes'] ?? 0}'),
-          if ((m['reason'] ?? '').toString().trim().isNotEmpty)
-            _kv('Reason', m['reason'].toString()),
-          _kv('Applied', _fmtDate(m['createdAt'])),
-          _kv('Status', item.status),
-        ]);
-        break;
-    }
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => _RequestDetailBottomSheet(
-        title: title,
-        icon: icon,
-        iconColor: AppColors.primary,
-        children: children,
-      ),
-    );
-  }
-
-  String _fmtDate(dynamic v) {
-    final d = DateTime.tryParse(v?.toString() ?? '');
-    return d == null ? 'â€”' : DateFormat('MMM dd, yyyy').format(d.toLocal());
-  }
-
-  Widget _kv(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(
-              '$label:',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+        tabs: _tabSpecs
+            .map(
+              (t) => Tab(
+                height: 58,
+                iconMargin: const EdgeInsets.only(bottom: 4),
+                icon: Icon(t.icon, size: 22),
+                // Scale the label down to fit its segment so longer labels
+                // (e.g. "Permission") are never clipped.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(t.label, maxLines: 1),
+                ),
               ),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
+            )
+            .toList(),
       ),
     );
   }
@@ -870,7 +580,11 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
                         },
                         onPageChanged: (focused) {
                           setModalState(
-                            () => focusedDay = _clampDay(focused, firstDay, lastDay),
+                            () => focusedDay = _clampDay(
+                              focused,
+                              firstDay,
+                              lastDay,
+                            ),
                           );
                         },
                         calendarFormat: CalendarFormat.month,
@@ -1026,6 +740,163 @@ class _RequestDetailBottomSheet extends StatelessWidget {
   }
 }
 
+/// Shared bottom action bar for the request tabs. It hosts the page-number
+/// pager on the left (prev arrow → up to three numbers → next arrow) and the
+/// tab's "create request" button on the right, both inside a single white
+/// footer strip. The pager only appears when there's more than one page; the
+/// create button only appears when [onCreate] is supplied. When neither is
+/// needed the bar collapses to nothing.
+///
+/// The pager window slides so its right edge tracks the current page — once
+/// you're past page 3 it shows the latest reachable pages (6 pages, last page
+/// → 4 5 6). The current page is filled; tapping any other number jumps to it.
+class _PaginationBar extends StatelessWidget {
+  final int currentPage;
+  final int totalPages;
+  final ValueChanged<int> onPageSelected;
+
+  /// Trailing create-request action. When [onCreate] is null the button is
+  /// omitted (e.g. read-only tabs like payslips).
+  final String? createLabel;
+  final VoidCallback? onCreate;
+
+  const _PaginationBar({
+    required this.currentPage,
+    required this.totalPages,
+    required this.onPageSelected,
+    this.createLabel,
+    this.onCreate,
+  });
+
+  /// Up to three contiguous page numbers. The window's right edge follows the
+  /// current page so the latest pages stay visible; near the start it fills
+  /// forward so three numbers still show (page 1 of 6 → 1 2 3).
+  List<int> _visiblePages() {
+    if (totalPages <= 1) return [1];
+    var start = (currentPage - 2).clamp(1, totalPages);
+    final end = (start + 2).clamp(1, totalPages);
+    start = (end - 2).clamp(1, totalPages); // slide back to keep three numbers
+    return [for (var p = start; p <= end; p++) p];
+  }
+
+  Widget _pageChip(int page) {
+    final isCurrent = page == currentPage;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: isCurrent ? null : () => onPageSelected(page),
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isCurrent ? AppColors.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isCurrent
+                ? AppColors.primary
+                : AppColors.primary.withOpacity(0.3),
+          ),
+        ),
+        child: Text(
+          '$page',
+          style: TextStyle(
+            color: isCurrent ? Colors.white : AppColors.primary,
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _arrow(IconData icon, bool enabled, VoidCallback onTap) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 34,
+        height: 34,
+        alignment: Alignment.center,
+        child: Icon(
+          icon,
+          size: 22,
+          color: enabled ? AppColors.primary : Colors.grey.shade400,
+        ),
+      ),
+    );
+  }
+
+  Widget _pager() {
+    final pages = _visiblePages();
+    // Scrolls horizontally as a fallback so it can never overflow on very
+    // narrow screens while the next arrow stays right after the last number.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _arrow(
+            Icons.chevron_left,
+            currentPage > 1,
+            () => onPageSelected(currentPage - 1),
+          ),
+          for (final p in pages) ...[const SizedBox(width: 6), _pageChip(p)],
+          const SizedBox(width: 6),
+          _arrow(
+            Icons.chevron_right,
+            currentPage < totalPages,
+            () => onPageSelected(currentPage + 1),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _createButton() {
+    return ElevatedButton.icon(
+      onPressed: onCreate,
+      icon: const Icon(Icons.add, size: 20),
+      label: Text(
+        createLabel ?? '',
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final showPager = totalPages > 1;
+    final hasButton = onCreate != null;
+    if (!showPager && !hasButton) return const SizedBox.shrink();
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: Colors.grey.shade200)),
+        ),
+        child: Row(
+          children: [
+            // Pager takes the free space on the left; otherwise a spacer pushes
+            // the create button to the right edge.
+            if (showPager) Expanded(child: _pager()) else const Spacer(),
+            if (hasButton) ...[const SizedBox(width: 8), _createButton()],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // --- LEAVE TAB ---
 
 class LeaveRequestsTab extends StatefulWidget {
@@ -1035,7 +906,11 @@ class LeaveRequestsTab extends StatefulWidget {
   State<LeaveRequestsTab> createState() => _LeaveRequestsTabState();
 }
 
-class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
+class _LeaveRequestsTabState extends State<LeaveRequestsTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final RequestService _requestService = RequestService();
   List<dynamic> _leaves = [];
   List<dynamic> _leaveBalances = [];
@@ -1053,15 +928,9 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
   DateTime? _startDate;
   DateTime? _endDate;
   int _currentPage = 1;
-  final int _itemsPerPage = 10;
+  final int _itemsPerPage = 5;
   int _totalPages = 0;
   bool _showFilters = false;
-
-  /// Start of month for [date]; end of that month (23:59:59) for [_endDate].
-  static DateTime _firstDayOfMonth(DateTime date) =>
-      DateTime(date.year, date.month, 1);
-  static DateTime _lastDayOfMonth(DateTime date) =>
-      DateTime(date.year, date.month + 1, 0, 23, 59, 59, 999);
 
   void toggleFilters() {
     setState(() {
@@ -1070,15 +939,17 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
   }
 
   void refresh() {
-    _fetchLeaves();
+    // Background refresh (e.g. returning to the screen): keep the current list
+    // on screen instead of flashing the loader over it.
+    _fetchLeaves(showLoader: false);
   }
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _startDate = _firstDayOfMonth(now);
-    _endDate = _lastDayOfMonth(now);
+    // Date filter is single-date only; start unfiltered (no range).
+    _startDate = null;
+    _endDate = null;
     _fetchLeaves();
     _fetchLeaveBalances();
   }
@@ -1117,9 +988,9 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
     super.dispose();
   }
 
-  Future<void> _fetchLeaves() async {
+  Future<void> _fetchLeaves({bool showLoader = true}) async {
     _fetchLeaveBalances(); // Also refresh balances
-    setState(() => _isLoading = true);
+    if (showLoader) setState(() => _isLoading = true);
     final result = await _requestService.getLeaveRequests(
       status: _selectedStatus,
       search: _searchController.text,
@@ -1160,28 +1031,34 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
   }
 
   /// Pick from-date and to-date in same calendar; leaves and balances are shown for that range.
-  Future<void> _pickDateRange() async {
-    final picked = await showDateRangePickerSameCalendar(
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
       context: context,
+      initialDate: _startDate ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime.now().add(const Duration(days: 365)),
-      initialStart: _startDate,
-      initialEnd: _endDate,
     );
     if (picked != null) {
       setState(() {
-        _startDate = picked.start;
-        _endDate = picked.end;
+        _startDate = DateTime(picked.year, picked.month, picked.day);
+        _endDate = DateTime(
+          picked.year,
+          picked.month,
+          picked.day,
+          23,
+          59,
+          59,
+          999,
+        );
       });
       _fetchLeaves();
     }
   }
 
-  void _resetToCurrentMonth() {
-    final now = DateTime.now();
+  void _clearDateFilter() {
     setState(() {
-      _startDate = _firstDayOfMonth(now);
-      _endDate = _lastDayOfMonth(now);
+      _startDate = null;
+      _endDate = null;
     });
     _fetchLeaves();
   }
@@ -1204,7 +1081,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
             ? 'First Half Day'
             : leave['session'] == '2'
             ? 'Second Half Day'
-            : 'â€”');
+            : '-');
     final start = DateFormat(
       'MMM dd, yyyy',
     ).format(DateTime.parse(leave['startDate']).toLocal());
@@ -1215,14 +1092,14 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
       'MMM dd, yyyy',
     ).format(DateTime.parse(leave['createdAt']));
     // Resolve approvedBy / rejectedBy: backend may populate with { name, email }
-    String approvedBy = 'â€”';
-    String rejectedBy = 'â€”';
+    String approvedBy = '-';
+    String rejectedBy = '-';
     final approver = leave['approvedBy'];
     final rejector = leave['rejectedBy'];
     if (approver != null) {
       if (approver is Map && approver['name'] != null) {
         approvedBy = approver['name'].toString().trim();
-        if (approvedBy.isEmpty) approvedBy = 'â€”';
+        if (approvedBy.isEmpty) approvedBy = '-';
       } else {
         approvedBy = 'System';
       }
@@ -1230,7 +1107,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
     if (rejector != null) {
       if (rejector is Map && rejector['name'] != null) {
         rejectedBy = rejector['name'].toString().trim();
-        if (rejectedBy.isEmpty) rejectedBy = 'â€”';
+        if (rejectedBy.isEmpty) rejectedBy = '-';
       } else {
         rejectedBy = 'System';
       }
@@ -1504,7 +1381,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
           ),
           const SizedBox(height: 2),
           Text(
-            '${balance['takenCount'] ?? 0}',
+            _trimBalanceNum(balance['takenCount']),
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
@@ -1515,32 +1392,66 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
             'Leaves Taken',
             style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
           ),
+          if (_balancePendingCount(balance) > 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${_trimBalanceNum(balance['pendingCount'])} pending',
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+                color: AppColors.warning,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
+  /// Pending leave days for this type (0 if absent). Per-user value from the DB.
+  double _balancePendingCount(dynamic balance) {
+    final v = balance is Map ? balance['pendingCount'] : null;
+    return v is num ? v.toDouble() : 0.0;
+  }
+
+  /// Trim a numeric count for display: "2" not "2.0", "0.5" kept as-is.
+  String _trimBalanceNum(dynamic v) {
+    final n = v is num ? v.toDouble() : 0.0;
+    if (n == n.roundToDouble()) return n.toInt().toString();
+    return n.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context); // keep-alive
     return Column(
       children: [
-        // Leave Balance Summary
-        if (!_isLoadingBalances && _leaveBalances.isNotEmpty)
-          Container(
-            height: 110, // Increased from 100
-            margin: const EdgeInsets.only(top: 12, bottom: 4),
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: _leaveBalances.length,
-              itemBuilder: (context, index) {
-                final balance = _leaveBalances[index];
-                return _buildBalanceCard(balance);
-              },
-            ),
-          ),
-        // Controls Column
-        if (_showFilters)
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              setState(() => _currentPage = 1);
+              await _fetchLeaves(showLoader: false);
+            },
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                // Leave Balance Summary
+                if (!_isLoadingBalances && _leaveBalances.isNotEmpty)
+                  Container(
+                    height: 110, // Increased from 100
+                    margin: const EdgeInsets.only(top: 12, bottom: 4),
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: _leaveBalances.length,
+                      itemBuilder: (context, index) {
+                        final balance = _leaveBalances[index];
+                        return _buildBalanceCard(balance);
+                      },
+                    ),
+                  ),
+                // Controls Column
+                if (_showFilters)
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
@@ -1560,7 +1471,10 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary, width: 2),
+                      borderSide: BorderSide(
+                        color: AppColors.primary,
+                        width: 2,
+                      ),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -1608,7 +1522,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
                     ),
                     const SizedBox(width: 10),
                     InkWell(
-                      onTap: _pickDateRange,
+                      onTap: _pickDate,
                       child: Container(
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1626,14 +1540,18 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
                             const SizedBox(width: 8),
                             Text(
                               _startDate == null || _endDate == null
-                                  ? 'Select from - to date'
+                                  ? 'Select date'
+                                  : _isSameCalendarDay(_startDate!, _endDate!)
+                                  ? DateFormat(
+                                      'MMM dd, yyyy',
+                                    ).format(_startDate!)
                                   : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
                               style: TextStyle(color: Colors.black),
                             ),
                             if (_startDate != null && _endDate != null)
                               IconButton(
                                 icon: const Icon(Icons.close, size: 16),
-                                onPressed: _resetToCurrentMonth,
+                                onPressed: _clearDateFilter,
                               ),
                           ],
                         ),
@@ -1645,123 +1563,77 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab> {
             ),
           ),
 
-        // List Body
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: () async {
-              setState(() => _currentPage = 1);
-              await _fetchLeaves();
-            },
-            child: _isLoading
-                ? const Center(child: AppTabLoader())
-                : _leaves.isEmpty
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: MediaQuery.of(context).size.height * 0.5,
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(20),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primaryLight,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.calendar_today_outlined,
-                                  size: 44,
-                                  color: AppColors.primary,
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No leave requests found',
-                                style: AppTextStyles.headingSmall.copyWith(
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                // List Body — loader / empty / items scroll with the header.
+                if (_isLoading)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: const Center(child: AppTabLoader()),
                   )
-                : ListView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
+                else if (_leaves.isEmpty)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(20),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryLight,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.calendar_today_outlined,
+                              size: 44,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No leave requests found',
+                            style: AppTextStyles.headingSmall.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Padding(
                     padding: const EdgeInsets.all(16),
-                    itemCount: _leaves.length,
-                    itemBuilder: (ctx, i) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12.0),
-                        child: FadeSlideIn(
-                          delay: Duration(milliseconds: (i * 45).clamp(0, 270)),
-                          child: _buildLeaveCard(_leaves[i]),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ),
-
-        // Pagination Controls
-        if (!_isLoading && _leaves.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 8, 140, 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(top: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.chevron_left, size: 22),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _currentPage > 1
-                      ? () {
-                          setState(() => _currentPage--);
-                          _fetchLeaves();
-                        }
-                      : null,
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '$_currentPage',
-                    style: TextStyle(
-                      color: AppColors.primary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                    child: Column(
+                      children: [
+                        for (int i = 0; i < _leaves.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12.0),
+                            child: FadeSlideIn(
+                              delay: Duration(
+                                milliseconds: (i * 45).clamp(0, 270),
+                              ),
+                              child: _buildLeaveCard(_leaves[i]),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right, size: 22),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _currentPage < _totalPages
-                      ? () {
-                          setState(() => _currentPage++);
-                          _fetchLeaves();
-                        }
-                      : null,
-                ),
               ],
             ),
           ),
+        ),
+
+        // Bottom action bar: page numbers (only when multi-page) on the left
+        // and the Apply Leave button on the right (pinned footer).
+        _PaginationBar(
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          onPageSelected: (page) {
+            setState(() => _currentPage = page);
+            _fetchLeaves();
+          },
+          createLabel: 'Apply Leave',
+          onCreate: showApplyLeaveDialog,
+        ),
       ],
     );
   }
@@ -1790,12 +1662,26 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   bool _isLoadingTypes = true;
   double _availableCasualLeaves = 0.0;
   double _totalAllowed = 0.0;
+  double _usedLeaveDays = 0.0;
+  double _pendingLeaveDays = 0.0;
+  // Per-leave-type usage for this employee (key = normalized type name).
+  final Map<String, double> _usedByType = {};
+  final Map<String, double> _pendingByType = {};
+  HolidayOffConfig _offConfig = HolidayOffConfig.empty;
+  bool _showLimitWarning = false;
+  String _limitWarningMsg = '';
 
   @override
   void initState() {
     super.initState();
     _fetchLeaveTypes();
     _fetchLeaveBalance();
+    _loadOffConfig();
+  }
+
+  Future<void> _loadOffConfig() async {
+    final config = await loadHolidayOffConfig();
+    if (mounted) setState(() => _offConfig = config);
   }
 
   @override
@@ -1807,13 +1693,118 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
   Future<void> _fetchLeaveBalance() async {
     final result = await _requestService.getLeaveBalance();
-    if (mounted && result['success'] == true) {
-      setState(() {
-        _availableCasualLeaves =
-            (result['availableCasualLeaves'] as num?)?.toDouble() ?? 0.0;
-        _totalAllowed = (result['totalAllowed'] as num?)?.toDouble() ?? 0.0;
-      });
+    if (!mounted || result['success'] != true) return;
+
+    final total = (result['totalAllowed'] as num?)?.toDouble() ?? 0.0;
+
+    // Always load the employee's own leave records so we can show per-type
+    // allocated/used/pending (the records endpoint works on every backend).
+    final usage = await _computeLeaveUsageFromRecords();
+
+    // Prefer backend-computed overall totals when present; otherwise use the
+    // totals derived from the records.
+    final beUsed = (result['usedDays'] as num?)?.toDouble();
+    final bePending = (result['pendingLeaveDays'] as num?)?.toDouble();
+
+    if (!mounted) return;
+    setState(() {
+      _totalAllowed = total;
+      _usedLeaveDays = beUsed ?? usage.$1;
+      _pendingLeaveDays = bePending ?? usage.$2;
+      _availableCasualLeaves = (total - _usedLeaveDays).clamp(0.0, total);
+    });
+  }
+
+  /// Normalizes a leave-type name to a match key (mirrors the backend):
+  /// lowercase, drop the word "leave", strip spaces. "Casual Leave" -> "casual".
+  String _leaveTypeKey(String? s) {
+    final t = (s ?? '').toLowerCase().trim();
+    return t.replaceAll(RegExp(r'\bleave\b'), '').replaceAll(RegExp(r'\s+'), '');
+  }
+
+  /// Allocated days for [type] from the staff's leave template (null = no fixed
+  /// allocation, e.g. Unpaid Leave). Sourced from getLeaveTypesForApply.
+  double? _allocatedForType(String? type) {
+    final key = _leaveTypeKey(type);
+    for (final e in _allowedTypes) {
+      if (e is Map && _leaveTypeKey(e['type'] as String?) == key) {
+        final d = e['days'];
+        return d is num ? d.toDouble() : null;
+      }
     }
+    return null;
+  }
+
+  double _usedForType(String? type) => _usedByType[_leaveTypeKey(type)] ?? 0.0;
+  double _pendingForType(String? type) =>
+      _pendingByType[_leaveTypeKey(type)] ?? 0.0;
+
+  /// Loads this employee's Approved (used) and Pending leave days for the
+  /// current calendar year from their own records, populating the per-type
+  /// maps and returning the overall (usedDays, pendingDays).
+  Future<(double, double)> _computeLeaveUsageFromRecords() async {
+    final now = DateTime.now();
+    final yearStart = DateTime(now.year, 1, 1);
+    final yearEnd = DateTime(now.year, 12, 31, 23, 59, 59);
+
+    double daysOf(dynamic l) {
+      final d = (l is Map) ? l['days'] : null;
+      return d is num ? d.toDouble() : double.tryParse(d?.toString() ?? '') ?? 0;
+    }
+
+    List<dynamic> listOf(Map<String, dynamic> res) {
+      final data = res['data'];
+      return data is Map
+          ? (data['leaves'] as List? ?? [])
+          : (data is List ? data : []);
+    }
+
+    double used = 0;
+    double pending = 0;
+    final usedByType = <String, double>{};
+    final pendingByType = <String, double>{};
+    try {
+      final approved = await _requestService.getLeaveRequests(
+        status: 'Approved',
+        startDate: yearStart,
+        endDate: yearEnd,
+        page: 1,
+        limit: 500,
+      );
+      if (approved['success'] == true) {
+        for (final l in listOf(approved)) {
+          final days = daysOf(l);
+          used += days;
+          final key = _leaveTypeKey(l is Map ? l['leaveType'] as String? : null);
+          usedByType[key] = (usedByType[key] ?? 0) + days;
+        }
+      }
+
+      // Pending requests are not date-bounded - a pending leave for any date
+      // still commits against the allocation.
+      final pend = await _requestService.getLeaveRequests(
+        status: 'Pending',
+        page: 1,
+        limit: 500,
+      );
+      if (pend['success'] == true) {
+        for (final l in listOf(pend)) {
+          final days = daysOf(l);
+          pending += days;
+          final key = _leaveTypeKey(l is Map ? l['leaveType'] as String? : null);
+          pendingByType[key] = (pendingByType[key] ?? 0) + days;
+        }
+      }
+    } catch (_) {
+      // Best-effort; leave totals at 0 on failure.
+    }
+    _usedByType
+      ..clear()
+      ..addAll(usedByType);
+    _pendingByType
+      ..clear()
+      ..addAll(pendingByType);
+    return (used, pending);
   }
 
   Future<void> _fetchLeaveTypes() async {
@@ -1856,14 +1847,20 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       DateTime.now().month,
       DateTime.now().day,
     );
+    final candidate = (isStart ? _startDate : _endDate) ?? today;
+    final initial = _offConfig.firstSelectableOnOrAfter(
+      candidate.isBefore(today) ? today : candidate,
+    );
     final picked = await showDatePicker(
       context: context,
-      initialDate: (isStart ? _startDate : _endDate) ?? today,
+      initialDate: initial,
       firstDate: today,
       lastDate: DateTime(2030, 12, 31),
+      selectableDayPredicate: (day) => !_offConfig.isDisabled(day),
     );
     if (picked == null || !mounted) return;
     setState(() {
+      _showLimitWarning = false;
       if (isStart) {
         _startDate = picked;
         if (_isOneDay || _isHalfDayLeave(_leaveType)) {
@@ -1952,28 +1949,84 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     if (!isUnpaidLeave) {
       await _fetchLeaveBalance();
       if (!mounted) return;
-      if (_availableCasualLeaves <= 0) {
-        SnackBarUtils.showSnackBar(
-          context,
-          "You don't have enough leave balance.",
-          isError: true,
+      // Effective available = approved balance minus any still-pending requests.
+      final effectiveAvailable = _effectiveAvailableLeaves;
+      final pendingNote = _pendingLeaveDays > 0
+          ? ' (${_trimNum(_pendingLeaveDays)} day${_pendingLeaveDays != 1 ? "s" : ""} pending approval)'
+          : '';
+      if (effectiveAvailable <= 0) {
+        final msg =
+            'Leave balance exhausted$pendingNote. Requesting '
+            '${_trimNum(requestedDays)} day${requestedDays != 1 ? "s" : ""} '
+            'may result in a fine/salary deduction.';
+        setState(() {
+          _showLimitWarning = true;
+          _limitWarningMsg = msg;
+        });
+        unawaited(
+          FcmService.showLimitExceededLocalNotification(
+            type: 'leave',
+            message: msg,
+          ),
+        );
+        unawaited(
+          _requestService.notifyAdminLimitExceeded(
+            type: 'leave',
+            requested: requestedDays,
+            limit: 0,
+          ),
         );
         return;
       }
-      if (_availableCasualLeaves == 0.5) {
+      if (effectiveAvailable == 0.5) {
         if (!_isHalfDayLeave(_leaveType)) {
-          SnackBarUtils.showSnackBar(
-            context,
-            "You don't have enough leave balance.",
-            isError: true,
+          final msg =
+              'Only 0.5 days remaining$pendingNote. Requesting '
+              '${_trimNum(requestedDays)} day${requestedDays != 1 ? "s" : ""} '
+              'may result in a fine/salary deduction.';
+          setState(() {
+            _showLimitWarning = true;
+            _limitWarningMsg = msg;
+          });
+          unawaited(
+            FcmService.showLimitExceededLocalNotification(
+              type: 'leave',
+              message: msg,
+            ),
+          );
+          unawaited(
+            _requestService.notifyAdminLimitExceeded(
+              type: 'leave',
+              requested: requestedDays,
+              limit: 0.5,
+            ),
           );
           return;
         }
-      } else if (requestedDays > _availableCasualLeaves) {
-        SnackBarUtils.showSnackBar(
-          context,
-          "You don't have enough leave balance.",
-          isError: true,
+      } else if (requestedDays > effectiveAvailable) {
+        final excess = requestedDays - effectiveAvailable;
+        final msg =
+            'Insufficient balance$pendingNote. Requested ${_trimNum(requestedDays)} '
+            'day${requestedDays != 1 ? "s" : ""}, only '
+            '${_trimNum(effectiveAvailable)} available. '
+            '${_trimNum(excess)} excess day${excess != 1 ? "s" : ""} '
+            'may be deducted as a fine.';
+        setState(() {
+          _showLimitWarning = true;
+          _limitWarningMsg = msg;
+        });
+        unawaited(
+          FcmService.showLimitExceededLocalNotification(
+            type: 'leave',
+            message: msg,
+          ),
+        );
+        unawaited(
+          _requestService.notifyAdminLimitExceeded(
+            type: 'leave',
+            requested: requestedDays,
+            limit: effectiveAvailable,
+          ),
         );
         return;
       }
@@ -2031,6 +2084,77 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       _leaveType != null &&
       _leaveType!.toLowerCase().replaceAll(RegExp(r'\s+'), '') == 'unpaidleave';
 
+  /// Approved balance minus still-pending requests, clamped to the allowance.
+  double get _effectiveAvailableLeaves =>
+      (_availableCasualLeaves - _pendingLeaveDays).clamp(
+        0.0,
+        _totalAllowed > 0 ? _totalAllowed : _availableCasualLeaves,
+      );
+
+  /// Remaining days for the selected leave type = its allocated days minus that
+  /// type's used and pending days. This is what the entitlement card shows.
+  double get _selectedTypeRemaining {
+    final allocated = _allocatedForType(_leaveType) ?? _totalAllowed;
+    return (allocated - _usedForType(_leaveType) - _pendingForType(_leaveType))
+        .clamp(0.0, allocated > 0 ? allocated : double.infinity);
+  }
+
+  Widget _buildLimitWarningBanner(String message) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.orange.shade400),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.warning_amber_rounded,
+            size: 20,
+            color: Colors.orange.shade700,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Leave Limit Exceeded',
+                  style: TextStyle(
+                    color: Colors.orange.shade800,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  style: TextStyle(
+                    color: Colors.orange.shade800,
+                    fontSize: 12.5,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Your admin has been notified.',
+                  style: TextStyle(
+                    color: Colors.orange.shade700,
+                    fontSize: 11.5,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Uppercase caption above each section (Figma "New Request").
   Widget _sectionLabel(String text) {
     return Padding(
@@ -2047,12 +2171,17 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     );
   }
 
-  /// Amber "Leave Entitlement" hero â€” days remaining + progress + used/total.
+  /// Amber "Leave Entitlement" hero - shows the selected leave type's allocated
+  /// days as the remaining figure (allocated - used - pending for that type).
   Widget _buildEntitlementCard() {
-    final remaining = _availableCasualLeaves;
-    final total = _totalAllowed;
-    final used = total - remaining;
-    final usedClamped = used < 0 ? 0.0 : (used > total ? total : used);
+    // Allocated days for the selected leave type (falls back to the overall
+    // template total when a type has no specific allocation).
+    final allocated = _allocatedForType(_leaveType) ?? _totalAllowed;
+    final total = allocated;
+    final usedType = _usedForType(_leaveType);
+    final pendingType = _pendingForType(_leaveType);
+    final remaining = _selectedTypeRemaining;
+    final usedClamped = usedType > allocated ? allocated : usedType;
     final progress = total > 0 ? (usedClamped / total).clamp(0.0, 1.0) : 0.0;
     return Container(
       width: double.infinity,
@@ -2121,7 +2250,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 Text(
                   _isUnpaidLeave
                       ? 'No balance limit applies to unpaid leave.'
-                      : 'You have used ${_trimNum(usedClamped)} of ${_trimNum(total)} annual leave days.',
+                      : pendingType > 0
+                      ? 'Used ${_trimNum(usedClamped)} of ${_trimNum(total)} allocated days · ${_trimNum(pendingType)} pending approval.'
+                      : 'You have used ${_trimNum(usedClamped)} of ${_trimNum(total)} allocated days.',
                   style: const TextStyle(
                     fontSize: 13,
                     color: AppColors.textSecondary,
@@ -2161,7 +2292,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide(color: AppColors.primary, width: 1.5),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
       ),
       items: _allowedTypes.map((e) {
         final type = e['type'] as String? ?? '';
@@ -2244,12 +2378,14 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
         color: AppColors.background,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: Form(
         key: _formKey,
         child: Column(
           children: [
-            // Header â€” back arrow + "New Request"
+            // Header - back arrow + "New Request"
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 14, 16, 6),
               child: Row(
@@ -2274,11 +2410,14 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 6, 20, 20),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:CrossAxisAlignment.start,
                   children: [
                     // Leave Entitlement hero
-                    _buildEntitlementCard(),
-                    const SizedBox(height: 24),
+                   _buildEntitlementCard(),
+                    const SizedBox(height: 14),
+                    if (_showLimitWarning)
+                      _buildLimitWarningBanner(_limitWarningMsg),
+                    if (!_showLimitWarning) const SizedBox(height: 10),
 
                     // Leave Type
                     _sectionLabel('Leave Type'),
@@ -2354,8 +2493,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         padding: const EdgeInsets.only(top: 10),
                         child: Text(
                           _isHalfDayLeave(_leaveType)
-                              ? 'Total: 0.5 day â€” ${_trimNum(_availableCasualLeaves)} days remaining'
-                              : 'Total: $_days day${_days == 1 ? '' : 's'} â€” ${_trimNum(_availableCasualLeaves)} days remaining',
+                              ? 'Total:  ${_trimNum(_selectedTypeRemaining)} days remaining'
+                              : 'Total: $_days day${_days == 1 ? '' : 's'} - ${_trimNum(_selectedTypeRemaining)} days remaining',
                           style: TextStyle(
                             color: AppColors.primary,
                             fontWeight: FontWeight.bold,
@@ -2374,14 +2513,18 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             label: const Text('First Half Day'),
                             selected: _session == '1',
                             onSelected: (v) => setState(() => _session = '1'),
-                            selectedColor: AppColors.primary.withValues(alpha: 0.3),
+                            selectedColor: AppColors.primary.withValues(
+                              alpha: 0.3,
+                            ),
                           ),
                           const SizedBox(width: 12),
                           ChoiceChip(
                             label: const Text('Second Half Day'),
                             selected: _session == '2',
                             onSelected: (v) => setState(() => _session = '2'),
-                            selectedColor: AppColors.primary.withValues(alpha: 0.3),
+                            selectedColor: AppColors.primary.withValues(
+                              alpha: 0.3,
+                            ),
                           ),
                         ],
                       ),
@@ -2400,7 +2543,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       ),
                       decoration: InputDecoration(
                         hintText: 'Briefly describe your reason...',
-                        hintStyle: const TextStyle(color: AppColors.textCaption),
+                        hintStyle: const TextStyle(
+                          color: AppColors.textCaption,
+                        ),
                         filled: true,
                         fillColor: AppColors.inputFill,
                         border: OutlineInputBorder(
@@ -2413,12 +2558,16 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+                          borderSide: BorderSide(
+                            color: AppColors.primary,
+                            width: 1.5,
+                          ),
                         ),
                         contentPadding: const EdgeInsets.all(16),
                       ),
-                      validator: (val) =>
-                          val == null || val.isEmpty ? 'Reason is required' : null,
+                      validator: (val) => val == null || val.isEmpty
+                          ? 'Reason is required'
+                          : null,
                     ),
                     const SizedBox(height: 28),
 
@@ -2481,7 +2630,11 @@ class LoanRequestsTab extends StatefulWidget {
   State<LoanRequestsTab> createState() => _LoanRequestsTabState();
 }
 
-class _LoanRequestsTabState extends State<LoanRequestsTab> {
+class _LoanRequestsTabState extends State<LoanRequestsTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final RequestService _requestService = RequestService();
   List<dynamic> _loans = [];
   bool _isLoading = true;
@@ -2498,7 +2651,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
   DateTime? _startDate;
   DateTime? _endDate;
   int _currentPage = 1;
-  final int _itemsPerPage = 10;
+  final int _itemsPerPage = 5;
   int _totalPages = 0;
   bool _showFilters = false;
 
@@ -2509,15 +2662,16 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
   }
 
   void refresh() {
-    _fetchLoans();
+    // Background refresh: keep the current list instead of flashing the loader.
+    _fetchLoans(showLoader: false);
   }
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _startDate = DateTime(now.year, now.month, 1);
-    _endDate = DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+    // Date filter is single-date only; start unfiltered (no range).
+    _startDate = null;
+    _endDate = null;
     _fetchLoans();
   }
 
@@ -2528,8 +2682,8 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
     super.dispose();
   }
 
-  Future<void> _fetchLoans() async {
-    setState(() => _isLoading = true);
+  Future<void> _fetchLoans({bool showLoader = true}) async {
+    if (showLoader) setState(() => _isLoading = true);
     final result = await _requestService.getLoanRequests(
       status: _selectedStatus,
       search: _searchController.text,
@@ -2578,19 +2732,24 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
     );
   }
 
-  Future<void> _pickDateRange() async {
-    final picked = await showDateRangePickerSameCalendar(
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
       context: context,
+      initialDate: _startDate ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime.now().add(const Duration(days: 365)),
-      initialStart: _startDate,
-      initialEnd: _endDate,
     );
     if (picked != null) {
       setState(() {
-        _startDate = picked.start;
-        _endDate = picked.end.add(
-          const Duration(hours: 23, minutes: 59, seconds: 59),
+        _startDate = DateTime(picked.year, picked.month, picked.day);
+        _endDate = DateTime(
+          picked.year,
+          picked.month,
+          picked.day,
+          23,
+          59,
+          59,
+          999,
         );
       });
       _fetchLoans();
@@ -2598,14 +2757,14 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
   }
 
   void _showLoanDetails(Map<String, dynamic> loan) {
-    String approvedBy = 'â€”';
-    String rejectedBy = 'â€”';
+    String approvedBy = '-';
+    String rejectedBy = '-';
     final approver = loan['approvedBy'];
     final rejector = loan['rejectedBy'];
     if (approver != null) {
       if (approver is Map && approver['name'] != null) {
         approvedBy = approver['name'].toString().trim();
-        if (approvedBy.isEmpty) approvedBy = 'â€”';
+        if (approvedBy.isEmpty) approvedBy = '-';
       } else {
         approvedBy = 'System';
       }
@@ -2613,7 +2772,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
     if (rejector != null) {
       if (rejector is Map && rejector['name'] != null) {
         rejectedBy = rejector['name'].toString().trim();
-        if (rejectedBy.isEmpty) rejectedBy = 'â€”';
+        if (rejectedBy.isEmpty) rejectedBy = '-';
       } else {
         rejectedBy = 'System';
       }
@@ -2624,7 +2783,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
     final isRejected = loan['status'] == 'Rejected';
     final requestedOn = loan['createdAt'] != null
         ? DateFormat('MMM dd, yyyy').format(DateTime.parse(loan['createdAt']))
-        : 'â€”';
+        : '-';
 
     showModalBottomSheet(
       context: context,
@@ -2636,12 +2795,12 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
         iconColor: AppColors.primary,
         children: [
           _detailRow('Type', loan['loanType'] ?? ''),
-          _detailRow('Amount', 'â‚¹${loan['amount']}'),
+          _detailRow('Amount', '${loan['amount']}'),
           _detailRow(
             'Tenure',
             '${loan['tenure'] ?? loan['tenureMonths']} Months',
           ),
-          _detailRow('EMI', 'â‚¹${loan['emi'] ?? 0}'),
+          _detailRow('EMI', '${loan['emi'] ?? 0}'),
           _detailRow('Interest Rate', '${loan['interestRate']}%'),
           _detailRow('Purpose', loan['purpose'] ?? ''),
           _detailRow('Status', loan['status'] ?? ''),
@@ -2721,107 +2880,107 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
       child: AppCard(
         radius: 18,
         child: Row(
-            children: [
-              // Icon
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceDark,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.account_balance_wallet,
-                  color: Colors.white,
-                  size: 28,
-                ),
+          children: [
+            // Icon
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceDark,
+                borderRadius: BorderRadius.circular(14),
               ),
-              const SizedBox(width: 16),
-              // Content
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Loan Type and Status
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            loan['loanType'] ?? 'Loan',
-                            style: AppTextStyles.headingSmall.copyWith(
-                              color: colorScheme.onSurface,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+              child: const Icon(
+                Icons.account_balance_wallet,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 16),
+            // Content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Loan Type and Status
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          loan['loanType'] ?? 'Loan',
+                          style: AppTextStyles.headingSmall.copyWith(
+                            color: colorScheme.onSurface,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            loan['status'] ?? '',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: statusColor,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    // Details
-                    _buildLoanCardDetailRow(
-                      Icons.currency_rupee,
-                      'Amount',
-                      'â‚¹${loan['amount']}',
-                    ),
-                    const SizedBox(height: 4),
-                    _buildLoanCardDetailRow(
-                      Icons.calendar_today,
-                      'Tenure',
-                      '${loan['tenure'] ?? loan['tenureMonths']} Months',
-                    ),
-                    const SizedBox(height: 4),
-                    _buildLoanCardDetailRow(
-                      Icons.payment,
-                      'EMI',
-                      'â‚¹${loan['emi'] ?? 0}',
-                    ),
-                    const SizedBox(height: 4),
-                    _buildLoanCardDetailRow(
-                      Icons.access_time,
-                      'Applied',
-                      appliedDate,
-                    ),
-                    if (isRejectedLoan && rejectedByName != '-') ...[
-                      const SizedBox(height: 4),
-                      _buildLoanCardDetailRow(
-                        Icons.person_off_outlined,
-                        'Rejected By',
-                        rejectedByName,
                       ),
-                    ] else if (!isRejectedLoan && approvedByName != '-') ...[
-                      const SizedBox(height: 4),
-                      _buildLoanCardDetailRow(
-                        Icons.person,
-                        'Approved By',
-                        approvedByName,
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          loan['status'] ?? '',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: statusColor,
+                          ),
+                        ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 8),
+                  // Details
+                  _buildLoanCardDetailRow(
+                    Icons.currency_rupee,
+                    'Amount',
+                    '₹${loan['amount']}',
+                  ),
+                  const SizedBox(height: 4),
+                  _buildLoanCardDetailRow(
+                    Icons.calendar_today,
+                    'Tenure',
+                    '${loan['tenure'] ?? loan['tenureMonths']} Months',
+                  ),
+                  const SizedBox(height: 4),
+                  _buildLoanCardDetailRow(
+                    Icons.payment,
+                    'EMI',
+                    '₹${loan['emi'] ?? 0}',
+                  ),
+                  const SizedBox(height: 4),
+                  _buildLoanCardDetailRow(
+                    Icons.access_time,
+                    'Applied',
+                    appliedDate,
+                  ),
+                  if (isRejectedLoan && rejectedByName != '-') ...[
+                    const SizedBox(height: 4),
+                    _buildLoanCardDetailRow(
+                      Icons.person_off_outlined,
+                      'Rejected By',
+                      rejectedByName,
+                    ),
+                  ] else if (!isRejectedLoan && approvedByName != '-') ...[
+                    const SizedBox(height: 4),
+                    _buildLoanCardDetailRow(
+                      Icons.person,
+                      'Approved By',
+                      approvedByName,
+                    ),
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
     );
   }
 
@@ -2852,18 +3011,28 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // keep-alive
     return Column(
       children: [
-        // Controls Column
-        if (_showFilters)
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              setState(() => _currentPage = 1);
+              await _fetchLoans(showLoader: false);
+            },
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search Type, Purpose...',
+                // Controls Column
+                if (_showFilters)
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: 'Search Type, Purpose...',
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
@@ -2875,7 +3044,10 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary, width: 2),
+                      borderSide: BorderSide(
+                        color: AppColors.primary,
+                        width: 2,
+                      ),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -2923,7 +3095,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
                     ),
                     const SizedBox(width: 10),
                     InkWell(
-                      onTap: _pickDateRange,
+                      onTap: _pickDate,
                       child: Container(
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -2940,8 +3112,12 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              _startDate == null
+                              _startDate == null || _endDate == null
                                   ? 'Date'
+                                  : _isSameCalendarDay(_startDate!, _endDate!)
+                                  ? DateFormat(
+                                      'MMM dd, yyyy',
+                                    ).format(_startDate!)
                                   : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
                               style: TextStyle(color: Colors.black),
                             ),
@@ -2966,117 +3142,71 @@ class _LoanRequestsTabState extends State<LoanRequestsTab> {
             ),
           ),
 
-        // List Content
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: () async {
-              setState(() => _currentPage = 1);
-              await _fetchLoans();
-            },
-            child: _isLoading
-                ? const Center(child: AppTabLoader())
-                : _loans.isEmpty
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: MediaQuery.of(context).size.height * 0.5,
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.account_balance_wallet_outlined,
-                                size: 64,
-                                color: Colors.grey[400],
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No loan requests found',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.black,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                // List Content — loader / empty / items scroll with the header.
+                if (_isLoading)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: const Center(child: AppTabLoader()),
                   )
-                : ListView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
+                else if (_loans.isEmpty)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.account_balance_wallet_outlined,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No loan requests found',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Padding(
                     padding: const EdgeInsets.all(16),
-                    itemCount: _loans.length,
-                    itemBuilder: (ctx, i) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12.0),
-                        child: FadeSlideIn(
-                          delay: Duration(milliseconds: (i * 45).clamp(0, 270)),
-                          child: _buildLoanCard(_loans[i]),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ),
-
-        // Pagination Controls
-        if (!_isLoading && _loans.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 8, 140, 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(top: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.chevron_left, size: 22),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _currentPage > 1
-                      ? () {
-                          setState(() => _currentPage--);
-                          _fetchLoans();
-                        }
-                      : null,
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '$_currentPage',
-                    style: TextStyle(
-                      color: AppColors.primary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                    child: Column(
+                      children: [
+                        for (int i = 0; i < _loans.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12.0),
+                            child: FadeSlideIn(
+                              delay: Duration(
+                                milliseconds: (i * 45).clamp(0, 270),
+                              ),
+                              child: _buildLoanCard(_loans[i]),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right, size: 22),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _currentPage < _totalPages
-                      ? () {
-                          setState(() => _currentPage++);
-                          _fetchLoans();
-                        }
-                      : null,
-                ),
               ],
             ),
           ),
+        ),
+
+        // Bottom action bar: page numbers (only when multi-page) on the left
+        // and the Request Loan button on the right (pinned footer).
+        _PaginationBar(
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          onPageSelected: (page) {
+            setState(() => _currentPage = page);
+            _fetchLoans();
+          },
+          createLabel: 'Request Loan',
+          onCreate: showRequestLoanDialog,
+        ),
       ],
     );
   }
@@ -3094,7 +3224,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
   final _formKey = GlobalKey<FormState>();
   final RequestService _requestService = RequestService();
 
-  // Loan type options â€” display label vs. value sent to backend.
+  // Loan type options - display label vs. value sent to backend.
   static const List<({String value, String label})> _loanTypes = [
     (value: 'Personal', label: 'Personal Loan'),
     (value: 'Advance', label: 'Advance Salary'),
@@ -3104,12 +3234,82 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
   String _loanType = 'Personal';
   double _tenureMonths = 12;
   final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _interestRateController = TextEditingController();
   final TextEditingController _purposeController = TextEditingController();
   bool _isSubmitting = false;
+
+  // Per-user loan stats fetched from the DB (replaces static placeholders).
+  int _activeLoanCount = 0;
+  int _pendingLoanCount = 0;
+  double _totalOutstanding = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchLoanSummary();
+  }
+
+  Future<void> _fetchLoanSummary() async {
+    final result = await _requestService.getLoanSummary();
+    if (result['success'] == true) {
+      final data = result['data'] as Map<String, dynamic>? ?? {};
+      if (!mounted) return;
+      setState(() {
+        _activeLoanCount = (data['activeCount'] as num?)?.toInt() ?? 0;
+        _pendingLoanCount = (data['pendingCount'] as num?)?.toInt() ?? 0;
+        _totalOutstanding = (data['totalOutstanding'] as num?)?.toDouble() ?? 0;
+      });
+      return;
+    }
+    // Fallback (summary endpoint not available on this backend): compute the
+    // per-user loan stats client-side from the employee's own loan records.
+    await _computeLoanSummaryFromRecords();
+  }
+
+  Future<void> _computeLoanSummaryFromRecords() async {
+    int active = 0;
+    int pending = 0;
+    double outstanding = 0;
+    try {
+      final result = await _requestService.getLoanRequests(
+        status: 'All Status',
+        page: 1,
+        limit: 500,
+      );
+      if (result['success'] == true) {
+        final data = result['data'];
+        final list = data is Map
+            ? (data['loans'] as List? ?? [])
+            : (data is List ? data : []);
+        for (final l in list) {
+          if (l is! Map) continue;
+          final status = (l['status'] ?? '').toString();
+          if (status == 'Active' || status == 'Approved') {
+            active++;
+            final rem = l['remainingAmount'];
+            outstanding += rem is num
+                ? rem.toDouble()
+                : double.tryParse(rem?.toString() ?? '') ?? 0;
+          } else if (status == 'Pending') {
+            pending++;
+          }
+        }
+      }
+    } catch (_) {
+      // best-effort
+    }
+    if (!mounted) return;
+    setState(() {
+      _activeLoanCount = active;
+      _pendingLoanCount = pending;
+      _totalOutstanding = outstanding;
+    });
+  }
 
   @override
   void dispose() {
     _amountController.dispose();
+    _interestRateController.dispose();
     _purposeController.dispose();
     super.dispose();
   }
@@ -3122,7 +3322,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
       'loanType': _loanType,
       'amount': double.tryParse(_amountController.text) ?? 0,
       'tenure': _tenureMonths.round(),
-      'interestRate': 0,
+      'interestRate': double.tryParse(_interestRateController.text.trim()) ?? 0,
       'purpose': _purposeController.text,
     });
     setState(() => _isSubmitting = false);
@@ -3177,7 +3377,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'ELIGIBLE AMOUNT',
+                'OUTSTANDING LOAN AMOUNT',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.9),
                   fontSize: 12,
@@ -3186,9 +3386,9 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                '₹10,000',
-                style: TextStyle(
+              Text(
+                '₹${NumberFormat('#,##0.##', 'en_IN').format(_totalOutstanding)}',
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 34,
                   fontWeight: FontWeight.w800,
@@ -3210,7 +3410,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                     Icon(Icons.info_outline, color: Colors.white, size: 15),
                     SizedBox(width: 6),
                     Text(
-                      'Based on your tenure and salary',
+                      'Total remaining across your active loans',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -3355,7 +3555,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
               prefixIcon: Padding(
                 padding: const EdgeInsets.only(left: 16, right: 8),
                 child: Text(
-                  '\$',
+                  '₹',
                   style: TextStyle(
                     color: AppColors.primary,
                     fontWeight: FontWeight.w700,
@@ -3374,9 +3574,8 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 vertical: 16,
               ),
             ),
-            validator: (val) => val == null || val.trim().isEmpty
-                ? 'Amount is required'
-                : null,
+            validator: (val) =>
+                val == null || val.trim().isEmpty ? 'Amount is required' : null,
           ),
           const SizedBox(height: 18),
 
@@ -3387,8 +3586,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
             icon: const Icon(Icons.keyboard_arrow_down),
             items: _loanTypes
                 .map(
-                  (e) =>
-                      DropdownMenuItem(value: e.value, child: Text(e.label)),
+                  (e) => DropdownMenuItem(value: e.value, child: Text(e.label)),
                 )
                 .toList(),
             onChanged: (val) => setState(() => _loanType = val!),
@@ -3443,9 +3641,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
               inactiveTrackColor: AppColors.divider,
               thumbColor: AppColors.primary,
               overlayColor: AppColors.primary.withOpacity(0.15),
-              thumbShape: const RoundSliderThumbShape(
-                enabledThumbRadius: 10,
-              ),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
             ),
             child: Slider(
               value: _tenureMonths,
@@ -3460,12 +3656,83 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: const [
-                Text('3M', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                Text('12M', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                Text('24M', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                Text('36M', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                Text(
+                  '3M',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                Text(
+                  '12M',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                Text(
+                  '24M',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                Text(
+                  '36M',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
               ],
             ),
+          ),
+          const SizedBox(height: 18),
+
+          // Interest Rate (%)
+          _fieldLabel('Interest Rate (%)'),
+          TextFormField(
+            controller: _interestRateController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+            decoration: InputDecoration(
+              hintText: '0.0',
+              hintStyle: const TextStyle(color: AppColors.textHint),
+              suffixIcon: Padding(
+                padding: const EdgeInsets.only(left: 8, right: 16),
+                child: Text(
+                  '%',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              suffixIconConstraints: const BoxConstraints(minWidth: 0),
+              filled: true,
+              fillColor: AppColors.inputFill,
+              border: _fieldBorder(Colors.transparent),
+              enabledBorder: _fieldBorder(Colors.transparent),
+              focusedBorder: _fieldBorder(AppColors.primary, width: 1.5),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 16,
+              ),
+            ),
+            validator: (val) {
+              if (val == null || val.trim().isEmpty) {
+                return 'Interest rate is required';
+              }
+              final rate = double.tryParse(val.trim());
+              if (rate == null || rate < 0 || rate > 100) {
+                return 'Enter a valid rate (0–100)';
+              }
+              return null;
+            },
           ),
           const SizedBox(height: 18),
 
@@ -3531,35 +3798,38 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                     constraints: const BoxConstraints(),
                   ),
                   const SizedBox(width: 12),
-                  const Text('Request Loan', style: AppTextStyles.headingMedium),
+                  const Text(
+                    'Request Loan',
+                    style: AppTextStyles.headingMedium,
+                  ),
                 ],
               ),
             ),
 
-            // Scrollable body â€” sections one by one
+            // Scrollable body - sections one by one
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildEligibleCard(),
-                    const SizedBox(height: 16),
+                   // _buildEligibleCard(),
+                  //  const SizedBox(height: 16),
                     Row(
                       children: [
                         Expanded(
                           child: _buildStatCard(
                             label: 'Active Loans',
-                            value: '0',
+                            value: '$_activeLoanCount',
                             caption: 'Applications',
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: _buildStatCard(
-                            label: 'Credit Score',
-                            value: 'A+',
-                            caption: 'Excellent',
+                            label: 'Pending Requests',
+                            value: '$_pendingLoanCount',
+                            caption: 'Awaiting approval',
                           ),
                         ),
                       ],
@@ -3647,7 +3917,11 @@ class ExpenseRequestsTab extends StatefulWidget {
   State<ExpenseRequestsTab> createState() => _ExpenseRequestsTabState();
 }
 
-class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
+class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final RequestService _requestService = RequestService();
   List<dynamic> _expenses = [];
   bool _isLoading = true;
@@ -3660,10 +3934,16 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
     'Paid',
   ];
 
+  // All-time totals for the hero card - independent of the paginated/filtered
+  // `_expenses` list, fetched straight from the DB for this employee.
+  double _totalReimbursed = 0;
+  double _totalPending = 0;
+  int _pendingClaimCount = 0;
+
   DateTime? _startDate;
   DateTime? _endDate;
   int _currentPage = 1;
-  final int _itemsPerPage = 10;
+  final int _itemsPerPage = 5;
   int _totalPages = 0;
   final TextEditingController _searchController = TextEditingController();
   bool _showFilters = false;
@@ -3675,20 +3955,81 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
   }
 
   void refresh() {
-    _fetchExpenses();
+    // Background refresh: keep the current list instead of flashing the loader.
+    _fetchExpenses(showLoader: false);
+    _fetchExpenseSummary();
   }
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _startDate = DateTime(now.year, now.month, 1);
-    _endDate = DateTime(now.year, now.month + 1, 0);
+    // Date filter is single-date only; start unfiltered (no range).
+    _startDate = null;
+    _endDate = null;
     _fetchExpenses();
+    _fetchExpenseSummary();
   }
 
-  Future<void> _fetchExpenses() async {
-    setState(() => _isLoading = true);
+  Future<void> _fetchExpenseSummary() async {
+    final result = await _requestService.getExpenseSummary();
+    if (result['success'] == true) {
+      final data = result['data'] as Map<String, dynamic>? ?? {};
+      if (!mounted) return;
+      setState(() {
+        _totalReimbursed = (data['totalReimbursed'] as num?)?.toDouble() ?? 0;
+        _totalPending = (data['totalPending'] as num?)?.toDouble() ?? 0;
+        _pendingClaimCount = (data['pendingCount'] as num?)?.toInt() ?? 0;
+      });
+      return;
+    }
+    // Fallback (summary endpoint not available on this backend): compute the
+    // all-time totals client-side from the employee's own expense records.
+    await _computeExpenseSummaryFromRecords();
+  }
+
+  Future<void> _computeExpenseSummaryFromRecords() async {
+    double reimbursed = 0;
+    double pending = 0;
+    int pendingCount = 0;
+    try {
+      final result = await _requestService.getExpenseRequests(
+        status: 'All Status',
+        page: 1,
+        limit: 500,
+      );
+      if (result['success'] == true) {
+        final data = result['data'];
+        final list = data is Map
+            ? (data['reimbursements'] as List? ?? [])
+            : (data is List ? data : []);
+        for (final e in list) {
+          if (e is! Map) continue;
+          final status = (e['status'] ?? '').toString();
+          final amt = e['amount'];
+          final amount = amt is num
+              ? amt.toDouble()
+              : double.tryParse(amt?.toString() ?? '') ?? 0;
+          if (status == 'Approved' || status == 'Paid') {
+            reimbursed += amount;
+          } else if (status == 'Pending') {
+            pending += amount;
+            pendingCount++;
+          }
+        }
+      }
+    } catch (_) {
+      // best-effort
+    }
+    if (!mounted) return;
+    setState(() {
+      _totalReimbursed = reimbursed;
+      _totalPending = pending;
+      _pendingClaimCount = pendingCount;
+    });
+  }
+
+  Future<void> _fetchExpenses({bool showLoader = true}) async {
+    if (showLoader) setState(() => _isLoading = true);
     final result = await _requestService.getExpenseRequests(
       status: _selectedStatus,
       search: _searchController.text,
@@ -3728,62 +4069,28 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
     }
   }
 
-  Future<void> _pickDateRange() async {
-    final picked = await showDateRangePickerSameCalendar(
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
       context: context,
+      initialDate: _startDate ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
-      initialStart: _startDate,
-      initialEnd: _endDate,
     );
     if (picked != null) {
       setState(() {
-        _startDate = picked.start;
-        _endDate = picked.end;
+        _startDate = DateTime(picked.year, picked.month, picked.day);
+        _endDate = DateTime(
+          picked.year,
+          picked.month,
+          picked.day,
+          23,
+          59,
+          59,
+          999,
+        );
       });
       _fetchExpenses();
     }
-  }
-
-  void _viewProof(String url) {
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AppBar(
-              title: Text('Proof Document'),
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              leading: IconButton(
-                icon: const Icon(Icons.close, color: Colors.black),
-                onPressed: () => Navigator.pop(ctx),
-              ),
-            ),
-            Container(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.7,
-              ),
-              child: Image.network(
-                url,
-                loadingBuilder: (ctx, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return const Center(child: AppTabLoader());
-                },
-                errorBuilder: (ctx, error, stackTrace) => const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(20.0),
-                    child: Text('Unable to load image or invalid format.'),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
-    );
   }
 
   // Changed to public for GlobalKey access
@@ -3795,16 +4102,16 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
         ? DateFormat(
             'MMM dd, yyyy',
           ).format(DateTime.parse(expense['createdAt']))
-        : 'â€”';
+        : '-';
 
-    String approvedByName = 'â€”';
-    String rejectedByName = 'â€”';
+    String approvedByName = '-';
+    String rejectedByName = '-';
     final approver = expense['approvedBy'];
     final rejector = expense['rejectedBy'];
     if (approver != null) {
       if (approver is Map && approver['name'] != null) {
         approvedByName = approver['name'].toString().trim();
-        if (approvedByName.isEmpty) approvedByName = 'â€”';
+        if (approvedByName.isEmpty) approvedByName = '-';
       } else {
         approvedByName = 'System';
       }
@@ -3812,7 +4119,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
     if (rejector != null) {
       if (rejector is Map && rejector['name'] != null) {
         rejectedByName = rejector['name'].toString().trim();
-        if (rejectedByName.isEmpty) rejectedByName = 'â€”';
+        if (rejectedByName.isEmpty) rejectedByName = '-';
       } else {
         rejectedByName = 'System';
       }
@@ -3828,7 +4135,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
         'Type',
         expense['type'] ?? expense['expenseType'] ?? 'Expense',
       ),
-      _expenseDetailRow('Amount', 'â‚¹${expense['amount']}'),
+      _expenseDetailRow('Amount', '₹${expense['amount']}'),
       _expenseDetailRow('Date', date),
       _expenseDetailRow('Applied Date', appliedDate),
       if (expense['description'] != null &&
@@ -3841,51 +4148,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
           _expenseDetailRow('Rejection Reason', rejectionReason),
       ] else
         _expenseDetailRow('Approved By', approvedByName),
-      if (proofs.isNotEmpty) ...[
-        const SizedBox(height: 12),
-        Text(
-          'Proof Files:',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 6),
-        ...proofs.asMap().entries.map((entry) {
-          final proof = entry.value;
-          String proofUrl;
-          if (proof is Map) {
-            proofUrl =
-                proof['url']?.toString() ??
-                proof['fileUrl']?.toString() ??
-                proof.toString();
-          } else {
-            proofUrl = proof.toString();
-          }
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: InkWell(
-              onTap: () => _viewProof(proofUrl),
-              borderRadius: BorderRadius.circular(8),
-              child: Row(
-                children: [
-                  Icon(Icons.attach_file, size: 18, color: AppColors.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'View Proof',
-                      style: TextStyle(
-                        color: Colors.blue,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-      ],
+      ...buildProofFileRows(context, _requestService, proofs),
     ];
 
     showModalBottomSheet(
@@ -3941,26 +4204,17 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
   double _amountOf(dynamic v) =>
       v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0;
 
-  /// Indian-grouped amount with up to 2 decimals (keeps â‚¹ â€” the app is INR).
+  /// Indian-grouped amount with up to 2 decimals (keeps ₹ - the app is INR).
   String _formatAmount(dynamic v) =>
       NumberFormat('#,##0.##', 'en_IN').format(_amountOf(v));
 
-  /// Sum of loaded claims whose status passes [test]. Derived from the already
-  /// fetched `_expenses` â€” no new API call.
-  double _sumWhere(bool Function(String status) test) {
-    double total = 0;
-    for (final e in _expenses) {
-      if (test((e['status'] ?? '').toString())) total += _amountOf(e['amount']);
-    }
-    return total;
-  }
-
-  /// Amber summary hero â€” Total Reimbursed + Pending amount/count (Figma).
+  /// Amber summary hero - Total Reimbursed + Pending amount/count (Figma).
+  /// Values come from [_fetchExpenseSummary] - all-time totals for this
+  /// employee from the DB, not just the current page/filter of `_expenses`.
   Widget _buildClaimHero() {
-    final reimbursed = _sumWhere((s) => s == 'Approved' || s == 'Paid');
-    final pending = _sumWhere((s) => s == 'Pending');
-    final pendingCount =
-        _expenses.where((e) => (e['status'] ?? '') == 'Pending').length;
+    final reimbursed = _totalReimbursed;
+    final pending = _totalPending;
+    final pendingCount = _pendingClaimCount;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -4000,7 +4254,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'â‚¹${_formatAmount(reimbursed)}',
+                    '${_formatAmount(reimbursed)}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 30,
@@ -4042,7 +4296,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    'â‚¹${_formatAmount(pending)}',
+                    '${_formatAmount(pending)}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -4052,7 +4306,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                 ],
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(999),
@@ -4134,8 +4391,8 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
     final date = DateFormat(
       'MMM dd, yyyy',
     ).format(DateTime.parse(expense['date']));
-    final type =
-        (expense['type'] ?? expense['expenseType'] ?? 'Expense').toString();
+    final type = (expense['type'] ?? expense['expenseType'] ?? 'Expense')
+        .toString();
     final status = (expense['status'] ?? '').toString();
 
     Color statusColor = AppColors.warning;
@@ -4164,7 +4421,11 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
                 color: AppColors.primary.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(_expenseIcon(type), color: AppColors.primary, size: 22),
+              child: Icon(
+                _expenseIcon(type),
+                color: AppColors.primary,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 14),
             // Title + date
@@ -4192,7 +4453,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  'â‚¹${_formatAmount(expense['amount'])}',
+                  '${_formatAmount(expense['amount'])}',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w800,
@@ -4238,225 +4499,222 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // keep-alive
+    // The whole tab is one scroll view so the hero, filters and list scroll
+    // together — previously only the inner list scrolled, so with filters open
+    // the upper section was cramped and unscrollable on small screens.
     return Column(
       children: [
-        // Figma "Expense Claims": amber summary hero + create button + header
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-          child: Column(
-            children: [
-              FadeSlideIn(child: _buildClaimHero()),
-              const SizedBox(height: 14),
-              FadeSlideIn(
-                delay: const Duration(milliseconds: 60),
-                child: _buildCreateButton(),
-              ),
-              const SizedBox(height: 18),
-              _buildRecentHeader(),
-            ],
-          ),
-        ),
-        // Controls Column
-        if (_showFilters)
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search Type, Description...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary, width: 2),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 0,
-                    ),
-                  ),
-                  onSubmitted: (_) => _fetchExpenses(),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _selectedStatus,
-                            isExpanded: true,
-                            items: _statusOptions
-                                .map(
-                                  (e) => DropdownMenuItem(
-                                    value: e,
-                                    child: Text(e),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (val) {
-                              if (val != null) {
-                                setState(() => _selectedStatus = val);
-                                _fetchExpenses();
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    // Date Filter Button
-                    InkWell(
-                      onTap: _pickDateRange,
-                      child: Container(
-                        height: 48,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.calendar_today,
-                              color: Colors.grey[600],
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _startDate == null
-                                  ? 'Date'
-                                  : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
-                              style: TextStyle(color: Colors.black),
-                            ),
-                            if (_startDate != null)
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 16),
-                                onPressed: () {
-                                  setState(() {
-                                    _startDate = null;
-                                    _endDate = null;
-                                  });
-                                  _fetchExpenses();
-                                },
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-        // List Content
         Expanded(
-          child: _isLoading
-              ? const Center(child: AppTabLoader())
-              : _expenses.isEmpty
-              ? Center(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              setState(() => _currentPage = 1);
+              await _fetchExpenses(showLoader: false);
+            },
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                // Figma "Expense Claims": amber summary hero + create button + header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.receipt_outlined,
-                        size: 64,
-                        color: Colors.grey[400],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No expense requests found',
-                        style: TextStyle(fontSize: 16, color: Colors.black),
-                      ),
+                      FadeSlideIn(child: _buildClaimHero()),
+                      // const SizedBox(height: 14),
+                      // FadeSlideIn(
+                      // delay: const Duration(milliseconds: 60),
+                      //  child: _buildCreateButton(),
+                      // ),
+                      const SizedBox(height: 18),
+                      _buildRecentHeader(),
                     ],
                   ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  itemCount: _expenses.length,
-                  itemBuilder: (ctx, i) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12.0),
-                      child: FadeSlideIn(
-                        delay: Duration(milliseconds: (i * 45).clamp(0, 270)),
-                        child: _buildExpenseCard(_expenses[i]),
-                      ),
-                    );
-                  },
                 ),
-        ),
-
-        // Pagination Controls
-        if (!_isLoading && _expenses.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 8, 140, 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(top: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.chevron_left, size: 22),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _currentPage > 1
-                      ? () {
-                          setState(() => _currentPage--);
-                          _fetchExpenses();
-                        }
-                      : null,
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '$_currentPage',
-                    style: TextStyle(
-                      color: AppColors.primary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                // Controls Column
+                if (_showFilters)
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: 'Search Type, Description...',
+                            prefixIcon: const Icon(Icons.search),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide(color: AppColors.primary),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide(color: AppColors.primary),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide(
+                                color: AppColors.primary,
+                                width: 2,
+                              ),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 0,
+                            ),
+                          ),
+                          onSubmitted: (_) => _fetchExpenses(),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: AppColors.primary),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                ),
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: _selectedStatus,
+                                    isExpanded: true,
+                                    items: _statusOptions
+                                        .map(
+                                          (e) => DropdownMenuItem(
+                                            value: e,
+                                            child: Text(e),
+                                          ),
+                                        )
+                                        .toList(),
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        setState(() => _selectedStatus = val);
+                                        _fetchExpenses();
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            // Date Filter Button
+                            InkWell(
+                              onTap: _pickDate,
+                              child: Container(
+                                height: 48,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: AppColors.primary),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.calendar_today,
+                                      color: Colors.grey[600],
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _startDate == null || _endDate == null
+                                          ? 'Date'
+                                          : _isSameCalendarDay(
+                                              _startDate!,
+                                              _endDate!,
+                                            )
+                                          ? DateFormat(
+                                              'MMM dd, yyyy',
+                                            ).format(_startDate!)
+                                          : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
+                                      style: TextStyle(color: Colors.black),
+                                    ),
+                                    if (_startDate != null)
+                                      IconButton(
+                                        icon: const Icon(Icons.close, size: 16),
+                                        onPressed: () {
+                                          setState(() {
+                                            _startDate = null;
+                                            _endDate = null;
+                                          });
+                                          _fetchExpenses();
+                                        },
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right, size: 22),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _currentPage < _totalPages
-                      ? () {
-                          setState(() => _currentPage++);
-                          _fetchExpenses();
-                        }
-                      : null,
-                ),
+
+                // List Content
+                // While (re)loading after a query change show the loader and
+                // reveal the list only once loaded, so stale results never flash.
+                if (_isLoading)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.4,
+                    child: const Center(child: AppTabLoader()),
+                  )
+                else if (_expenses.isEmpty)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.4,
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.receipt_outlined,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No expense requests found',
+                            style: TextStyle(fontSize: 16, color: Colors.black),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                    child: Column(
+                      children: [
+                        for (int i = 0; i < _expenses.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12.0),
+                            child: FadeSlideIn(
+                              delay: Duration(
+                                milliseconds: (i * 45).clamp(0, 270),
+                              ),
+                              child: _buildExpenseCard(_expenses[i]),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
+        ),
+        // Bottom action bar: page numbers (only when multi-page) on the left
+        // and the Claim Expense button on the right.
+        _PaginationBar(
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          onPageSelected: (page) {
+            setState(() => _currentPage = page);
+            _fetchExpenses();
+          },
+          createLabel: 'Claim Expense',
+          onCreate: showClaimExpenseDialog,
+        ),
       ],
     );
   }
@@ -4670,7 +4928,10 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
   }
 
   /// Grey date card with a calendar icon — matches Apply Leave's date cards.
-  Widget _buildDateField({required DateTime? date, required VoidCallback onTap}) {
+  Widget _buildDateField({
+    required DateTime? date,
+    required VoidCallback onTap,
+  }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
@@ -4691,7 +4952,9 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: date == null ? AppColors.textCaption : AppColors.textPrimary,
+                color: date == null
+                    ? AppColors.textCaption
+                    : AppColors.textPrimary,
               ),
             ),
           ],
@@ -4766,7 +5029,9 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
         color: AppColors.background,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: Form(
         key: _formKey,
         child: Column(
@@ -4832,7 +5097,9 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                         fontWeight: FontWeight.w500,
                         color: AppColors.textPrimary,
                       ),
-                      decoration: _fieldDecoration(hint: 'Enter expense amount'),
+                      decoration: _fieldDecoration(
+                        hint: 'Enter expense amount',
+                      ),
                       validator: (val) => val == null || val.isEmpty
                           ? 'Amount is required'
                           : null,
@@ -4961,7 +5228,11 @@ class PermissionRequestsTab extends StatefulWidget {
   State<PermissionRequestsTab> createState() => _PermissionRequestsTabState();
 }
 
-class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
+class _PermissionRequestsTabState extends State<PermissionRequestsTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final RequestService _requestService = RequestService();
   List<dynamic> _requests = [];
   bool _isLoading = true;
@@ -4977,6 +5248,11 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
   Map<String, dynamic>? _balance;
 
+  // Permission requests come back for the whole month in one response, so we
+  // page through them on the client (5 per page) to match the other tabs.
+  int _currentPage = 1;
+  final int _itemsPerPage = 5;
+
   void toggleFilters() {
     setState(() {
       _showFilters = !_showFilters;
@@ -4984,7 +5260,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
   }
 
   void refresh() {
-    _fetchRequests();
+    // Background refresh: keep the current list instead of flashing the loader.
+    _fetchRequests(showLoader: false);
   }
 
   @override
@@ -4994,8 +5271,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
     _fetchBalance();
   }
 
-  Future<void> _fetchRequests() async {
-    setState(() => _isLoading = true);
+  Future<void> _fetchRequests({bool showLoader = true}) async {
+    if (showLoader) setState(() => _isLoading = true);
     final result = await _requestService.getPermissionRequests(
       status: _selectedStatus,
       month: _selectedMonth.month,
@@ -5006,6 +5283,9 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
       final data = result['data'];
       setState(() {
         _requests = data is Map ? (data['permissions'] ?? []) : [];
+        // Reset to page 1 only on an explicit (query-changing) load; a quiet
+        // background refresh keeps the user on their current page.
+        if (showLoader) _currentPage = 1;
         _isLoading = false;
       });
     } else {
@@ -5109,6 +5389,15 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
   }
 
   void showRequestPermissionDialog() {
+    // Block submission entirely when Permission is not configured for the shift.
+    if (_balance != null && _balance?['configured'] == false) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Permission is not configured. Please contact HR.',
+        isError: true,
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -5124,176 +5413,259 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // keep-alive
     final theme = Theme.of(context);
     final monthLabel = DateFormat('MMMM yyyy').format(_selectedMonth);
     final quota = (_balance?['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
     final consumed = (_balance?['consumedMinutes'] as num?)?.toDouble() ?? 0;
-    final remain = (_balance?['remainingMinutes'] as num?)?.toDouble() ?? 0;
+    final pending = (_balance?['pendingMinutes'] as num?)?.toDouble() ?? 0;
+    // Treat missing flags as configured/enabled so older backends are not blocked.
+    final configured = _balance == null || _balance?['configured'] != false;
+    final enabled = _balance == null || _balance?['enabled'] != false;
     String hoursAndMinutes(double minutes) {
       final normalized = minutes < 0 ? 0 : minutes;
       final hrs = (normalized / 60).toStringAsFixed(2);
       return '$hrs h\n${normalized.toInt()} min';
     }
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        await _fetchRequests();
-        await _fetchBalance();
-      },
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(12),
-        children: [
-          Card(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Padding(
+    // Client-side paging: the backend returns the whole month at once.
+    final totalPages = _requests.isEmpty
+        ? 1
+        : (_requests.length / _itemsPerPage).ceil();
+    final safePage = _currentPage.clamp(1, totalPages);
+    final pageStart = (safePage - 1) * _itemsPerPage;
+    final pagedRequests = _requests
+        .skip(pageStart)
+        .take(_itemsPerPage)
+        .toList();
+
+    return Column(
+      children: [
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              await _fetchRequests(showLoader: false);
+              await _fetchBalance();
+            },
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Permission Balance ($monthLabel)',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
+              children: [
+                Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Permission Balance ($monthLabel)',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: _pickMonth,
+                          icon: const Icon(Icons.calendar_month),
+                          label: const Text('Month'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    _balanceTile('Monthly', hoursAndMinutes(quota)),
+                    const SizedBox(width: 8),
+                    _balanceTile('Used', hoursAndMinutes(consumed)),
+                    const SizedBox(width: 8),
+                    _balanceTile('Pending', hoursAndMinutes(pending)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (!configured)
+                  _permissionNotice(
+                    icon: Icons.error_outline,
+                    color: Colors.red,
+                    message: 'Permission is not configured. Please contact HR.',
+                  )
+                else if (!enabled)
+                  _permissionNotice(
+                    icon: Icons.info_outline,
+                    color: Colors.orange.shade800,
+                    message:
+                        'Permission is disabled for your shift. Requests still work, '
+                        'but applicable late/early fines will be deducted.',
+                  ),
+                if (!configured || !enabled) const SizedBox(height: 12),
+                if (_showFilters)
+                  Card(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: DropdownButtonFormField<String>(
+                        value: _selectedStatus,
+                        items: _statusOptions
+                            .map(
+                              (s) => DropdownMenuItem(value: s, child: Text(s)),
+                            )
+                            .toList(),
+                        decoration: const InputDecoration(labelText: 'Status'),
+                        onChanged: (v) async {
+                          if (v == null) return;
+                          setState(() => _selectedStatus = v);
+                          await _fetchRequests();
+                        },
                       ),
                     ),
                   ),
-                  TextButton.icon(
-                    onPressed: _pickMonth,
-                    icon: const Icon(Icons.calendar_month),
-                    label: const Text('Month'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _balanceTile('Quota', hoursAndMinutes(quota)),
-              const SizedBox(width: 8),
-              _balanceTile('Consumed', hoursAndMinutes(consumed)),
-              const SizedBox(width: 8),
-              _balanceTile('Remaining', hoursAndMinutes(remain)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (_showFilters)
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: DropdownButtonFormField<String>(
-                  value: _selectedStatus,
-                  items: _statusOptions
-                      .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                      .toList(),
-                  decoration: const InputDecoration(labelText: 'Status'),
-                  onChanged: (v) async {
-                    if (v == null) return;
-                    setState(() => _selectedStatus = v);
-                    await _fetchRequests();
-                  },
-                ),
-              ),
-            ),
-          if (_showFilters) const SizedBox(height: 12),
-          if (_isLoading)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: AppTabLoader(),
-              ),
-            )
-          else if (_requests.isEmpty)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('No permission requests found'),
-              ),
-            )
-          else
-            ..._requests.map((raw) {
-              final req = raw is Map<String, dynamic>
-                  ? raw
-                  : Map<String, dynamic>.from(raw as Map);
-              final status = (req['status'] ?? '').toString();
-              final isPending = status == 'Pending';
-              return Card(
-                margin: const EdgeInsets.only(bottom: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _fmtDate(req['date']),
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _statusColor(status).withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              status,
-                              style: TextStyle(
-                                color: _statusColor(status),
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ],
+                if (_showFilters) const SizedBox(height: 12),
+                // While (re)loading after a query change show the loader and
+                // reveal the list only once loaded, so stale results never flash.
+                if (_isLoading)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: AppTabLoader(),
+                    ),
+                  )
+                else if (_requests.isEmpty)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('No permission requests found'),
+                    ),
+                  )
+                else
+                  ...pagedRequests.map((raw) {
+                    final req = raw is Map<String, dynamic>
+                        ? raw
+                        : Map<String, dynamic>.from(raw as Map);
+                    final status = (req['status'] ?? '').toString();
+                    final isPending = status == 'Pending';
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      const SizedBox(height: 8),
-                      Text('Type: ${_fmtType(req['type']?.toString())}'),
-                      Text(
-                        'Requested Minutes: ${req['requestedMinutes'] ?? 0}',
-                      ),
-                      if ((req['reason'] ?? '')
-                          .toString()
-                          .trim()
-                          .isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text('Reason: ${req['reason']}'),
-                      ],
-                      const SizedBox(height: 4),
-                      Text('Applied: ${_fmtDate(req['createdAt'])}'),
-                      if (isPending) ...[
-                        const SizedBox(height: 10),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: OutlinedButton.icon(
-                            onPressed: () =>
-                                _cancelRequest(req['_id'].toString()),
-                            icon: const Icon(Icons.cancel_outlined),
-                            label: const Text('Cancel'),
-                          ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    _fmtDate(req['date']),
+                                    style: theme.textTheme.titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _statusColor(
+                                      status,
+                                    ).withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    status,
+                                    style: TextStyle(
+                                      color: _statusColor(status),
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text('Type: ${_fmtType(req['type']?.toString())}'),
+                            Text(
+                              'Requested Minutes: ${req['requestedMinutes'] ?? 0}',
+                            ),
+                            if ((req['reason'] ?? '')
+                                .toString()
+                                .trim()
+                                .isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text('Reason: ${req['reason']}'),
+                            ],
+                            const SizedBox(height: 4),
+                            Text('Applied: ${_fmtDate(req['createdAt'])}'),
+                            if (isPending) ...[
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: OutlinedButton.icon(
+                                  onPressed: () =>
+                                      _cancelRequest(req['_id'].toString()),
+                                  icon: const Icon(Icons.cancel_outlined),
+                                  label: const Text('Cancel'),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
-                      ],
-                    ],
-                  ),
-                ),
-              );
-            }),
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ),
+        // Bottom action bar: page numbers (only when multi-page) on the left
+        // and the Request Permission button on the right.
+        _PaginationBar(
+          currentPage: safePage,
+          totalPages: totalPages,
+          onPageSelected: (page) => setState(() => _currentPage = page),
+          createLabel: 'Request Permission',
+          onCreate: showRequestPermissionDialog,
+        ),
+      ],
+    );
+  }
+
+  Widget _permissionNotice({
+    required IconData icon,
+    required Color color,
+    required String message,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: color,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                height: 1.3,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -5302,14 +5674,14 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab> {
   Widget _balanceTile(String title, String value) {
     IconData icon;
     switch (title.toLowerCase()) {
-      case 'quota':
+      case 'monthly allocated':
         icon = Icons.inventory_2_outlined;
         break;
-      case 'consumed':
+      case 'used':
         icon = Icons.timelapse_outlined;
         break;
-      case 'remaining':
-        icon = Icons.check_circle_outline;
+      case 'pending':
+        icon = Icons.hourglass_bottom_outlined;
         break;
       default:
         icon = Icons.check_circle_outline;
@@ -5375,6 +5747,92 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   final TextEditingController _minutesController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
   bool _isSubmitting = false;
+  HolidayOffConfig _offConfig = HolidayOffConfig.empty;
+  // Permission configuration gate. Defaults keep the form usable until config loads.
+  bool _loadingConfig = true;
+  bool _configured = true;
+  bool _enabled = true;
+  double _quotaMinutes = 0;
+  double _consumedMinutes = 0;
+  double _pendingMinutes = 0;
+  bool _showLimitWarning = false;
+  String _limitWarningMsg = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOffConfig();
+    _loadPermissionConfig();
+  }
+
+  Future<void> _loadPermissionConfig() async {
+    final result = await _requestService.getPermissionBalance(
+      month: _date.month,
+      year: _date.year,
+    );
+    if (!mounted) return;
+    final data = result['data'];
+    if (result['success'] == true && data is Map) {
+      setState(() {
+        _configured = data['configured'] != false;
+        _enabled = data['enabled'] != false;
+        _quotaMinutes = (data['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
+        _consumedMinutes = (data['consumedMinutes'] as num?)?.toDouble() ?? 0;
+        _pendingMinutes = (data['pendingMinutes'] as num?)?.toDouble() ?? 0;
+        _loadingConfig = false;
+      });
+    } else {
+      setState(() => _loadingConfig = false);
+    }
+  }
+
+  Widget _buildPermissionNotice({
+    required IconData icon,
+    required Color color,
+    required String message,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: color,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadOffConfig() async {
+    final config = await loadHolidayOffConfig();
+    if (!mounted) return;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    setState(() {
+      _offConfig = config;
+      // If the current default date is a holiday/week-off, move to the next working day.
+      final current = _date.isBefore(today) ? today : _date;
+      if (config.isDisabled(current)) {
+        _date = config.firstSelectableOnOrAfter(current);
+      }
+    });
+  }
 
   DateTime? _permissionDateOnly(dynamic value) {
     if (value == null) return null;
@@ -5429,18 +5887,91 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   }
 
   Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    // Only today and future dates are selectable; past dates and holidays/week-offs are not.
+    final base = _date.isBefore(today) ? today : _date;
+    final initial = _offConfig.firstSelectableOnOrAfter(base);
     final picked = await showDatePicker(
       context: context,
-      initialDate: _date,
-      firstDate: DateTime(DateTime.now().year - 1, 1, 1),
-      lastDate: DateTime(DateTime.now().year + 1, 12, 31),
+      initialDate: initial,
+      firstDate: today,
+      lastDate: DateTime(now.year + 1, 12, 31),
+      selectableDayPredicate: (day) => !_offConfig.isDisabled(day),
     );
     if (picked != null) {
-      setState(() => _date = DateTime(picked.year, picked.month, picked.day));
+      setState(() {
+        _date = DateTime(picked.year, picked.month, picked.day);
+        _showLimitWarning = false;
+      });
     }
   }
 
+  Widget _buildPermissionLimitBanner(String message) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.orange.shade400),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.warning_amber_rounded,
+            size: 20,
+            color: Colors.orange.shade700,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Permission Quota Exceeded',
+                  style: TextStyle(
+                    color: Colors.orange.shade800,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  style: TextStyle(
+                    color: Colors.orange.shade800,
+                    fontSize: 12.5,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Your admin has been notified. Request is still submitted.',
+                  style: TextStyle(
+                    color: Colors.orange.shade700,
+                    fontSize: 11.5,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _submit() async {
+    if (!_configured) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Permission is not configured. Please contact HR.',
+        isError: true,
+      );
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
 
     final minutes = int.tryParse(_minutesController.text.trim());
@@ -5456,6 +5987,40 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     if (reason.isEmpty) {
       SnackBarUtils.showSnackBar(context, 'Reason is required', isError: true);
       return;
+    }
+
+    // Effective remaining = quota - consumed - pending (pending minutes may still be deducted).
+    final effectiveRemaining =
+        (_quotaMinutes - _consumedMinutes - _pendingMinutes).clamp(
+          0.0,
+          _quotaMinutes,
+        );
+    if (_quotaMinutes > 0 && minutes > effectiveRemaining) {
+      final excess = minutes - effectiveRemaining.toInt();
+      final msg =
+          'Monthly permission quota exceeded. '
+          'Used: ${_consumedMinutes.toInt()} min, '
+          'Pending: ${_pendingMinutes.toInt()} min, '
+          'Remaining: ${effectiveRemaining.toInt()} min. '
+          'Requested $minutes min ($excess min excess may be deducted as a fine).';
+      setState(() {
+        _showLimitWarning = true;
+        _limitWarningMsg = msg;
+      });
+      unawaited(
+        FcmService.showLimitExceededLocalNotification(
+          type: 'permission',
+          message: msg,
+        ),
+      );
+      unawaited(
+        _requestService.notifyAdminLimitExceeded(
+          type: 'permission',
+          requested: minutes,
+          limit: effectiveRemaining,
+        ),
+      );
+      // Do not return — permission over-quota is submittable.
     }
 
     final alreadyExists = await _hasExistingPermissionForDate(_date);
@@ -5506,7 +6071,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         color: AppColors.background,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: Form(
         key: _formKey,
         child: Column(
@@ -5538,6 +6105,27 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Permission configuration notice (not configured / disabled).
+                    if (!_loadingConfig && !_configured) ...[
+                      _buildPermissionNotice(
+                        icon: Icons.error_outline,
+                        color: Colors.red,
+                        message:
+                            'Permission is not configured. Please contact HR.',
+                      ),
+                      const SizedBox(height: 20),
+                    ] else if (!_loadingConfig && !_enabled) ...[
+                      _buildPermissionNotice(
+                        icon: Icons.info_outline,
+                        color: Colors.orange.shade800,
+                        message:
+                            'Permission is disabled for your shift. Your request '
+                            'will be accepted, but applicable late/early fines '
+                            'will be deducted.',
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+
                     // Date
                     _sectionLabel('Date'),
                     _buildDateField(date: _date, onTap: _pickDate),
@@ -5611,11 +6199,17 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     ),
                     const SizedBox(height: 28),
 
+                    if (_showLimitWarning)
+                      _buildPermissionLimitBanner(_limitWarningMsg),
+                    if (_showLimitWarning) const SizedBox(height: 12),
+
                     // Submit
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: _isSubmitting ? null : _submit,
+                        onPressed: (_isSubmitting || !_configured)
+                            ? null
+                            : _submit,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primary,
                           foregroundColor: Colors.white,
@@ -5700,7 +6294,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   }
 
   /// Grey date card with a calendar icon — matches Apply Leave's date cards.
-  Widget _buildDateField({required DateTime date, required VoidCallback onTap}) {
+  Widget _buildDateField({
+    required DateTime date,
+    required VoidCallback onTap,
+  }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
@@ -5756,7 +6353,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
   DateTime? _startDate;
   DateTime? _endDate;
   int _currentPage = 1;
-  final int _itemsPerPage = 10;
+  final int _itemsPerPage = 5;
   int _totalPages = 0;
   bool _showFilters = false;
 
@@ -5767,15 +6364,16 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
   }
 
   void refresh() {
-    _fetchRequests();
+    // Background refresh: keep the current list instead of flashing the loader.
+    _fetchRequests(showLoader: false);
   }
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _startDate = DateTime(now.year, now.month, 1);
-    _endDate = DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+    // Date filter is single-date only; start unfiltered (no range).
+    _startDate = null;
+    _endDate = null;
     _fetchRequests();
   }
 
@@ -5786,8 +6384,8 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     super.dispose();
   }
 
-  Future<void> _fetchRequests() async {
-    setState(() => _isLoading = true);
+  Future<void> _fetchRequests({bool showLoader = true}) async {
+    if (showLoader) setState(() => _isLoading = true);
     final result = await _requestService.getPayslipRequests(
       status: _selectedStatus,
       search: _searchController.text,
@@ -5960,7 +6558,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
           if (mounted) {
             SnackBarUtils.showSnackBar(
               context,
-              'Downloading fileâ€¦ Check your browser downloads.',
+              'Downloading file... Check your browser downloads.',
               isError: false,
             );
           }
@@ -6000,7 +6598,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         if (mounted) {
           SnackBarUtils.showSnackBar(
             context,
-            'Downloading fileâ€¦ Check your browser downloads.',
+            'Downloading file... Check your browser downloads.',
             isError: false,
           );
         }
@@ -6176,15 +6774,15 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
   void _showPayslipDetails(Map<String, dynamic> req) {
     final appliedDate = req['createdAt'] != null
         ? DateFormat('MMM dd, yyyy').format(DateTime.parse(req['createdAt']))
-        : 'â€”';
-    String approvedBy = 'â€”';
-    String rejectedBy = 'â€”';
+        : '-';
+    String approvedBy = '-';
+    String rejectedBy = '-';
     final approver = req['approvedBy'];
     final rejector = req['rejectedBy'];
     if (approver != null) {
       if (approver is Map && approver['name'] != null) {
         approvedBy = approver['name'].toString().trim();
-        if (approvedBy.isEmpty) approvedBy = 'â€”';
+        if (approvedBy.isEmpty) approvedBy = '-';
       } else {
         approvedBy = 'System';
       }
@@ -6192,7 +6790,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     if (rejector != null) {
       if (rejector is Map && rejector['name'] != null) {
         rejectedBy = rejector['name'].toString().trim();
-        if (rejectedBy.isEmpty) rejectedBy = 'â€”';
+        if (rejectedBy.isEmpty) rejectedBy = '-';
       } else {
         rejectedBy = 'System';
       }
@@ -6315,183 +6913,183 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
       child: AppCard(
         radius: 18,
         child: Row(
-            children: [
-              // Icon
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceDark,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.description,
-                  color: Colors.white,
-                  size: 28,
-                ),
+          children: [
+            // Icon
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceDark,
+                borderRadius: BorderRadius.circular(14),
               ),
-              const SizedBox(width: 16),
-              // Content
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Period and Status
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            periodText,
-                            style: AppTextStyles.headingSmall.copyWith(
-                              color: colorScheme.onSurface,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+              child: const Icon(
+                Icons.description,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 16),
+            // Content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Period and Status
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          periodText,
+                          style: AppTextStyles.headingSmall.copyWith(
+                            color: colorScheme.onSurface,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          statusLabel,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: statusColor,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            statusLabel,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: statusColor,
-                            ),
-                          ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  // Details
+                  if (req['reason'] != null &&
+                      req['reason'].toString().isNotEmpty) ...[
+                    _buildPayslipCardDetailRow(
+                      Icons.info_outline,
+                      'Reason',
+                      req['reason'] ?? '',
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  _buildPayslipCardDetailRow(
+                    Icons.access_time,
+                    'Applied',
+                    appliedDate,
+                  ),
+                  if (isRejectedPayslip && rejectedBy != '-') ...[
+                    const SizedBox(height: 4),
+                    _buildPayslipCardDetailRow(
+                      Icons.person_off_outlined,
+                      'Rejected By',
+                      rejectedBy,
+                    ),
+                  ] else if (!isRejectedPayslip && approvedBy != '-') ...[
+                    const SizedBox(height: 4),
+                    _buildPayslipCardDetailRow(
+                      Icons.person,
+                      'Approved By',
+                      approvedBy,
+                    ),
+                  ],
+                  // Download / Share actions â€“ show whenever payslip URL exists
+                  if (hasPayslipUrl) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        IconButton(
+                          tooltip: 'Share Payslip',
+                          icon: const Icon(Icons.ios_share_rounded, size: 20),
+                          color: AppColors.primary,
+                          onPressed: () {
+                            String monthName = 'Month';
+                            int year = DateTime.now().year;
+                            if (req['month'] != null && req['year'] != null) {
+                              monthName = _getMonthName(req['month']);
+                              final yr = req['year'];
+                              if (yr is int) {
+                                year = yr;
+                              } else if (yr is num) {
+                                year = yr.toInt();
+                              } else if (yr is String) {
+                                year = int.tryParse(yr) ?? year;
+                              }
+                            } else {
+                              final period = _getPeriodText(req);
+                              final parts = period.split(' ');
+                              if (parts.isNotEmpty) monthName = parts[0];
+                              if (parts.length > 1) {
+                                final yr = int.tryParse(parts[1]);
+                                if (yr != null) year = yr;
+                              }
+                            }
+                            _sharePayslipPdf(
+                              url: payslipUrl,
+                              fileBaseName: 'Payslip_$monthName',
+                            );
+                          },
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: 'Download Payslip',
+                          icon: const Icon(Icons.download_outlined, size: 20),
+                          color: AppColors.primary,
+                          onPressed: () {
+                            final requestId = req['_id']?.toString();
+                            if (requestId == null || requestId.isEmpty) {
+                              SnackBarUtils.showSnackBar(
+                                context,
+                                'Invalid payslip request id',
+                                isError: true,
+                              );
+                              return;
+                            }
+                            String monthName = 'Month';
+                            int year = DateTime.now().year;
+                            if (req['month'] != null && req['year'] != null) {
+                              monthName = _getMonthName(req['month']);
+                              final yr = req['year'];
+                              if (yr is int) {
+                                year = yr;
+                              } else if (yr is num) {
+                                year = yr.toInt();
+                              } else if (yr is String) {
+                                year = int.tryParse(yr) ?? year;
+                              }
+                            } else {
+                              final period = _getPeriodText(req);
+                              final parts = period.split(' ');
+                              if (parts.isNotEmpty) monthName = parts[0];
+                              if (parts.length > 1) {
+                                final yr = int.tryParse(parts[1]);
+                                if (yr != null) year = yr;
+                              }
+                            }
+                            _downloadPayslip(
+                              requestId,
+                              monthName,
+                              year,
+                              payslipUrl: payslipUrl,
+                            );
+                          },
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    // Details
-                    if (req['reason'] != null &&
-                        req['reason'].toString().isNotEmpty) ...[
-                      _buildPayslipCardDetailRow(
-                        Icons.info_outline,
-                        'Reason',
-                        req['reason'] ?? '',
-                      ),
-                      const SizedBox(height: 4),
-                    ],
-                    _buildPayslipCardDetailRow(
-                      Icons.access_time,
-                      'Applied',
-                      appliedDate,
-                    ),
-                    if (isRejectedPayslip && rejectedBy != '-') ...[
-                      const SizedBox(height: 4),
-                      _buildPayslipCardDetailRow(
-                        Icons.person_off_outlined,
-                        'Rejected By',
-                        rejectedBy,
-                      ),
-                    ] else if (!isRejectedPayslip && approvedBy != '-') ...[
-                      const SizedBox(height: 4),
-                      _buildPayslipCardDetailRow(
-                        Icons.person,
-                        'Approved By',
-                        approvedBy,
-                      ),
-                    ],
-                    // Download / Share actions â€“ show whenever payslip URL exists
-                    if (hasPayslipUrl) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          IconButton(
-                            tooltip: 'Share Payslip',
-                            icon: const Icon(Icons.ios_share_rounded, size: 20),
-                            color: AppColors.primary,
-                            onPressed: () {
-                              String monthName = 'Month';
-                              int year = DateTime.now().year;
-                              if (req['month'] != null && req['year'] != null) {
-                                monthName = _getMonthName(req['month']);
-                                final yr = req['year'];
-                                if (yr is int) {
-                                  year = yr;
-                                } else if (yr is num) {
-                                  year = yr.toInt();
-                                } else if (yr is String) {
-                                  year = int.tryParse(yr) ?? year;
-                                }
-                              } else {
-                                final period = _getPeriodText(req);
-                                final parts = period.split(' ');
-                                if (parts.isNotEmpty) monthName = parts[0];
-                                if (parts.length > 1) {
-                                  final yr = int.tryParse(parts[1]);
-                                  if (yr != null) year = yr;
-                                }
-                              }
-                              _sharePayslipPdf(
-                                url: payslipUrl,
-                                fileBaseName: 'Payslip_$monthName',
-                              );
-                            },
-                          ),
-                          const SizedBox(width: 4),
-                          IconButton(
-                            tooltip: 'Download Payslip',
-                            icon: const Icon(Icons.download_outlined, size: 20),
-                            color: AppColors.primary,
-                            onPressed: () {
-                              final requestId = req['_id']?.toString();
-                              if (requestId == null || requestId.isEmpty) {
-                                SnackBarUtils.showSnackBar(
-                                  context,
-                                  'Invalid payslip request id',
-                                  isError: true,
-                                );
-                                return;
-                              }
-                              String monthName = 'Month';
-                              int year = DateTime.now().year;
-                              if (req['month'] != null && req['year'] != null) {
-                                monthName = _getMonthName(req['month']);
-                                final yr = req['year'];
-                                if (yr is int) {
-                                  year = yr;
-                                } else if (yr is num) {
-                                  year = yr.toInt();
-                                } else if (yr is String) {
-                                  year = int.tryParse(yr) ?? year;
-                                }
-                              } else {
-                                final period = _getPeriodText(req);
-                                final parts = period.split(' ');
-                                if (parts.isNotEmpty) monthName = parts[0];
-                                if (parts.length > 1) {
-                                  final yr = int.tryParse(parts[1]);
-                                  if (yr != null) year = yr;
-                                }
-                              }
-                              _downloadPayslip(
-                                requestId,
-                                monthName,
-                                year,
-                                payslipUrl: payslipUrl,
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
     );
   }
 
@@ -6529,19 +7127,24 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     );
   }
 
-  Future<void> _pickDateRange() async {
-    final picked = await showDateRangePickerSameCalendar(
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
       context: context,
+      initialDate: _startDate ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime.now().add(const Duration(days: 365)),
-      initialStart: _startDate,
-      initialEnd: _endDate,
     );
     if (picked != null) {
       setState(() {
-        _startDate = picked.start;
-        _endDate = picked.end.add(
-          const Duration(hours: 23, minutes: 59, seconds: 59),
+        _startDate = DateTime(picked.year, picked.month, picked.day);
+        _endDate = DateTime(
+          picked.year,
+          picked.month,
+          picked.day,
+          23,
+          59,
+          59,
+          999,
         );
       });
       _fetchRequests();
@@ -6552,16 +7155,25 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Controls Column
-        if (_showFilters)
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              setState(() => _currentPage = 1);
+              await _fetchRequests(showLoader: false);
+            },
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search Reason, Month...',
+                // Controls Column
+                if (_showFilters)
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: 'Search Reason, Month...',
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
@@ -6573,7 +7185,10 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary, width: 2),
+                      borderSide: BorderSide(
+                        color: AppColors.primary,
+                        width: 2,
+                      ),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -6621,7 +7236,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                     ),
                     const SizedBox(width: 10),
                     InkWell(
-                      onTap: _pickDateRange,
+                      onTap: _pickDate,
                       child: Container(
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -6638,8 +7253,12 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              _startDate == null
+                              _startDate == null || _endDate == null
                                   ? 'Date'
+                                  : _isSameCalendarDay(_startDate!, _endDate!)
+                                  ? DateFormat(
+                                      'MMM dd, yyyy',
+                                    ).format(_startDate!)
                                   : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
                               style: TextStyle(color: Colors.black),
                             ),
@@ -6664,116 +7283,69 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
             ),
           ),
 
-        // List Body
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: () async {
-              setState(() => _currentPage = 1);
-              await _fetchRequests();
-            },
-            child: _isLoading
-                ? const Center(child: AppTabLoader())
-                : _requests.isEmpty
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: MediaQuery.of(context).size.height * 0.5,
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.description_outlined,
-                                size: 64,
-                                color: Colors.grey[400],
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No payslip requests found',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.black,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                // List Body — loader / empty / items scroll with the header.
+                if (_isLoading)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: const Center(child: AppTabLoader()),
                   )
-                : ListView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
+                else if (_requests.isEmpty)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.description_outlined,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No payslip requests found',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Padding(
                     padding: const EdgeInsets.all(16),
-                    itemCount: _requests.length,
-                    itemBuilder: (ctx, i) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12.0),
-                        child: FadeSlideIn(
-                          delay: Duration(milliseconds: (i * 45).clamp(0, 270)),
-                          child: _buildPayslipCard(_requests[i]),
-                        ),
-                      );
-                    },
+                    child: Column(
+                      children: [
+                        for (int i = 0; i < _requests.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12.0),
+                            child: FadeSlideIn(
+                              delay: Duration(
+                                milliseconds: (i * 45).clamp(0, 270),
+                              ),
+                              child: _buildPayslipCard(_requests[i]),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
+              ],
+            ),
           ),
         ),
 
-        // Pagination Controls
-        if (!_isLoading && _requests.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 8, 140, 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(top: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.chevron_left, size: 22),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _currentPage > 1
-                      ? () {
-                          setState(() => _currentPage--);
-                          _fetchRequests();
-                        }
-                      : null,
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '$_currentPage',
-                    style: TextStyle(
-                      color: AppColors.primary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right, size: 22),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: _currentPage < _totalPages
-                      ? () {
-                          setState(() => _currentPage++);
-                          _fetchRequests();
-                        }
-                      : null,
-                ),
-              ],
-            ),
+        // Pagination Controls — only when there's more than one page, so a
+        // single-page result doesn't show a stray lone "1" strip (pinned footer).
+        if (!_isLoading && _requests.isNotEmpty && _totalPages > 1)
+          _PaginationBar(
+            currentPage: _currentPage,
+            totalPages: _totalPages,
+            onPageSelected: (page) {
+              setState(() => _currentPage = page);
+              _fetchRequests();
+            },
           ),
       ],
     );

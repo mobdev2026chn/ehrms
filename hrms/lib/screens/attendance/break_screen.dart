@@ -4,8 +4,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'selfie_camera_screen.dart' show SelfieCameraScreen, useImagePickerFallback;
+import 'selfie_camera_screen.dart'
+    show SelfieCameraScreen, useImagePickerFallback;
 import '../../config/app_colors.dart';
+import '../../models/break_summary.dart';
 import '../../services/break_service.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
@@ -38,9 +40,10 @@ class _BreakScreenState extends State<BreakScreen> {
   String? _city;
   String? _pincode;
   Map<String, dynamic>? _activeBreak;
+  BreakSummary? _breakSummary;
 
   bool _isLoading = false;
-  bool _isBreakLoading = true;
+  bool _isBreakLoading = false;
   bool _isLocationLoading = true;
   bool _isDetectingFace = false;
   bool _showStartedBanner = false;
@@ -54,7 +57,10 @@ class _BreakScreenState extends State<BreakScreen> {
   void initState() {
     super.initState();
     _activeBreak = widget.initialBreak;
-    _refreshCurrentBreak();
+    // Render immediately, then refresh the break state and balance in the
+    // background (no full-screen blocking) so the screen opens instantly.
+    _refreshCurrentBreak(silent: true);
+    _fetchBreakSummary();
     _determinePosition();
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _maybeShowPermissionDialog(),
@@ -82,8 +88,8 @@ class _BreakScreenState extends State<BreakScreen> {
     await prefs.setBool(_kBreakPermissionDialogShown, true);
   }
 
-  Future<void> _refreshCurrentBreak() async {
-    setState(() => _isBreakLoading = true);
+  Future<void> _refreshCurrentBreak({bool silent = false}) async {
+    if (!silent) setState(() => _isBreakLoading = true);
     final result = await _breakService.getCurrentBreak();
     if (!mounted) return;
     setState(() {
@@ -95,6 +101,24 @@ class _BreakScreenState extends State<BreakScreen> {
             : (data is Map ? Map<String, dynamic>.from(data) : null);
       }
     });
+  }
+
+  /// Loads today's break balance (used / allowed / remaining) from the API.
+  /// Called on open and after every start/end so the balance is always current.
+  Future<void> _fetchBreakSummary() async {
+    try {
+      final result = await _breakService.getTodayBreakSummary();
+      if (!mounted) return;
+      if (result['success'] == true && result['data'] is Map) {
+        setState(() {
+          _breakSummary = BreakSummary.fromJson(
+            Map<String, dynamic>.from(result['data'] as Map),
+          );
+        });
+      }
+    } catch (_) {
+      // Non-fatal: the balance card is simply hidden when unavailable.
+    }
   }
 
   Future<void> _determinePosition() async {
@@ -136,7 +160,8 @@ class _BreakScreenState extends State<BreakScreen> {
       if (!mounted) return;
       setState(() {
         _position = position;
-        _address = resolved?.formattedAddress ??
+        _address =
+            resolved?.formattedAddress ??
             'Lat: ${position.latitude}, Lng: ${position.longitude}';
         _area = resolved?.area;
         _city = resolved?.city ?? resolved?.state;
@@ -168,7 +193,8 @@ class _BreakScreenState extends State<BreakScreen> {
       return;
     }
 
-    final locationStr = _address ??
+    final locationStr =
+        _address ??
         (_area != null
             ? '$_area, ${_city ?? ''}${_pincode != null ? ' $_pincode' : ''}'
             : null);
@@ -176,6 +202,7 @@ class _BreakScreenState extends State<BreakScreen> {
     final captureResult = await SelfieCameraScreen.captureSelfie(
       context,
       location: locationStr,
+      infoText: _remainingBreakText(),
       onRefreshLocation: () async {
         await _determinePosition();
         return _address;
@@ -227,10 +254,46 @@ class _BreakScreenState extends State<BreakScreen> {
     return breakDisplayStartFromApi(_activeBreak?['startTime']);
   }
 
+  /// Short balance label for the face-scan camera info pill, e.g.
+  /// "Break left: 45m 00s", "Break limit reached", or "Break: Unlimited".
+  /// Returns null until the summary loads so the pill stays hidden.
+  String? _remainingBreakText() {
+    final summary = _breakSummary;
+    if (summary == null) return null;
+    if (summary.isUnlimited) return 'Break: Unlimited';
+    final remainingSec =
+        summary.remainingSeconds ?? (summary.remainingMin ?? 0) * 60;
+    if (remainingSec <= 0) return 'Break limit reached';
+    return 'Break left: ${BreakSummary.formatDuration(remainingSec)}';
+  }
+
+  /// Whether starting a NEW break is blocked because the shift's break policy
+  /// explicitly disables breaks. Ending an already-running break is always allowed.
+  bool get _startBreakBlockedByPolicy =>
+      !_isOnBreak && (_breakSummary?.policyDisabled == true);
+
   Future<void> _submit() async {
     if (_isLoading) return;
+    // The shift may have breaks turned off — block starting a new one up front
+    // (the backend enforces this too), but never block ending an active break.
+    if (_startBreakBlockedByPolicy) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Breaks are not enabled for your shift.',
+        isError: true,
+      );
+      return;
+    }
+    // Capture the break instant at the moment the button is tapped, before the
+    // location/selfie/network work below, so loading latency does not push the
+    // saved break start/end time forward.
+    final String clickTime = DateTime.now().toUtc().toIso8601String();
     if (_imageFile == null) {
-      SnackBarUtils.showSnackBar(context, 'Please take a selfie first!', isError: true);
+      SnackBarUtils.showSnackBar(
+        context,
+        'Please take a selfie first!',
+        isError: true,
+      );
       return;
     }
     if (_position == null) {
@@ -260,6 +323,7 @@ class _BreakScreenState extends State<BreakScreen> {
             city: _city,
             pincode: _pincode,
             selfie: selfie,
+            clientTime: clickTime,
           )
         : await _breakService.startBreak(
             lat: _position!.latitude,
@@ -269,6 +333,7 @@ class _BreakScreenState extends State<BreakScreen> {
             city: _city,
             pincode: _pincode,
             selfie: selfie,
+            clientTime: clickTime,
           );
 
     if (!mounted) return;
@@ -288,6 +353,7 @@ class _BreakScreenState extends State<BreakScreen> {
         _imageFile = null;
         _showStartedBanner = true;
       });
+      _fetchBreakSummary();
       SnackBarUtils.showSnackBar(context, 'Break started successfully');
       return;
     }
@@ -302,6 +368,118 @@ class _BreakScreenState extends State<BreakScreen> {
       context,
       ErrorMessageUtils.sanitizeForDisplay(result['message']?.toString()),
       isError: true,
+    );
+  }
+
+  /// Shows today's break balance: used / allowed / remaining (second precision).
+  /// Hidden until the summary loads. When breaks are unlimited, shows only used.
+  Widget _buildBalanceCard() {
+    final summary = _breakSummary;
+    if (summary == null) return const SizedBox.shrink();
+
+    final unlimited = summary.isUnlimited;
+    final remainingSec = summary.remainingSeconds ?? 0;
+    final allowedSec = summary.allowedSeconds ?? (summary.allowedMinutes * 60);
+    final exhausted = !unlimited && remainingSec <= 0;
+    final accent = exhausted ? Colors.red.shade600 : AppColors.primary;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              accent.withValues(alpha: 0.12),
+              accent.withValues(alpha: 0.04),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: accent.withValues(alpha: 0.3)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.coffee_rounded, size: 18, color: accent),
+                const SizedBox(width: 8),
+                const Text(
+                  'Break Balance Today',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _balanceMetric(
+                  'Used',
+                  BreakSummary.formatDuration(summary.totalBreakSeconds),
+                  Colors.black87,
+                ),
+                if (!unlimited) ...[
+                  _balanceDivider(),
+                  _balanceMetric(
+                    'Allowed',
+                    BreakSummary.formatDuration(allowedSec),
+                    Colors.black87,
+                  ),
+                  _balanceDivider(),
+                  _balanceMetric(
+                    'Remaining',
+                    BreakSummary.formatDuration(remainingSec),
+                    accent,
+                  ),
+                ] else ...[
+                  _balanceDivider(),
+                  _balanceMetric('Limit', 'Unlimited', Colors.green.shade700),
+                ],
+              ],
+            ),
+            if (exhausted) ...[
+              const SizedBox(height: 10),
+              Text(
+                'You have used your full break time for today. Further break time may attract a fine.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.red.shade700,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _balanceMetric(String label, String value, Color valueColor) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: valueColor,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  Widget _balanceDivider() {
+    return Container(
+      width: 1,
+      height: 32,
+      color: Colors.grey.withValues(alpha: 0.25),
     );
   }
 
@@ -334,7 +512,10 @@ class _BreakScreenState extends State<BreakScreen> {
           : InkWell(
               onTap: _isDetectingFace ? null : _takeSelfie,
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 28,
+                  horizontal: 16,
+                ),
                 child: Column(
                   children: [
                     if (_isDetectingFace)
@@ -370,7 +551,10 @@ class _BreakScreenState extends State<BreakScreen> {
                 ? const SizedBox(
                     height: 18,
                     width: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: Text(
+                        'Location Fetching...',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
                   )
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -387,7 +571,9 @@ class _BreakScreenState extends State<BreakScreen> {
                       if (_city != null || _pincode != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
-                          child: Text('${_city ?? ''} ${_pincode ?? ''}'.trim()),
+                          child: Text(
+                            '${_city ?? ''} ${_pincode ?? ''}'.trim(),
+                          ),
                         ),
                     ],
                   ),
@@ -410,8 +596,11 @@ class _BreakScreenState extends State<BreakScreen> {
           ? const Center(child: AppTabLoader())
           : RefreshIndicator(
               onRefresh: () async {
-                await _refreshCurrentBreak();
-                await _determinePosition();
+                await Future.wait([
+                  _refreshCurrentBreak(silent: true),
+                  _fetchBreakSummary(),
+                  _determinePosition(),
+                ]);
               },
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -419,12 +608,15 @@ class _BreakScreenState extends State<BreakScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    _buildBalanceCard(),
                     if (_isOnBreak && startTime != null) ...[
                       BreakStatusCard(
                         startTime: startTime,
                         onEndBreak: _submit,
                         isBusy: _isLoading,
                         showSuccessBanner: _showStartedBanner,
+                        completedBreakSecondsToday:
+                            _breakSummary?.completedBreakSeconds ?? 0,
                       ),
                       const SizedBox(height: 12),
                       if (!_showStartedBanner)
@@ -442,12 +634,29 @@ class _BreakScreenState extends State<BreakScreen> {
                         ),
                       const SizedBox(height: 16),
                     ],
+                    if (_startBreakBlockedByPolicy) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange.shade200),
+                        ),
+                        child: const Text(
+                          'Breaks are not enabled for your shift.',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     _buildSelfieCard(),
                     const SizedBox(height: 20),
                     _buildLocationCard(),
                     const SizedBox(height: 24),
                     ElevatedButton(
-                      onPressed: _isLoading ? null : _submit,
+                      onPressed: (_isLoading || _startBreakBlockedByPolicy)
+                          ? null
+                          : _submit,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primary,
                         foregroundColor: Colors.white,

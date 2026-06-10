@@ -426,7 +426,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                       decoration: BoxDecoration(
                         color: _sendingOtp
                             ? AppColors.primary.withOpacity(0.1)
-                            : AppColors.primary.withOpacity(0.08),
+                            : _otpSent
+                            ? AppColors.primary.withOpacity(0.08)
+                            : AppColors.error.withOpacity(0.08),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Row(
@@ -440,10 +442,16 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                 color: AppColors.primary,
                               ),
                             )
-                          else
+                          else if (_otpSent)
                             Icon(
                               Icons.check_circle_rounded,
                               color: AppColors.primary,
+                              size: 22,
+                            )
+                          else
+                            Icon(
+                              Icons.error_outline_rounded,
+                              color: AppColors.error,
                               size: 22,
                             ),
                           const SizedBox(width: 10),
@@ -453,13 +461,16 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                   ? 'Sending OTP to customer email...'
                                   : _otpSent
                                   ? 'OTP sent to customer. Enter the code below.'
-                                  : 'Sending OTP...',
+                                  : 'We couldn\'t deliver the OTP to the customer email. Please try again or check email configuration.',
                               style: TextStyle(
                                 fontSize: 14,
-                                color: Colors.grey.shade800,
+                                color: _sendingOtp || _otpSent
+                                    ? Colors.grey.shade800
+                                    : AppColors.error,
                                 fontWeight: FontWeight.w500,
                               ),
                               overflow: TextOverflow.ellipsis,
+                              maxLines: 2,
                             ),
                           ),
                         ],

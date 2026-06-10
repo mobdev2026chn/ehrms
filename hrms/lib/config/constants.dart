@@ -10,7 +10,7 @@ class AppConstants {
 //  static const String webBaseUrl = 'https://my.ektahr.com/api';
 // =======
   // Dev via `adb reverse tcp:9001 tcp:9001` — device localhost tunnels to the PC's server.
- // static const String baseUrl = 'http://127.0.0.1:9001/api';
+ //static const String baseUrl = 'http://127.0.0.1:9001/api';
   static const String baseUrl ='https://ehrms.askeva.net/api';
   //static const String baseUrl ='https://app.ektahr.com/api';//
   // 'http://19B2.168.1.33:9001/api';
@@ -84,6 +84,10 @@ class AppConstants {
     return u.replaceAll(RegExp(r'/+$'), '');
   }
 
+
+
+
+
   /// Debug console: presence + live task tracking POSTs (flutter run / debug only).
   static const bool logTrackingsToConsole = true;
   // static const bool logTrackingsToConsole = false;
@@ -119,5 +123,29 @@ class AppConstants {
     }
     final p = path.startsWith('/') ? path : '/$path';
     return '$fileBaseUrl$p';
+  }
+
+  /// Base URL (no `/api`) for Interaction/chat uploads. These files live on the
+  /// same host the chat REST/Socket talks to ([interactionApiBaseUrl]), which is
+  /// the web host when [interactionUseWebHost] is true — NOT [baseUrl]. Using
+  /// [fileBaseUrl] here would point chat media at the geo backend host (e.g.
+  /// 127.0.0.1:9001 in dev), which doesn't hold those uploads and just times out.
+  static String get interactionFileBaseUrl {
+    final u = interactionApiBaseUrl;
+    if (u.endsWith('/api')) return u.substring(0, u.length - 4);
+    return u.replaceAll(RegExp(r'/+$'), '');
+  }
+
+  /// Resolve an Interaction/chat file path (image, document, voice, avatar) to a
+  /// full URL against the interaction host. Full URLs/data URIs pass through.
+  static String getInteractionFileUrl(String? path) {
+    if (path == null || path.isEmpty) return '';
+    if (path.startsWith('http://') ||
+        path.startsWith('https://') ||
+        path.startsWith('data:')) {
+      return path;
+    }
+    final p = path.startsWith('/') ? path : '/$path';
+    return '$interactionFileBaseUrl$p';
   }
 }

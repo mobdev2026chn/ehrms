@@ -1,6 +1,7 @@
 // hrms/lib/screens/profile/edit_profile_screen.dart
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -191,7 +192,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             CircleAvatar(
               radius: 48,
               backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-              backgroundImage: _hasPhoto ? NetworkImage(_photoUrl!) : null,
+              backgroundImage: _hasPhoto ? CachedNetworkImageProvider(_photoUrl!) : null,
               onBackgroundImageError: _hasPhoto
                   ? (_, __) {
                       if (mounted) setState(() => _photoError = true);

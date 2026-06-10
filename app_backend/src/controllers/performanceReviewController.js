@@ -194,6 +194,105 @@ const submitSelfReview = async (req, res) => {
 };
 
 /**
+ * Create a self-assessment (employee-initiated). Unlike submitSelfReview (which fills a
+ * review a manager/HR already created), this lets an employee start their own self review
+ * for a chosen cycle. Creates a PerformanceReview owned by the employee with the self
+ * review embedded and status 'self-review-submitted'.
+ */
+const createSelfAssessment = async (req, res) => {
+  try {
+    const user = req.user;
+    const staff = req.staff;
+    const staffDoc = staff?._id ? await Staff.findById(staff._id) : await Staff.findOne({ userId: user?._id });
+    if (!staffDoc) {
+      return res.status(404).json({
+        success: false,
+        error: { message: 'Staff record not found' },
+      });
+    }
+
+    const {
+      reviewCycle,
+      reviewType = 'Custom',
+      reviewPeriod,
+      overallRating,
+      strengths,
+      areasForImprovement,
+      achievements,
+      challenges,
+      goalsAchieved,
+      comments,
+    } = req.body;
+
+    if (!reviewCycle || !String(reviewCycle).trim()) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'reviewCycle is required' },
+      });
+    }
+    const startDate = reviewPeriod?.startDate;
+    const endDate = reviewPeriod?.endDate;
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'reviewPeriod.startDate and reviewPeriod.endDate are required' },
+      });
+    }
+
+    const businessId = staffDoc.businessId
+      || (mongoose.Types.ObjectId.isValid(user?.companyId) ? new mongoose.Types.ObjectId(user.companyId) : undefined);
+    if (!businessId) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'Unable to resolve business for this employee' },
+      });
+    }
+
+    // Avoid duplicate self-assessment for the same cycle.
+    const existing = await PerformanceReview.findOne({
+      employeeId: staffDoc._id,
+      reviewCycle: String(reviewCycle).trim(),
+    });
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        error: { message: 'A review already exists for this cycle. Open it from My Reviews to update your self review.' },
+      });
+    }
+
+    const review = await PerformanceReview.create({
+      employeeId: staffDoc._id,
+      reviewCycle: String(reviewCycle).trim(),
+      reviewPeriod: { startDate: new Date(startDate), endDate: new Date(endDate) },
+      reviewType,
+      status: 'self-review-submitted',
+      selfReview: {
+        overallRating: Number(overallRating) || 0,
+        strengths: Array.isArray(strengths) ? strengths : [],
+        areasForImprovement: Array.isArray(areasForImprovement) ? areasForImprovement : [],
+        achievements: Array.isArray(achievements) ? achievements : [],
+        challenges: Array.isArray(challenges) ? challenges : [],
+        goalsAchieved: Array.isArray(goalsAchieved) ? goalsAchieved : [],
+        comments: comments || '',
+        submittedAt: new Date(),
+      },
+      businessId,
+      createdBy: user?._id || staffDoc.userId,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: { review },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: { message: error.message || 'Failed to create self-assessment' },
+    });
+  }
+};
+
+/**
  * Get employee performance summary (for My Performance overview)
  */
 const getEmployeePerformanceSummary = async (req, res) => {
@@ -258,5 +357,6 @@ module.exports = {
   getPerformanceReviews,
   getPerformanceReviewById,
   submitSelfReview,
+  createSelfAssessment,
   getEmployeePerformanceSummary,
 };

@@ -309,10 +309,16 @@ const getLeaveTypes = async (req, res) => {
             rangeEnd = new Date(Date.UTC(targetYear, targetMonth + 1, 0, 23, 59, 59, 999));
         }
 
-        // 1. Fetch Approved leaves that overlap with the requested range
+        // 1. Fetch Approved + Pending leaves that overlap with the requested range
         const approvedLeaves = await Leave.find({
             employeeId: staffId,
             status: { $regex: /^approved$/i },
+            startDate: { $lte: rangeEnd },
+            endDate: { $gte: rangeStart }
+        });
+        const pendingLeaves = await Leave.find({
+            employeeId: staffId,
+            status: { $regex: /^pending$/i },
             startDate: { $lte: rangeEnd },
             endDate: { $gte: rangeStart }
         });
@@ -344,44 +350,42 @@ const getLeaveTypes = async (req, res) => {
         defaultTypes.forEach(t => {
             const key = normalizeToKey(t);
             if (!typeGroups.has(key)) {
-                typeGroups.set(key, { originalName: t, takenCount: 0 });
+                typeGroups.set(key, { originalName: t, takenCount: 0, pendingCount: 0 });
             }
         });
 
-        // 3. Process leaves and count days accurately within range (same key for "Casual" / "Casual Leave" etc.)
-        approvedLeaves.forEach(l => {
-            const key = normalizeToKey(l.leaveType);
-            if (!typeGroups.has(key)) {
-                typeGroups.set(key, { originalName: l.leaveType, takenCount: 0 });
-            }
-
-            const group = typeGroups.get(key);
-            const lStart = new Date(l.startDate);
-            const lEnd = new Date(l.endDate);
-
-            // Use local components to be timezone-independent during the loop
-            const current = new Date(Date.UTC(lStart.getFullYear(), lStart.getMonth(), lStart.getDate()));
-            const end = new Date(Date.UTC(lEnd.getFullYear(), lEnd.getMonth(), lEnd.getDate()));
-
-            while (current <= end) {
-                // If this day of the leave falls within our filter range, count it
-                if (current >= rangeStart && current <= rangeEnd) {
-                    const typeKey = normalizeToKey(l.leaveType);
-                    // Half Day stored as days=0.5; count 0.5 per day for display
-                    if (typeKey === 'halfday') {
-                        group.takenCount += 0.5;
-                    } else {
-                        group.takenCount += 1;
-                    }
+        // Count days of a leave that fall within the filter range into the given group field.
+        const accumulateDays = (leaves, field) => {
+            leaves.forEach(l => {
+                const key = normalizeToKey(l.leaveType);
+                if (!typeGroups.has(key)) {
+                    typeGroups.set(key, { originalName: l.leaveType, takenCount: 0, pendingCount: 0 });
                 }
-                current.setUTCDate(current.getUTCDate() + 1);
-            }
-        });
+                const group = typeGroups.get(key);
+                const lStart = new Date(l.startDate);
+                const lEnd = new Date(l.endDate);
+                // Use UTC components to be timezone-independent during the loop
+                const current = new Date(Date.UTC(lStart.getFullYear(), lStart.getMonth(), lStart.getDate()));
+                const end = new Date(Date.UTC(lEnd.getFullYear(), lEnd.getMonth(), lEnd.getDate()));
+                while (current <= end) {
+                    if (current >= rangeStart && current <= rangeEnd) {
+                        // Half Day stored as days=0.5; count 0.5 per day for display
+                        group[field] += key === 'halfday' ? 0.5 : 1;
+                    }
+                    current.setUTCDate(current.getUTCDate() + 1);
+                }
+            });
+        };
+
+        // 3. Process approved (taken) and pending leaves per type within range
+        accumulateDays(approvedLeaves, 'takenCount');
+        accumulateDays(pendingLeaves, 'pendingCount');
 
         // Convert Map to response format
         const leaveSummary = Array.from(typeGroups.values()).map(g => ({
             type: g.originalName,
-            takenCount: g.takenCount
+            takenCount: g.takenCount,
+            pendingCount: g.pendingCount
         }));
 
         res.json({
@@ -458,6 +462,28 @@ const getTotalLeavesFromAssignedTemplate = (staff) => {
 };
 
 /**
+ * Fallback pool when the staff's own template can't be resolved (unassigned,
+ * deleted/dangling leaveTemplateId, or empty leaveTypes): use the latest active
+ * leave template configured for the staff's business. Mirrors getTotalAllowedFromTemplate.
+ * Prevents employees from being silently blocked from applying leave just because
+ * their individual template assignment is missing while their company has a policy.
+ * @param {Object} staff - Staff document (needs businessId)
+ * @returns {Promise<number>} sum of leaveTypes[].days from business template (0 if none)
+ */
+const getTotalLeavesFromBusinessTemplate = async (staff) => {
+    const businessId = staff?.businessId;
+    if (!businessId) return 0;
+    const latest = await LeaveTemplate.findOne({ businessId, isActive: true })
+        .sort({ updatedAt: -1 })
+        .lean();
+    if (!latest?.leaveTypes || !Array.isArray(latest.leaveTypes)) return 0;
+    return latest.leaveTypes.reduce(
+        (sum, t) => sum + (Number(t.days) || Number(t.limit) || 0),
+        0
+    );
+};
+
+/**
  * Get available leave pool for balance validation.
  * - If current-month attendances have availableCasualLeaves for this staff: use latest document's value.
  * - If not: get total from template assigned to staff (sum of all leaveTypes[].days).
@@ -467,13 +493,31 @@ const getTotalLeavesFromAssignedTemplate = (staff) => {
  * @returns {Promise<number>} available balance (0 if none)
  */
 const getAvailableLeavePool = async (employeeId, staff) => {
-    const fromAttendance = await getAvailableCasualLeavesFromAttendances(employeeId);
-    if (typeof fromAttendance === 'number' && !Number.isNaN(fromAttendance)) {
-        return fromAttendance;
+    // Compute total allowed from the assigned template (with business-template fallback).
+    let totalAllowed = getTotalLeavesFromAssignedTemplate(staff);
+    if (!(totalAllowed > 0)) {
+        totalAllowed = await getTotalLeavesFromBusinessTemplate(staff);
     }
-    // No current-month availableCasualLeaves in attendances: use template assigned to staff.
-    const totalAllowed = getTotalLeavesFromAssignedTemplate(staff);
-    return Math.max(0, totalAllowed);
+    if (!(totalAllowed > 0)) return 0;
+
+    // Deduct approved leave days consumed in the current calendar year so the pool
+    // accurately reflects remaining balance (not just the raw template total).
+    const now = new Date();
+    const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
+    const yearEnd = new Date(Date.UTC(now.getUTCFullYear(), 11, 31, 23, 59, 59, 999));
+    const approvedAgg = await Leave.aggregate([
+        {
+            $match: {
+                employeeId,
+                status: { $regex: /^approved$/i },
+                startDate: { $lte: yearEnd },
+                endDate: { $gte: yearStart }
+            }
+        },
+        { $group: { _id: null, total: { $sum: '$days' } } }
+    ]);
+    const usedDays = Math.max(0, Number(approvedAgg?.[0]?.total || 0));
+    return Math.max(0, totalAllowed - usedDays);
 };
 
 const getLeaveTypesForApply = async (req, res) => {
@@ -713,11 +757,54 @@ const getLeaveBalance = async (req, res) => {
     try {
         const staffId = req.staff._id;
         const staff = await Staff.findById(staffId).populate('leaveTemplateId');
-        const availableCasualLeaves = await getAvailableLeavePool(staffId, staff);
         const totalAllowed = staff ? await getTotalAllowedFromTemplate(staff) : 0;
+
+        // Year-to-date approved leave days (current calendar year).
+        const now = new Date();
+        const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
+        const yearEnd = new Date(Date.UTC(now.getUTCFullYear(), 11, 31, 23, 59, 59, 999));
+
+        const approvedAgg = await Leave.aggregate([
+            {
+                $match: {
+                    employeeId: staffId,
+                    status: { $regex: /^approved$/i },
+                    startDate: { $lte: yearEnd },
+                    endDate: { $gte: yearStart }
+                }
+            },
+            { $group: { _id: null, total: { $sum: '$days' } } }
+        ]);
+        const usedDays = Math.max(0, Number(approvedAgg?.[0]?.total || 0));
+
+        // Pending leave days for this employee (any future/current pending requests).
+        const pendingAgg = await Leave.aggregate([
+            {
+                $match: {
+                    employeeId: staffId,
+                    status: { $regex: /^pending$/i }
+                }
+            },
+            { $group: { _id: null, total: { $sum: '$days' } } }
+        ]);
+        const pendingLeaveDays = Math.max(0, Number(pendingAgg?.[0]?.total || 0));
+
+        // Available = total allowed minus already-approved days consumed this year.
+        const availableCasualLeaves = Math.max(0, totalAllowed - usedDays);
+
+        console.log('[LeaveBalance]', {
+            staffId: staffId?.toString?.() || String(staffId || ''),
+            leaveTemplateId: staff?.leaveTemplateId?._id?.toString?.() || null,
+            year: now.getUTCFullYear(),
+            totalAllowed,
+            usedDays,
+            pendingLeaveDays,
+            availableCasualLeaves
+        });
+
         res.json({
             success: true,
-            data: { availableCasualLeaves, totalAllowed }
+            data: { availableCasualLeaves, totalAllowed, usedDays, pendingLeaveDays }
         });
     } catch (error) {
         console.error(error);

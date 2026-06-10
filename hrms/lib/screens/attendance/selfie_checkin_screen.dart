@@ -307,10 +307,15 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
       }
     } else if (state is AttendanceFailure) {
       if (!mounted) return;
+      // Capture before reset: only show the error toast when a punch action
+      // was in-flight. Background status-refresh failures are silent so they
+      // never bleed through onto an open camera screen.
+      final wasPunchInProgress = _isLoading;
       setState(() {
         _isStatusLoading = false;
         _isLoading = false;
       });
+      if (!wasPunchInProgress) return;
       final msg = state.message;
       if (msg.contains('Salary not configured')) {
         showDialog<void>(
@@ -479,68 +484,79 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   }
 
   Future<void> _takeSelfie() async {
-    var status = await Permission.camera.status;
-    if (!status.isGranted) {
-      status = await Permission.camera.request();
-      if (!mounted) return;
+    try {
+      var status = await Permission.camera.status;
       if (!status.isGranted) {
+        status = await Permission.camera.request();
+        if (!mounted) return;
+        if (!status.isGranted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Camera permission is needed to take a selfie. Please allow in app settings.',
+            isError: true,
+          );
+          return;
+        }
+      }
+
+      // In-app camera (live preview, location+refresh, no switch); fallback to system camera if init fails
+      if (!mounted) return;
+      final locationStr =
+          _address ??
+          (_area != null
+              ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
+              : null);
+      final captureResult = await SelfieCameraScreen.captureSelfie(
+        context,
+        location: locationStr,
+        onRefreshLocation: () async {
+          await _determinePosition();
+          if (!mounted) return null;
+          return _address ??
+              (_area != null
+                  ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
+                  : null);
+        },
+      );
+      File? file;
+      if (captureResult is File) {
+        file = captureResult;
+      } else if (identical(captureResult, useImagePickerFallback)) {
+        final picker = ImagePicker();
+        final pickedFile = await picker.pickImage(
+          source: ImageSource.camera,
+          preferredCameraDevice: CameraDevice.front,
+          imageQuality: 85,
+          maxWidth: 1024,
+        );
+        if (pickedFile != null && mounted) file = File(pickedFile.path);
+      }
+      if (file == null || !mounted) return;
+
+      setState(() => _isDetectingFace = true);
+      final result = await FaceDetectionHelper.detectFromFile(file);
+      if (!mounted) return;
+      setState(() => _isDetectingFace = false);
+
+      if (!result.valid) {
         SnackBarUtils.showSnackBar(
           context,
-          'Camera permission is needed to take a selfie. Please allow in app settings.',
+          result.message ?? 'Please take a selfie with exactly one face visible.',
           isError: true,
         );
         return;
       }
-    }
 
-    // In-app camera (live preview, location+refresh, no switch); fallback to system camera if init fails
-    final locationStr =
-        _address ??
-        (_area != null
-            ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
-            : null);
-    final captureResult = await SelfieCameraScreen.captureSelfie(
-      context,
-      location: locationStr,
-      onRefreshLocation: () async {
-        await _determinePosition();
-        if (!mounted) return null;
-        return _address ??
-            (_area != null
-                ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
-                : null);
-      },
-    );
-    File? file;
-    if (captureResult is File) {
-      file = captureResult;
-    } else if (identical(captureResult, useImagePickerFallback)) {
-      final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.front,
-        imageQuality: 85,
-        maxWidth: 1024,
-      );
-      if (pickedFile != null && mounted) file = File(pickedFile.path);
-    }
-    if (file == null || !mounted) return;
-
-    setState(() => _isDetectingFace = true);
-    final result = await FaceDetectionHelper.detectFromFile(file);
-    if (!mounted) return;
-    setState(() => _isDetectingFace = false);
-
-    if (!result.valid) {
+      setState(() => _imageFile = file);
+    } catch (e) {
+      if (!mounted) return;
+      if (_isDetectingFace) setState(() => _isDetectingFace = false);
       SnackBarUtils.showSnackBar(
         context,
-        result.message ?? 'Please take a selfie with exactly one face visible.',
+        'Could not open camera. Please try again.',
         isError: true,
       );
-      return;
     }
-
-    setState(() => _imageFile = file);
   }
 
   Future<void> _showWarningDialog(List<dynamic> warnings) async {
@@ -597,7 +613,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
       _showHalfDayNotAllowedSnackbar();
       return;
     }
-    final requireSelfie = _template?['requireSelfie'] ?? true;
+    final requireSelfie = _requireSelfieForCurrentAction;
     final bool requireGeolocation = _template?['requireGeolocation'] ?? true;
     print(
       '[SelfieCheckInScreen][TemplateFlags][submit] requireSelfie=$requireSelfie requireGeolocation=$requireGeolocation hasSelfie=${_imageFile != null} hasPosition=${_position != null}',
@@ -624,6 +640,11 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
 
       return;
     }
+
+    // Capture the punch instant at the moment the button is committed, BEFORE selfie
+    // compression / face verification / network. The server stores this as punchIn/
+    // punchOut so loading latency does not push the saved time forward.
+    final String clickTime = DateTime.now().toUtc().toIso8601String();
 
     setState(() => _isLoading = true);
 
@@ -690,6 +711,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           pincode: _pincode,
           selfie: selfiePayload,
           movementType: movementType,
+          clientTime: clickTime,
         ),
       );
     } else {
@@ -703,6 +725,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           pincode: _pincode,
           selfie: selfiePayload,
           movementType: movementType,
+          clientTime: clickTime,
         ),
       );
     }
@@ -711,6 +734,10 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
 
   bool get _isCheckInDisabled => !_isCheckedIn && !_checkInAllowed;
   bool get _isCheckOutDisabled => _isCheckedIn && !_checkOutAllowed;
+
+  /// Selfie is required only on punch-out, not on punch-in.
+  bool get _requireSelfieForCurrentAction =>
+      _isCheckedIn ? (_template?['requireSelfie'] ?? true) : false;
   bool get _isButtonDisabled =>
       _isCompleted ||
       _isLoading ||
@@ -872,7 +899,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // Full-width card with camera icon or selfie photo + retake
-                    if (widget.template?['requireSelfie'] ?? true) ...[
+                    if (_requireSelfieForCurrentAction) ...[
                       Card(
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),

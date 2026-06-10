@@ -30,7 +30,6 @@ import '../../services/interaction_service.dart';
 import '../../services/break_service.dart';
 import '../../services/performance_service.dart';
 import '../../models/break_summary.dart';
-import '../requests/my_requests_screen.dart';
 import '../salary/salary_structure_detail_screen.dart';
 import '../salary/request_payslip_screen.dart';
 import '../performance/my_performance_screen.dart';
@@ -39,6 +38,7 @@ import '../../utils/salary_fine_summary.dart';
 import '../../utils/attendance_display_util.dart';
 import '../../utils/absent_alert_helper.dart';
 import '../../utils/rotational_shift_util.dart';
+import '../attendance/shift_screen.dart';
 
 class HomeDashboardScreen extends StatefulWidget {
   final Function(int index, {int subTabIndex})? onNavigate;
@@ -136,6 +136,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   int _activeLoansCount = 0;
 
   bool _isCandidate = false;
+  bool _isAdminLike = false;
   bool _liveTrackingActive = false;
 
   List<dynamic> _todayAnnouncements = [];
@@ -383,6 +384,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _userName = data['name'] ?? 'User';
             _isCandidate =
                 (data['role'] ?? '').toString().toLowerCase() == 'candidate';
+            final role = (data['role'] ?? '').toString().toLowerCase().trim();
+            _isAdminLike = role == 'admin' ||
+                role == 'super admin' ||
+                role == 'superadmin' ||
+                role == 'hr' ||
+                role == 'senior hr';
             final cachedCompanyName = data['companyName'];
             if (cachedCompanyName is String &&
                 cachedCompanyName.trim().isNotEmpty) {
@@ -412,10 +419,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       );
       final profileFuture = _authService.getProfile();
       final businessFuture = _settingsService.getBusiness();
-      _fetchMonthAttendance(forceRefresh: true);
-      _fetchActiveLoans();
-      _fetchBreakSummary();
-      _fetchPerformanceSummary();
+      final monthFuture = _fetchMonthAttendance(forceRefresh: true);
+      final loansFuture = _fetchActiveLoans();
+      final breakFuture = _fetchBreakSummary();
+      final perfFuture = _fetchPerformanceSummary();
       final fcmFuture = FcmService.getStoredNotifications();
       if (kDebugMode) {
         debugPrint(
@@ -451,7 +458,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       }
 
       // Keep profile/settings enrichment non-blocking so dashboard content is not delayed.
-      Future<void>(() async {
+      final enrichFuture = Future<void>(() async {
         try {
           final profileSettled = await profileFuture.timeout(
             dashboardLoadTimeout,
@@ -491,6 +498,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           }
         }
       });
+      Future<void> salaryFuture = Future<void>.value();
       if (mounted) {
         if (result['success']) {
           final data = result['data'];
@@ -557,7 +565,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             );
           }
           _reconcileShiftKeyWithTodayTemplate();
-          _calculateSalaryFromModule();
+          salaryFuture = _calculateSalaryFromModule();
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
             final punchIn = _todayAttendance?['punchIn']?.toString().trim();
@@ -582,6 +590,27 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 .length,
           );
         }
+      }
+
+      // First/cold load: hold the loading state until every card's data has
+      // settled, so the dashboard reveals once — fully populated — instead of
+      // swapping values in piecemeal (loans → performance → salary → ...) over
+      // the following ~1-2s. Capped so a slow external salary call can't stall
+      // the first paint indefinitely. Warm refreshes (cached data present) skip
+      // this and update in place, keeping pull-to-refresh snappy.
+      if (!hasCachedData) {
+        const secondaryWaitTimeout = Duration(seconds: 8);
+        Future<void> guard(Future<void> f) => f
+            .timeout(secondaryWaitTimeout, onTimeout: () {})
+            .catchError((_) {});
+        await Future.wait<void>([
+          guard(monthFuture),
+          guard(loansFuture),
+          guard(breakFuture),
+          guard(perfFuture),
+          guard(enrichFuture),
+          guard(salaryFuture),
+        ]);
       }
     } catch (e) {
       if (kDebugMode) {
@@ -1438,9 +1467,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
             // 2. Today's Attendance label + card
             _buildFigmaLabel('TODAY\'S ATTENDANCE'),
-            const SizedBox(height: 10),
-            _buildFigmaAttendanceCard(),
+           // const SizedBox(height: 10),
+          //  _buildFigmaAttendanceCard(),
             const SizedBox(height: 20),
+               if (!_isCandidate) ...[
+              _buildMonthAttendanceCard(dashboardCompact: true),
+              const SizedBox(height: 16),
+            ],
+
+//const SizedBox(height: 10),
 
             // 3. Quick Actions (3 evenly-spaced, per Figma)
             Row(
@@ -1488,10 +1523,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             const SizedBox(height: 16),
 
             // 7. Attendance compact (punch card + today sub-card)
-            if (!_isCandidate) ...[
-              _buildMonthAttendanceCard(dashboardCompact: true),
-              const SizedBox(height: 16),
-            ],
+            // if (!_isCandidate) ...[
+            //   _buildMonthAttendanceCard(dashboardCompact: true),
+            //   const SizedBox(height: 16),
+            // ],
 
             // 8. Menu rows
             _buildFigmaMenuItems(),
@@ -1511,6 +1546,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       shadowColor: Colors.transparent,
     );
 
+    // Cold load (no cached data): show a single loader and reveal the fully
+    // populated dashboard once, instead of painting empty/placeholder cards that
+    // then swap to real values in staggered waves. `_isLoadingDashboard` is only
+    // ever true on a first load (see _loadData), so warm refreshes keep showing
+    // cached content and update in place.
+    final bodyChild = _isLoadingDashboard
+        ? const Center(child: AppTabLoader())
+        : content;
+
     if (widget.embeddedInDashboard) {
       return Scaffold(
         key: _dashboardScaffoldKey,
@@ -1520,7 +1564,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           currentIndex: widget.dashboardTabIndex ?? 0,
           onNavigateToIndex: widget.onNavigateToIndex,
         ),
-        body: content,
+        body: bodyChild,
       );
     }
     return Scaffold(
@@ -1528,7 +1572,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: appBar,
       drawer: const AppDrawer(),
-      body: content,
+      body: bodyChild,
     );
   }
 
@@ -1700,6 +1744,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         'Attendance History',
         () => onNavigate?.call(4, subTabIndex: 1),
       ),
+      // (
+      //   Icons.calendar_month_outlined,
+      //   'Shifts',
+      //   // Opens the Attendance Calendar (history view), which surfaces the
+      //   // "Today's working shift (this cycle)" card and per-day shift windows.
+      //   () => onNavigate?.call(4, subTabIndex: 1),
+      // ),
     ];
     return AppCard(
       padding: EdgeInsets.zero,
@@ -2028,31 +2079,38 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return '${parts.join(' · ')} today';
   }
 
-  /// Figma: dark card — Celebrations (left in 2-col row)
+  /// Figma: Celebrations card (left in 2-col row). Clean white card with only
+  /// a falling colour-paper (confetti) effect.
   Widget _buildCelebrationsCard() {
     final count = _todayCelebrations.length;
-    final hasAny = count > 0 || _upcomingCelebrations.isNotEmpty;
-    return AppCard(
-      color: AppColors.surfaceDark,
-      onTap: hasAny ? _openCelebrationsSheet : null,
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x1F000000),
-          blurRadius: 10,
-          offset: Offset(0, 3),
-        ),
-      ],
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Celebrations',
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
+    final hasAny =
+        count > 0 || (_isAdminLike && _upcomingCelebrations.isNotEmpty);
+
+    const Color avatarRing = Colors.white;
+    final Color avatarFill = AppColors.primary.withValues(alpha: 0.85);
+    final Color ctaColor = AppColors.primary;
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.celebration,
+                size: 20,
+                color: Color(0xFFFFC107), // gold
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                'Celebrations',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1F2937),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
           if (count == 0)
@@ -2060,7 +2118,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               'No celebrations today',
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.white.withValues(alpha: 0.45),
+                color: const Color(0xFF1F2937).withValues(alpha: 0.55),
               ),
             )
           else ...[
@@ -2076,10 +2134,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                         width: 28,
                         height: 28,
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.3),
+                          color: avatarFill,
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: AppColors.surfaceDark,
+                            color: avatarRing,
                             width: 2,
                           ),
                         ),
@@ -2107,7 +2165,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           color: AppColors.primary,
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: AppColors.surfaceDark,
+                            color: avatarRing,
                             width: 2,
                           ),
                         ),
@@ -2131,7 +2189,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               _todayCelebrationsLabel(),
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.white.withValues(alpha: 0.75),
+                color: const Color(0xFF1F2937).withValues(alpha: 0.75),
               ),
             ),
             const SizedBox(height: 4),
@@ -2141,19 +2199,46 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   'Tap to view',
                   style: TextStyle(
                     fontSize: 10,
-                    color: AppColors.primary.withValues(alpha: 0.9),
+                    color: ctaColor.withValues(alpha: 0.95),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 Icon(
                   Icons.chevron_right,
                   size: 14,
-                  color: AppColors.primary.withValues(alpha: 0.9),
+                  color: ctaColor.withValues(alpha: 0.95),
                 ),
               ],
             ),
           ],
         ],
+    );
+
+    return GestureDetector(
+      onTap: hasAny ? _openCelebrationsSheet : null,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: kSoftCardShadow,
+        ),
+        child: Stack(
+          children: [
+            // Falling colour-paper (confetti) — the only effect on the card.
+            // Slow motion + smaller particles.
+            const Positioned.fill(
+              child: ConfettiBurst(
+                duration: Duration(milliseconds: 6000),
+                minSize: 3,
+                maxSize: 7,
+                repeat: true,
+              ),
+            ),
+            Padding(padding: const EdgeInsets.all(16), child: content),
+          ],
+        ),
       ),
     );
   }
@@ -2225,14 +2310,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             _buildCelebrationTile(c, isToday: true),
                           const SizedBox(height: 8),
                         ],
-                        if (_upcomingCelebrations.isNotEmpty) ...[
+                        if (_isAdminLike &&
+                            _upcomingCelebrations.isNotEmpty) ...[
                           _buildCelebrationSectionLabel('Upcoming'),
                           const SizedBox(height: 8),
                           for (final c in _upcomingCelebrations)
                             _buildCelebrationTile(c, isToday: false),
                         ],
                         if (_todayCelebrations.isEmpty &&
-                            _upcomingCelebrations.isEmpty)
+                            (!_isAdminLike ||
+                                _upcomingCelebrations.isEmpty))
                           Padding(
                             padding: const EdgeInsets.symmetric(vertical: 24),
                             child: Center(
@@ -2383,55 +2470,84 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
-  /// Figma quick actions: Request Permission | Request Loan | Expense Claim | Apply Leave
+  /// Figma quick actions: Request Permission | Request Leave | Expense Claim
   List<Widget> _buildRequestQuickActionButtons() {
+    // Wrapped in Expanded so all four actions share the row width evenly and
+    // fit on a single screen — no horizontal scroll.
     return [
-      _buildQuickActionButton(
-        icon: Icons.badge_outlined,
-        label: 'Request\nPermission',
-        onTap: _openRequestPermissionSheet,
+      Expanded(
+        child: _buildQuickActionButton(
+          icon: Icons.access_time_rounded,
+          label: 'Shift\nTime',
+          onTap: _openShiftTimeSheet,
+        ),
       ),
-      _buildQuickActionButton(
-        icon: Icons.payments_outlined,
-        label: 'Request\nLoan',
-        onTap: _openRequestLoanSheet,
+      Expanded(
+        child: _buildQuickActionButton(
+          icon: Icons.badge_outlined,
+          label: 'Request\nPermission',
+          onTap: _openRequestPermissionSheet,
+        ),
       ),
-      _buildQuickActionButton(
-        icon: Icons.receipt_long_outlined,
-        label: 'Expense\nClaim',
-        onTap: _openClaimExpenseSheet,
+      Expanded(
+        child: _buildQuickActionButton(
+          icon: Icons.event_available_outlined,
+          label: 'Request\nLeave',
+          onTap: _openRequestLeaveSheet,
+        ),
+      ),
+      Expanded(
+        child: _buildQuickActionButton(
+          icon: Icons.receipt_long_outlined,
+          label: 'Expense\nClaim',
+          onTap: _openClaimExpenseSheet,
+        ),
       ),
     ];
   }
 
-  /// Opens the Request Permission form as a bottom sheet directly from the
-  /// dashboard, refreshing dashboard data on success.
+  /// Navigates to the Requests screen on the Permission tab.
   void _openRequestPermissionSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      builder: (ctx) => RequestPermissionDialog(onSuccess: _loadData),
-    );
+    widget.onNavigate?.call(1, subTabIndex: 1);
   }
 
-  /// Opens the Request Loan form as a bottom sheet directly from the dashboard.
-  void _openRequestLoanSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => RequestLoanDialog(onSuccess: _loadData),
-    );
+  /// Navigates to the Requests screen on the Leave tab.
+  void _openRequestLeaveSheet() {
+    widget.onNavigate?.call(1, subTabIndex: 0);
   }
 
-  /// Opens the Claim Expense form as a bottom sheet directly from the dashboard.
+  /// Navigates to the Requests screen on the Expense tab.
   void _openClaimExpenseSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      builder: (ctx) => ClaimExpenseDialog(onSuccess: _loadData),
+    widget.onNavigate?.call(1, subTabIndex: 2);
+  }
+
+  /// Opens the full-page Shift screen. Passes the raw shift-resolution inputs
+  /// so [ShiftScreen] can compute the effective shift for any calendar day with
+  /// the same rotational logic as the assigned-shift header (no re-fetch).
+  void _openShiftTimeSheet() {
+    final now = DateTime.now();
+    final appliedId = _todayAppliedShiftIdForHeader();
+    final appliedRes = appliedId != null
+        ? appliedShiftPastResolvedFromCompany(
+            companyDoc: _dashboardCompanyDocForAppliedShiftLookup(),
+            appliedShiftId: appliedId,
+          )
+        : null;
+    final appliedHeaderLine = appliedRes != null
+        ? _appliedShiftCompactLineFromResult(appliedRes)
+        : null;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ShiftScreen(
+          companyDoc: _profileCompanyDoc,
+          staffShiftKey: _profileStaffShiftName,
+          joiningDate: _profileJoiningDate,
+          todayTemplate: _todayAttendanceTemplateMap(),
+          appliedHeaderLine: appliedHeaderLine,
+          referenceDate: now,
+        ),
+      ),
     );
   }
 
@@ -2490,21 +2606,38 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         ],
       ],
     );
-    return Container(
+    // Vibrant multi-colour gradient for the primary card: a full warm-to-cool
+    // sweep. Plain surface for the secondary variants.
+    const cardGradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Color(0xFFFF4E50), // red
+        Color(0xFFF9A825), // amber
+        Color(0xFF43E97B), // green
+        Color(0xFF2563EB), // blue
+        Color(0xFF8E2DE2), // purple
+      ],
+    );
+
+    final card = Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isPrimaryCard ? AppColors.primary : colorScheme.surface,
+        color: isPrimaryCard ? null : colorScheme.surface,
+        gradient: isPrimaryCard ? cardGradient : null,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isPrimaryCard
-              ? AppColors.primary.withValues(alpha: 0.5)
+              ? Colors.white.withValues(alpha: 0.25)
               : colorScheme.outline.withValues(alpha: 0.4),
         ),
         boxShadow: [
           BoxShadow(
-            color: accentColor.withValues(alpha: isPrimaryCard ? 0.25 : 0.08),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
+            color: isPrimaryCard
+                ? const Color(0xFFD62976).withValues(alpha: 0.35)
+                : accentColor.withValues(alpha: 0.08),
+            blurRadius: isPrimaryCard ? 16 : 10,
+            offset: const Offset(0, 4),
           ),
           BoxShadow(
             color: colorScheme.shadow.withValues(alpha: 0.04),
@@ -2517,21 +2650,25 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ? Row(
               children: [
                 if (icon != null)
-                  iconGradientColors != null && iconGradientColors.length >= 2
-                      ? ShaderMask(
-                          blendMode: BlendMode.srcIn,
-                          shaderCallback: (bounds) => LinearGradient(
-                            colors: iconGradientColors,
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ).createShader(bounds),
-                          child: Icon(icon, size: 44, color: Colors.white),
-                        )
-                      : Icon(
-                          icon,
-                          size: 44,
-                          color: isPrimaryCard ? Colors.white : accentColor,
-                        )
+                  PopPulse(
+                    child:
+                        iconGradientColors != null &&
+                            iconGradientColors.length >= 2
+                        ? ShaderMask(
+                            blendMode: BlendMode.srcIn,
+                            shaderCallback: (bounds) => LinearGradient(
+                              colors: iconGradientColors,
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ).createShader(bounds),
+                            child: Icon(icon, size: 44, color: Colors.white),
+                          )
+                        : Icon(
+                            icon,
+                            size: 44,
+                            color: isPrimaryCard ? Colors.white : accentColor,
+                          ),
+                  )
                 else
                   Image.asset(
                     imageAsset!,
@@ -2545,6 +2682,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             )
           : content,
     );
+
+    // Gentle entrance animation when the card first mounts.
+    return FadeSlideIn(child: card);
   }
 
   // ignore: unused_element - kept for when summary cards layout is reverted
@@ -2707,19 +2847,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 88,
+      // No fixed width — the parent Expanded controls the column width so four
+      // actions fit on one row across small screens.
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 56,
-              height: 56,
+              width: 52,
+              height: 52,
               decoration: BoxDecoration(
                 color: AppColors.primary.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, color: AppColors.primary, size: 24),
+              child: Icon(icon, color: AppColors.primary, size: 22),
             ),
             const SizedBox(height: 8),
             Text(

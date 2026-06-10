@@ -143,6 +143,44 @@ class PerformanceService {
     throw Exception('Failed to submit review');
   }
 
+  /// Create an employee-initiated self assessment (own review for a chosen cycle).
+  /// POST /api/performance/reviews/self-assessment
+  Future<Map<String, dynamic>> createSelfAssessment({
+    required String reviewCycle,
+    required String reviewType,
+    required String startDate,
+    required String endDate,
+    required int overallRating,
+    required List<String> strengths,
+    required List<String> areasForImprovement,
+    required List<String> achievements,
+    required List<String> challenges,
+    required List<String> goalsAchieved,
+    required String comments,
+  }) async {
+    final token = await _authService.getToken();
+    if (token == null) throw Exception('Not authenticated');
+    _api.setAuthToken(token);
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/performance/reviews/self-assessment',
+      data: {
+        'reviewCycle': reviewCycle,
+        'reviewType': reviewType,
+        'reviewPeriod': {'startDate': startDate, 'endDate': endDate},
+        'overallRating': overallRating,
+        'strengths': strengths,
+        'areasForImprovement': areasForImprovement,
+        'achievements': achievements,
+        'challenges': challenges,
+        'goalsAchieved': goalsAchieved,
+        'comments': comments,
+      },
+    );
+    final data = response.data;
+    if (data != null && data['success'] == true) return data;
+    throw Exception('Failed to create self assessment');
+  }
+
   /// Get performance goals (my goals)
   Future<Map<String, dynamic>> getGoals({
     int page = 1,

@@ -39,7 +39,9 @@ class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
   // Gold accent — driven by the saved theme colour so the splash stays on-brand.
   Color _primaryColor = AppColors.primary;
-  bool _isLoadingTheme = true;
+  // Completes when the saved theme colour has been applied. _checkAuth awaits
+  // this instead of busy-polling every 100ms.
+  Future<void>? _themeLoad;
 
   // One-shot entrance (logo / headline / underline / tagline / dots).
   late final AnimationController _introController;
@@ -168,7 +170,7 @@ class _SplashScreenState extends State<SplashScreen>
       if (mounted) _introController.forward();
     });
 
-    _loadThemeColor();
+    _themeLoad = _loadThemeColor();
     _checkAuth();
   }
 
@@ -195,19 +197,22 @@ class _SplashScreenState extends State<SplashScreen>
         } else {
           _primaryColor = AppColors.primary;
         }
-        _isLoadingTheme = false;
       });
     }
   }
 
   Future<void> _checkAuth() async {
-    // Wait for theme to load
-    while (_isLoadingTheme) {
-      await Future.delayed(const Duration(milliseconds: 100));
+    // Wait for the saved theme colour to load (a single prefs read, typically
+    // a few ms) so the splash renders on-brand — no busy-polling.
+    try {
+      await (_themeLoad ?? Future<void>.value());
+    } catch (_) {
+      // Theme load failure must not block startup; default colour is already set.
     }
 
-    // Simulate a short loading time for branding or initialization
-    await Future.delayed(const Duration(seconds: 2));
+    // Short branding window so the entrance animation is visible. The auth/redirect
+    // work below also runs network calls, so real cold-start time is gated on those.
+    await Future.delayed(const Duration(milliseconds: 600));
 
     // If the API server (baseUrl) changed since last run, the stored token was
     // signed by a different backend and will 401 on every protected call. Clear

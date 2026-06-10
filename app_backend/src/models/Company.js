@@ -1,6 +1,43 @@
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
+/**
+ * Per-shift policy sub-schemas. Declared as sub-schemas with `default: undefined` (see usage
+ * below) so an absent policy stays absent — Mongoose does NOT materialize a phantom
+ * {enabled:false} object on legacy shifts that never configured it. This preserves the
+ * pre-existing "unconfigured" semantics (break-start not blocked; permission shows
+ * "not configured") while making the fields first-class: savable from this backend and
+ * readable via direct dot-access, not only via toObject().
+ */
+const breakPolicySchema = new Schema({
+  enabled: { type: Boolean, default: false },
+  allowedMinutes: { type: Number, default: 0 },
+  fineEnabled: { type: Boolean, default: false },
+  fineType: {
+    type: String,
+    enum: ['1xSalary', '2xSalary', '3xSalary', 'custom'],
+    default: '1xSalary'
+  },
+  customFinePerHour: { type: Number, default: 0 }
+}, { _id: false });
+
+const permissionPolicySchema = new Schema({
+  enabled: { type: Boolean, default: false },
+  monthlyQuotaMinutes: { type: Number, default: 0 },
+  applyTo: {
+    type: String,
+    enum: ['lateArrival', 'earlyExit', 'both'],
+    default: 'both'
+  }
+}, { _id: false });
+
+const overtimePolicySchema = new Schema({
+  // Tri-state: null = not configured (fall back to AttendanceTemplate.allowOvertime).
+  enabled: { type: Boolean, default: null },
+  // null = use company-level overtimePaySettings.defaultMultiplier.
+  multiplier: { type: Number, default: null }
+}, { _id: false });
+
 const CompanySchema = new Schema(
   {
     name: {
@@ -136,7 +173,25 @@ const CompanySchema = new Schema(
             firstHalfLogoutGraceMinutes: { type: Number, default: 30 },
             secondHalfLoginGraceMinutes: { type: Number, default: 0 },
             secondHalfStrictLogin: { type: Boolean, default: true }
-          }
+          },
+          /**
+           * Daily break allowance & overage fine (read in leaveAttendanceHelper.getShiftTimings,
+           * enforced in breakController). When disabled/allowedMinutes=0 a default 1h/day allowance
+           * applies with no fine. `default: undefined` keeps the policy absent on shifts that never
+           * configured it (legacy non-blocking behaviour preserved).
+           */
+          breakPolicy: { type: breakPolicySchema, default: undefined },
+          /**
+           * Monthly permission (late-arrival / early-exit) quota that waives applicable fines.
+           * Read in getShiftTimings; enforced in attendanceController / requestController.
+           */
+          permissionPolicy: { type: permissionPolicySchema, default: undefined },
+          /**
+           * Per-shift overtime control. `enabled` gates OT accrual for this shift (falls back to
+           * AttendanceTemplate.allowOvertime when absent); `multiplier` overrides the company-level
+           * overtimePaySettings.defaultMultiplier. OT buffer stays in otBufferMinutes above.
+           */
+          overtimePolicy: { type: overtimePolicySchema, default: undefined }
         }],
         automationRules: {
           autoMarkAbsent: { type: Boolean, default: false },
@@ -170,6 +225,11 @@ const CompanySchema = new Schema(
               default: 'lateArrival'
             }
           }]
+        },
+        /** Company-wide OT pay toggle and default multiplier (per-shift overtimePolicy.multiplier overrides). */
+        overtimePaySettings: {
+          enabled: { type: Boolean, default: false },
+          defaultMultiplier: { type: Number, default: 1 }
         }
       },
       business: {

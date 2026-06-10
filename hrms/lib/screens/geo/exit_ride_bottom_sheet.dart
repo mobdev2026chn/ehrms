@@ -1,6 +1,8 @@
 // Shared Exit Ride bottom sheet – exit type (Hold ride / Exit full ride) + reason required.
 // Used by LiveTrackingScreen and ArrivedScreen.
 import 'package:flutter/material.dart';
+import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 
 /// Exit type: 'hold' = staff can resume; 'exited' = only after admin reopens.
 const String kExitTypeHold = 'hold';
@@ -42,10 +44,10 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
   Future<void> _submit() async {
     if (_submitting) return;
     if (_selectedExitType == null || _selectedExitType!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select Hold ride or Exit full ride'),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Please select Hold ride or Exit full ride',
+        isError: true,
       );
       return;
     }
@@ -53,16 +55,20 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
     if (_selectedReason == 'Other') {
       reason = _reasonController.text.trim();
       if (reason.isEmpty) {
-        ScaffoldMessenger.of(
+        SnackBarUtils.showSnackBar(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Please enter a reason')));
+          'Please enter a reason',
+          isError: true,
+        );
         return;
       }
     } else if (_selectedReason != null && _selectedReason!.isNotEmpty) {
       reason = _selectedReason!;
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select or enter a reason')),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Please select or enter a reason',
+        isError: true,
       );
       return;
     }
@@ -89,9 +95,7 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
       if (message.startsWith('Exception: ')) {
         message = message.substring(11);
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      SnackBarUtils.showSnackBar(context, message, isError: true);
     }
   }
 
@@ -153,7 +157,7 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
                     child: Icon(
                       Icons.exit_to_app_rounded,
                       size: 40,
-                      color: Colors.orange.shade700,
+                      color: AppColors.primary,
                     ),
                   ),
                 ),
@@ -311,7 +315,7 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
                       child: ElevatedButton.icon(
                         onPressed: _submit,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange.shade600,
+                          backgroundColor:AppColors.primary,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(

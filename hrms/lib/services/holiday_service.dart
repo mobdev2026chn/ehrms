@@ -21,6 +21,7 @@ class HolidayService {
     int? month,
     String? search,
     bool useWebHrmsApi = false,
+    int limit = 100,
   }) async {
     try {
       if (!useWebHrmsApi) {
@@ -30,7 +31,7 @@ class HolidayService {
           ? await webHrmsApiDio().get<Map<String, dynamic>>(
               '/holidays/employee',
               queryParameters: {
-                'limit': 100,
+                'limit': limit,
                 if (year != null) 'year': year,
                 if (month != null) 'month': month,
                 if (search != null && search.isNotEmpty) 'search': search,
@@ -39,7 +40,7 @@ class HolidayService {
           : await _api.dio.get<Map<String, dynamic>>(
         '/holidays/employee',
         queryParameters: {
-          'limit': 100,
+          'limit': limit,
           if (year != null) 'year': year,
           if (month != null) 'month': month,
           if (search != null && search.isNotEmpty) 'search': search,
@@ -66,6 +67,42 @@ class HolidayService {
       if (e.response?.statusCode == 404) {
         return {'success': true, 'data': <Holiday>[]};
       }
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Fetches the recurring weekly-off configuration for the logged-in employee.
+  /// Returns { success, weeklyOffPattern: 'standard'|'oddEvenSaturday',
+  /// weeklyOffDays: List&lt;int&gt; } where days use JS getDay() numbering (0=Sun..6=Sat).
+  Future<Map<String, dynamic>> getWeekOffConfig() async {
+    try {
+      await _setToken();
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/holidays/weekoff-config',
+      );
+      final body = response.data;
+      if (body != null && body['success'] == true) {
+        final data = body['data'] as Map<String, dynamic>? ?? {};
+        final pattern = (data['weeklyOffPattern'] as String?) ?? 'standard';
+        final days = <int>{};
+        for (final h in (data['weeklyHolidays'] as List? ?? <dynamic>[])) {
+          final day = h is Map ? (h['day'] as num?)?.toInt() : null;
+          if (day != null) days.add(day);
+        }
+        return {
+          'success': true,
+          'weeklyOffPattern': pattern,
+          'weeklyOffDays': days.toList(),
+        };
+      }
+      return {
+        'success': false,
+        'message': ErrorMessageUtils.messageFromResponseData(body) ??
+            'Failed to load week-off config',
+      };
+    } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
       return {'success': false, 'message': _handleException(e)};

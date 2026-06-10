@@ -1,11 +1,13 @@
 // hrms/lib/widgets/profile_app_bar_actions.dart
 import 'dart:convert';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_colors.dart';
 import '../screens/notifications/notifications_screen.dart';
+import '../screens/profile/profile_screen.dart';
 
 /// Figma top-right AppBar cluster: a notification bell that opens the
 /// notifications screen and the signed-in user's avatar (photo or initial),
@@ -69,25 +71,33 @@ class _ProfileAppBarActionsState extends State<ProfileAppBarActions> {
             ),
           ),
           const SizedBox(width: 14),
-          Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: AppColors.primary, width: 2),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const ProfileScreen(dashboardTabIndex: 3),
+              ),
             ),
-            child: CircleAvatar(
-              radius: 17,
-              backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-              backgroundImage: hasPhoto ? NetworkImage(_avatarUrl!) : null,
-              child: hasPhoto
-                  ? null
-                  : Text(
-                      _initial,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.primary, width: 2),
+              ),
+              child: CircleAvatar(
+                radius: 17,
+                backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+                backgroundImage: hasPhoto ? CachedNetworkImageProvider(_avatarUrl!) : null,
+                child: hasPhoto
+                    ? null
+                    : Text(
+                        _initial,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
                       ),
-                    ),
+              ),
             ),
           ),
         ],

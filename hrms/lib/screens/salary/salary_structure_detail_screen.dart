@@ -8,6 +8,7 @@ import '../../widgets/profile_app_bar_actions.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../services/salary_service.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../dashboard/dashboard_screen.dart';
 
 class SalaryStructureDetailScreen extends StatefulWidget {
   const SalaryStructureDetailScreen({super.key});
@@ -61,6 +62,7 @@ class _SalaryStructureDetailScreenState
           _error = 'Could not load salary details.';
           _isLoading = false;
         });
+        _showErrorDialog(_error);
         return;
       }
       if (!bundle.salaryDetailsAccessEnabled) {
@@ -69,6 +71,7 @@ class _SalaryStructureDetailScreenState
               'Salary details are not enabled for your account. Please contact HR.';
           _isLoading = false;
         });
+        _showErrorDialog(_error);
         return;
       }
 
@@ -105,7 +108,42 @@ class _SalaryStructureDetailScreenState
         _error = e.toString();
         _isLoading = false;
       });
+      _showErrorDialog(_error);
     }
+  }
+
+  /// Surface a load failure in a modal dialog with OK (dismiss) and Retry
+  /// (re-run the fetch) actions. The inline error state remains as a fallback
+  /// behind the dialog.
+  void _showErrorDialog(String message) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unable to load salary'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const DashboardScreen()),
+                (route) => route.isFirst,
+              );
+            },
+            child: const Text('OK'),
+          ),
+          // FilledButton(
+          //   onPressed: () {
+          //     Navigator.of(dialogContext).pop();
+          //     _fetchAndCalculateSalary();
+          //   },
+          //   child: const Text('Retry'),
+          // ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -138,22 +176,9 @@ class _SalaryStructureDetailScreenState
         child: _isLoading
             ? const Center(key: ValueKey('salary-loading'), child: AppTabLoader())
             : _error.isNotEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Error: $_error',
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: _fetchAndCalculateSalary,
-                          child: const Text('Retry'),
-                        ),
-                      ],
-                    ),
-                  )
+                // Errors are surfaced via _showErrorDialog (OK → dashboard,
+                // Retry → refetch); keep the background clean behind the modal.
+                ? const SizedBox.shrink(key: ValueKey('salary-error'))
                 : _salaryStructure == null
                     ? const Center(
                         child: Text('No salary structure data available'))

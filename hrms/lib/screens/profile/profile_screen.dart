@@ -1,9 +1,8 @@
 // hrms/lib/screens/profile/profile_screen.dart
 import 'dart:convert';
-import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -16,10 +15,8 @@ import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
-import '../../utils/face_detection_helper.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../notifications/notifications_screen.dart';
-import 'edit_profile_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final int? dashboardTabIndex;
@@ -294,12 +291,6 @@ class _ProfileScreenState extends State<ProfileScreen>
         surfaceTintColor: Colors.transparent,
         actions: [
           IconButton(
-            icon: const Icon(Icons.edit_outlined, size: 24),
-            color: AppColors.primary,
-            tooltip: 'Edit profile',
-            onPressed: _showEditProfileDialog,
-          ),
-          IconButton(
             icon: const Icon(Icons.notifications_none_rounded, size: 26),
             color: AppColors.textPrimary,
             tooltip: 'Notifications',
@@ -370,13 +361,17 @@ class _ProfileScreenState extends State<ProfileScreen>
                     ),
                     const SizedBox(height: 24),
                   ],
+                  _buildPersonalSection(),
+                  const SizedBox(height: 24),
+                  _buildEmploymentInfoSection(),
+                  const SizedBox(height: 24),
                   _buildContactCard(),
+                  const SizedBox(height: 24),
+                  _buildAddressSection(),
                   const SizedBox(height: 24),
                   _buildIdQuickCards(),
                   const SizedBox(height: 24),
                   _buildDarkBankCard(),
-                  const SizedBox(height: 24),
-                  _buildPersonalSection(),
                   const SizedBox(height: 24),
                   _buildIdentityAndBankSection(),
                 ],
@@ -430,60 +425,41 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       child: Column(
         children: [
-          // Avatar with pencil edit button + white ring
+          // Avatar with white ring (view-only — tap to view full size)
           GestureDetector(
-            onTap: () => showPhoto
-                ? _showProfilePhotoOptions(photoUrl: photoUrlStr, hasPhoto: true)
-                : _changeProfilePhoto(),
-            onLongPress: _changeProfilePhoto,
-            child: Stack(
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 4),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.12),
-                        blurRadius: 14,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
+            onTap: showPhoto ? () => _showPhotoFullScreen(photoUrlStr) : null,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 4),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 14,
+                    offset: const Offset(0, 5),
                   ),
-                  child: CircleAvatar(
-                    radius: 48,
-                    backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-                    backgroundImage:
-                        showPhoto ? NetworkImage(photoUrlStr) : null,
-                    onBackgroundImageError: showPhoto
-                        ? (_, __) {
-                            if (mounted) {
-                              setState(() => _profileImageError = true);
-                            }
-                          }
-                        : null,
-                    child: showPhoto
-                        ? null
-                        : Text(initial,
-                            style: TextStyle(
-                                fontSize: 34,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.primary)),
-                  ),
-                ),
-                Positioned(
-                  bottom: 4,
-                  right: 4,
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2.5)),
-                    child: const Icon(Icons.edit, size: 14, color: Colors.white),
-                  ),
-                ),
-              ],
+                ],
+              ),
+              child: CircleAvatar(
+                radius: 48,
+                backgroundColor: AppColors.primary.withValues(alpha: 0.12),
+                backgroundImage:
+                    showPhoto ? CachedNetworkImageProvider(photoUrlStr) : null,
+                onBackgroundImageError: showPhoto
+                    ? (_, __) {
+                        if (mounted) {
+                          setState(() => _profileImageError = true);
+                        }
+                      }
+                    : null,
+                child: showPhoto
+                    ? null
+                    : Text(initial,
+                        style: TextStyle(
+                            fontSize: 34,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary)),
+              ),
             ),
           ),
           const SizedBox(height: 14),
@@ -538,6 +514,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   /// Figma "Joined" / "Location" stat cards row beneath the header.
   Widget _buildStatCardsRow() {
     final joiningDate = _staffData?['joiningDate'];
+    
     final branchName =
         _userData?['branchName']?.toString() ??
         (_staffData?['branchId'] is Map
@@ -623,7 +600,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   String _formatDateShort(dynamic date) {
     try {
       final d = date is DateTime ? date : DateTime.parse(date.toString());
-      return DateFormat('MMM yyyy').format(d);
+      return DateFormat('dd MMM yyyy').format(d);
     } catch (_) { return ''; }
   }
 
@@ -736,7 +713,10 @@ class _ProfileScreenState extends State<ProfileScreen>
               _displayCustomFieldValue(right),
             )
           else
-            const Expanded(child: SizedBox()),
+            // _buildInfoGrid already wraps each child in an Expanded — pass a
+            // bare SizedBox, not an Expanded, or two Expandeds compete for the
+            // same RenderObject's parent data.
+            const SizedBox(),
         ]),
       );
       if (i + 2 < fields.length) {
@@ -782,11 +762,26 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _buildPersonalSection() {
+    final name = _profile?['name']?.toString() ?? 'N/A';
+    final empId = _staffData?['employeeId']?.toString() ?? 'N/A';
+    final email = _profile?['email']?.toString() ?? 'N/A';
+    final phone = _profile?['phone']?.toString() ?? _staffData?['phone']?.toString() ?? 'N/A';
+
     return _buildCardSection(
       icon: Icons.person_outline,
       title: 'Personal Information',
       content: Column(
         children: [
+          _buildInfoGrid([
+            _buildInfoItem('Full Name', name),
+            _buildInfoItem('Employee ID', empId),
+          ]),
+          const SizedBox(height: 20),
+          _buildInfoGrid([
+            _buildInfoItem('Email', email),
+            _buildInfoItem('Phone', phone),
+          ]),
+          const SizedBox(height: 20),
           _buildInfoGrid([
             _buildInfoItem('Gender', _staffData?['gender'] ?? 'N/A'),
             _buildInfoItem('Date of Birth', _formatDate(_staffData?['dob'])),
@@ -799,38 +794,38 @@ class _ProfileScreenState extends State<ProfileScreen>
             ),
             _buildInfoItem('Blood Group', _staffData?['bloodGroup'] ?? 'N/A'),
           ]),
-          const SizedBox(height: 20),
-          if (_staffData?['address'] != null)
-            Builder(
-              builder: (_) {
-                final addr = _staffData?['address'] ?? {};
-                final parts = [
-                  addr['line1']?.toString().trim() ?? '',
-                  addr['city']?.toString().trim() ?? '',
-                  addr['state']?.toString().trim() ?? '',
-                  addr['postalCode']?.toString().trim() ?? '',
-                  addr['country']?.toString().trim() ?? '',
-                ].where((p) => p.isNotEmpty).toList();
-
-                if (parts.isEmpty) {
-                  // No address to show
-                  return const SizedBox.shrink();
-                }
-
-                final addressString = parts.join(', ');
-
-                return _buildMultilineInfoItem(
-                  'Current Address',
-                  addressString,
-                );
-              },
-            ),
           if (_fieldsForCategory('Personal Information').isNotEmpty) ...[
             const SizedBox(height: 20),
             _buildCustomFieldColumnForCard(
               _fieldsForCategory('Personal Information'),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmploymentInfoSection() {
+    final designation = _staffData?['designation']?.toString() ?? '';
+    final department = _staffData?['department']?.toString() ?? '';
+    final staffType = _staffData?['staffType']?.toString() ?? '';
+    final joiningDate = _staffData?['joiningDate'];
+    final joinedStr = joiningDate != null ? _formatDate(joiningDate) : 'N/A';
+
+    return _buildCardSection(
+      icon: Icons.work_outline,
+      title: 'Employment Information',
+      content: Column(
+        children: [
+          _buildInfoGrid([
+            _buildInfoItem('Designation', designation.isEmpty ? 'N/A' : designation),
+            _buildInfoItem('Department', department.isEmpty ? 'N/A' : department),
+          ]),
+          const SizedBox(height: 20),
+          _buildInfoGrid([
+            _buildInfoItem('Employee Type', staffType.isEmpty ? 'N/A' : staffType),
+            _buildInfoItem('Joining Date', joinedStr),
+          ]),
         ],
       ),
     );
@@ -851,12 +846,19 @@ class _ProfileScreenState extends State<ProfileScreen>
             children: [
               _buildInfoGrid([
                 _buildInfoItem('UAN Number', empIds['uan']),
-                _buildInfoItem('PAN Number', empIds['pan']),
+                _buildInfoItem('PF Number', empIds['pfNumber']),
               ]),
+             // const SizedBox(height: 20),
+             // _buildInfoGrid([
+               // _buildInfoItem('Aadhaar Number', empIds['aadhaar']),
+//_buildInfoItem('PF Number', empIds['pfNumber']),
+//]),
               const SizedBox(height: 20),
               _buildInfoGrid([
-                _buildInfoItem('Aadhaar Number', empIds['aadhaar']),
-                _buildInfoItem('PF Number', empIds['pfNumber']),
+                _buildInfoItem('ESI Number', empIds['esiNumber']),
+                // _buildInfoGrid wraps each child in an Expanded; pass a bare
+                // SizedBox so we don't end up with two competing Expandeds.
+                const SizedBox(),
               ]),
               if (employmentCustom.isNotEmpty) ...[
                 const SizedBox(height: 20),
@@ -885,26 +887,9 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  /// Figma "Personal Details" card: email / phone / address with an EDIT pill.
   Widget _buildContactCard() {
     final email = _profile?['email']?.toString() ?? '';
     final phone = _profile?['phone']?.toString() ?? '';
-    final addr = _staffData?['address'];
-    String address = '';
-    if (addr is Map) {
-      address = [
-        addr['line1'],
-        addr['city'],
-        addr['state'],
-        addr['postalCode'],
-        addr['country'],
-      ]
-          .map((e) => e?.toString().trim() ?? '')
-          .where((e) => e.isNotEmpty)
-          .join(', ');
-    } else if (addr != null) {
-      address = addr.toString();
-    }
 
     return Container(
       width: double.infinity,
@@ -923,54 +908,71 @@ class _ProfileScreenState extends State<ProfileScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                Icon(Icons.contact_phone_outlined, color: AppColors.primary, size: 22),
+                const SizedBox(width: 12),
                 Text(
-                  'Personal Details',
+                  'Contact Information',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
                     color: AppColors.textPrimary,
                   ),
                 ),
-                GestureDetector(
-                  onTap: _showEditProfileDialog,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'EDIT',
-                      style: TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
+          Divider(color: Colors.grey.shade100, height: 1),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
             child: Column(
               children: [
-                _buildContactRow(
-                    Icons.email_outlined, 'EMAIL ADDRESS', email),
+                _buildContactRow(Icons.email_outlined, 'EMAIL ADDRESS', email),
                 const SizedBox(height: 18),
                 _buildContactRow(Icons.phone_outlined, 'PHONE NUMBER', phone),
-                const SizedBox(height: 18),
-                _buildContactRow(Icons.home_outlined, 'ADDRESS', address),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddressSection() {
+    final addr = _staffData?['address'];
+    String line1 = '', city = '', state = '', postalCode = '', country = '';
+    if (addr is Map) {
+      line1 = addr['line1']?.toString().trim() ?? '';
+      city = addr['city']?.toString().trim() ?? '';
+      state = addr['state']?.toString().trim() ?? '';
+      postalCode = addr['postalCode']?.toString().trim() ?? '';
+      country = addr['country']?.toString().trim() ?? '';
+    }
+
+    return _buildCardSection(
+      icon: Icons.location_on_outlined,
+      title: 'Address',
+      content: Column(
+        children: [
+          if (line1.isNotEmpty)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildInfoItem('Address Line 1', line1),
+                const SizedBox(height: 20),
+              ],
+            ),
+          _buildInfoGrid([
+            _buildInfoItem('City', city.isEmpty ? 'N/A' : city),
+            _buildInfoItem('State', state.isEmpty ? 'N/A' : state),
+          ]),
+          const SizedBox(height: 20),
+          _buildInfoGrid([
+            _buildInfoItem('Postal Code', postalCode.isEmpty ? 'N/A' : postalCode),
+            _buildInfoItem('Country', country.isEmpty ? 'N/A' : country),
+          ]),
         ],
       ),
     );
@@ -1114,6 +1116,10 @@ class _ProfileScreenState extends State<ProfileScreen>
         _maskBankAccount(bank is Map ? bank['accountNumber']?.toString() : null);
     final ifsc =
         (bank is Map ? bank['ifscCode']?.toString() : null)?.trim();
+    final accountHolderName =
+        (bank is Map ? bank['accountHolderName']?.toString() : null)?.trim();
+    final upiId =
+        (bank is Map ? bank['upiId']?.toString() : null)?.trim();
 
     return Container(
       width: double.infinity,
@@ -1144,7 +1150,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'PRIMARY BANK',
+                      'BANK DETAILS',
                       style: TextStyle(
                         color: Colors.white60,
                         fontSize: 11,
@@ -1251,6 +1257,68 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
             ],
           ),
+          if ((accountHolderName != null && accountHolderName.isNotEmpty) ||
+              (upiId != null && upiId.isNotEmpty)) ...[
+            const SizedBox(height: 16),
+            Divider(color: Colors.white.withValues(alpha: 0.12), height: 1),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                if (accountHolderName != null && accountHolderName.isNotEmpty)
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'ACCOUNT HOLDER',
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          accountHolderName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (upiId != null && upiId.isNotEmpty)
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'UPI ID',
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          upiId,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -2006,131 +2074,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
   }
 
-  Future<void> _showEditProfileDialog() async {
-    final flattenedData = {..._profile ?? {}, ..._staffData ?? {}};
-    final saved = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => EditProfileScreen(userData: flattenedData),
-      ),
-    );
-    if (saved == true && mounted) {
-      _loadProfile();
-    }
-  }
-
-  void _showProfilePhotoOptions({
-    required String? photoUrl,
-    required bool hasPhoto,
-  }) {
-    showModalBottomSheet<void>(
-      context: context,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (hasPhoto && photoUrl != null)
-                ListTile(
-                  leading: const Icon(Icons.visibility_outlined),
-                  title: const Text('View Full Size'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showPhotoFullScreen(photoUrl);
-                  },
-                ),
-              ListTile(
-                leading: const Icon(Icons.camera_alt_outlined),
-                title: const Text('Update by Selfie'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _changeProfilePhoto();
-                },
-              ),
-              if (hasPhoto)
-                ListTile(
-                  leading: Icon(Icons.delete_outline, color: Colors.red[700]),
-                  title: Text('Delete Photo', style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.w600)),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await _deleteProfilePhoto();
-                  },
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _changeProfilePhoto() async {
-    try {
-      final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.front,
-        imageQuality: 80,
-        maxWidth: 800,
-      );
-
-      if (pickedFile == null) return;
-
-      final file = File(pickedFile.path);
-
-      // Verify face detection before upload
-      final faceResult = await FaceDetectionHelper.detectFromFile(file);
-      if (!faceResult.valid) {
-        if (mounted) {
-          SnackBarUtils.showSnackBar(
-            context,
-            faceResult.message ??
-                'Please take a selfie with exactly one face visible.',
-            isError: true,
-          );
-        }
-        return;
-      }
-
-      final result = await _authService.updateProfilePhoto(file);
-
-      if (!mounted) return;
-
-      if (result['success'] == true) {
-        final url = result['data']?['photoUrl']?.toString();
-        if (url != null && url.isNotEmpty) {
-          setState(() {
-            _userData ??= {};
-            _userData!['profile'] ??= {};
-            _userData!['profile']['avatar'] = url;
-            _userData!['profile']['photoUrl'] = url;
-            _cachedAvatarUrl = url;
-            _profileImageError = false;
-          });
-        }
-        SnackBarUtils.showSnackBar(
-          context,
-          'Image uploaded',
-          backgroundColor: AppColors.primary,
-        );
-        _loadProfile();
-      } else {
-        SnackBarUtils.showSnackBar(
-          context,
-          'Image uploaded failed',
-          isError: true,
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      SnackBarUtils.showSnackBar(
-        context,
-        'Image uploaded failed',
-        isError: true,
-      );
-    }
-  }
-
   void _showPhotoFullScreen(String photoUrl) {
     showDialog<void>(
       context: context,
@@ -2164,61 +2107,6 @@ class _ProfileScreenState extends State<ProfileScreen>
         ),
       ),
     );
-  }
-
-  Future<void> _deleteProfilePhoto() async {
-    try {
-      final result = await _authService.updateProfile({
-        'avatar': '',
-        'photoUrl': '',
-      });
-      if (!mounted) return;
-      if (result['success'] == true) {
-        setState(() {
-          _userData ??= {};
-          _userData!['profile'] ??= {};
-          _userData!['profile']['avatar'] = null;
-          _userData!['profile']['photoUrl'] = null;
-          _cachedAvatarUrl = null;
-          _profileImageError = false;
-        });
-        // Clear avatar from stored user so drawer and other screens show updated state
-        try {
-          final prefs = await SharedPreferences.getInstance();
-          final userStr = prefs.getString('user');
-          if (userStr != null) {
-            final user = jsonDecode(userStr) as Map<String, dynamic>;
-            user['avatar'] = null;
-            user['photoUrl'] = null;
-            user['profilePic'] = null;
-            if (user['profile'] is Map) {
-              (user['profile'] as Map)['avatar'] = null;
-              (user['profile'] as Map)['photoUrl'] = null;
-            }
-            await prefs.setString('user', jsonEncode(user));
-          }
-        } catch (_) {}
-        SnackBarUtils.showSnackBar(
-          context,
-          'Profile photo removed',
-          backgroundColor: AppColors.primary,
-        );
-        _loadProfile();
-      } else {
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(result['message']?.toString(), fallback: 'Failed to remove photo'),
-          isError: true,
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      SnackBarUtils.showSnackBar(
-        context,
-        'Failed to remove photo',
-        isError: true,
-      );
-    }
   }
 
   void _showEditEducationSheet() {
@@ -4236,7 +4124,7 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
           CircleAvatar(
             radius: 28,
             backgroundColor: AppColors.primary.withOpacity(0.15),
-            backgroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
+            backgroundImage: hasPhoto ? CachedNetworkImageProvider(photoUrl) : null,
             child: hasPhoto
                 ? null
                 : Text(

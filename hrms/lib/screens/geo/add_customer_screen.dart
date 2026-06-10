@@ -1,10 +1,14 @@
 import 'package:country_code_picker/country_code_picker.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
+import 'package:phone_numbers_parser/metadata.dart';
+import 'package:phone_numbers_parser/phone_numbers_parser.dart';
 import 'package:flutter/material.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/utils/error_message_utils.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -30,8 +34,51 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   /// E.164 digits only (no leading +), for API `countryCode`.
   String _dialDigits = '91';
 
+  /// ISO-3166 alpha-2 of the selected country, used to validate the national
+  /// mobile number against libphonenumber metadata.
+  IsoCode _iso = IsoCode.IN;
+
   static String _digitsOnlyDial(String dial) =>
       dial.replaceAll(RegExp(r'\D'), '');
+
+  /// Maps a country_code_picker ISO string (e.g. "IN") to an [IsoCode]; returns
+  /// null when the code is unknown so callers can keep the previous value.
+  static IsoCode? _isoFromCode(String? code) {
+    if (code == null) return null;
+    try {
+      return IsoCode.values.byName(code.toUpperCase());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Valid national mobile-number lengths for the selected country, taken from
+  /// libphonenumber metadata (e.g. India -> [10], UAE -> [9]).
+  List<int> get _mobileLengths =>
+      metadataLenghtsByIsoCode[_iso]?.mobile ?? const [];
+
+  /// Largest valid mobile length; caps how many digits the field accepts so a
+  /// user physically cannot enter more than the country allows. Falls back to
+  /// 15 (E.164 maximum) when metadata has no mobile length.
+  int get _maxMobileDigits {
+    final lengths = _mobileLengths;
+    if (lengths.isEmpty) return 15;
+    return lengths.reduce((a, b) => a > b ? a : b);
+  }
+
+  /// Smallest valid mobile length, used to keep the field hint accurate.
+  int get _minMobileDigits {
+    final lengths = _mobileLengths;
+    if (lengths.isEmpty) return 0;
+    return lengths.reduce((a, b) => a < b ? a : b);
+  }
+
+  String get _mobileHint {
+    if (_mobileLengths.isEmpty) return 'Mobile number';
+    return _minMobileDigits == _maxMobileDigits
+        ? '$_maxMobileDigits digits'
+        : '$_minMobileDigits–$_maxMobileDigits digits';
+  }
 
   @override
   void dispose() {
@@ -70,15 +117,34 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   String? _validateMobile(String? v) {
     if (v == null || v.trim().isEmpty) return 'Required';
     final digits = v.replaceAll(RegExp(r'\D'), '');
-    if (_dialDigits == '91') {
-      if (digits.length != 10) return 'Enter 10-digit mobile number';
-    } else if (digits.length < 6) {
-      return 'Enter a valid number';
+    if (digits.isEmpty) return 'Enter a valid mobile number';
+    try {
+      // Interpret the entry as a national number dialed inside the selected
+      // country, then validate length + prefix against libphonenumber metadata.
+      final phone = PhoneNumber.parse(digits, callerCountry: _iso);
+      if (!phone.isValid(type: PhoneNumberType.mobile)) {
+        return 'Enter a valid mobile number for the selected country';
+      }
+    } catch (_) {
+      // Metadata lookup failed for this locale — fall back to a loose E.164
+      // subscriber-number range so a valid number is never wrongly rejected.
+      if (digits.length < 4 || digits.length > 15) {
+        return 'Enter a valid mobile number';
+      }
     }
     return null;
   }
 
+  String? _validatePincode(String? v) {
+    final value = (v ?? '').trim();
+    if (value.isEmpty) return 'Required';
+    if (RegExp(r'\D').hasMatch(value)) return 'Digits only';
+    if (value.length != 6) return 'Enter a valid 6-digit PIN code';
+    return null;
+  }
+
   Future<void> _submit() async {
+    SnackBarUtils.dismiss(context);
     if (!_formKey.currentState!.validate()) return;
     setState(() => _submitting = true);
     try {
@@ -97,9 +163,14 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
 
       await CustomerService().createCustomer(customer);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Customer added successfully!')),
+      // Success: app-wide tooltip toast, then close after a short beat.
+      SnackBarUtils.showSnackBar(
+        context,
+        'Customer Added Successfully',
+        isError: false,
       );
+      await Future.delayed(const Duration(milliseconds: 1200));
+      if (!mounted) return;
       Navigator.of(context).pop(true);
     } on DioException catch (e) {
       if (mounted) {
@@ -109,18 +180,16 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
           parsed,
           fallback: ErrorMessageUtils.toUserFriendlyMessage(e),
         );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(displayMsg),
-            duration: const Duration(seconds: 5),
-          ),
-        );
+        // Duplicate phone / email and other API errors as a black error toast.
+        SnackBarUtils.showSnackBar(context, displayMsg, isError: true);
       }
     } catch (e) {
       if (mounted) {
         setState(() => _submitting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.toUserFriendlyMessage(e),
+          isError: true,
         );
       }
     }
@@ -185,12 +254,21 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                               if (dial != null) {
                                 _dialDigits = _digitsOnlyDial(dial);
                               }
+                              _iso = _isoFromCode(cc?.code) ?? _iso;
                             },
                             onChanged: (cc) {
                               final dial = cc.dialCode;
                               if (dial == null) return;
                               setState(() {
                                 _dialDigits = _digitsOnlyDial(dial);
+                                _iso = _isoFromCode(cc.code) ?? _iso;
+                                // Trim any digits beyond the new country's max
+                                // so the field never shows an over-length value.
+                                final max = _maxMobileDigits;
+                                if (_numberController.text.length > max) {
+                                  _numberController.text =
+                                      _numberController.text.substring(0, max);
+                                }
                               });
                             },
                             searchDecoration: InputDecoration(
@@ -272,11 +350,15 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                             decoration: _inputDecoration(
                               'Customer Number (mobile) *',
                               Icons.phone_rounded,
-                              hint: _dialDigits == '91'
-                                  ? '10 digits'
-                                  : null,
+                              hint: _mobileHint,
                             ),
                             keyboardType: TextInputType.phone,
+                            // Digits only + hard cap at the country's longest
+                            // valid mobile length (e.g. 10 for India).
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(_maxMobileDigits),
+                            ],
                             validator: _validateMobile,
                             textInputAction: TextInputAction.next,
                           ),
@@ -336,15 +418,15 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                               hint: 'Numbers only',
                             ),
                             keyboardType: TextInputType.number,
-                            validator: (v) {
-                              if (v == null || v.trim().isEmpty) {
-                                return 'Required';
-                              }
-                              if (RegExp(r'\D').hasMatch(v.trim())) {
-                                return 'Digits only';
-                              }
-                              return null;
-                            },
+                            maxLength: 6,
+                            buildCounter: (
+                              context, {
+                              required currentLength,
+                              required isFocused,
+                              maxLength,
+                            }) =>
+                                null,
+                            validator: _validatePincode,
                             textInputAction: TextInputAction.next,
                           ),
                         ),

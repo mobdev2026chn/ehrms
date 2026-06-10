@@ -15,6 +15,7 @@ import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:hrms/services/task_service.dart';
+import 'package:hrms/services/geo/route_snapping_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/task_movement_summary_util.dart';
@@ -297,9 +298,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         arrivalTime: task.arrivalTime,
       );
       if (travelledMaps.length >= 2) {
-        final travelledPts = travelledMaps
+        final rawTravelledPts = travelledMaps
             .map((e) => LatLng(e['lat']!, e['lng']!))
             .toList();
+        // Snap to roads so the line follows the actual path travelled, not
+        // corner-cutting straight segments between sparse GPS samples.
+        final snapped = await RouteSnappingService.buildExactRouteFromLatLng(
+          rawTravelledPts,
+        );
+        final travelledPts = snapped.length >= 2 ? snapped : rawTravelledPts;
+        if (!mounted) return;
         final pathStart = travelledPts.first;
         final pathEnd = travelledPts.last;
         final meters = Geolocator.distanceBetween(
@@ -340,7 +348,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               polylineId: const PolylineId('travelled'),
               points: travelledPts,
               color: AppColors.primary,
-              width: 4,
+              width: 5,
+              geodesic: true,
+              startCap: Cap.roundCap,
+              endCap: Cap.roundCap,
+              jointType: JointType.round,
             ),
           );
         });

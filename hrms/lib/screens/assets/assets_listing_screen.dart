@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
+import '../../widgets/profile_app_bar_actions.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -10,6 +11,7 @@ import '../../services/asset_service.dart';
 import '../../models/asset_model.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
+import '../../utils/swr_cache.dart';
 import 'asset_details_screen.dart';
 import 'assets_all_list_screen.dart';
 import 'software_licenses_screen.dart';
@@ -28,6 +30,8 @@ class AssetsListingScreen extends StatefulWidget {
 }
 
 class _AssetsListingScreenState extends State<AssetsListingScreen> {
+  static const String _cacheKey = 'my_assets';
+
   final AssetService _assetService = AssetService();
   List<Asset> _hardware = [];
   List<Asset> _software = [];
@@ -36,17 +40,32 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
   @override
   void initState() {
     super.initState();
-    _fetch();
+    // Stale-while-revalidate: show the last-loaded assets instantly (no loader).
+    // Skip the network while the cache is still fresh so moving tab-to-tab
+    // doesn't reload or replay animations ("double load").
+    final cached = SwrCache.get<List<Asset>>(_cacheKey);
+    if (cached != null) {
+      _software = cached.where((a) => a.isSoftware).toList();
+      _hardware = cached.where((a) => !a.isSoftware).toList();
+      _isLoading = false;
+    }
+    if (!SwrCache.isFresh(_cacheKey)) {
+      _fetch();
+    }
   }
 
   Future<void> _fetch() async {
-    setState(() => _isLoading = true);
+    // Don't blank already-visible (cached) data with a loader on revalidation.
+    if (_hardware.isEmpty && _software.isEmpty) {
+      setState(() => _isLoading = true);
+    }
     final result =
         await _assetService.getAssets(status: null, page: 1, limit: 1000);
     if (!mounted) return;
 
     if (result['success']) {
       final all = (result['data'] as List<Asset>?) ?? [];
+      SwrCache.set(_cacheKey, all);
       setState(() {
         _software = all.where((a) => a.isSoftware).toList();
         _hardware = all.where((a) => !a.isSoftware).toList();
@@ -138,82 +157,88 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
-      appBar: AppBar(
-        leading: const MenuIconButton(),
-        centerTitle: false,
-        title: const Text(
-          'My Assets',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-        ),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_none),
-            onPressed: () {},
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12, left: 4),
-            child: CircleAvatar(
-              radius: 18,
-              backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-              child: Icon(Icons.person, color: AppColors.primary, size: 20),
-            ),
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: AppTabLoader())
-          : RefreshIndicator(
-              onRefresh: _fetch,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                children: [
-                  _buildSummaryRow(),
-                  const SizedBox(height: 28),
-                  _buildSectionHeader('Hardware Assets',
-                      onViewAll: _hardware.isEmpty ? null : _openHardwareList),
-                  const SizedBox(height: 12),
-                  if (_hardware.isEmpty)
-                    _buildEmpty('No hardware assigned to you.',
-                        Icons.devices_other_outlined)
-                  else
-                    ...List.generate(
-                      _hardware.length > 3 ? 3 : _hardware.length,
-                      (i) => Padding(
-                        padding: const EdgeInsets.only(bottom: 14),
-                        child: FadeSlideIn(
-                          delay:
-                              Duration(milliseconds: (i * 60).clamp(0, 240)),
-                          child: _buildHardwareCard(_hardware[i]),
-                        ),
-                      ),
-                    ),
-                  const SizedBox(height: 16),
-                  _buildSectionHeader('Software Licenses',
-                      onViewAll: _openSoftware),
-                  const SizedBox(height: 12),
-                  if (_software.isEmpty)
-                    _buildEmpty('No software licenses yet.',
-                        Icons.apps_outlined)
-                  else
-                    SizedBox(
-                      height: 168,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _software.length,
-                        separatorBuilder: (_, __) =>
-                            const SizedBox(width: 14),
-                        itemBuilder: (context, i) => FadeSlideIn(
-                          delay:
-                              Duration(milliseconds: (i * 60).clamp(0, 240)),
-                          child: _buildSoftwareCard(_software[i]),
-                        ),
-                      ),
-                    ),
-                ],
+      body: RefreshIndicator(
+        onRefresh: _fetch,
+        // Full-screen scroll: the app bar is a sliver so the title scrolls
+        // away with the content instead of staying pinned at the top.
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverAppBar(
+              leading: const MenuIconButton(),
+              centerTitle: false,
+              floating: true,
+              snap: true,
+              backgroundColor: AppColors.background,
+              surfaceTintColor: Colors.transparent,
+              title: const Text(
+                'My Assets',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
               ),
+              elevation: 0,
+              actions: const [
+                ProfileAppBarActions(),
+              ],
             ),
+            if (_isLoading)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: AppTabLoader()),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    _buildSummaryRow(),
+                    const SizedBox(height: 28),
+                    _buildSectionHeader('Hardware Assets',
+                        onViewAll:
+                            _hardware.isEmpty ? null : _openHardwareList),
+                    const SizedBox(height: 12),
+                    if (_hardware.isEmpty)
+                      _buildEmpty('No hardware assigned to you.',
+                          Icons.devices_other_outlined)
+                    else
+                      ...List.generate(
+                        _hardware.length > 3 ? 3 : _hardware.length,
+                        (i) => Padding(
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: FadeSlideIn(
+                            delay: Duration(
+                                milliseconds: (i * 60).clamp(0, 240)),
+                            child: _buildHardwareCard(_hardware[i]),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    _buildSectionHeader('Software Licenses',
+                        onViewAll: _openSoftware),
+                    const SizedBox(height: 12),
+                    if (_software.isEmpty)
+                      _buildEmpty('No software licenses yet.',
+                          Icons.apps_outlined)
+                    else
+                      SizedBox(
+                        height: 168,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _software.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: 14),
+                          itemBuilder: (context, i) => FadeSlideIn(
+                            delay: Duration(
+                                milliseconds: (i * 60).clamp(0, 240)),
+                            child: _buildSoftwareCard(_software[i]),
+                          ),
+                        ),
+                      ),
+                  ]),
+                ),
+              ),
+          ],
+        ),
+      ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
   }

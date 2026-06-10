@@ -25,6 +25,35 @@ function buildAddressString(address, area, city, pincode) {
   return parts.length ? parts.join(', ') : '';
 }
 
+/** Client clocks may skew; all stored instants stay authoritative UTC on the server. */
+const MAX_PUNCH_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * Resolve the punch instant the client captured at button-click time. The app sends the
+ * tap timestamp so location/selfie/network latency does not push the saved time forward.
+ * Falls back to the server `now` when the client value is missing, unparseable, in the
+ * future beyond the allowed skew, or more than 48h in the past.
+ */
+function resolveClientPunchTime(clientInput, serverNow = new Date()) {
+  const nowMs = serverNow.getTime();
+  if (clientInput == null || clientInput === '') {
+    return serverNow;
+  }
+  const ms = new Date(clientInput).getTime();
+  if (!Number.isFinite(ms)) {
+    return serverNow;
+  }
+  if (ms > nowMs + MAX_PUNCH_CLOCK_SKEW_MS) {
+    console.warn('[Attendance] punch: client time in future; using server now');
+    return serverNow;
+  }
+  if (ms < nowMs - 48 * 60 * 60 * 1000) {
+    console.warn('[Attendance] punch: client time too far in past; using server now');
+    return serverNow;
+  }
+  return new Date(ms);
+}
+
 /** Insert attendance punch tracking into trackings collection. */
 async function insertAttendanceTracking(
     staffId,
@@ -199,6 +228,22 @@ function isShiftAssignedForStaff(company, staff, attendanceTemplateDoc) {
     });
 }
 
+// Coerce a value that semantically means "true" into a real boolean.
+// The attendance template can be persisted by a separate admin service that
+// stores these flags as strings ("true"/"1"/"yes"/"on") or numbers (1) rather
+// than a JS boolean. A strict `=== true` check silently turns those into
+// `false`, which blocks punch-in on holidays/weekly-off even though the admin
+// toggle is ON. Treat any recognised truthy representation as true.
+function coerceTrue(value) {
+    if (value === true) return true;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') {
+        const v = value.trim().toLowerCase();
+        return v === 'true' || v === '1' || v === 'yes' || v === 'on';
+    }
+    return false;
+}
+
 function normalizeTemplate(templateDoc) {
     if (!templateDoc) return {};
     let t = templateDoc.toObject ? templateDoc.toObject() : templateDoc;
@@ -210,8 +255,8 @@ function normalizeTemplate(templateDoc) {
         ...t,
         requireSelfie: t.requireSelfie !== false,
         requireGeolocation: t.requireGeolocation !== false,
-        allowAttendanceOnHolidays: t.allowAttendanceOnHolidays === true,
-        allowAttendanceOnWeeklyOff: t.allowAttendanceOnWeeklyOff === true,
+        allowAttendanceOnHolidays: coerceTrue(t.allowAttendanceOnHolidays),
+        allowAttendanceOnWeeklyOff: coerceTrue(t.allowAttendanceOnWeeklyOff),
         // Respect template settings - default to true if not specified
         allowLateEntry: t.allowLateEntry !== false && t.lateEntryAllowed !== false,
         allowEarlyExit: t.allowEarlyExit !== false && t.earlyExitAllowed !== false,
@@ -405,7 +450,7 @@ function calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePer
 // Helper function to calculate fine for early exit.
 // Uses formula: Fine = (Daily Salary ÷ Shift Hours) × (Early Minutes ÷ 60). Applies fineRules when present.
 // When businessTimezone is provided, shift end is built in that TZ (consistent with late calculation).
-function calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, dailySalary, shiftHours, fineConfig = null, businessTimezone = null, dailyGrossForRules = null) {
+function calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, dailySalary, shiftHours, fineConfig = null, businessTimezone = null, dailyGrossForRules = null, shiftStartTime = null) {
     let shiftEnd;
     if (businessTimezone) {
         const { getShiftBoundaryAsUTCDate } = require('../utils/leaveAttendanceHelper');
@@ -414,6 +459,18 @@ function calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, dailySal
         const [endHours, endMins] = shiftEndTime.split(':').map(Number);
         shiftEnd = new Date(attendanceDate);
         shiftEnd.setHours(endHours, endMins, 0, 0);
+    }
+    // Overnight shift (PM start / AM end, e.g. 21:00->06:00): the AM end-time is
+    // built on the same calendar day as the PM start, landing *before* the shift
+    // begins. Roll it forward one day so early-checkout minutes are correct.
+    if (shiftStartTime) {
+        const [sH, sM] = String(shiftStartTime).split(':').map(Number);
+        const [eH, eM] = String(shiftEndTime).split(':').map(Number);
+        const startMin = (sH || 0) * 60 + (sM || 0);
+        const endMin = (eH || 0) * 60 + (eM || 0);
+        if (endMin <= startMin) {
+            shiftEnd = new Date(shiftEnd.getTime() + 24 * 60 * 60 * 1000);
+        }
     }
     console.log('[Fine] Early check: punchOutTime=', punchOutTime?.toISOString?.(), 'shiftEnd(UTC)=', shiftEnd?.toISOString?.());
     if (punchOutTime >= shiftEnd) return { earlyMinutes: 0, fineAmount: 0 };
@@ -572,6 +629,10 @@ async function applyPermissionQuotaAdjustment({
         permissionEarlyMinutes: 0
     };
     const policy = shiftPermissionPolicy || {};
+    // A policy object present on the shift means Permission is configured. When it is configured
+    // but explicitly disabled, the feature still works but fines are NOT waived (deducted in full).
+    const isConfigured = !!(shiftPermissionPolicy && typeof shiftPermissionPolicy === 'object');
+    const policyExplicitlyDisabled = isConfigured && shiftPermissionPolicy.enabled === false;
     let enabled = policy.enabled === true;
     let monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
     if (monthlyQuotaMinutes <= 0) {
@@ -626,10 +687,11 @@ async function applyPermissionQuotaAdjustment({
         0,
         approvedLateOnly + approvedEarlyOnly + approvedBothShared
     );
-    if ((!enabled || monthlyQuotaMinutes <= 0) && approvedMinutesForDay > 0) {
-        // Fallback path for records where policy settings are missing/zero but
-        // approved permission exists for the day. Keeps permission usage fields
-        // consistent with approved request minutes.
+    if ((!enabled || monthlyQuotaMinutes <= 0) && approvedMinutesForDay > 0 && !policyExplicitlyDisabled) {
+        // Fallback path for records where policy settings are missing/zero (legacy/unconfigured)
+        // but approved permission exists for the day. Keeps permission usage fields consistent
+        // with approved request minutes. Skipped when the shift explicitly disabled Permission —
+        // there the fine must be deducted in full (no waiver).
         enabled = true;
         monthlyQuotaMinutes = Math.max(monthlyQuotaMinutes, approvedMinutesForDay);
         console.log('[Permission][Fallback]', {
@@ -960,7 +1022,7 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 const { calculateHalfDayEarlyFine } = require('../utils/leaveAttendanceHelper');
                 earlyFine = calculateHalfDayEarlyFine(punchOutTime, attendanceDate, session, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross);
             } else {
-                earlyFine = calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, effectiveDailyNet, shiftHours, fineConfig, businessTimezone, effectiveDailyGross);
+                earlyFine = calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, effectiveDailyNet, shiftHours, fineConfig, businessTimezone, effectiveDailyGross, shiftStartTime);
             }
         }
 
@@ -1331,10 +1393,14 @@ async function applyOvertimeAmountForAttendance(
         effectiveDailySalary = effectiveDailySalary / 2;
     }
 
+    // Per-shift overtimePolicy.multiplier wins; else company default; else 1x.
+    const shiftOtMult = Number(shiftTiming?.overtimePolicy?.multiplier);
     const mult =
-        otSettings && Number(otSettings.defaultMultiplier) > 0
-            ? Number(otSettings.defaultMultiplier)
-            : 1;
+        Number.isFinite(shiftOtMult) && shiftOtMult > 0
+            ? shiftOtMult
+            : (otSettings && Number(otSettings.defaultMultiplier) > 0
+                ? Number(otSettings.defaultMultiplier)
+                : 1);
 
     console.log(logTag, 'payContext | shiftType=%s shiftHours=%s | effectiveDailySalary=%s | halfDay=%s | calcType=%s | OTminutesPaid=%s (full stored overtime) | defaultMultiplier=%s',
         shiftTypeLower,
@@ -1374,7 +1440,9 @@ const checkIn = async (req, res) => {
         earlyMinutes: bodyEarlyMinutes,
         fineAmount: bodyFineAmount,
         businessId: bodyBusinessId,
-        source: bodySource
+        source: bodySource,
+        punchInTime: bodyPunchInTime,
+        clientTime: bodyClientTime
     } = req.body;
 
     let selfieInput = selfie;
@@ -1405,6 +1473,9 @@ const checkIn = async (req, res) => {
 
     // Date Logic: Store as Date object set to midnight (start of day) - UTC safe approach
     const now = new Date();
+    // Punch instant captured by the app at button-click time (falls back to server now).
+    // The day-bucket below intentionally stays on server `now` to avoid cross-day drift.
+    const punchInAt = resolveClientPunchTime(bodyPunchInTime ?? bodyClientTime, now);
     // Create Date object for start/end of day in UTC to ensure MongoDB ISODate format
     const year = now.getUTCFullYear();
     const month = now.getUTCMonth();
@@ -1693,7 +1764,7 @@ const checkIn = async (req, res) => {
                     },
                     { attendanceId: existing._id }
                 );
-            existing.punchIn = now;
+            existing.punchIn = punchInAt;
 
             // Update location using Mongoose set() method for nested paths to avoid validation issues
             // This ensures punchOut is not touched if it doesn't exist
@@ -1815,7 +1886,7 @@ const checkIn = async (req, res) => {
                     performedByName: staff.name || undefined,
                     performedByEmail: staff.email || undefined,
                     selfieUrl: undefined,
-                    punchInDateTime: now,
+                    punchInDateTime: punchInAt,
                     punchInAddress: buildAddressString(address, area, city, pincode) || undefined,
                     timestamp: now
                 }),
@@ -1921,7 +1992,7 @@ const checkIn = async (req, res) => {
             businessId: businessIdToStore,
             ...(appliedShiftId && { appliedShiftId }),
             date: startOfDay,
-            punchIn: now,
+            punchIn: punchInAt,
             status: (isHoliday || isWeeklyOff) ? 'Present' : 'Pending',
             isPaidLeave: false,  // check-in attendance: default false
             location: locationData,
@@ -2024,7 +2095,7 @@ const checkIn = async (req, res) => {
                 performedByName: staff.name || undefined,
                 performedByEmail: staff.email || undefined,
                 selfieUrl: undefined,
-                punchInDateTime: now,
+                punchInDateTime: punchInAt,
                 punchInAddress: buildAddressString(address, area, city, pincode) || undefined,
                 timestamp: now
             }),
@@ -2055,7 +2126,9 @@ const checkOut = async (req, res) => {
         lateMinutes: bodyLateMinutes,
         earlyMinutes: bodyEarlyMinutes,
         fineAmount: bodyFineAmount,
-        source: bodySource
+        source: bodySource,
+        punchOutTime: bodyPunchOutTime,
+        clientTime: bodyClientTime
     } = req.body;
 
     let selfieInput = selfie;
@@ -2073,6 +2146,8 @@ const checkOut = async (req, res) => {
     }
     const staffId = req.staff._id;
     const now = new Date();
+    // Punch-out instant captured by the app at button-click time (falls back to server now).
+    const punchOutAt = resolveClientPunchTime(bodyPunchOutTime ?? bodyClientTime, now);
     console.log('[Attendance checkOut] request', {
         staffId: staffId?.toString(),
         date: now.toISOString?.()?.slice(0, 10),
@@ -2411,7 +2486,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     }
 
     // Update Fields
-    attendance.punchOut = now;
+    attendance.punchOut = punchOutAt;
     attendance.punchOutIpAddress = req.ip || req.connection.remoteAddress;
     if (appliedShiftId) attendance.appliedShiftId = appliedShiftId;
     if (source) attendance.source = source;
@@ -2423,16 +2498,22 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         };
     }
 
-    // Calculate Work Hours: store duration in minutes in attendances collection
+    // Calculate Work Hours: store duration in minutes in attendances collection.
+    // Uses the click-time punch-out instant so loading latency does not inflate work hours.
     if (attendance.punchIn) {
-        const durationMs = now - new Date(attendance.punchIn);
+        const durationMs = punchOutAt - new Date(attendance.punchIn);
         const minutes = Math.round(durationMs / (1000 * 60));
         attendance.workHours = minutes; // store in minutes
 
         // Overtime (minutes): only for overtimeEligible staff when template allows OT.
         // Standard/rotational: gross past shift end minus otBufferMinutes. Open shift: full extra vs required daily minutes; bufferTime tracks threshold only.
         const otEligible = staff.overtimeEligible === true;
-        if (otEligible && template.allowOvertime !== false) {
+        // Per-shift overtimePolicy.enabled (tri-state) overrides the template flag when configured.
+        const shiftOtEnabled = shiftTiming?.overtimePolicy?.enabled;
+        const otAllowedByPolicy = shiftOtEnabled == null
+            ? template.allowOvertime !== false
+            : shiftOtEnabled === true;
+        if (otEligible && otAllowedByPolicy) {
             const stType = (shiftTiming?.shiftType || 'standard').toString().toLowerCase();
             const hasEndTime = shiftTiming?.endTime && String(shiftTiming.endTime).trim().length > 0;
             if (stType === 'open' && isOpenShiftCheckout) {
@@ -2447,9 +2528,9 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
                 );
                 attendance.overtime = overtimeMinutes;
                 attendance.bufferTime = bufferTimeUsed;
-            } else if (stType !== 'open' && hasEndTime && now > shiftEnd) {
+            } else if (stType !== 'open' && hasEndTime && punchOutAt > shiftEnd) {
                 const bufferMin = Math.max(0, Math.round(Number(shiftTiming?.otBufferMinutes) || 0));
-                const grossMin = Math.floor((now.getTime() - shiftEnd.getTime()) / (60 * 1000));
+                const grossMin = Math.floor((punchOutAt.getTime() - shiftEnd.getTime()) / (60 * 1000));
                 attendance.overtime = Math.max(0, grossMin - bufferMin);
                 attendance.bufferTime = 0;
                 console.log('[OT Minutes][fixed shift] formula: grossPastEnd = floor((punchOut−shiftEnd)/1min) = %s | overtime = max(0, gross − otBuffer) = max(0, %s − %s) = %s',
@@ -2458,13 +2539,13 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
                 attendance.overtime = 0;
                 attendance.bufferTime = 0;
                 console.log('[OT Minutes] overtime=0 | shiftType=%s openCheckout=%s hasEndTime=%s punchAfterShiftEnd=%s',
-                    stType, stType === 'open' && isOpenShiftCheckout, !!hasEndTime, now > shiftEnd);
+                    stType, stType === 'open' && isOpenShiftCheckout, !!hasEndTime, punchOutAt > shiftEnd);
             }
         } else {
             attendance.overtime = 0;
             attendance.bufferTime = 0;
             console.log('[OT Minutes] overtime=0 | reason=%s',
-                !otEligible ? 'staff_not_overtimeEligible' : 'template_disallows_overtime');
+                !otEligible ? 'staff_not_overtimeEligible' : 'shift_or_template_disallows_overtime');
         }
 
         let leaveForOt = activeLeave;
@@ -2629,6 +2710,30 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         fineAmount: attendance.fineAmount
     });
 
+    // Auto Half-Day: when the employee worked fewer minutes than a full day's required
+    // working hours, classify the day as Half Day (payroll counts it as 0.5). Gated by the
+    // company automationRules.autoMarkHalfDay flag. Days governed by an approved leave or an
+    // existing Half Day status are left untouched (those are authoritative).
+    const autoMarkHalfDayEnabled = company?.settings?.attendance?.automationRules?.autoMarkHalfDay === true;
+    if (autoMarkHalfDayEnabled && !activeLeave && !isHalfDayStatus && attendance.punchIn && attendance.punchOut) {
+        const { calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
+        const stType = (shiftTiming?.shiftType || 'standard').toString().toLowerCase();
+        let requiredFullDayMin = null;
+        if (stType === 'open' || stType === 'open shift') {
+            const reqH = Number(shiftTiming?.workHours ?? shiftTiming?.openWorkHours);
+            if (Number.isFinite(reqH) && reqH > 0) requiredFullDayMin = Math.round(reqH * 60);
+        } else if (shiftTiming?.startTime && shiftTiming?.endTime) {
+            const fullDayHours = calculateWorkHoursFromShift(shiftTiming.startTime, shiftTiming.endTime);
+            if (Number.isFinite(fullDayHours) && fullDayHours > 0) requiredFullDayMin = Math.round(fullDayHours * 60);
+        }
+        const workedMin = Number(attendance.workHours) || 0;
+        if (requiredFullDayMin && requiredFullDayMin > 0 && workedMin < requiredFullDayMin) {
+            attendance.status = 'Half Day';
+            console.log('[Auto Half-Day][CHECK-OUT] worked %s min < required %s min => status=Half Day (attendanceId=%s)',
+                workedMin, requiredFullDayMin, attendance._id?.toString?.() || null);
+        }
+    }
+
     await attendance.save();
 
     if (deferCheckoutSelfie) {
@@ -2683,7 +2788,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
             performedByEmail: staff.email || undefined,
             selfieUrl: attendance.punchOutSelfie || undefined,
             punchInDateTime: attendance.punchIn || undefined,
-            punchOutDateTime: now,
+            punchOutDateTime: punchOutAt,
             punchInAddress: (attendance.location?.punchIn && buildAddressString(attendance.location.punchIn.address, attendance.location.punchIn.area, attendance.location.punchIn.city, attendance.location.punchIn.pincode)) || undefined,
             punchOutAddress: buildAddressString(address, area, city, pincode) || undefined,
             timestamp: now
@@ -2818,7 +2923,7 @@ const getTodayAttendance = async (req, res) => {
             nowUTC: { year: now.getUTCFullYear(), month: now.getUTCMonth(), date: now.getUTCDate() }
         });
 
-        const { isCurrentlyInLeaveSession, getLeaveMessageForUI, canCheckInWithHalfDayLeave, canCheckOutWithHalfDayLeave, getHalfDaySessionMessage, getShiftTimings, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
+        const { isCurrentlyInLeaveSession, isWithinSecondHalfEarlyLoginWindow, getLeaveMessageForUI, canCheckInWithHalfDayLeave, canCheckOutWithHalfDayLeave, getHalfDaySessionMessage, getShiftTimings, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
         // Case-insensitive: treat "half day", "Half Day", "HALF DAY" etc. as half-day leave (DB may store different casing)
         const isHalfDayLeaveType = (lt) => (lt || '').trim().toLowerCase() === 'half day';
         // Resolve session '1' or '2' from Leave/attendance (use halfDaySession first, then halfDayType, then session)
@@ -2914,8 +3019,14 @@ const getTodayAttendance = async (req, res) => {
         const isOnLeave = !!activeLeave;
         // For half-day, "currently in leave session" drives message and check-in/out; use client local time when provided
         const currentlyInLeaveSession = halfDaySource && isToday && isCurrentlyInLeaveSession(halfDayLeaveForHelper, now, shiftStartForLeave, shiftEndForLeave, businessTimezone, halfDaySettingsForLeave, clientCurrentMinutesOverride);
+        // First Half Day leave: the employee works the SECOND half. Just before the second half begins
+        // (within the secondHalfLoginGraceMinutes window) we must let them punch in even though the clock
+        // is still inside the first (leave) half. In that window, do NOT treat it as a blocking leave
+        // session — otherwise the app hides the punch card and shows "You are on leave - First Half".
+        const earlySecondHalfLogin = halfDaySource && isToday && isWithinSecondHalfEarlyLoginWindow(halfDayLeaveForHelper, now, shiftStartForLeave, shiftEndForLeave, businessTimezone, halfDaySettingsForLeave, clientCurrentMinutesOverride);
+        const inLeaveSessionBlocking = currentlyInLeaveSession && !earlySecondHalfLogin;
         let leaveMessage = (halfDaySource && isToday) ? getLeaveMessageForUI(halfDayLeaveForHelper, now, shiftStartForLeave, shiftEndForLeave, businessTimezone, halfDaySettingsForLeave) : (activeLeave && isToday ? getLeaveMessageForUI(activeLeave, now, shiftStartForLeave, shiftEndForLeave, businessTimezone, halfDaySettingsForLeave) : null);
-        if (halfDaySource && isToday && currentlyInLeaveSession) {
+        if (halfDaySource && isToday && inLeaveSessionBlocking) {
             const sessionNum = resolveSession(halfDaySource);
             leaveMessage = sessionNum === '1' ? 'You are on leave - First Half' : sessionNum === '2' ? 'You are on leave - Second Half' : leaveMessage;
         }
@@ -2937,7 +3048,7 @@ const getTodayAttendance = async (req, res) => {
             const sessionStr = sessionNum || String(halfDaySource.session ?? '').trim();
             const halfDayDisplay = resolveHalfDayDisplay(halfDaySource);
             let halfDayMsg = getHalfDaySessionMessage(sessionNum, shiftStartForLeave, shiftEndForLeave, halfDaySettingsForLeave);
-            if (isToday && currentlyInLeaveSession) {
+            if (isToday && inLeaveSessionBlocking) {
                 halfDayMsg = sessionNum === '1' ? 'You are on leave - First Half' : sessionNum === '2' ? 'You are on leave - Second Half' : halfDayMsg;
             }
             halfDayLeave = {
@@ -2971,9 +3082,15 @@ const getTodayAttendance = async (req, res) => {
                 
                 checkInAllowed = checkInResult.allowed;
                 checkOutAllowed = checkOutResult.allowed;
-                // When user is currently in their leave half, never allow check-in/out (override any helper result)
-                if (currentlyInLeaveSession) {
+                // When user is currently in their leave half, never allow check-in/out (override any helper
+                // result) — EXCEPT in the early second-half login window for a First Half Day leave, where
+                // the employee is allowed to punch in ahead of their working (second) half starting.
+                if (inLeaveSessionBlocking) {
                     checkInAllowed = false;
+                    checkOutAllowed = false;
+                } else if (earlySecondHalfLogin) {
+                    // Honor the check-in helper's verdict (allowed) but keep check-out closed until the
+                    // working half actually starts.
                     checkOutAllowed = false;
                 }
                 console.log('[Attendance getStatus] Half-day leave', {
@@ -2984,6 +3101,7 @@ const getTodayAttendance = async (req, res) => {
                     firstHalfLeave: sessionNum === '1',
                     secondHalfLeave: sessionNum === '2',
                     currentlyInLeaveSession,
+                    earlySecondHalfLogin,
                     checkInAllowed,
                     checkOutAllowed,
                     leaveMessage: halfDayMsg,
@@ -3003,10 +3121,11 @@ const getTodayAttendance = async (req, res) => {
             checkOutAllowed = false;
         }
         // For half-day: set leaveMessage and flags explicitly by current time
-        // - In leave half (currentlyInLeaveSession): "You are on leave - First/Second Half", checkInAllowed/checkOutAllowed = false
-        // - In working half: session timing message + "Check-in/out allowed for your working half.", checkInAllowed/checkOutAllowed from helpers
+        // - In leave half (inLeaveSessionBlocking): "You are on leave - First/Second Half", checkInAllowed/checkOutAllowed = false
+        // - In working half OR early second-half login window: session timing message + "Check-in/out allowed
+        //   for your working half.", checkInAllowed/checkOutAllowed from helpers
         if (halfDayLeave && halfDayLeave.message && isToday) {
-            if (currentlyInLeaveSession) {
+            if (inLeaveSessionBlocking) {
                 const sessionNum = resolveSession(halfDaySource);
                 leaveMessage = sessionNum === '1' ? 'You are on leave - First Half' : sessionNum === '2' ? 'You are on leave - Second Half' : halfDayLeave.message;
             } else {
@@ -3251,41 +3370,43 @@ const getTodayAttendance = async (req, res) => {
 // Helper: enrich attendance record with half-day leave details from Leaves collection
 const enrichWithLeaveDetails = async (attendanceList, staffId) => {
     const Leave = require('../models/Leave');
-    const enriched = [];
-    for (const doc of attendanceList) {
+    // Each half-day record needs its matching approved Leave. This used to await a
+    // findOne() per record inside a sequential for-loop (N+1: K half-day rows = K
+    // serial round-trips). Map to concurrent lookups so they overlap; Promise.all
+    // preserves input order. Full days do no DB work.
+    return Promise.all(attendanceList.map(async (doc) => {
         const plain = doc.toObject ? doc.toObject() : { ...doc };
         const isHalfDay = (plain.status === 'Half Day' || (plain.leaveType && String(plain.leaveType).toLowerCase() === 'half day'));
-        if (isHalfDay && plain.date) {
-            const attDate = new Date(plain.date);
-            // Create Date object for start/end of day in UTC to ensure MongoDB ISODate format
-            const year = attDate.getUTCFullYear();
-            const month = attDate.getUTCMonth();
-            const day = attDate.getUTCDate();
-            const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-            const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
-            const leave = await Leave.findOne({
-                employeeId: plain.employeeId || staffId,
-                leaveType: 'Half Day',
-                status: { $regex: /^approved$/i },
-                startDate: { $lte: endOfDay },
-                endDate: { $gte: startOfDay }
-            }).populate('approvedBy', 'name email').lean();
-            if (leave) {
-                plain.leaveDetails = {
-                    session: leave.session || null,
-                    leaveType: leave.leaveType,
-                    startDate: leave.startDate,
-                    endDate: leave.endDate,
-                    status: leave.status,
-                    reason: leave.reason,
-                    approvedAt: leave.approvedAt || null,
-                    approvedBy: leave.approvedBy ? { name: leave.approvedBy.name || null, email: leave.approvedBy.email || null } : null
-                };
-            }
+        if (!(isHalfDay && plain.date)) return plain;
+
+        const attDate = new Date(plain.date);
+        // Create Date object for start/end of day in UTC to ensure MongoDB ISODate format
+        const year = attDate.getUTCFullYear();
+        const month = attDate.getUTCMonth();
+        const day = attDate.getUTCDate();
+        const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+        const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+        const leave = await Leave.findOne({
+            employeeId: plain.employeeId || staffId,
+            leaveType: 'Half Day',
+            status: { $regex: /^approved$/i },
+            startDate: { $lte: endOfDay },
+            endDate: { $gte: startOfDay }
+        }).populate('approvedBy', 'name email').lean();
+        if (leave) {
+            plain.leaveDetails = {
+                session: leave.session || null,
+                leaveType: leave.leaveType,
+                startDate: leave.startDate,
+                endDate: leave.endDate,
+                status: leave.status,
+                reason: leave.reason,
+                approvedAt: leave.approvedAt || null,
+                approvedBy: leave.approvedBy ? { name: leave.approvedBy.name || null, email: leave.approvedBy.email || null } : null
+            };
         }
-        enriched.push(plain);
-    }
-    return enriched;
+        return plain;
+    }));
 };
 
 // @desc    Get Attendance History
@@ -3410,33 +3531,102 @@ const getMonthAttendance = async (req, res) => {
             return res.status(400).json({ message: 'Year and Month are required' });
         }
 
+        const __monthT0 = Date.now();
         const startOfMonth = new Date(year, month - 1, 1);
         const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
 
-        // Fetch attendance
-        const attendanceRaw = await Attendance.find({
-            $or: [
-                { employeeId: req.staff._id },
-                { user: req.staff._id }
-            ],
-            date: { $gte: startOfMonth, $lte: endOfMonth }
-        }).sort({ date: 1 }).lean();
-
-        // Enrich records that have fineHours/lateMinutes but no fineAmount (e.g. Excel import) using payroll fine formula
+        // Models/helpers used below — required up-front so the reads can be batched.
         const Company = require('../models/Company');
         const Staff = require('../models/Staff');
-        const { getRecordFineAmount, calculateAttendanceStats } = require('./payrollController');
+        const Leave = require('../models/Leave');
+        const { getRecordFineAmount } = require('./payrollController');
         const { getEffectiveFineConfig } = require('../utils/fineCalculationHelper');
         const { getShiftTimings, calculateWorkHoursFromShift, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
 
-        const companyForFine = await Company.findById(req.staff.businessId).lean();
+        // Balance the load: these reads are independent of each other, so issue them on one concurrent
+        // wave instead of a chain of sequential awaits (previously Attendance -> Company -> Staff ->
+        // Staff(populate) -> stats -> Leave, six serial round-trips). Collapsing them is what lets the
+        // calendar populate on the first tap instead of lagging behind / appearing to need a second click.
+        // staffDoc is fetched once with both +salary and the calendar template populates (previously this
+        // was two separate Staff.findById calls for the same _id).
+        const [attendanceRaw, companyForFine, staffDoc, leaves, alternateWorkRecords] = await Promise.all([
+            Attendance.find({
+                $or: [
+                    { employeeId: req.staff._id },
+                    { user: req.staff._id }
+                ],
+                date: { $gte: startOfMonth, $lte: endOfMonth }
+            }).sort({ date: 1 }).lean(),
+            Company.findById(req.staff.businessId).lean(),
+            Staff.findById(req.staff._id)
+                .select('+salary')
+                .populate('weeklyHolidayTemplateId')
+                .populate('holidayTemplateId')
+                .lean(),
+            Leave.find({
+                employeeId: req.staff._id,
+                status: { $regex: /^approved$/i },
+                $or: [
+                    { startDate: { $gte: startOfMonth, $lte: endOfMonth } },
+                    { endDate: { $gte: startOfMonth, $lte: endOfMonth } },
+                    { startDate: { $lte: startOfMonth }, endDate: { $gte: endOfMonth } }
+                ]
+            }),
+            // Alternate work dates (compensation week-off / comp-off) — independent of the
+            // other reads, so it joins the same concurrent wave instead of a later serial await.
+            Attendance.find({
+                $or: [{ employeeId: req.staff._id }, { user: req.staff._id }],
+                compensationType: { $in: ['weekOff', 'compOff'] },
+                alternateWorkDate: { $gte: startOfMonth, $lte: endOfMonth }
+            }).select('alternateWorkDate').lean()
+        ]);
+
+        // Enrich records that have fineHours/lateMinutes but no fineAmount (e.g. Excel import) using payroll fine formula
         const businessTz = getBusinessTimezone(companyForFine);
-        const staffWithSalary = await Staff.findById(req.staff._id).select('+salary').lean();
+        const staffWithSalary = staffDoc;
+        const staffForCalendar = staffDoc;
         const fineConfig = companyForFine ? getEffectiveFineConfig(companyForFine) : null;
+
+        // Calendar template + week-off config — needed for the calendar output below AND to derive the
+        // full-month working-day count used as the daily-salary (fine) divisor. Fetch the two
+        // independent reads concurrently.
+        const [holidayTemplate, weekOffConfig] = await Promise.all([
+            getHolidayTemplateForStaff(staffForCalendar || req.staff),
+            getWeekOffConfigForStaff(staffForCalendar || req.staff, companyForFine),
+        ]);
+        const holidays = getHolidaysForMonth(holidayTemplate, year, month);
+        const weeklyOffPattern = weekOffConfig.weeklyOffPattern;
+        const weeklyHolidays = weekOffConfig.weeklyHolidays;
+
+        // Full-month working days = days in month − week-offs − holidays (whole month, no today/joining
+        // cap). Computed locally from data already in hand. This used to come from
+        // calculateAttendanceStats(), which re-fetched Attendance, Staff, Company, the week-off config
+        // and the holiday template all over again (~5 duplicate DB reads + extra day-loops + another
+        // Leave.find) purely to produce this one divisor — the main reason this endpoint loaded slowly.
+        // Formula mirrors payrollController.calculateAttendanceStats' workingDaysFullMonth.
+        const daysInMonthForSalary = new Date(year, month, 0).getDate();
+        let weeklyOffDaysFull = 0;
+        let holidaysFull = 0;
+        for (let day = 1; day <= daysInMonthForSalary; day++) {
+            const dow = new Date(year, month - 1, day).getDay();
+            if (holidays.some(h => new Date(h.date).getDate() === day)) {
+                holidaysFull++;
+                continue;
+            }
+            let isWoff = false;
+            if (weeklyOffPattern === 'oddEvenSaturday') {
+                if (dow === 0) isWoff = true;
+                else if (dow === 6 && isOddEvenSaturdayWeeklyOff(year, month - 1, day, 'local')) isWoff = true;
+            } else {
+                isWoff = weeklyHolidays.some(h => h.day === dow);
+            }
+            if (isWoff) weeklyOffDaysFull++;
+        }
+        const workingDaysFullMonth = daysInMonthForSalary - weeklyOffDaysFull - holidaysFull;
+
         let dailySalaryForEnrich = 0;
         try {
-            const stats = await calculateAttendanceStats(req.staff._id, Number(month), Number(year));
-            const thisMonthWorkingDays = stats.workingDaysFullMonth ?? stats.workingDays ?? 0;
+            const thisMonthWorkingDays = workingDaysFullMonth;
             if (thisMonthWorkingDays > 0 && staffWithSalary && staffWithSalary.salary) {
                 const s = staffWithSalary.salary;
                 const gf = (s.basicSalary || 0) + (s.dearnessAllowance || 0) + (s.houseRentAllowance || 0) + (s.specialAllowance || 0);
@@ -3452,30 +3642,39 @@ const getMonthAttendance = async (req, res) => {
         }
 
         for (const doc of attendanceRaw) {
-            const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary, doc.date ? new Date(doc.date) : new Date(), staffWithSalary?.joiningDate) : {};
-            const shiftHours = Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
-            const hasFineMinutes = (Number(doc.fineHours) || 0) > 0 || (Number(doc.lateMinutes) || 0) > 0;
-            const status = (doc.status || '').trim().toLowerCase();
-            const isEligible = status === 'present' || status === 'approved' || (doc.leaveType || '').trim().toLowerCase() === 'half day';
-            if (hasFineMinutes && isEligible && !(Number(doc.fineAmount) > 0)) {
-                const amount = getRecordFineAmount(doc, dailySalaryForEnrich, shiftHours, fineConfig);
-                if (amount > 0) doc.fineAmount = amount;
+            // Fine enrichment is supplementary to the calendar (it only sets
+            // doc.fineAmount). A throw here — e.g. a record with an odd shift config,
+            // a bad date, or missing salary — must NOT take down the whole month
+            // response, which would leave the app's calendar blank/colorless. Guard
+            // per-record so one bad row is skipped instead of 500-ing the endpoint.
+            try {
+                const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary, doc.date ? new Date(doc.date) : new Date(), staffWithSalary?.joiningDate) : {};
+                const shiftHours = Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
+                const hasFineMinutes = (Number(doc.fineHours) || 0) > 0 || (Number(doc.lateMinutes) || 0) > 0;
+                const status = (doc.status || '').trim().toLowerCase();
+                const isEligible = status === 'present' || status === 'approved' || (doc.leaveType || '').trim().toLowerCase() === 'half day';
+                if (hasFineMinutes && isEligible && !(Number(doc.fineAmount) > 0)) {
+                    const amount = getRecordFineAmount(doc, dailySalaryForEnrich, shiftHours, fineConfig);
+                    if (amount > 0) doc.fineAmount = amount;
+                }
+            } catch (fineErr) {
+                console.warn('[getMonthAttendance] fine enrichment skipped for a record:', fineErr?.message);
             }
         }
 
-        const attendance = await enrichWithLeaveDetails(attendanceRaw, req.staff._id);
+        // Leave-detail enrichment is needed for leaveType display, but if it throws
+        // (e.g. a malformed leave record) the calendar should still render with the
+        // raw attendance rows rather than failing the entire request.
+        let attendance;
+        try {
+            attendance = await enrichWithLeaveDetails(attendanceRaw, req.staff._id);
+        } catch (leaveErr) {
+            console.warn('[getMonthAttendance] enrichWithLeaveDetails failed, using raw records:', leaveErr?.message);
+            attendance = attendanceRaw;
+        }
 
-        const staffForCalendar = await Staff.findById(req.staff._id)
-            .populate('weeklyHolidayTemplateId')
-            .populate('holidayTemplateId')
-            .lean();
-        const holidayTemplate = await getHolidayTemplateForStaff(staffForCalendar || req.staff);
-        const holidays = getHolidaysForMonth(holidayTemplate, year, month);
-
-        // Week-off from staff's WeeklyHolidayTemplate only (weeklyholidaytemplates collection via staff.weeklyHolidayTemplateId)
-        const weekOffConfig = await getWeekOffConfigForStaff(staffForCalendar || req.staff, companyForFine);
-        const weeklyOffPattern = weekOffConfig.weeklyOffPattern;
-        const weeklyHolidays = weekOffConfig.weeklyHolidays;
+        // holidayTemplate / holidays / weekOffConfig (weeklyOffPattern, weeklyHolidays) were resolved
+        // up-front in the concurrent wave above and reused here — no second round-trip.
 
         // Stats calculation
         const totalDaysInMonth = new Date(year, month, 0).getDate();
@@ -3492,13 +3691,33 @@ const getMonthAttendance = async (req, res) => {
             lastDayToCount = currentDay;
         }
 
+        // Date of Joining: nothing exists before the employee joined, so days before the
+        // joining date must not be counted (working days) or marked absent/week-off/holiday.
+        // firstCountableDay is the first day of THIS month that is on/after the joining date.
+        let firstCountableDay = 1;
+        const joiningDateRaw = staffWithSalary?.joiningDate || staffForCalendar?.joiningDate;
+        if (joiningDateRaw) {
+            const joinD = new Date(joiningDateRaw);
+            if (!Number.isNaN(joinD.getTime())) {
+                const joinYear = joinD.getFullYear();
+                const joinMonth = joinD.getMonth() + 1;
+                if (Number(year) < joinYear || (Number(year) === joinYear && Number(month) < joinMonth)) {
+                    // Entire requested month precedes the joining month → nothing countable.
+                    firstCountableDay = totalDaysInMonth + 1;
+                } else if (Number(year) === joinYear && Number(month) === joinMonth) {
+                    firstCountableDay = joinD.getDate();
+                }
+            }
+        }
+
         let workingDays = 0;
         let weekOffs = 0;
         let holidaysCount = 0;
         let weekOffDates = [];
 
-        // Loop for stats - only for days 1..lastDayToCount (so future days are not counted as absent)
-        for (let d = 1; d <= lastDayToCount; d++) {
+        // Loop for stats - only for days firstCountableDay..lastDayToCount (so days before the
+        // joining date and future days are not counted as working/absent)
+        for (let d = firstCountableDay; d <= lastDayToCount; d++) {
             const date = new Date(year, month - 1, d);
             date.setHours(0, 0, 0, 0);
 
@@ -3525,8 +3744,8 @@ const getMonthAttendance = async (req, res) => {
             }
         }
 
-        // Separate loop for weekOffDates (always for the full month to show in calendar)
-        for (let d = 1; d <= totalDaysInMonth; d++) {
+        // Separate loop for weekOffDates (full month for calendar, but not before the joining date)
+        for (let d = firstCountableDay; d <= totalDaysInMonth; d++) {
             // Create date in local timezone for day of week calculation
             const date = new Date(year, month - 1, d);
             const dayOfWeek = date.getDay();
@@ -3614,18 +3833,7 @@ const getMonthAttendance = async (req, res) => {
             holidayDateSet.add(dateStr);
         });
 
-        // Fetch leaves for the month
-        const Leave = require('../models/Leave');
-        const leaves = await Leave.find({
-            employeeId: req.staff._id,
-            status: { $regex: /^approved$/i },
-            $or: [
-                { startDate: { $gte: startOfMonth, $lte: endOfMonth } },
-                { endDate: { $gte: startOfMonth, $lte: endOfMonth } },
-                { startDate: { $lte: startOfMonth }, endDate: { $gte: endOfMonth } }
-            ]
-        });
-
+        // Leaves for the month already fetched in the concurrent wave above (variable: leaves).
         const leaveDateSet = new Set();
         leaves.forEach(leave => {
             let curr = new Date(leave.startDate);
@@ -3653,7 +3861,7 @@ const getMonthAttendance = async (req, res) => {
         // Today in business timezone (string compare yyyy-MM-dd)
         const todayStr = formatAttendanceCalendarDay(new Date());
 
-        for (let d = 1; d <= totalDaysInMonth; d++) {
+        for (let d = firstCountableDay; d <= totalDaysInMonth; d++) {
             // Create date string directly in YYYY-MM-DD format (avoids timezone issues)
             const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             // Create date object for day of week calculation (using local time for day calculation)
@@ -3732,12 +3940,8 @@ const getMonthAttendance = async (req, res) => {
             absentDates.push(dateStr);
         }
 
-        // Dates in this month that are alternate work dates for this employee (compensation week-off or comp-off: they work on these days)
-        const alternateWorkRecords = await Attendance.find({
-            $or: [{ employeeId: req.staff._id }, { user: req.staff._id }],
-            compensationType: { $in: ['weekOff', 'compOff'] },
-            alternateWorkDate: { $gte: startOfMonth, $lte: endOfMonth }
-        }).select('alternateWorkDate').lean();
+        // Dates in this month that are alternate work dates for this employee (compensation week-off or
+        // comp-off: they work on these days). alternateWorkRecords fetched in the concurrent wave above.
         const alternateWorkDatesInMonth = alternateWorkRecords.map(r => formatDateString(r.alternateWorkDate)).filter(Boolean);
 
         // Attach AttendanceLog rows to each attendance document by attendanceId (punches, breaks,
@@ -3751,10 +3955,24 @@ const getMonthAttendance = async (req, res) => {
                     .map(id => id?.toString?.() ?? String(id))
                     .filter(Boolean)
             );
-            const logs = await AttendanceLog.find({
-                attendanceId: { $in: attendanceIds },
-                timestamp: { $gte: startOfMonth, $lte: endOfMonth }
-            }).sort({ timestamp: 1 }).lean();
+            const staffIdAsString = String(req.staff._id);
+            // The two AttendanceLog reads (logs-by-attendanceId and the orphan break-log fallback)
+            // are independent queries — run them concurrently instead of one after the other.
+            const [logs, orphanBreakLogs] = await Promise.all([
+                AttendanceLog.find({
+                    attendanceId: { $in: attendanceIds },
+                    timestamp: { $gte: startOfMonth, $lte: endOfMonth }
+                }).sort({ timestamp: 1 }).lean(),
+                AttendanceLog.find({
+                    action: { $in: ['BREAK_START', 'BREAK_END'] },
+                    timestamp: { $gte: startOfMonth, $lte: endOfMonth },
+                    $or: [
+                        { performedBy: req.staff._id },
+                        { 'newValue.employeeID': req.staff._id },
+                        { 'newValue.employeeID': staffIdAsString }
+                    ]
+                }).sort({ timestamp: 1 }).lean()
+            ]);
 
             const logsByAttendanceId = {};
             logs.forEach(log => {
@@ -3776,17 +3994,6 @@ const getMonthAttendance = async (req, res) => {
                     attendanceIdByDate[dKey] = aid;
                 }
             });
-
-            const staffIdAsString = String(req.staff._id);
-            const orphanBreakLogs = await AttendanceLog.find({
-                action: { $in: ['BREAK_START', 'BREAK_END'] },
-                timestamp: { $gte: startOfMonth, $lte: endOfMonth },
-                $or: [
-                    { performedBy: req.staff._id },
-                    { 'newValue.employeeID': req.staff._id },
-                    { 'newValue.employeeID': staffIdAsString }
-                ]
-            }).sort({ timestamp: 1 }).lean();
 
             orphanBreakLogs.forEach(log => {
                 const existingAid = log.attendanceId?.toString?.() ?? String(log.attendanceId || '');
@@ -3825,6 +4032,24 @@ const getMonthAttendance = async (req, res) => {
                 ? companyForFine.settings.attendance.shifts
                 : null;
 
+        // Perf probe: how long the whole month endpoint took (DB + compute). Read this in the
+        // server console while loading the calendar to see if the latency is server-side.
+        console.log(`[Perf] getMonthAttendance ${year}-${month} took ${Date.now() - __monthT0}ms (records: ${attendanceRaw.length})`);
+
+        // Diagnostic: flag a fully-empty payload for a current/past month (a future month
+        // is legitimately empty). If this ever logs for the current month while the app
+        // shows "data disappeared", it pins the blank to the server side (wrong staff
+        // context, date-range mismatch, or a transient empty DB read) rather than the app.
+        const __isFutureMonth = (Number(year) > now.getFullYear()) ||
+            (Number(year) === now.getFullYear() && Number(month) > (now.getMonth() + 1));
+        if (!__isFutureMonth &&
+            attendanceRaw.length === 0 &&
+            presentDates.length === 0 &&
+            absentDates.length === 0 &&
+            holidays.length === 0) {
+            console.warn(`[getMonthAttendance][EMPTY] ${year}-${month} returned no attendance/present/absent/holiday for staff=${req.staff && req.staff._id} business=${req.staff && req.staff.businessId} — investigate (range ${startOfMonth.toISOString()}..${endOfMonth.toISOString()})`);
+        }
+
         res.json({
             data: {
                 attendance: attendanceForResponse,
@@ -3840,7 +4065,13 @@ const getMonthAttendance = async (req, res) => {
                     weeklyOffPattern,
                     weeklyHolidays
                 },
-                stats: {
+                // Stats are summary counters only — the calendar coloring above does
+                // not depend on them. Wrap the whole block so a throw in any counter
+                // (e.g. a malformed leave/date) degrades to zeroed stats instead of
+                // 500-ing the request and blanking the calendar.
+                stats: (() => {
+                  try {
+                    return {
                     workingDays,
                     holidaysCount,
                     weekOffs,
@@ -3979,7 +4210,12 @@ const getMonthAttendance = async (req, res) => {
                         }, 0);
                         return presentOnly + paidLeaveOnly;
                     })())
-                }
+                    };
+                  } catch (statsErr) {
+                    console.warn('[getMonthAttendance] stats computation failed, returning zeros:', statsErr?.message);
+                    return { workingDays, holidaysCount, weekOffs, presentDays: 0, paidLeaveDays: 0, absentDays: 0 };
+                  }
+                })()
             }
         });
 

@@ -1,6 +1,5 @@
 // hrms/lib/screens/salary/request_payslip_screen.dart
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_colors.dart';
@@ -13,7 +12,7 @@ import '../../widgets/app_card.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/profile_app_bar_actions.dart';
-import '../requests/my_requests_screen.dart';
+import 'all_payslips_screen.dart';
 
 /// Figma "Request Payslip": pick a fiscal year and a completed month, then
 /// generate a payslip request. Below the picker is a list of recently
@@ -315,12 +314,6 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     );
   }
 
-  String? _payslipUrl(dynamic req) {
-    final payroll = req is Map ? req['payrollId'] : null;
-    final url = payroll is Map ? payroll['payslipUrl']?.toString().trim() : null;
-    return (url != null && url.isNotEmpty) ? url : null;
-  }
-
   Future<void> _openPayslip(String url) async {
     final uri = Uri.tryParse(url);
     if (uri != null && await canLaunchUrl(uri)) {
@@ -333,7 +326,7 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
 
   void _openAllRequests() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const MyRequestsScreen()),
+      MaterialPageRoute(builder: (_) => const AllPayslipsScreen()),
     );
   }
 
@@ -368,15 +361,15 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
                 children: [
-                  Text(
-                    'Request Payslip',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
+                  // Text(
+                  //   'Request Payslip',
+                  //   style: TextStyle(
+                  //     fontSize: 20,
+                  //     fontWeight: FontWeight.bold,
+                  //     color: AppColors.textPrimary,
+                  //   ),
+                  // ),
+                  // const SizedBox(height: 4),
                   Text(
                     'Select the period to generate your financial document.',
                     style: TextStyle(
@@ -468,24 +461,24 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              'Fiscal year tracking is active. All records are verified by HR.',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.45,
-                fontWeight: FontWeight.w500,
-                color: AppColors.primaryDark,
-              ),
-            ),
-          ),
+//const SizedBox(height: 16),
+          // Container(
+          //   width: double.infinity,
+          //   padding: const EdgeInsets.all(14),
+          //   decoration: BoxDecoration(
+          //     color: AppColors.primary.withValues(alpha: 0.08),
+          //     borderRadius: BorderRadius.circular(12),
+          //   ),
+          //   child: Text(
+          //     'Fiscal year tracking is active. All records are verified by HR.',
+          //     style: TextStyle(
+          //       fontSize: 13,
+          //       height: 1.45,
+          //       fontWeight: FontWeight.w500,
+          //       color: AppColors.primaryDark,
+          //     ),
+          //   ),
+          // ),
         ],
       ),
     );
@@ -636,107 +629,16 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
       for (final req in items)
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
-          child: _buildRecentCard(req),
+          child: PayslipRequestCard(req: req, onDownload: _onRecentDownload),
         ),
     ];
   }
 
-  Widget _buildRecentCard(dynamic req) {
-    final monthNum = req is Map ? req['month'] : null;
-    final monthName = (monthNum is int && monthNum >= 1 && monthNum <= 12)
-        ? _months[monthNum - 1]
-        : null;
-    final year = req is Map ? req['year']?.toString() : null;
-    final period = (req is Map && req['period'] != null)
-        ? req['period'].toString()
-        : [monthName, year].whereType<String>().join(' ').trim();
-
-    final url = _payslipUrl(req);
-    final hasUrl = url != null;
-
-    String when = '';
-    final created = req is Map ? req['createdAt'] : null;
-    final updated = req is Map ? req['updatedAt'] : null;
-    final dateStr = (hasUrl ? (updated ?? created) : created)?.toString();
-    final date = dateStr != null ? DateTime.tryParse(dateStr) : null;
-    if (date != null) {
-      final fmt = DateFormat('MMM dd, yyyy').format(date.toLocal());
-      when = hasUrl ? 'Generated on $fmt' : 'Requested on $fmt';
+  void _onRecentDownload(String? url) {
+    if (url != null) {
+      _openPayslip(url);
     } else {
-      when = (req is Map ? req['status']?.toString() : null) ?? '';
+      SnackBarUtils.showSnackBar(context, 'Payslip is not generated yet');
     }
-
-    return AppCard(
-      padding: const EdgeInsets.all(14),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.surfaceDark,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(Icons.description, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  period.isEmpty ? 'Payslip Request' : period,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  when,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          GestureDetector(
-            onTap: () {
-              if (hasUrl) {
-                _openPayslip(url);
-              } else {
-                SnackBarUtils.showSnackBar(
-                  context,
-                  'Payslip is not generated yet',
-                );
-              }
-            },
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: hasUrl
-                    ? AppColors.primary.withValues(alpha: 0.12)
-                    : AppColors.inputFill,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.download_rounded,
-                size: 20,
-                color: hasUrl ? AppColors.primary : AppColors.textCaption,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

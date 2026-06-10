@@ -112,13 +112,9 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                 children: [
                   _buildHeader(),
                   const SizedBox(height: 20),
-                  if (_reviews.isEmpty) ...[
-                    _buildEmptyCard(),
-                    const SizedBox(height: 16),
-                    _buildUpcomingMilestoneCard(),
-                    const SizedBox(height: 16),
-                    _buildGoalTrackerCard(),
-                  ] else
+                  if (_reviews.isEmpty)
+                    _buildEmptyCard()
+                  else
                     for (final review in _reviews)
                       _buildReviewCard(review as Map<String, dynamic>),
                 ],
@@ -253,194 +249,6 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
     );
   }
 
-  // Motivational milestone banner (decorative — shown on the empty state).
-  Widget _buildUpcomingMilestoneCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppColors.primary, AppColors.primaryDark],
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            right: -8,
-            bottom: -12,
-            child: Icon(
-              Icons.calendar_month_rounded,
-              size: 96,
-              color: Colors.white.withValues(alpha: 0.15),
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'UPCOMING MILESTONE',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.2,
-                  color: Colors.white.withValues(alpha: 0.85),
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Next Cycle',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: const [
-                  Icon(
-                    Icons.calendar_today_rounded,
-                    size: 18,
-                    color: Colors.white,
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Oct 2024',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Goal tracker progress card (decorative — shown on the empty state).
-  Widget _buildGoalTrackerCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'CURRENT PROGRESS',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.8,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Goal Tracker',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.rocket_launch_rounded,
-                  size: 20,
-                  color: AppColors.primary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'IN PROGRESS',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primaryDark,
-                  ),
-                ),
-              ),
-              Text(
-                '82%',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: 0.82,
-              backgroundColor: AppColors.divider,
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-              minHeight: 8,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Almost there! 3 of 4 key results achieved.',
-            style: TextStyle(
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildReviewCard(Map<String, dynamic> review) {
     final id = review['_id'] as String? ?? '';
     final reviewCycle = review['reviewCycle'] ?? 'N/A';
@@ -451,6 +259,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
     final finalRating = review['finalRating'];
     final selfReview = review['selfReview'] as Map<String, dynamic>?;
     final managerReview = review['managerReview'] as Map<String, dynamic>?;
+    final hrReview = review['hrReview'] as Map<String, dynamic>?;
 
     String periodStr = '';
     if (period != null) {
@@ -563,10 +372,27 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
               const SizedBox(height: 2),
               Row(
                 children: [
-                  Icon(Icons.star_rounded, size: 12, color: AppColors.warning),
+                  Icon(Icons.supervisor_account_rounded,
+                      size: 12, color: AppColors.info),
                   const SizedBox(width: 4),
                   Text(
                     'Manager Review: ${managerReview['overallRating'] ?? 'N/A'}/5.0',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (hrReview != null) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(Icons.badge_rounded, size: 12, color: AppColors.primary),
+                  const SizedBox(width: 4),
+                  Text(
+                    'HR Review: ${hrReview['overallRating'] ?? 'N/A'}/5.0',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w500,
@@ -595,44 +421,45 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
             const SizedBox(height: 10),
             Row(
               children: [
-                OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ReviewDetailScreen(reviewId: id),
-                      ),
-                    ).then((_) => _fetchReviews());
-                  },
-                  icon: const Icon(Icons.visibility_rounded, size: 14),
-                  label: Text('View Details'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    side: BorderSide(color: AppColors.primary),
-                  ),
-                ),
-                if (canSubmitSelfReview) ...[
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
+                Expanded(
+                  child: OutlinedButton(
                     onPressed: () {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) =>
-                              SelfAssessmentFormScreen(reviewId: id),
+                          builder: (_) => const MyReviewsScreen(),
+                        ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      side: BorderSide(color: AppColors.primary),
+                    ),
+                    child: const Text('View Details'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SelfAssessmentFormScreen(reviewId: id),
                         ),
                       ).then((_) => _fetchReviews());
                     },
                     icon: const Icon(Icons.edit_rounded, size: 14),
-                    label: Text('Submit Review'),
+                    label: const Text('Submit Review'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                     ),
                   ),
-                ],
+                ),
               ],
-            ),
+),
+            
           ],
         ),
       ),

@@ -243,6 +243,8 @@ class TaskService {
     required String assignedTo,
     required String customerId,
     required DateTime expectedCompletionDate,
+    DateTime? earliestCompletionDate,
+    DateTime? latestCompletionDate,
     String status = 'assigned',
     Map<String, dynamic>? sourceLocation,
     Map<String, dynamic>? destinationLocation,
@@ -261,6 +263,22 @@ class TaskService {
       'status': status,
       'source': 'app',
     };
+    // Completion-date range. Normalize to UTC midnight of the calendar date so
+    // it matches how the backend stores/filters expectedCompletionDate.
+    if (earliestCompletionDate != null) {
+      body['earliestCompletionDate'] = DateTime.utc(
+        earliestCompletionDate.year,
+        earliestCompletionDate.month,
+        earliestCompletionDate.day,
+      ).toIso8601String();
+    }
+    if (latestCompletionDate != null) {
+      body['latestCompletionDate'] = DateTime.utc(
+        latestCompletionDate.year,
+        latestCompletionDate.month,
+        latestCompletionDate.day,
+      ).toIso8601String();
+    }
     if (storedBusinessId != null && storedBusinessId.isNotEmpty) {
       body['businessId'] = storedBusinessId;
     }
@@ -343,15 +361,20 @@ class TaskService {
       final query = <String, dynamic>{'page': page, 'limit': limit};
       final q = (search ?? '').trim();
       if (q.isNotEmpty) query['search'] = q;
+      // Send the picked calendar day as UTC midnight so it matches how
+      // expectedCompletionDate is stored (UTC midnight of the calendar date)
+      // and how the backend re-extracts UTC date parts. Using local
+      // .toUtc() here shifted the day back one in +ve timezones (e.g. IST),
+      // making the date filter return the wrong day's tasks.
       if (startDate != null) {
-        query['startDate'] = DateTime(
+        query['startDate'] = DateTime.utc(
           startDate.year,
           startDate.month,
           startDate.day,
-        ).toUtc().toIso8601String();
+        ).toIso8601String();
       }
       if (endDate != null) {
-        query['endDate'] = DateTime(
+        query['endDate'] = DateTime.utc(
           endDate.year,
           endDate.month,
           endDate.day,
@@ -359,7 +382,7 @@ class TaskService {
           59,
           59,
           999,
-        ).toUtc().toIso8601String();
+        ).toIso8601String();
       }
       if (statusGroups != null && statusGroups.isNotEmpty) {
         query['statusGroups'] = statusGroups.join(',');

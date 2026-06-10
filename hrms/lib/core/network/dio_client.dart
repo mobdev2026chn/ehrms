@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/constants.dart';
+import '../../utils/swr_cache.dart';
 
 /// Clears persisted auth tokens + user snapshot and default Dio Authorization header.
 Future<void> clearStoredAuthSession() async {
@@ -17,6 +18,8 @@ Future<void> clearStoredAuthSession() async {
   await prefs.remove('taskSettings');
   await prefs.remove('businessId');
   await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
+  // Drop any in-memory screen caches so one session's data can't leak into the next.
+  SwrCache.clearAll();
   DioClient().clearAuthToken();
 }
 

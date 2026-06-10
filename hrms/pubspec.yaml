@@ -39,8 +39,9 @@ dependencies:
   flutter_secure_storage: ^9.0.0
   json_annotation: ^4.10.0
   shared_preferences: ^2.2.2 
-  http: ^1.2.0 
-  dio: ^5.4.0  
+  http: ^1.2.0
+  dio: ^5.4.0
+  mime: ^2.0.0
   geolocator: ^14.0.2
   permission_handler: ^11.0.1
   provider: ^6.1.1
@@ -74,6 +75,7 @@ dependencies:
   floating: ^6.0.0
   excel: ^4.0.6
   pdfx: ^2.9.2
+  pdf: ^3.11.1
   share_plus: ^11.1.0
   fl_chart: ^0.69.2
   socket_io_client: ^3.1.4
@@ -81,6 +83,12 @@ dependencies:
   record: ^6.0.0
   just_audio: ^0.10.5
   country_code_picker: ^3.4.1
+  # Pure-Dart libphonenumber metadata: validates mobile numbers per country
+  # (length + prefix rules) without platform channels.
+  phone_numbers_parser: ^9.0.0
+  # Disk + memory caching for remote images (avatars, proof photos) so they are
+  # not re-downloaded on every screen open.
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:

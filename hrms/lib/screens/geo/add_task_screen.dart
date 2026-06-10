@@ -1,5 +1,6 @@
 // Add Task – full-screen form, Request module UI patterns.
-// Fields: Task Title, Customer (searchable), Description, Source, Destination.
+// Fields: Task Title, Customer (searchable), completion-date range, Description,
+// Source. Destination is derived from the selected customer's address.
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -10,9 +11,7 @@ import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
-import 'package:hrms/services/geo/places_service.dart';
 import 'package:hrms/services/task_service.dart';
-import 'package:hrms/screens/geo/live_tracking_screen.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
 import 'package:hrms/screens/notifications/notifications_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
@@ -33,8 +32,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   final _descriptionController = TextEditingController();
   final _sourceController = TextEditingController();
   final _destinationController = TextEditingController();
-  LatLng? _destinationLatLng;
-  String? _destinationPincode;
   final _customerSearchController = TextEditingController();
 
   Customer? _selectedCustomer;
@@ -43,15 +40,21 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   bool _loadingCustomers = true;
   bool _submitting = false;
   bool _showCustomerDropdown = false;
-  bool _showDestinationSuggestions = false;
   final FocusNode _customerFocusNode = FocusNode();
-  List<PlacePrediction> _destinationPredictions = [];
-  final String _sourceAddress = '';
-  String _destinationAddress = '';
-  DateTime? _expectedCompletionDate;
-  final bool _useCurrentLocationForSource = true;
-  bool _useCustomerAddressAsDestination = false;
-  bool _destinationChangedByUser = false;
+  DateTime? _earliestCompletionDate;
+  DateTime? _latestCompletionDate;
+  // Source can be resolved two ways: true = automatic current GPS, false =
+  // manual address typed into _sourceController (geocoded on submit).
+  bool _useCurrentLocationForSource = true;
+  // Destination can be resolved two ways: true = automatic from the selected
+  // customer's address, false = manual address typed into _destinationController.
+  bool _useCustomerAddressForDest = true;
+  // When a manual source/destination is chosen from the map picker, these hold
+  // the exact pinned coordinates so submit uses them directly instead of
+  // re-geocoding the text. Cleared when the user edits the address by hand.
+  LatLng? _manualSourceLatLng;
+  LatLng? _manualDestLatLng;
+  String? _manualDestPincode;
   String _currentLocationAddress = '';
   bool _loadingCurrentLocation = false;
 
@@ -200,24 +203,24 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Keep the momentum',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    height: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Organize your workflow by adding a clear title and priority.',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.9),
-                    height: 1.35,
-                  ),
-                ),
+                // const Text(
+                //   'Keep the momentum',
+                //   style: TextStyle(
+                //     fontSize: 22,
+                //     fontWeight: FontWeight.bold,
+                //     color: Colors.white,
+                //     height: 1.2,
+                //   ),
+                // ),
+                // const SizedBox(height: 8),
+                // Text(
+                //   'Organize your workflow by adding a clear title and priority.',
+                //   style: TextStyle(
+                //     fontSize: 14,
+                //     color: Colors.white.withValues(alpha: 0.9),
+                //     height: 1.35,
+                //   ),
+                // ),
               ],
             ),
           ],
@@ -268,81 +271,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     );
   }
 
-  /// Read-only "Assigned To" field — tasks are always assigned to the current
-  /// staff (widget.staffId), shown as "Me" to match the Figma layout.
-  Widget _buildAssignedToField() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Assigned To',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade300),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.person_outline_rounded,
-                  size: 20, color: Colors.grey.shade700),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Me',
-                  style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
-                ),
-              ),
-              Icon(Icons.keyboard_arrow_down_rounded,
-                  size: 22, color: Colors.grey.shade500),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   /// Description: only user-entered text. Source/destination are stored in sourceLocation/destinationLocation.
   String _buildDescription() {
     return _descriptionController.text.trim();
-  }
-
-  Future<void> _searchDestination(String query) async {
-    if (query.trim().isEmpty) {
-      setState(() {
-        _showDestinationSuggestions = false;
-        _destinationPredictions = [];
-      });
-      return;
-    }
-    final list = await PlacesService.autocomplete(query);
-    if (mounted) {
-      setState(() {
-        _destinationPredictions = list;
-        _showDestinationSuggestions = true;
-      });
-    }
-  }
-
-  Future<void> _onDestinationSelected(PlaceDetails details) async {
-    setState(() {
-      _destinationAddress =
-          details.formattedAddress ?? '${details.lat}, ${details.lng}';
-      _destinationController.text = _destinationAddress;
-      _destinationLatLng = LatLng(details.lat, details.lng);
-      _destinationPincode = details.pincode;
-      _destinationChangedByUser = true;
-      _showDestinationSuggestions = false;
-      _destinationPredictions = [];
-    });
   }
 
   void _onCustomerSelected(Customer c) {
@@ -350,222 +281,16 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       _selectedCustomer = c;
       _customerSearchController.text = c.customerName;
       _showCustomerDropdown = false;
-      if (_useCustomerAddressAsDestination) {
-        _applyCustomerAddressAsDestination(c);
-      }
     });
   }
 
-  void _applyCustomerAddressAsDestination(Customer c) {
-    final addr = '${c.address}, ${c.city}, ${c.pincode}'.trim();
-    _destinationController.text = addr;
-    _destinationAddress = addr;
-    _destinationPincode = c.pincode.isNotEmpty ? c.pincode : null;
-    _destinationLatLng = null;
-    _destinationChangedByUser = false;
-  }
-
-  Widget _buildDestinationField() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Destination',
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.grey.shade700,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 6),
-        // Search location
-        TextFormField(
-          controller: _destinationController,
-          style: TextStyle(fontSize: 13),
-          decoration: InputDecoration(
-            prefixIcon: Icon(
-              Icons.pin_drop_rounded,
-              size: 20,
-              color: AppColors.primary,
-            ),
-            hintText: 'Search address or place...',
-            hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-            suffixIcon: _destinationAddress.isNotEmpty
-                ? IconButton(
-                    icon: Icon(
-                      Icons.clear,
-                      size: 20,
-                      color: Colors.grey.shade600,
-                    ),
-                    onPressed: () => setState(() {
-                      _destinationController.clear();
-                      _destinationAddress = '';
-                      _destinationLatLng = null;
-                      _destinationPincode = null;
-                      _destinationChangedByUser = false;
-                    }),
-                  )
-                : null,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 12,
-            ),
-          ),
-          onChanged: (v) {
-            if (v.length >= 3) {
-              _searchDestination(v);
-            } else {
-              setState(() {
-                _showDestinationSuggestions = false;
-                _destinationPredictions = [];
-              });
-            }
-          },
-        ),
-        if (_selectedCustomer != null) ...[
-          const SizedBox(height: 8),
-          CheckboxListTile(
-            value: _useCustomerAddressAsDestination,
-            onChanged: (bool? value) {
-              setState(() {
-                _useCustomerAddressAsDestination = value ?? false;
-                if (_useCustomerAddressAsDestination &&
-                    _selectedCustomer != null) {
-                  _applyCustomerAddressAsDestination(_selectedCustomer!);
-                }
-              });
-            },
-            title: Text(
-              'Use customer address as destination',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
-            ),
-            controlAffinity: ListTileControlAffinity.leading,
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-          ),
-        ],
-        if (_showDestinationSuggestions &&
-            _destinationPredictions.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Container(
-            constraints: const BoxConstraints(maxHeight: 180),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade300),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _destinationPredictions.length,
-              itemBuilder: (context, i) {
-                final p = _destinationPredictions[i];
-                return ListTile(
-                  dense: true,
-                  leading: Icon(
-                    Icons.pin_drop_rounded,
-                    size: 20,
-                    color: AppColors.primary,
-                  ),
-                  title: Text(
-                    p.mainText,
-                    style: TextStyle(fontSize: 13, color: Colors.black87),
-                  ),
-                  subtitle: p.secondaryText.isNotEmpty
-                      ? Text(
-                          p.secondaryText,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey.shade600,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        )
-                      : null,
-                  onTap: () async {
-                    final details = await PlacesService.getPlaceDetails(
-                      p.placeId,
-                    );
-                    if (details != null && mounted) {
-                      await _onDestinationSelected(details);
-                    }
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-        const SizedBox(height: 8),
-        // Select on Map - styled like Live Tracking "Change / Pin destination"
-        TextButton.icon(
-          onPressed: () async {
-            Position? pos;
-            try {
-              pos = await Geolocator.getCurrentPosition(
-                desiredAccuracy: LocationAccuracy.high,
-              );
-            } catch (_) {}
-            final result = await Navigator.of(context)
-                .push<PinDestinationResult>(
-                  MaterialPageRoute(
-                    builder: (context) => PinDestinationMapScreen(
-                      initialCenter: pos != null
-                          ? LatLng(pos.latitude, pos.longitude)
-                          : null,
-                      initialPin: _destinationLatLng,
-                    ),
-                  ),
-                );
-            if (result != null && mounted) {
-              setState(() {
-                _destinationLatLng = LatLng(result.lat, result.lng);
-                _destinationAddress = result.address;
-                _destinationController.text = result.address;
-                _destinationPincode = result.pincode;
-                _destinationChangedByUser = true;
-              });
-            }
-          },
-          icon: Icon(
-            Icons.pin_drop_rounded,
-            size: 18,
-            color: AppColors.primary,
-          ),
-          label: Text(
-            'Select on Map',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.primary,
-            ),
-          ),
-          style: TextButton.styleFrom(
-            foregroundColor: AppColors.primary,
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
-            alignment: Alignment.centerLeft,
-          ),
-        ),
-        if (_destinationAddress.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text(
-            'Selected: $_destinationAddress${_destinationPincode != null ? ' ($_destinationPincode)' : ''}',
-            style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ],
-    );
+  /// Destination text built from the selected customer's address.
+  String _customerDestinationAddress(Customer c) {
+    return [
+      c.address,
+      c.city,
+      c.pincode,
+    ].where((p) => p.trim().isNotEmpty).join(', ').trim();
   }
 
   Future<void> _submit() async {
@@ -576,46 +301,123 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       ).showSnackBar(const SnackBar(content: Text('Please select a customer')));
       return;
     }
-    if (_expectedCompletionDate == null) {
+    if (_earliestCompletionDate == null || _latestCompletionDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select expected completion date')),
+        const SnackBar(
+          content: Text(
+            'Please select earliest and latest completion dates',
+          ),
+        ),
       );
       return;
     }
-    final destAddr = _destinationAddress.isNotEmpty
-        ? _destinationAddress
-        : _destinationController.text.trim();
-    if (destAddr.isEmpty && _destinationLatLng == null) {
+    if (_latestCompletionDate!.isBefore(_earliestCompletionDate!)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please search or pin destination')),
+        const SnackBar(
+          content: Text(
+            'Latest completion date must be on or after the earliest date',
+          ),
+        ),
+      );
+      return;
+    }
+    // Destination: Auto = selected customer's address, Manual = typed address.
+    final String destAddr;
+    if (_useCustomerAddressForDest) {
+      destAddr = _customerDestinationAddress(_selectedCustomer!);
+      if (destAddr.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Selected customer has no address on file'),
+          ),
+        );
+        return;
+      }
+    } else {
+      destAddr = _destinationController.text.trim();
+      if (destAddr.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a destination address')),
+        );
+        return;
+      }
+    }
+    // Manual source must have an address typed in before we try to geocode it.
+    if (!_useCurrentLocationForSource && _sourceController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a source address')),
       );
       return;
     }
     setState(() => _submitting = true);
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (mounted) {
-          setState(() => _submitting = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Location permission denied')),
-          );
+      // Resolve the source (pickup) according to the chosen mode:
+      //  • Auto   → current GPS position + the reverse-geocoded address.
+      //  • Manual → forward-geocode the typed address into coordinates.
+      final LatLng pickup;
+      final String sourceAddress;
+      if (_useCurrentLocationForSource) {
+        LocationPermission permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
         }
-        return;
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) {
+          if (mounted) {
+            setState(() => _submitting = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Location permission denied')),
+            );
+          }
+          return;
+        }
+        final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        );
+        pickup = LatLng(position.latitude, position.longitude);
+        sourceAddress = _currentLocationAddress.isNotEmpty
+            ? _currentLocationAddress
+            : 'Current location (GPS)';
+      } else {
+        final typedSource = _sourceController.text.trim();
+        if (_manualSourceLatLng != null) {
+          // Exact pin from the map picker — use it directly, don't re-geocode.
+          pickup = _manualSourceLatLng!;
+          sourceAddress = typedSource.isNotEmpty ? typedSource : 'Dropped pin';
+        } else {
+          List<Location> srcLocs = [];
+          try {
+            srcLocs = await locationFromAddress(typedSource);
+          } catch (_) {}
+          if (srcLocs.isEmpty) {
+            if (mounted) {
+              setState(() => _submitting = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Could not locate the source address on the map',
+                  ),
+                ),
+              );
+            }
+            return;
+          }
+          pickup = LatLng(srcLocs.first.latitude, srcLocs.first.longitude);
+          sourceAddress = typedSource;
+        }
       }
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      final pickup = LatLng(position.latitude, position.longitude);
 
-      LatLng dropoff;
-      String? destPincode = _destinationPincode;
-      if (_destinationLatLng != null) {
-        dropoff = _destinationLatLng!;
+      final LatLng dropoff;
+      // Customer pincode only applies when the destination is the customer's
+      // address; for a manual address we let the reverse-geocode fallback fill it.
+      String? destPincode =
+          (_useCustomerAddressForDest && _selectedCustomer!.pincode.isNotEmpty)
+          ? _selectedCustomer!.pincode
+          : null;
+      if (!_useCustomerAddressForDest && _manualDestLatLng != null) {
+        // Exact pin from the map picker — use it directly, don't re-geocode.
+        dropoff = _manualDestLatLng!;
+        destPincode ??= _manualDestPincode;
       } else {
         List<Location> destLocs = [];
         try {
@@ -626,24 +428,26 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             setState(() => _submitting = false);
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Please search or pin destination on map'),
+                content: Text(
+                  'Could not locate the destination address on the map',
+                ),
               ),
             );
           }
           return;
         }
         dropoff = LatLng(destLocs.first.latitude, destLocs.first.longitude);
-        if (destPincode == null) {
-          try {
-            final resolved = await AddressResolutionService.reverseGeocode(
-              dropoff.latitude,
-              dropoff.longitude,
-            );
-            if (resolved?.pincode?.isNotEmpty == true) {
-              destPincode = resolved!.pincode;
-            }
-          } catch (_) {}
-        }
+      }
+      if (destPincode == null) {
+        try {
+          final resolved = await AddressResolutionService.reverseGeocode(
+            dropoff.latitude,
+            dropoff.longitude,
+          );
+          if (resolved?.pincode?.isNotEmpty == true) {
+            destPincode = resolved!.pincode;
+          }
+        } catch (_) {}
       }
 
       final destLocation = <String, dynamic>{
@@ -661,44 +465,31 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         description: _buildDescription(),
         assignedTo: widget.staffId,
         customerId: _selectedCustomer!.id!,
-        expectedCompletionDate: _expectedCompletionDate!,
+        // Latest date is the hard deadline → keep it as expectedCompletionDate
+        // so existing task views keep showing a due date.
+        expectedCompletionDate: _latestCompletionDate!,
+        earliestCompletionDate: _earliestCompletionDate!,
+        latestCompletionDate: _latestCompletionDate!,
         status: 'assigned',
         sourceLocation: {
           'lat': pickup.latitude,
           'lng': pickup.longitude,
-          'address': _currentLocationAddress,
+          'address': sourceAddress,
         },
         destinationLocation: destLocation,
       );
       if (!mounted) return;
-      final taskWithCustomer = task.copyWith(customer: _selectedCustomer);
-
-      await TaskService().updateTask(
-        taskWithCustomer.id!,
-        status: 'in_progress',
-        startTime: DateTime.now(),
-        startLat: pickup.latitude,
-        startLng: pickup.longitude,
-        sourceLocation: {
-          'lat': pickup.latitude,
-          'lng': pickup.longitude,
-          'address': _currentLocationAddress,
-          'fullAddress': _currentLocationAddress,
-        },
-      );
-
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (context) => LiveTrackingScreen(
-            taskId: taskWithCustomer.taskId,
-            taskMongoId: taskWithCustomer.id,
-            pickupLocation: pickup,
-            dropoffLocation: dropoff,
-            task: taskWithCustomer,
-          ),
+      // Creation only assigns the task (status 'assigned'); it does NOT auto-start
+      // the ride. The new task now shows up in the staff's task list — they open
+      // it from there and tap "Start Ride", running TaskDetailScreen's existing
+      // flow. Pop back to the list (which refreshes on return) so it appears.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Task "${task.taskTitle}" assigned successfully'),
+          duration: const Duration(seconds: 3),
         ),
       );
+      Navigator.of(context).pop(true);
     } on DioException catch (e) {
       if (mounted) {
         setState(() => _submitting = false);
@@ -747,8 +538,11 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         surfaceTintColor: Colors.transparent,
         actions: [
           IconButton(
-            icon: Icon(Icons.notifications_none_rounded,
-                color: AppColors.textPrimary, size: 26),
+            icon: Icon(
+              Icons.notifications_none_rounded,
+              color: AppColors.textPrimary,
+              size: 26,
+            ),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const NotificationsScreen()),
             ),
@@ -758,136 +552,154 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             child: CircleAvatar(
               radius: 18,
               backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-              child: Icon(Icons.person_rounded,
-                  color: AppColors.primary, size: 22),
+              child: Icon(
+                Icons.person_rounded,
+                color: AppColors.primary,
+                size: 22,
+              ),
             ),
           ),
         ],
       ),
       body: Form(
         key: _formKey,
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  16,
-                  16,
-                  16 + MediaQuery.of(context).viewInsets.bottom,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildMomentumBanner(),
-                    const SizedBox(height: 20),
-                    _buildLabeledField(
-                      'Task Title',
-                      TextFormField(
-                        controller: _taskTitleController,
-                        decoration: _cleanInputDecoration(
-                          'e.g., Design System Audit',
-                        ),
-                        validator: (v) =>
-                            (v == null || v.trim().isEmpty) ? 'Required' : null,
-                        textInputAction: TextInputAction.next,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildCustomerField(),
-                    const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: _buildExpectedCompletionDateField()),
-                        const SizedBox(width: 12),
-                        Expanded(child: _buildAssignedToField()),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _buildLabeledField(
-                      'Description',
-                      TextFormField(
-                        controller: _descriptionController,
-                        decoration: _cleanInputDecoration(
-                          'Briefly describe the tasks and objectives...',
-                        ),
-                        maxLines: 4,
-                        textInputAction: TextInputAction.newline,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildSourceField(),
-                    const SizedBox(height: 16),
-                    _buildDestinationField(),
-                    const SizedBox(height: 24),
-                  ],
-                ),
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
-                    blurRadius: 8,
-                    offset: const Offset(0, -2),
+        // Whole page scrolls as one: form fields and the Create Task button
+        // share a single scroll view instead of the button being pinned.
+        child: SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            16 + MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+            //  _buildMomentumBanner(),
+           //   const SizedBox(height: 20),
+              _buildLabeledField(
+                'Task Title',
+                TextFormField(
+                  controller: _taskTitleController,
+                  decoration: _cleanInputDecoration(
+                    'e.g., Design System Audit',
                   ),
-                ],
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Required' : null,
+                  textInputAction: TextInputAction.next,
+                ),
               ),
-              child: SafeArea(
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _submitting ? null : _submit,
-                    icon: _submitting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(
-                            Icons.task_alt_rounded,
+              const SizedBox(height: 16),
+              _buildCustomerField(),
+              const SizedBox(height: 16),
+              _buildCompletionDateRangeFields(),
+              const SizedBox(height: 16),
+              _buildLabeledField(
+                'Description',
+                TextFormField(
+                  controller: _descriptionController,
+                  decoration: _cleanInputDecoration(
+                    'Briefly describe the tasks and objectives...',
+                  ),
+                  maxLines: 4,
+                  textInputAction: TextInputAction.newline,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _buildSourceField(),
+            //  const SizedBox(height: 16),
+             // _buildDestinationField(),
+              const SizedBox(height: 24),
+              // Create Task button scrolls with the form rather than being
+              // pinned to the bottom of the screen.
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _submitting ? null : _submit,
+                  icon: _submitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
                             color: Colors.white,
-                            size: 22,
                           ),
-                    label: Text(
-                      _submitting ? 'Creating...' : 'Create Task',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
+                        )
+                      : const Icon(
+                          Icons.task_alt_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                  label: Text(
+                    _submitting ? 'Creating...' : 'Create Task',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 2,
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    elevation: 2,
                   ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildExpectedCompletionDateField() {
+  /// Earliest + Latest completion date range (replaces the single Due Date).
+  Widget _buildCompletionDateRangeFields() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildCompletionDateField(
+          label: 'Earliest Completion Date',
+          value: _earliestCompletionDate,
+          firstDate: DateTime.now(),
+          onPicked: (picked) {
+            setState(() {
+              _earliestCompletionDate = picked;
+              // Keep the range valid: bump latest forward if it now precedes earliest.
+              if (_latestCompletionDate != null &&
+                  _latestCompletionDate!.isBefore(picked)) {
+                _latestCompletionDate = picked;
+              }
+            });
+          },
+        ),
+        const SizedBox(height: 16),
+        _buildCompletionDateField(
+          label: 'Latest Completion Date',
+          value: _latestCompletionDate,
+          firstDate: _earliestCompletionDate ?? DateTime.now(),
+          onPicked: (picked) {
+            setState(() => _latestCompletionDate = picked);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompletionDateField({
+    required String label,
+    required DateTime? value,
+    required DateTime firstDate,
+    required ValueChanged<DateTime> onPicked,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Due Date',
+          label,
           style: TextStyle(
             fontSize: 14,
             color: AppColors.textPrimary,
@@ -897,15 +709,17 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         const SizedBox(height: 8),
         InkWell(
           onTap: () async {
-            final now = DateTime.now();
+            final initial = value != null && !value.isBefore(firstDate)
+                ? value
+                : firstDate;
             final picked = await showDatePicker(
               context: context,
-              initialDate: _expectedCompletionDate ?? now,
-              firstDate: now,
-              lastDate: now.add(const Duration(days: 365)),
+              initialDate: initial,
+              firstDate: firstDate,
+              lastDate: DateTime.now().add(const Duration(days: 365)),
             );
             if (picked != null && mounted) {
-              setState(() => _expectedCompletionDate = picked);
+              onPicked(picked);
             }
           },
           borderRadius: BorderRadius.circular(12),
@@ -928,14 +742,12 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               ),
             ),
             child: Text(
-              _expectedCompletionDate == null
+              value == null
                   ? ''
-                  : '${_expectedCompletionDate!.day.toString().padLeft(2, '0')}/${_expectedCompletionDate!.month.toString().padLeft(2, '0')}/${_expectedCompletionDate!.year}',
+                  : '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}',
               style: TextStyle(
                 fontSize: 14,
-                color: _expectedCompletionDate == null
-                    ? Colors.grey.shade500
-                    : Colors.black87,
+                color: value == null ? Colors.grey.shade500 : Colors.black87,
               ),
             ),
           ),
@@ -944,68 +756,461 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     );
   }
 
-  Widget _buildSourceField() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Source (always current GPS)',
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.grey.shade700,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+  /// Pre-fills the manual source field with the reverse-geocoded current
+  /// location, fetching it first if it hasn't been resolved yet.
+  Future<void> _fillSourceFromCurrentLocation() async {
+    if (_currentLocationAddress.isEmpty ||
+        _currentLocationAddress == 'Location permission denied') {
+      await _fetchCurrentLocationAddress();
+    }
+    if (!mounted) return;
+    final addr = _currentLocationAddress;
+    if (addr.isNotEmpty &&
+        addr != 'Location permission denied' &&
+        addr != 'Current location (GPS)') {
+      // Address now comes from current GPS, not a map pin — drop any stale pin
+      // so submit re-geocodes this address.
+      setState(() {
+        _sourceController.text = addr;
+        _manualSourceLatLng = null;
+      });
+    }
+  }
+
+  /// Opens the full-screen map picker and returns the chosen pin, if any.
+  Future<PinDestinationResult?> _openMapPicker({LatLng? initialPin}) {
+    return Navigator.of(context).push<PinDestinationResult>(
+      MaterialPageRoute(
+        builder: (_) => PinDestinationMapScreen(initialPin: initialPin),
+      ),
+    );
+  }
+
+  /// Lets the user drop an exact pin for the source on the map.
+  Future<void> _pickSourceOnMap() async {
+    final result = await _openMapPicker(initialPin: _manualSourceLatLng);
+    if (result == null || !mounted) return;
+    setState(() {
+      _manualSourceLatLng = LatLng(result.lat, result.lng);
+      _sourceController.text = result.address;
+    });
+  }
+
+  /// Lets the user drop an exact pin for the destination on the map.
+  Future<void> _pickDestinationOnMap() async {
+    final result = await _openMapPicker(initialPin: _manualDestLatLng);
+    if (result == null || !mounted) return;
+    setState(() {
+      _manualDestLatLng = LatLng(result.lat, result.lng);
+      _manualDestPincode = result.pincode;
+      _destinationController.text = result.address;
+    });
+  }
+
+  /// One segment in a two-way Auto/Manual toggle.
+  Widget _segmentOption(
+    String label,
+    IconData icon,
+    bool selected,
+    VoidCallback onTap,
+  ) {
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.06),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+            color: selected ? AppColors.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.gps_fixed_rounded, size: 20, color: AppColors.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _loadingCurrentLocation
-                    ? Text(
-                        'Getting your location...',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
-                        ),
-                      )
-                    : Text(
-                        _currentLocationAddress,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.textPrimary,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+              Icon(
+                icon,
+                size: 18,
+                color: selected ? Colors.white : Colors.grey.shade700,
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  'Auto',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700,
-                  ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : Colors.grey.shade700,
                 ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Pill container that holds the two [_segmentOption]s of a toggle.
+  Widget _segmentedContainer(List<Widget> children) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(children: children),
+    );
+  }
+
+  /// Shared decoration for the manual source/destination address fields.
+  InputDecoration _addressInputDecoration({
+    required IconData prefixIcon,
+    required Color prefixColor,
+    required Widget suffix,
+    required String hint,
+  }) {
+    return InputDecoration(
+      prefixIcon: Icon(prefixIcon, size: 20, color: prefixColor),
+      suffixIcon: suffix,
+      hintText: hint,
+      hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+      filled: true,
+      fillColor: Colors.white,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: AppColors.primary, width: 2),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    );
+  }
+
+  Widget _buildSourceField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Source',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildSourceModeToggle(),
+        const SizedBox(height: 10),
+        if (_useCurrentLocationForSource)
+          _buildAutoSourceCard()
+        else
+          _buildManualSourceField(),
+      ],
+    );
+  }
+
+  /// Auto / Manual segmented switch for how the source is resolved.
+  Widget _buildSourceModeToggle() {
+    return _segmentedContainer([
+      _segmentOption(
+        'Auto (GPS)',
+        Icons.gps_fixed_rounded,
+        _useCurrentLocationForSource,
+        () {
+          if (_useCurrentLocationForSource) return;
+          setState(() => _useCurrentLocationForSource = true);
+          if (_currentLocationAddress.isEmpty) _fetchCurrentLocationAddress();
+        },
+      ),
+      _segmentOption(
+        'Manual',
+        Icons.edit_location_alt_rounded,
+        !_useCurrentLocationForSource,
+        () {
+          if (!_useCurrentLocationForSource) return;
+          setState(() => _useCurrentLocationForSource = false);
+        },
+      ),
+    ]);
+  }
+
+  /// Read-only card showing the auto-resolved current GPS address.
+  Widget _buildAutoSourceCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.gps_fixed_rounded, size: 20, color: AppColors.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _loadingCurrentLocation
+                ? Text(
+                    'Getting your location...',
+                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                  )
+                : Text(
+                    _currentLocationAddress.isEmpty
+                        ? 'Current location (GPS)'
+                        : _currentLocationAddress,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textPrimary,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+          ),
+          IconButton(
+            tooltip: 'Refresh location',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(
+              Icons.refresh_rounded,
+              size: 20,
+              color: AppColors.primary,
+            ),
+            onPressed: _loadingCurrentLocation
+                ? null
+                : _fetchCurrentLocationAddress,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Outlined "Pick on map" button used under the manual source/destination
+  /// fields to open the full-screen pin picker.
+  Widget _buildPickOnMapButton(VoidCallback onPressed) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(Icons.map_rounded, size: 18, color: AppColors.primary),
+        label: Text(
+          'Pick on map',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.primary,
+          ),
+        ),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          side: BorderSide(color: AppColors.primary.withOpacity(0.5)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Free-text source address (geocoded on submit) with shortcuts to fill it
+  /// from the current GPS location or to drop an exact pin on the map.
+  Widget _buildManualSourceField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextFormField(
+          controller: _sourceController,
+          minLines: 1,
+          maxLines: 2,
+          textInputAction: TextInputAction.newline,
+          // User typed by hand → any pin chosen earlier is stale, so submit
+          // re-geocodes the typed text instead of using the old coordinates.
+          onChanged: (_) {
+            if (_manualSourceLatLng != null) {
+              setState(() => _manualSourceLatLng = null);
+            }
+          },
+          decoration: _addressInputDecoration(
+            prefixIcon: Icons.edit_location_alt_rounded,
+            prefixColor: AppColors.primary,
+            hint: 'Enter source address',
+            suffix: IconButton(
+              tooltip: 'Use my current location',
+              icon: _loadingCurrentLocation
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Icons.my_location_rounded,
+                      size: 20,
+                      color: AppColors.primary,
+                    ),
+              onPressed: _loadingCurrentLocation
+                  ? null
+                  : _fillSourceFromCurrentLocation,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildPickOnMapButton(_pickSourceOnMap),
+      ],
+    );
+  }
+
+  /// Copies the selected customer's address into the manual destination field.
+  void _fillDestinationFromCustomer() {
+    final c = _selectedCustomer;
+    if (c == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select a customer first')),
+      );
+      return;
+    }
+    final addr = _customerDestinationAddress(c);
+    if (addr.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selected customer has no address on file'),
+        ),
+      );
+      return;
+    }
+    // Address now comes from the customer record, not a map pin — drop any
+    // stale pin so submit re-geocodes this address.
+    setState(() {
+      _destinationController.text = addr;
+      _manualDestLatLng = null;
+      _manualDestPincode = null;
+    });
+  }
+
+  Widget _buildDestinationField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Destination',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildDestinationModeToggle(),
+        const SizedBox(height: 10),
+        if (_useCustomerAddressForDest)
+          _buildCustomerDestinationCard()
+        else
+          _buildManualDestinationField(),
+      ],
+    );
+  }
+
+  /// Customer / Manual segmented switch for how the destination is resolved.
+  Widget _buildDestinationModeToggle() {
+    return _segmentedContainer([
+      _segmentOption(
+        'Customer',
+        Icons.person_pin_circle_rounded,
+        _useCustomerAddressForDest,
+        () {
+          if (_useCustomerAddressForDest) return;
+          setState(() => _useCustomerAddressForDest = true);
+        },
+      ),
+      _segmentOption(
+        'Manual',
+        Icons.edit_location_alt_rounded,
+        !_useCustomerAddressForDest,
+        () {
+          if (!_useCustomerAddressForDest) return;
+          setState(() => _useCustomerAddressForDest = false);
+        },
+      ),
+    ]);
+  }
+
+  /// Read-only card showing the destination derived from the selected customer.
+  Widget _buildCustomerDestinationCard() {
+    final c = _selectedCustomer;
+    final addr = c != null ? _customerDestinationAddress(c) : '';
+    final placeholder = c == null
+        ? 'Select a customer above'
+        : 'Selected customer has no address on file';
+    final isPlaceholder = c == null || addr.isEmpty;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.location_on_rounded, size: 20, color: Colors.pink.shade400),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              isPlaceholder ? placeholder : addr,
+              style: TextStyle(
+                fontSize: 13,
+                color: isPlaceholder
+                    ? Colors.grey.shade600
+                    : AppColors.textPrimary,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Free-text destination address (geocoded on submit) with shortcuts to fill
+  /// it from the selected customer's address or to drop an exact pin on the map.
+  Widget _buildManualDestinationField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextFormField(
+          controller: _destinationController,
+          minLines: 1,
+          maxLines: 2,
+          textInputAction: TextInputAction.newline,
+          // User typed by hand → any pin chosen earlier is stale, so submit
+          // re-geocodes the typed text instead of using the old coordinates.
+          onChanged: (_) {
+            if (_manualDestLatLng != null || _manualDestPincode != null) {
+              setState(() {
+                _manualDestLatLng = null;
+                _manualDestPincode = null;
+              });
+            }
+          },
+          decoration: _addressInputDecoration(
+            prefixIcon: Icons.location_on_rounded,
+            prefixColor: Colors.pink.shade400,
+            hint: 'Enter destination address',
+            suffix: IconButton(
+              tooltip: 'Use customer address',
+              icon: Icon(
+                Icons.person_pin_circle_rounded,
+                size: 20,
+                color: AppColors.primary,
+              ),
+              onPressed: _fillDestinationFromCustomer,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildPickOnMapButton(_pickDestinationOnMap),
       ],
     );
   }

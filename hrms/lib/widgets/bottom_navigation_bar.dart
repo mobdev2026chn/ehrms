@@ -1,4 +1,4 @@
-﻿// hrms/lib/widgets/bottom_navigation_bar.dart
+// hrms/lib/widgets/bottom_navigation_bar.dart
 // Reusable custom bottom navbar with dark theme and yellow accent (reference-style).
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -35,6 +35,7 @@ class AppBottomNavigationBar extends StatefulWidget {
 
   /// When provided, used for Punch button label (Punch In vs Punch Out). From today's attendance.
   final bool? isPunchedInToday;
+
   /// When provided, controls hide/show of punch CTA based on today's completion state.
   final bool? isPunchCompletedToday;
   final bool isPunchActionInProgress;
@@ -42,6 +43,7 @@ class AppBottomNavigationBar extends StatefulWidget {
   final bool isBreakActionInProgress;
   final DateTime? activeBreakStartTime;
   final VoidCallback? onEndBreakTap;
+
   /// When false, hides the tea-break control for shifts with `breakPolicy.enabled == false`.
   final bool showBreakNavButton;
 
@@ -124,7 +126,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
     // state is not provided. This avoids show/hide flicker during tab switches.
     final usesInternalPunchState =
         widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
-    if (usesInternalPunchState && oldWidget.currentIndex != widget.currentIndex) {
+    if (usesInternalPunchState &&
+        oldWidget.currentIndex != widget.currentIndex) {
       _checkPunchState();
     }
   }
@@ -190,7 +193,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
       final hasPunchInToday = _isPunchDateForToday(punchIn, today);
       final hasPunchOutToday = _isPunchDateForToday(punchOut, today);
 
-      final isPunchedInFromPrefs = cacheDay == todayKey &&
+      final isPunchedInFromPrefs =
+          cacheDay == todayKey &&
           isAwaitingPunchOutFromCachedPunchStrings(
             punchIn: punchIn,
             punchOut: punchOut,
@@ -322,7 +326,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
     final navItems = widget.items ?? _buildItems();
     final usesInternalPunchState =
         widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
-    final canRenderPunchButton = !usesInternalPunchState || _isPunchStateResolved;
+    final canRenderPunchButton =
+        !usesInternalPunchState || _isPunchStateResolved;
     final isPunchedInForBreak = widget.isPunchedInToday ?? _isPunchedIn;
     final isPunchedIn = widget.isPunchedInToday ?? _isPunchedIn;
 
@@ -331,36 +336,66 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
     final selected = AppColors.primary;
 
     if (kDebugMode) {
-      debugPrint('[BottomNav] showBreakNavButton=${widget.showBreakNavButton} isPunchedInForBreak=$isPunchedInForBreak');
+      debugPrint(
+        '[BottomNav] showBreakNavButton=${widget.showBreakNavButton} isPunchedInForBreak=$isPunchedInForBreak',
+      );
     }
+
+    // A break is only valid while punched in (between punch-in and punch-out).
+    // `isPunchedIn` (awaiting-punch-out) is true only in that window, so it is
+    // the exact condition for enabling the Break tab.
+    final breakAllowed = isPunchedIn;
 
     // Figma layout: 2 tabs | center punch circle | 2 tabs
     // navItems[0]=Home, [1]=Attendance, center=Punch, [2]=Break, [3]=My Request
-    Widget navTab(int idx, NavItem item, int navIdx) {
+    Widget navTab(
+      int idx,
+      NavItem item,
+      int navIdx, {
+      bool dimmed = false,
+      bool busy = false,
+    }) {
       final isActive = widget.currentIndex == navIdx;
       return Expanded(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () { HapticFeedback.lightImpact(); _handleNavigation(context, navIdx); },
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                isActive ? item.activeIcon : item.icon,
-                size: 22,
-                color: isActive ? selected : unselected,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                item.label,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                  color: isActive ? selected : unselected,
+        child: Opacity(
+          opacity: dimmed ? 0.4 : 1.0,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: busy
+                ? null
+                : () {
+                    HapticFeedback.lightImpact();
+                    _handleNavigation(context, navIdx);
+                  },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                busy
+                    ? SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(selected),
+                        ),
+                      )
+                    : Icon(
+                        isActive ? item.activeIcon : item.icon,
+                        size: 22,
+                        color: isActive ? selected : unselected,
+                      ),
+                const SizedBox(height: 4),
+                Text(
+                  busy ? 'Please wait' : item.label,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                    color: isActive ? selected : unselected,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
@@ -374,7 +409,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: BreakStatusCard(
               startTime: _effectiveBreakStartTime!,
-              onEndBreak: widget.onEndBreakTap ?? () => _handleNavigation(context, 6),
+              onEndBreak:
+                  widget.onEndBreakTap ?? () => _handleNavigation(context, 6),
               isBusy: widget.isBreakActionInProgress,
               showSuccessBanner: false,
             ),
@@ -407,55 +443,72 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
                   child: canRenderPunchButton
                       ? Center(
                           child: GestureDetector(
-                            onTap: () { HapticFeedback.mediumImpact(); _handleNavigation(context, 5); },
+                            onTap: () {
+                              HapticFeedback.mediumImpact();
+                              _handleNavigation(context, 5);
+                            },
                             child: ScaleTransition(
                               scale: Tween<double>(begin: 1.0, end: 1.045)
-                                  .animate(CurvedAnimation(
-                                    parent: _pulseController,
-                                    curve: Curves.easeInOut,
-                                  )),
-                              child: AnimatedOpacity(
-                              duration: const Duration(milliseconds: 150),
-                              opacity: (widget.isPunchActionInProgress || (widget.isPunchCompletedToday ?? _isPunchCompletedToday)) ? 0.5 : 1.0,
-                              child: Container(
-                                width: 58,
-                                height: 58,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: LinearGradient(
-                                    colors: [AppColors.primary, AppColors.primaryDark],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
+                                  .animate(
+                                    CurvedAnimation(
+                                      parent: _pulseController,
+                                      curve: Curves.easeInOut,
+                                    ),
                                   ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: AppColors.primary.withValues(alpha: 0.5),
-                                      blurRadius: 12,
-                                      offset: const Offset(0, 3),
+                              child: AnimatedOpacity(
+                                duration: const Duration(milliseconds: 150),
+                                opacity:
+                                    (widget.isPunchActionInProgress ||
+                                        (widget.isPunchCompletedToday ??
+                                            _isPunchCompletedToday))
+                                    ? 0.5
+                                    : 1.0,
+                                child: Container(
+                                  width: 58,
+                                  height: 58,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        AppColors.primary,
+                                        AppColors.primaryDark,
+                                      ],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
                                     ),
-                                  ],
-                                ),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      isPunchedIn ? Icons.fingerprint : Icons.fingerprint,
-                                      color: Colors.white,
-                                      size: 26,
-                                    ),
-                                    Text(
-                                      isPunchedIn ? 'Punch out' : 'Punch in',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 7,
-                                        fontWeight: FontWeight.w700,
-                                        letterSpacing: 0.2,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppColors.primary.withValues(
+                                          alpha: 0.5,
+                                        ),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 3),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        isPunchedIn
+                                            ? Icons.fingerprint
+                                            : Icons.fingerprint,
+                                        color: Colors.white,
+                                        size: 26,
+                                      ),
+                                      Text(
+                                        isPunchedIn ? 'Punch out' : 'Punch in',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 7,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.2,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
                             ),
                           ),
                         )
@@ -463,7 +516,16 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
                 ),
 
                 // Right 2 tabs: Break + My Request
-                if (navItems.length > 2) navTab(2, navItems[2], 2),
+                // Break is dimmed when not punched in / already punched out — the
+                // tap is still intercepted and explained by DashboardScreen's gate.
+                if (navItems.length > 2)
+                  navTab(
+                    2,
+                    navItems[2],
+                    2,
+                    dimmed: !breakAllowed && !widget.isBreakActionInProgress,
+                    busy: widget.isBreakActionInProgress,
+                  ),
                 if (navItems.length > 3) navTab(3, navItems[3], 3),
               ],
             ),

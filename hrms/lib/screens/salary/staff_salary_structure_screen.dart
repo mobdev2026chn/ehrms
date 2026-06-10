@@ -30,8 +30,7 @@ class _StaffSalaryStructureScreenState extends State<StaffSalaryStructureScreen>
     super.initState();
     _load();
   }
-
-  Future<void> _load() async {
+Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = '';
@@ -50,10 +49,9 @@ class _StaffSalaryStructureScreenState extends State<StaffSalaryStructureScreen>
       if (!b.salaryDetailsAccessEnabled) {
         setState(() {
           _bundle = null;
-          _error =
-              'Salary details are not enabled for your account. Please contact HR.';
           _loading = false;
         });
+        _showAccessDeniedDialog();  // <-- Show dialog instead of setting error
         return;
       }
       setState(() {
@@ -67,6 +65,31 @@ class _StaffSalaryStructureScreenState extends State<StaffSalaryStructureScreen>
         _loading = false;
       });
     }
+  }
+
+  void _showAccessDeniedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.lock_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Access Restricted'),
+          ],
+        ),
+        content: const Text(
+          'Salary details are not enabled for your account. Please contact HR.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   List<Map<String, dynamic>> _sortedHistoryDesc(StaffSalaryBundle b) {

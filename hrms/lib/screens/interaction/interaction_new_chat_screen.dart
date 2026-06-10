@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
@@ -99,7 +100,7 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
                 return ListTile(
                   leading: CircleAvatar(
                     backgroundColor: AppColors.primary.withOpacity(0.2),
-                    backgroundImage: url != null ? NetworkImage(url) : null,
+                    backgroundImage: url != null ? CachedNetworkImageProvider(url) : null,
                     child: url == null
                         ? Text(
                             name.isNotEmpty ? name[0].toUpperCase() : '?',

@@ -338,24 +338,78 @@ exports.getTasksByStaffIdPaginated = async (req, res) => {
     }
 
     // Status-group filter.
+    // Raw status spellings that map to each app status-group, mirroring
+    // normalizeStatusForApp/statusFromJson. Matched case-insensitively because
+    // stored statuses vary in casing/spacing (e.g. "Completed", "completed tasks").
+    // Each group's raw spellings are chosen so the filter returns exactly the
+    // tasks whose card badge shows that status. The mapping mirrors the app's
+    // Task.statusFromJson (lib/models/task.dart) which decides the card label:
+    // e.g. "serving today" / "delayed tasks" render as "Pending", so they live
+    // in the pending group (NOT in-progress).
+    const STATUS_GROUP_SPELLINGS = {
+      // Card: Pending / Assigned / Scheduled
+      pending: [
+        'pending', 'pending tasks', 'pendingtasks',
+        'delayed tasks', 'delayedtasks',
+        'serving today', 'servingtoday',
+        'assigned', 'assigned tasks', 'assignedtasks',
+        'not yet started', 'notyetstarted',
+        'scheduled', 'scheduled tasks', 'scheduledtasks',
+      ],
+      // Card: In Progress / Arrived
+      inprogress: [
+        'in_progress', 'in progress', 'inprogress',
+        'arrived',
+      ],
+      // Card: Hold
+      hold: [
+        'hold', 'on_hold', 'on hold', 'onhold', 'hold tasks', 'holdtasks',
+      ],
+      // Card: Hold on Arrival
+      holdonarrival: [
+        'holdOnArrival', 'hold on arrival', 'holdonarrival', 'hold_on_arrival',
+      ],
+      // Card: Waiting for Approval
+      waitingforapproval: [
+        'waiting_for_approval', 'waiting for approval', 'waitingforapproval',
+      ],
+      // Card: Completed
+      completed: [
+        'completed', 'completed tasks', 'completedtasks',
+      ],
+      // Card: Exited on Arrival
+      exitonarrival: [
+        'exitOnArrival', 'exit on arrival', 'exitonarrival',
+        'exitedOnArrival', 'exited on arrival', 'exitedonarrival',
+      ],
+      // Card: Exited
+      exited: [
+        'exited',
+      ],
+      // Card: Reopened
+      reopened: [
+        'reopened', 'reopened tasks', 'reopenedtasks',
+      ],
+      // Card: Rejected
+      rejected: [
+        'rejected', 'rejected tasks', 'rejectedtasks',
+      ],
+    };
     if (statusGroupsRaw) {
       const groups = statusGroupsRaw
         .split(',')
         .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
-      const statusSet = new Set();
+      const patterns = [];
       for (const g of groups) {
-        if (g === 'inprogress') {
-          ['in_progress', 'in progress', 'arrived'].forEach((x) => statusSet.add(x));
-        } else if (g === 'hold') {
-          ['hold', 'holdOnArrival', 'hold on arrival'].forEach((x) => statusSet.add(x));
-        } else if (g === 'completed') {
-          ['completed', 'waiting_for_approval', 'waiting for approval'].forEach((x) =>
-            statusSet.add(x)
-          );
+        const spellings = STATUS_GROUP_SPELLINGS[g];
+        if (!spellings) continue;
+        for (const sp of spellings) {
+          const escaped = sp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          patterns.push(new RegExp(`^${escaped}$`, 'i'));
         }
       }
-      if (statusSet.size > 0) query.status = { $in: Array.from(statusSet) };
+      if (patterns.length > 0) query.status = { $in: patterns };
     }
 
     // Search by task fields + customer name/number.

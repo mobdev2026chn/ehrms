@@ -114,7 +114,11 @@ class SalaryRevisionOverviewScreen extends StatelessWidget {
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (_) => SalaryRevisionDetailScreen(entry: e),
+                    builder: (_) => SalaryRevisionDetailScreen(
+                      entry: e,
+                      employeeName: name,
+                      employeeId: empId.isNotEmpty ? empId : null,
+                    ),
                   ),
                 );
               },
