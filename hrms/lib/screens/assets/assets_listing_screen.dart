@@ -360,6 +360,10 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
 
   // ── Hardware card ────────────────────────────────────────────────────────
   Widget _buildHardwareCard(Asset asset) {
+    // The web Assets module has no "Active"/"Inactive" status, so don't surface
+    // the fabricated ACTIVE badge for working assets. Real states
+    // (maintenance / damaged / retired) are still shown.
+    final isWorking = asset.status.toLowerCase() == 'working';
     final badge = _statusBadge(asset.status);
     return InkWell(
       onTap: () => _openDetails(asset),
@@ -420,24 +424,26 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: badge.bg,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    badge.label,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                      color: badge.fg,
+                if (!isWorking) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: badge.bg,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      badge.label,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                        color: badge.fg,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
             const SizedBox(height: 12),

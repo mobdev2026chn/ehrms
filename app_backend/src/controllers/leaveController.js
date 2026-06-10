@@ -6,7 +6,8 @@ const HolidayTemplate = require('../models/HolidayTemplate');
 const Attendance = require('../models/Attendance');
 const Company = require('../models/Company');
 const mongoose = require('mongoose');
-const { markAttendanceForApprovedLeave, calculateAvailableLeaves } = require('../utils/leaveAttendanceHelper');
+const { markAttendanceForApprovedLeave, calculateAvailableLeaves, getShiftTimings } = require('../utils/leaveAttendanceHelper');
+const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
 
 // Helper for date calculation
@@ -527,10 +528,30 @@ const getLeaveTypesForApply = async (req, res) => {
 
         const list = [];
 
-        // Static option: Half Day always visible (counts as 0.5 day, deducted from availableCasualLeaves)
-        const hasHalfDay = list.some(t => (t.type || '').toLowerCase().replace(/\s+/g, '') === 'halfday');
-        if (!hasHalfDay) {
-            list.push({ type: 'Half Day', days: 0.5 });
+        // Half Day is only offered when the staff's effective shift has half-day
+        // enabled (company.settings.attendance.shifts[].halfDaySettings.enabled).
+        // getShiftTimings returns a non-null halfDaySettings only when enabled, so
+        // a truthy value here means the shift permits half-day leave.
+        let halfDayEnabled = true; // default for legacy companies with no shifts config
+        try {
+            const company = staff?.businessId
+                ? await Company.findById(staff.businessId).select('settings.attendance.shifts').lean()
+                : null;
+            if (company?.settings?.attendance?.shifts?.length) {
+                const attendanceTemplate = await loadAttendanceTemplateForStaff(staff);
+                const timings = getShiftTimings(company, staff, new Date(), staff?.joiningDate, attendanceTemplate);
+                halfDayEnabled = !!timings?.halfDaySettings;
+            }
+        } catch (e) {
+            console.warn('[getLeaveTypesForApply] half-day resolve failed, defaulting to enabled:', e?.message);
+        }
+
+        // Static option: Half Day (counts as 0.5 day) — only when enabled for the shift.
+        if (halfDayEnabled) {
+            const hasHalfDay = list.some(t => (t.type || '').toLowerCase().replace(/\s+/g, '') === 'halfday');
+            if (!hasHalfDay) {
+                list.push({ type: 'Half Day', days: 0.5 });
+            }
         }
 
         if (staff?.leaveTemplateId?.leaveTypes && Array.isArray(staff.leaveTemplateId.leaveTypes)) {
@@ -965,6 +986,26 @@ const createLeave = async (req, res) => {
 
         // Validation for Half Day
         if (leaveType === 'Half Day') {
+            // Enforce the shift policy: Half Day is only allowed when the staff's
+            // effective shift enables it (halfDaySettings.enabled). Mirrors the
+            // gating applied to the Apply-Leave type list.
+            try {
+                const company = staff?.businessId
+                    ? await Company.findById(staff.businessId).select('settings.attendance.shifts').lean()
+                    : null;
+                if (company?.settings?.attendance?.shifts?.length) {
+                    const attendanceTemplate = await loadAttendanceTemplateForStaff(staff);
+                    const timings = getShiftTimings(company, staff, startDateNorm || new Date(), staff?.joiningDate, attendanceTemplate);
+                    if (!timings?.halfDaySettings) {
+                        return res.status(400).json({
+                            success: false,
+                            error: { message: 'Half Day leave is not enabled for your shift. Please contact HR.' }
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('[createLeave] half-day shift check failed, allowing:', e?.message);
+            }
             if (!session || !['1', '2'].includes(session)) {
                 return res.status(400).json({ success: false, error: { message: 'Session (1 or 2) is mandatory for Half Day leave' } });
             }

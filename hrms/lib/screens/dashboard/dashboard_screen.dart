@@ -1523,6 +1523,23 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+  /// Returns the shift-break-policy block reason from the last loaded summary, or
+  /// null when the policy permits starting a break. Mirrors the backend gate so
+  /// the camera never opens for a shift that will reject the break:
+  ///  - breaks explicitly disabled         -> "not enabled"
+  ///  - breaks enabled but no allowance set -> "not configured / contact HR"
+  String? _breakPolicyBlockReason() {
+    final summary = _breakSummary;
+    if (summary == null) return null;
+    if (summary.policyDisabled) {
+      return 'Breaks are not enabled for your shift.';
+    }
+    if (summary.policyEnabled && !summary.policyConfigured) {
+      return 'Breaks are not configured for your shift. Please contact HR.';
+    }
+    return null;
+  }
+
   /// Returns a reason string when a break may NOT be started given the current
   /// punch state, or null when it is allowed. A break is only valid while the
   /// employee is punched in: not before punch-in, and not after punch-out.
@@ -1583,6 +1600,13 @@ class _DashboardScreenState extends State<DashboardScreen>
         'You are already on break. End that break to start a new one.',
         isError: true,
       );
+      return;
+    }
+    // Block up front (no selfie) when the shift policy disables or hasn't configured
+    // breaks. The backend enforces this too, but gating here avoids a wasted selfie.
+    final policyBlock = _breakPolicyBlockReason();
+    if (policyBlock != null) {
+      SnackBarUtils.showSnackBar(context, policyBlock, isError: true);
       return;
     }
     setState(() => _isBreakActionInProgress = true);

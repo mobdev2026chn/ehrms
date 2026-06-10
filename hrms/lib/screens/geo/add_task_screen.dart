@@ -15,6 +15,7 @@ import 'package:hrms/services/task_service.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
 import 'package:hrms/screens/notifications/notifications_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 
 class AddTaskScreen extends StatefulWidget {
@@ -483,11 +484,11 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       // the ride. The new task now shows up in the staff's task list — they open
       // it from there and tap "Start Ride", running TaskDetailScreen's existing
       // flow. Pop back to the list (which refreshes on return) so it appears.
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Task "${task.taskTitle}" assigned successfully'),
-          duration: const Duration(seconds: 3),
-        ),
+      // Show the confirmation at the TOP of the screen using the project's
+      // standard animated top toast (see [SnackBarUtils]).
+      SnackBarUtils.showSnackBar(
+        context,
+        'Task "${task.taskTitle}" assigned successfully',
       );
       Navigator.of(context).pop(true);
     } on DioException catch (e) {

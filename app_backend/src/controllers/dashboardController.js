@@ -180,6 +180,8 @@ const getEmployeeDashboardStats = async (req, res) => {
                     const nextBday = nextOccurrence(now, bMonth, bDay);
                     const daysLeft = Math.ceil((nextBday - now) / (24 * 60 * 60 * 1000));
                     const isToday = bMonth === todayMonth && bDay === todayDay;
+                    // Age the person turns on this (upcoming/today) birthday.
+                    const turningAge = nextBday.getFullYear() - d.getFullYear();
                     const item = {
                         type: 'birthday',
                         name: s.name,
@@ -187,6 +189,7 @@ const getEmployeeDashboardStats = async (req, res) => {
                         displayDate: `${bDay} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][bMonth]}`,
                         daysLeft: isToday ? 0 : daysLeft,
                         avatar: s.avatar,
+                        turningAge,
                     };
                     if (isToday) todayCelebrations.push(item);
                     else if (daysLeft > 0 && daysLeft <= upcomingDays) upcomingCelebrations.push(item);

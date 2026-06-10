@@ -1,10 +1,16 @@
 // hrms/lib/screens/attendance/shift_screen.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 import '../../config/app_colors.dart';
+import '../../services/attendance_service.dart';
+import '../../services/salary_service.dart';
+import '../../utils/fine_calculation_util.dart';
+import '../../utils/holiday_off_util.dart';
 import '../../utils/rotational_shift_util.dart';
+import '../../utils/shift_policy_util.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/profile_app_bar_actions.dart';
@@ -24,6 +30,7 @@ class ShiftScreen extends StatefulWidget {
     required this.todayTemplate,
     required this.referenceDate,
     this.appliedHeaderLine,
+    this.initialMonthData,
   });
 
   /// Company doc carrying `settings.attendance.shifts` for resolution.
@@ -44,15 +51,104 @@ class ShiftScreen extends StatefulWidget {
   /// Compact line from an applied (swapped) shift, which overrides today's text.
   final String? appliedHeaderLine;
 
+  /// Dashboard's already-loaded `/attendance/month` payload for the reference
+  /// month (avoids a redundant fetch + throttle collision on open).
+  final Map<String, dynamic>? initialMonthData;
+
   @override
   State<ShiftScreen> createState() => _ShiftScreenState();
 }
 
+/// What a single calendar day resolves to on the Shift screen.
+enum _DayKind { working, weekOff, holiday, leave, none }
+
+/// Resolved shift / status for one calendar day, after overlaying the staff's
+/// holiday + weekly-off pattern and the month's attendance data (applied leaves
+/// and the *actual* shift worked that day) on top of the rotational fallback.
+class _ShiftDayInfo {
+  const _ShiftDayInfo({
+    required this.kind,
+    this.shift,
+    this.label,
+    this.note,
+    this.fromAttendance = false,
+  });
+
+  final _DayKind kind;
+
+  /// Resolved shift window for a working day.
+  final EffectiveShiftDay? shift;
+
+  /// Short cell label (leave abbreviation).
+  final String? label;
+
+  /// Longer note (holiday name / leave type).
+  final String? note;
+
+  /// True when [shift] came from the day's own attendance record
+  /// (`appliedShiftId`) rather than the rotational fallback — i.e. the shift
+  /// the employee was actually assigned/worked that date.
+  final bool fromAttendance;
+}
+
+/// Parsed per-month attendance overlay (applied leaves + the per-day
+/// `appliedShiftId`). Mirrors the maps the Attendance Calendar builds.
+class _MonthShiftData {
+  _MonthShiftData({
+    required this.statusByDate,
+    required this.leaveTypeByDate,
+    required this.leaveSet,
+    required this.holidaySet,
+    required this.holidayNameByDate,
+    required this.weekOffSet,
+    required this.alternateWorkSet,
+    required this.appliedShiftIdByDate,
+    required this.companyDocForApplied,
+  });
+
+  final Map<String, String> statusByDate;
+  final Map<String, String> leaveTypeByDate;
+  final Set<String> leaveSet;
+  final Set<String> holidaySet;
+  final Map<String, String> holidayNameByDate;
+
+  /// Backend-computed week-off dates ('yyyy-MM-dd') — authoritative source that
+  /// matches the Attendance Calendar (covers Sundays + any configured pattern).
+  final Set<String> weekOffSet;
+
+  /// Compensation work days that fall on a week-off (employee still works).
+  final Set<String> alternateWorkSet;
+  final Map<String, dynamic> appliedShiftIdByDate;
+
+  /// Company doc (embedded shifts) used to resolve `appliedShiftId` → window.
+  final Map<String, dynamic>? companyDocForApplied;
+}
+
 class _ShiftScreenState extends State<ShiftScreen> {
+  final AttendanceService _attendanceService = AttendanceService();
+
   late DateTime _focusedDay;
   late DateTime _selectedDay;
   late final DateTime _today;
   late final DateTime _joiningMonthStart;
+
+  /// Weekly-off pattern for the logged-in staff (their WeeklyHolidayTemplate or the
+  /// business fallback). Layered on top of the shift template so week-off weekdays
+  /// render as "Week Off" instead of the default shift window.
+  HolidayOffConfig _offConfig = HolidayOffConfig.empty;
+
+  /// Parsed attendance overlay keyed by `year-month`.
+  final Map<String, _MonthShiftData> _months = {};
+
+  /// `year-month` keys currently being fetched (de-dupes in-flight requests).
+  final Set<String> _loadingMonths = {};
+
+  /// Company fine config (`/attendance/fine-calculation`) and this user's
+  /// per-day salary — used to show the fine rules that apply to this staff,
+  /// with salary-based rules resolved to a per-user ₹ rate.
+  Map<String, dynamic>? _fineCalculation;
+  double? _netPerDaySalary;
+  bool _fineLoaded = false;
 
   @override
   void initState() {
@@ -63,6 +159,188 @@ class _ShiftScreenState extends State<ShiftScreen> {
     _selectedDay = _today;
     final j = widget.joiningDate;
     _joiningMonthStart = j != null ? DateTime(j.year, j.month, 1) : DateTime(2020);
+    _loadWeekOffConfig();
+    _loadFineSettings();
+
+    // Seed the reference month from the dashboard's payload, then ensure the
+    // focused month is loaded.
+    final seed = widget.initialMonthData;
+    if (seed != null) {
+      _months[_monthKey(_today)] =
+          _parseMonthData(seed, _today.year, _today.month);
+    }
+    _ensureMonthLoaded(_focusedDay);
+  }
+
+  Future<void> _loadWeekOffConfig() async {
+    final config = await loadHolidayOffConfig();
+    if (!mounted) return;
+    setState(() => _offConfig = config);
+  }
+
+  /// Fetches the company fine config and this user's per-day salary so the Fine
+  /// Settings card can show the rules + the resolved per-user amount.
+  Future<void> _loadFineSettings() async {
+    Map<String, dynamic>? fineConfig;
+    try {
+      final result = await _attendanceService.getFineCalculation();
+      if (result['success'] == true) {
+        fineConfig = result['data'] as Map<String, dynamic>?;
+      }
+    } catch (_) {}
+
+    double? net;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      net = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
+      if (net == null || net <= 0) {
+        final gross = prefs.getDouble(kAppGrossPerDaySalaryPrefsKey);
+        if (gross != null && gross > 0) net = gross;
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _fineCalculation = fineConfig;
+      _netPerDaySalary = net;
+      _fineLoaded = true;
+    });
+  }
+
+  // ── Month data ───────────────────────────────────────────────────────────
+
+  String _monthKey(DateTime d) => '${d.year}-${d.month}';
+
+  _MonthShiftData? _monthFor(DateTime d) => _months[_monthKey(d)];
+
+  void _ensureMonthLoaded(DateTime d) {
+    final key = _monthKey(d);
+    if (_months.containsKey(key) || _loadingMonths.contains(key)) return;
+    _fetchMonth(d.year, d.month);
+  }
+
+  Future<void> _fetchMonth(int year, int month) async {
+    final key = '$year-$month';
+    _loadingMonths.add(key);
+    try {
+      final result = await _attendanceService.getMonthAttendance(year, month);
+      if (!mounted) return;
+      if (result['success'] == true && result['data'] is Map) {
+        final data = Map<String, dynamic>.from(result['data'] as Map);
+        setState(() {
+          _months[key] = _parseMonthData(data, year, month);
+        });
+      }
+    } catch (_) {
+      // Leave the month unparsed — cells fall back to rotational resolution.
+    } finally {
+      _loadingMonths.remove(key);
+    }
+  }
+
+  /// Parses a `/attendance/month` payload into the per-day overlay maps.
+  _MonthShiftData _parseMonthData(Map data, int year, int month) {
+    final statusByDate = <String, String>{};
+    final leaveTypeByDate = <String, String>{};
+    final leaveSet = <String>{};
+    final holidaySet = <String>{};
+    final holidayNameByDate = <String, String>{};
+    final weekOffSet = <String>{};
+    final alternateWorkSet = <String>{};
+    final appliedShiftIdByDate = <String, dynamic>{};
+
+    String calDate(dynamic v) {
+      if (v == null) return '';
+      try {
+        if (v is DateTime) {
+          final u = v.toUtc();
+          return '${u.year}-${u.month.toString().padLeft(2, '0')}-${u.day.toString().padLeft(2, '0')}';
+        }
+        final s = v.toString().trim();
+        if (s.isEmpty) return '';
+        if (s.contains('T')) return s.split('T').first;
+        if (s.length >= 10 && s[4] == '-' && s[7] == '-') return s.substring(0, 10);
+        final d = DateTime.parse(s).toUtc();
+        return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      } catch (_) {
+        return '';
+      }
+    }
+
+    bool inMonth(String dateStr) {
+      final parts = dateStr.split('-');
+      if (parts.length != 3) return false;
+      return (int.tryParse(parts[0]) ?? 0) == year &&
+          (int.tryParse(parts[1]) ?? 0) == month;
+    }
+
+    final attendance = data['attendance'];
+    if (attendance is List) {
+      for (final entry in attendance) {
+        if (entry is! Map) continue;
+        final dateStr = calDate(entry['date']);
+        if (dateStr.isEmpty || !inMonth(dateStr)) continue;
+        statusByDate[dateStr] = (entry['status'] as String?) ?? 'Present';
+        final leaveType = entry['leaveType'] as String?;
+        if (leaveType != null && leaveType.trim().isNotEmpty) {
+          leaveTypeByDate[dateStr] = leaveType.trim();
+        }
+        final applied = entry['appliedShiftId'];
+        if (applied != null && applied.toString().trim().isNotEmpty) {
+          appliedShiftIdByDate[dateStr] = applied;
+        }
+      }
+    }
+
+    final holidays = data['holidays'];
+    if (holidays is List) {
+      for (final h in holidays) {
+        if (h is! Map) continue;
+        final dateStr = calDate(h['date']);
+        if (dateStr.isEmpty || !inMonth(dateStr)) continue;
+        holidaySet.add(dateStr);
+        final name = h['name']?.toString().trim();
+        if (name != null && name.isNotEmpty) holidayNameByDate[dateStr] = name;
+      }
+    }
+
+    void addStrings(dynamic list, Set<String> into) {
+      if (list is List) {
+        for (final v in list) {
+          if (v is String && v.isNotEmpty) into.add(v);
+        }
+      }
+    }
+
+    addStrings(data['leaveDates'], leaveSet);
+    addStrings(data['weekOffDates'], weekOffSet);
+    addStrings(data['alternateWorkDatesInMonth'], alternateWorkSet);
+
+    // Embedded shifts for appliedShiftId resolution prefer the month payload's
+    // businessShifts; fall back to the profile company doc.
+    Map<String, dynamic>? companyForApplied;
+    final bs = data['businessShifts'];
+    if (bs is List && bs.isNotEmpty) {
+      companyForApplied = {
+        'settings': {
+          'attendance': {'shifts': List<dynamic>.from(bs)},
+        },
+      };
+    } else {
+      companyForApplied = widget.companyDoc;
+    }
+
+    return _MonthShiftData(
+      statusByDate: statusByDate,
+      leaveTypeByDate: leaveTypeByDate,
+      leaveSet: leaveSet,
+      holidaySet: holidaySet,
+      holidayNameByDate: holidayNameByDate,
+      weekOffSet: weekOffSet,
+      alternateWorkSet: alternateWorkSet,
+      appliedShiftIdByDate: appliedShiftIdByDate,
+      companyDocForApplied: companyForApplied,
+    );
   }
 
   bool get _isAtJoiningMonth {
@@ -71,9 +349,14 @@ class _ShiftScreenState extends State<ShiftScreen> {
   }
 
   /// Effective shift for [day]. Today's merged template is only valid for today.
+  ///
+  /// The staff's weekly-off pattern is applied on top of the resolved shift: a
+  /// week-off weekday renders as "Week Off" rather than the shift template's
+  /// default window (the shift row itself carries no week-off flag for standard
+  /// templates — only the `byWeekCalendar` rotation does).
   EffectiveShiftDay? _shiftForDay(DateTime day) {
     final d = DateTime(day.year, day.month, day.day);
-    return effectiveShiftForCalendarDay(
+    final base = effectiveShiftForCalendarDay(
       companyDoc: widget.companyDoc,
       staffShiftKey: widget.staffShiftKey,
       dayLocal: d,
@@ -81,6 +364,123 @@ class _ShiftScreenState extends State<ShiftScreen> {
       attendanceTodayTemplate:
           isSameDay(d, _today) ? widget.todayTemplate : null,
     );
+    if (base != null && base.isWeekOff) return base;
+    if (_offConfig.isWeeklyOff(d)) {
+      return EffectiveShiftDay(
+        displayName: 'Week Off',
+        startTime: null,
+        endTime: null,
+        shiftTypeLower: 'weekoff',
+        openWorkHours: null,
+        otBufferMinutes: null,
+        rotationTemplateName: base?.rotationTemplateName,
+        cycleLength: base?.cycleLength,
+        cycleDayIndex1Based: base?.cycleDayIndex1Based,
+        rotationalMode: base?.rotationalMode,
+        isWeekOff: true,
+      );
+    }
+    return base;
+  }
+
+  /// Resolves a stamped `appliedShiftId` to its shift window via company shifts.
+  EffectiveShiftDay? _shiftFromAppliedId(dynamic appliedId, _MonthShiftData md) {
+    final res = appliedShiftPastResolvedFromCompany(
+      companyDoc: md.companyDocForApplied ?? widget.companyDoc,
+      appliedShiftId: appliedId,
+    );
+    if (res == null) return null;
+    return EffectiveShiftDay(
+      displayName: res.shiftName,
+      startTime: res.startTime,
+      endTime: res.endTime,
+      shiftTypeLower: res.isOpen ? 'open' : 'standard',
+      openWorkHours: res.openWorkHours,
+      isWeekOff: false,
+    );
+  }
+
+  /// The effective day status, overlaying real attendance data when available.
+  ///
+  /// Priority: a day actually worked shows the shift stamped on its record (so
+  /// reassigning the shift today never rewrites past days) → holiday → applied
+  /// leave → week-off → rotational fallback for days without a record.
+  _ShiftDayInfo _dayInfoFor(DateTime day) {
+    final d = DateTime(day.year, day.month, day.day);
+    final dateStr = HolidayOffConfig.keyFor(d);
+    final md = _monthFor(d);
+
+    final status = md?.statusByDate[dateStr];
+    final isPresent = status == 'Present' || status == 'Half Day';
+
+    // 1. Worked → the shift stamped on that day's record (historical assignment).
+    final appliedId = md?.appliedShiftIdByDate[dateStr];
+    if (appliedId != null) {
+      final shift = _shiftFromAppliedId(appliedId, md!);
+      if (shift != null) {
+        return _ShiftDayInfo(
+          kind: _DayKind.working,
+          shift: shift,
+          fromAttendance: true,
+        );
+      }
+    }
+
+    // 2. Holiday (staff calendar or month payload), unless they worked it.
+    final isHoliday =
+        _offConfig.isHoliday(d) || (md?.holidaySet.contains(dateStr) ?? false);
+    if (isHoliday && !isPresent) {
+      return _ShiftDayInfo(
+        kind: _DayKind.holiday,
+        note: md?.holidayNameByDate[dateStr],
+      );
+    }
+
+    // 3. Applied leave.
+    if (md != null) {
+      final leaveType = md.leaveTypeByDate[dateStr];
+      if (leaveType != null && leaveType.isNotEmpty) {
+        return _ShiftDayInfo(
+          kind: _DayKind.leave,
+          label: _leaveAbbrev(leaveType),
+          note: leaveType,
+        );
+      }
+      if (status == 'On Leave' ||
+          (md.leaveSet.contains(dateStr) && !isPresent)) {
+        return const _ShiftDayInfo(kind: _DayKind.leave, label: 'L', note: 'Leave');
+      }
+    }
+
+    // 4. Week off. The backend-computed weekOffDates from /attendance/month is
+    //    the authoritative source (matches the Attendance Calendar); the staff
+    //    weekly-off pattern and rotational byWeekCalendar are fallbacks. A
+    //    compensation work day overrides a week-off (the employee works it).
+    final isAltWork = md?.alternateWorkSet.contains(dateStr) ?? false;
+    final base = _shiftForDay(d);
+    if (!isAltWork && !isPresent) {
+      final monthWeekOff = md?.weekOffSet.contains(dateStr) ?? false;
+      if (monthWeekOff ||
+          (base != null && base.isWeekOff) ||
+          _offConfig.isWeeklyOff(d)) {
+        return _ShiftDayInfo(kind: _DayKind.weekOff, shift: base);
+      }
+    }
+
+    // 5. Fallback: rotational / standard window from the current assignment.
+    if (base == null) return const _ShiftDayInfo(kind: _DayKind.none);
+    return _ShiftDayInfo(kind: _DayKind.working, shift: base);
+  }
+
+  /// 2-letter abbreviation for a leave type, e.g. "Casual Leave" → "CL".
+  String _leaveAbbrev(String leaveType) {
+    final t = leaveType.trim();
+    if (t.isEmpty) return 'L';
+    final words = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.length >= 2) {
+      return (words[0][0] + words[1][0]).toUpperCase();
+    }
+    return t.length <= 3 ? t.toUpperCase() : t.substring(0, 2).toUpperCase();
   }
 
   String? _windowOf(EffectiveShiftDay? s) {
@@ -101,12 +501,36 @@ class _ShiftScreenState extends State<ShiftScreen> {
       _focusedDay = nd;
       _selectedDay = nd;
     });
+    _ensureMonthLoaded(nd);
+  }
+
+  /// Pull-to-refresh: force-reload the focused month (and the weekly-off /
+  /// holiday config) so a freshly-assigned shift or new leave shows without
+  /// reopening the screen.
+  Future<void> _refresh() async {
+    final f = _focusedDay;
+    final key = _monthKey(f);
+    _months.remove(key);
+    await Future.wait([
+      _loadWeekOffConfig(),
+      _attendanceService
+          .getMonthAttendance(f.year, f.month, forceRefresh: true)
+          .then((result) {
+        if (!mounted) return;
+        if (result['success'] == true && result['data'] is Map) {
+          final data = Map<String, dynamic>.from(result['data'] as Map);
+          setState(() {
+            _months[key] = _parseMonthData(data, f.year, f.month);
+          });
+        }
+      }).catchError((_) {}),
+    ]);
   }
 
   @override
   Widget build(BuildContext context) {
     final refFmt = DateFormat('EEE, MMM d, yyyy').format(_today);
-    final todaySnap = _shiftForDay(_today);
+    final todayInfo = _dayInfoFor(_today);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -127,49 +551,81 @@ class _ShiftScreenState extends State<ShiftScreen> {
         ),
         actions: const [ProfileAppBarActions()],
       ),
-      body: ListView(
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
         children: [
-          Text(
-            'Your Shift',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Today\'s working window and the shift calendar.',
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.4,
-              color: AppColors.textSecondary,
-            ),
-          ),
+          // Text(
+          //   'Your Shift',
+          //   style: TextStyle(
+          //     fontSize: 20,
+          //     fontWeight: FontWeight.bold,
+          //     color: AppColors.textPrimary,
+          //   ),
+          // ),
+         // const SizedBox(height: 4),
+          // Text(
+          //   'Today\'s working window and the shift calendar.',
+          //   style: TextStyle(
+          //     fontSize: 13,
+          //     height: 1.4,
+          //     color: AppColors.textSecondary,
+          //   ),
+          // ),
           const SizedBox(height: 20),
-          _buildTodayShiftCard(todaySnap, refFmt),
-          if (todaySnap != null) ...[
+          _buildTodayShiftCard(todayInfo, refFmt),
+          if (todayInfo.kind == _DayKind.working && todayInfo.shift != null) ...[
             const SizedBox(height: 16),
-            _buildDetailsCard(todaySnap),
+            _buildDetailsCard(todayInfo.shift!),
+          ],
+          const SizedBox(height: 16),
+          _buildPoliciesCard(),
+          if (_fineLoaded && _fineCalculation != null) ...[
+            const SizedBox(height: 16),
+            _buildFineSettingsCard(),
           ],
           const SizedBox(height: 16),
           _buildShiftCalendarCard(),
           const SizedBox(height: 16),
           _buildSelectedDayCard(),
         ],
+        ),
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
   }
 
   /// Blue summary card — same design language as the dashboard / calendar.
-  Widget _buildTodayShiftCard(EffectiveShiftDay? snap, String refFmt) {
+  Widget _buildTodayShiftCard(_ShiftDayInfo info, String refFmt) {
+    final snap = info.shift;
     final rotName = snap?.rotationTemplateName?.trim();
     final shiftName = snap?.displayName.trim() ?? '';
     final window = _windowOf(snap);
     final compactLine = widget.appliedHeaderLine ?? snap?.compactLine();
+
+    // Status-only days (off / holiday / leave) show a single headline line.
+    String? statusHeadline;
+    switch (info.kind) {
+      case _DayKind.weekOff:
+        statusHeadline = 'Week Off';
+        break;
+      case _DayKind.holiday:
+        statusHeadline = (info.note != null && info.note!.isNotEmpty)
+            ? 'Holiday · ${info.note}'
+            : 'Holiday';
+        break;
+      case _DayKind.leave:
+        statusHeadline = (info.note != null && info.note!.isNotEmpty)
+            ? 'On Leave · ${info.note}'
+            : 'On Leave';
+        break;
+      case _DayKind.working:
+      case _DayKind.none:
+        statusHeadline = null;
+        break;
+    }
 
     return Container(
       width: double.infinity,
@@ -224,49 +680,61 @@ class _ShiftScreenState extends State<ShiftScreen> {
             ],
           ),
           const SizedBox(height: 14),
-          if (rotName != null && rotName.isNotEmpty) ...[
+          if (statusHeadline != null)
             Text(
-              rotName,
+              statusHeadline,
               style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 6),
-          ],
-          if (window != null) ...[
-            Text(
-              window,
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                height: 1.1,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            if (shiftName.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                shiftName,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-            ],
-          ] else
-            Text(
-              (compactLine != null && compactLine.isNotEmpty)
-                  ? compactLine
-                  : 'No shift assigned',
-              style: TextStyle(
-                fontSize: 18,
+                fontSize: 20,
                 fontWeight: FontWeight.bold,
                 height: 1.3,
                 color: AppColors.textPrimary,
               ),
-            ),
+            )
+          else ...[
+            if (rotName != null && rotName.isNotEmpty) ...[
+              Text(
+                rotName,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
+            if (window != null) ...[
+              Text(
+                window,
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  height: 1.1,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              if (shiftName.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  shiftName,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ] else
+              Text(
+                (compactLine != null && compactLine.isNotEmpty)
+                    ? compactLine
+                    : 'No shift assigned',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  height: 1.3,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+          ],
         ],
       ),
     );
@@ -291,7 +759,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
       _detailRow(
         Icons.schedule_outlined,
         'Timing',
-        _windowOf(s) ?? (s.isOpen ? 'Open (flexible)' : '—'),
+        _windowOf(s) ??
+            (s.isOpen ? 'Open · ${_requiredHoursLabel(s)}' : '—'),
       ),
       _detailRow(Icons.category_outlined, 'Shift Type', shiftType),
       _detailRow(Icons.hourglass_bottom_outlined, 'Required Hours',
@@ -368,6 +837,356 @@ class _ShiftScreenState extends State<ShiftScreen> {
     );
   }
 
+  // ── Shift policies ──────────────────────────────────────────────────────────
+
+  /// Break / Permission / Overtime / Half-Day availability for today's shift,
+  /// resolved from the company shift row. Shows whether each function is enabled
+  /// for the user and its allocated limit. The functions themselves are gated by
+  /// these same policies (break via the break balance, permission via the
+  /// permission balance, half-day in Apply Leave).
+  Widget _buildPoliciesCard() {
+    final policies = resolveShiftPoliciesForDay(
+      companyDoc: widget.companyDoc,
+      staffShiftKey: widget.staffShiftKey,
+      dayLocal: _today,
+      joiningDate: widget.joiningDate,
+      attendanceTemplate: widget.todayTemplate,
+    );
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Shift Policies',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          _policyRow(
+            Icons.coffee_outlined,
+            'Break',
+            policies.breakPolicy,
+            allowedLabel: (p) => p.limitMinutes != null
+                ? 'Allowed · ${_minutesLabel(p.limitMinutes!)}/day'
+                : 'Allowed',
+            unconfiguredLabel: 'Default · 1h/day',
+          ),
+          _policyDivider(),
+          _policyRow(
+            Icons.timer_outlined,
+            'Permission',
+            policies.permission,
+            allowedLabel: (p) => p.limitMinutes != null
+                ? 'Allowed · ${_minutesLabel(p.limitMinutes!)}/month'
+                : 'Allowed',
+            unconfiguredLabel: 'Available',
+          ),
+          _policyDivider(),
+          _policyRow(
+            Icons.more_time_outlined,
+            'Overtime',
+            policies.overtime,
+            allowedLabel: (p) => p.multiplier != null
+                ? 'Allowed · ${_multiplierLabel(p.multiplier!)}'
+                : 'Allowed',
+            unconfiguredLabel: 'As per template',
+          ),
+          _policyDivider(),
+          _policyRow(
+            Icons.hourglass_bottom_outlined,
+            'Half Day',
+            policies.halfDay,
+            allowedLabel: (_) => 'Allowed',
+            unconfiguredLabel: 'Not allowed',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _policyDivider() => Divider(
+        height: 1,
+        color: AppColors.textSecondary.withValues(alpha: 0.12),
+      );
+
+  Widget _policyRow(
+    IconData icon,
+    String label,
+    ShiftPolicyInfo info, {
+    required String Function(ShiftPolicyInfo) allowedLabel,
+    required String unconfiguredLabel,
+  }) {
+    final String value;
+    final Color valueColor;
+    switch (info.availability) {
+      case PolicyAvailability.enabled:
+        value = allowedLabel(info);
+        valueColor = AppColors.success;
+        break;
+      case PolicyAvailability.disabled:
+        value = 'Not allowed';
+        valueColor = Colors.red.shade600;
+        break;
+      case PolicyAvailability.unconfigured:
+        value = unconfiguredLabel;
+        valueColor = AppColors.textSecondary;
+        break;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.primary),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+          const Spacer(),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: valueColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "90" → "1h 30m", "60" → "1h", "45" → "45 min".
+  String _minutesLabel(int mins) {
+    if (mins <= 0) return '0 min';
+    if (mins % 60 == 0) return '${mins ~/ 60}h';
+    if (mins < 60) return '$mins min';
+    return '${mins ~/ 60}h ${mins % 60}m';
+  }
+
+  /// "1.5" → "1.5×", "2.0" → "2×".
+  String _multiplierLabel(double m) {
+    final s = m == m.roundToDouble() ? m.toInt().toString() : m.toString();
+    return '$s×';
+  }
+
+  // ── Fine settings ────────────────────────────────────────────────────────────
+
+  /// Late-arrival / early-exit fine config for this user, read from the company
+  /// `/attendance/fine-calculation` rules and resolved against this staff's
+  /// per-day salary + shift hours (so salary-based rules show a real ₹ rate).
+  Widget _buildFineSettingsCard() {
+    final fc = _fineCalculation;
+    if (fc == null) return const SizedBox.shrink();
+
+    final disabled = fc['enabled'] == false || fc['applyFines'] == false;
+    final method = (fc['calculationMethod'] ?? fc['calculationType'] ?? 'shiftBased')
+        .toString();
+    final methodLabel =
+        method == 'fixedPerHour' ? 'Fixed per hour' : 'Shift-based';
+    final shiftHours = _representativeShiftHours();
+    final grace = _graceMinutes();
+
+    final children = <Widget>[
+      Text(
+        'Fine Settings',
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+          color: AppColors.textPrimary,
+        ),
+      ),
+      const SizedBox(height: 4),
+    ];
+
+    if (disabled) {
+      children.add(
+        _fineRow(Icons.verified_outlined, 'Status', 'No fines applied',
+            color: AppColors.success),
+      );
+    } else {
+      children.add(
+        _fineRow(Icons.gavel_outlined, 'Status', 'Active',
+            color: AppColors.success),
+      );
+      if (grace != null) {
+        children.add(_fineDivider());
+        children.add(
+          _fineRow(Icons.timelapse_outlined, 'Grace Period',
+              _minutesLabel(grace),
+              color: AppColors.textPrimary),
+        );
+      }
+      children.add(_fineDivider());
+      final late = _fineValueFor('lateArrival', shiftHours);
+      children.add(
+        _fineRow(Icons.login_rounded, 'Late Arrival', late.text,
+            color: late.color),
+      );
+      children.add(_fineDivider());
+      final early = _fineValueFor('earlyExit', shiftHours);
+      children.add(
+        _fineRow(Icons.logout_rounded, 'Early Exit', early.text,
+            color: early.color),
+      );
+      children.add(_fineDivider());
+      children.add(
+        _fineRow(Icons.calculate_outlined, 'Method', methodLabel,
+            color: AppColors.textSecondary),
+      );
+      if (_netPerDaySalary == null || _netPerDaySalary! <= 0) {
+        children.add(const SizedBox(height: 8));
+        children.add(
+          Text(
+            'Amounts are estimated from your salary once your latest payslip syncs.',
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.35,
+              color: AppColors.textCaption,
+            ),
+          ),
+        );
+      }
+    }
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
+  }
+
+  Widget _fineDivider() => Divider(
+        height: 1,
+        color: AppColors.textSecondary.withValues(alpha: 0.12),
+      );
+
+  /// Resolves the displayed fine for [actionType] ('lateArrival' | 'earlyExit')
+  /// to a label + colour. "No fine" (green) when no rule applies to the action.
+  ({String text, Color color}) _fineValueFor(String actionType, double shiftHours) {
+    if (fineConfigHasRules(_fineCalculation)) {
+      final rule = matchFineRuleForAction(_fineCalculation, actionType);
+      if (rule == null) {
+        return (text: 'No fine', color: AppColors.success);
+      }
+      return (
+        text: _fineRuleDescription(rule, shiftHours),
+        color: Colors.red.shade600,
+      );
+    }
+    // No explicit rules → the shift-based hourly fine applies.
+    return (text: _hourlySalaryLabel(1, shiftHours), color: Colors.red.shade600);
+  }
+
+  /// Human description of a single fine rule (per-min/-hour/fixed/half/full-day
+  /// or salary-multiple), surfacing the per-user ₹ rate where salary is known.
+  String _fineRuleDescription(Map<String, dynamic> rule, double shiftHours) {
+    final type = (rule['type']?.toString() ?? '').toLowerCase();
+
+    if (type == 'custom') {
+      final amt = (rule['customAmount'] as num?)?.toDouble() ?? 0.0;
+      final unit =
+          (rule['customAmountUnit']?.toString() ?? 'perHour').toLowerCase();
+      final a = _money(amt);
+      if (unit == 'perminute') return '₹$a / min';
+      if (unit == 'fixed') return '₹$a (fixed)';
+      return '₹$a / hour';
+    }
+    if (type == 'halfday') return _salaryFractionLabel('Half-day salary', 0.5);
+    if (type == 'fullday') return _salaryFractionLabel('Full-day salary', 1.0);
+
+    final mult = type == '2xsalary'
+        ? 2
+        : type == '3xsalary'
+            ? 3
+            : 1;
+    return _hourlySalaryLabel(mult, shiftHours);
+  }
+
+  /// "1× hourly salary (≈ ₹120/hr)" — appends the resolved hourly amount when
+  /// this user's per-day salary and shift hours are both known.
+  String _hourlySalaryLabel(int multiplier, double shiftHours) {
+    final base = '$multiplier× hourly salary';
+    final net = _netPerDaySalary;
+    if (net != null && net > 0 && shiftHours > 0) {
+      final perHour = (net / shiftHours) * multiplier;
+      return '$base (≈ ₹${_money(perHour)}/hr)';
+    }
+    return base;
+  }
+
+  /// "Half-day salary (≈ ₹500)" using this user's per-day salary when known.
+  String _salaryFractionLabel(String base, double fraction) {
+    final net = _netPerDaySalary;
+    if (net != null && net > 0) {
+      return '$base (≈ ₹${_money(net * fraction)})';
+    }
+    return base;
+  }
+
+  String _money(double v) => NumberFormat('#,##0.##').format(v);
+
+  /// Grace period (minutes) for the fine — prefers the shift template, then the
+  /// fine config's company-level fallback. Null when neither is set.
+  int? _graceMinutes() {
+    final t = widget.todayTemplate?['gracePeriodMinutes'];
+    if (t is num && t > 0) return t.toInt();
+    final g = _fineCalculation?['graceTimeMinutes'];
+    if (g is num && g > 0) return g.toInt();
+    return null;
+  }
+
+  /// Today's shift length in hours for the salary-based fine rate. Falls back to
+  /// a standard 9h day when today has no fixed window (week-off / open shift).
+  double _representativeShiftHours() {
+    final s = _shiftForDay(_today);
+    final start = s?.startTime?.trim();
+    final end = s?.endTime?.trim();
+    if (start != null && start.isNotEmpty && end != null && end.isNotEmpty) {
+      final h = calculateShiftHours(start, end);
+      if (h > 0) return h;
+    }
+    return 9.0;
+  }
+
+  Widget _fineRow(IconData icon, String label, String value,
+      {required Color color}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.primary),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+          const Spacer(),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Shift calendar ─────────────────────────────────────────────────────────
 
   Widget _buildShiftCalendarCard() {
@@ -393,6 +1212,10 @@ class _ShiftScreenState extends State<ShiftScreen> {
             firstDay: _joiningMonthStart,
             lastDay: DateTime(_today.year + 2, _today.month, _today.day),
             focusedDay: _focusedDay,
+            // Pin the calendar's "today" to the screen's reference date so its
+            // built-in today marker can't drift to DateTime.now() and produce a
+            // second highlighted cell. Only the reference/selected day is marked.
+            currentDay: _today,
             selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
             onDaySelected: (selectedDay, focusedDay) {
               setState(() {
@@ -466,8 +1289,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
     bool selected = false,
     bool isToday = false,
   }) {
-    final snap = _shiftForDay(day);
-    final isOff = snap?.isWeekOff ?? false;
+    final info = _dayInfoFor(day);
+    final snap = info.shift;
     final start = snap?.startTime?.trim();
     final end = snap?.endTime?.trim();
     final hasWindow =
@@ -481,7 +1304,13 @@ class _ShiftScreenState extends State<ShiftScreen> {
     } else if (isToday) {
       bg = AppColors.primary.withValues(alpha: 0.06);
       border = AppColors.primary.withValues(alpha: 0.5);
-    } else if (isOff) {
+    } else if (info.kind == _DayKind.holiday) {
+      bg = const Color(0xFFEEF0FF);
+      border = Colors.transparent;
+    } else if (info.kind == _DayKind.leave) {
+      bg = const Color(0xFFDCEAFE);
+      border = Colors.transparent;
+    } else if (info.kind == _DayKind.weekOff) {
       bg = AppColors.inputFill;
       border = Colors.transparent;
     } else {
@@ -492,47 +1321,75 @@ class _ShiftScreenState extends State<ShiftScreen> {
     // Times take priority over the shift name: green dot = in time (start),
     // red dot = out time (end).
     Widget detail;
-    if (isOff) {
-      detail = _cellNote('Off');
-    } else if (hasWindow) {
-      detail = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _timeRow(Colors.green, start),
-          const SizedBox(height: 1),
-          _timeRow(Colors.red, end),
-        ],
-      );
-    } else if (snap?.isOpen ?? false) {
-      detail = _cellNote('Open');
-    } else {
-      detail = const SizedBox.shrink();
+    switch (info.kind) {
+      case _DayKind.weekOff:
+        detail = _cellNote('Off');
+        break;
+      case _DayKind.holiday:
+        detail = _cellNote('Hol', color: const Color(0xFF4F46E5));
+        break;
+      case _DayKind.leave:
+        detail = _cellNote(info.label ?? 'L', color: const Color(0xFF2563EB));
+        break;
+      case _DayKind.working:
+        if (hasWindow) {
+          detail = Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _timeRow(Colors.green, start),
+              const SizedBox(height: 1),
+              _timeRow(Colors.red, end),
+            ],
+          );
+        } else if (snap?.isOpen ?? false) {
+          // Open shifts have no fixed window — surface the required hours.
+          final hrs = snap != null ? _requiredHoursLabel(snap) : '—';
+          detail = Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _cellNote('Open', color: const Color(0xFF0D9488)),
+              if (hrs != '—') _cellNote(hrs, color: AppColors.textSecondary),
+            ],
+          );
+        } else {
+          detail = const SizedBox.shrink();
+        }
+        break;
+      case _DayKind.none:
+        detail = const SizedBox.shrink();
+        break;
     }
 
-    return Container(
-      margin: const EdgeInsets.all(2),
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 1),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: border),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            '${day.day}',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: isToday || selected
-                  ? FontWeight.bold
-                  : FontWeight.w500,
-              color: AppColors.textPrimary,
+    // A uniform box for every day: fill the cell so 1-line and 2-line contents
+    // (e.g. "Off" vs in/out times) render at the same size.
+    return Padding(
+      padding: const EdgeInsets.all(2),
+      child: Container(
+        width: double.infinity,
+        height: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 1),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: border),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '${day.day}',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isToday || selected
+                    ? FontWeight.bold
+                    : FontWeight.w500,
+                color: AppColors.textPrimary,
+              ),
             ),
-          ),
-          const SizedBox(height: 2),
-          detail,
-        ],
+            const SizedBox(height: 2),
+            detail,
+          ],
+        ),
       ),
     );
   }
@@ -562,15 +1419,15 @@ class _ShiftScreenState extends State<ShiftScreen> {
     );
   }
 
-  Widget _cellNote(String text) => Text(
+  Widget _cellNote(String text, {Color? color}) => Text(
         text,
         maxLines: 1,
         textAlign: TextAlign.center,
         style: TextStyle(
           fontSize: 8.5,
           height: 1.0,
-          fontWeight: FontWeight.w500,
-          color: AppColors.textCaption,
+          fontWeight: FontWeight.w600,
+          color: color ?? AppColors.textCaption,
         ),
       );
 
@@ -603,24 +1460,45 @@ class _ShiftScreenState extends State<ShiftScreen> {
         item(Colors.green, 'In time'),
         item(Colors.red, 'Out time'),
         item(AppColors.inputFill, 'Week Off', circle: false),
+        item(const Color(0xFFEEF0FF), 'Holiday', circle: false),
+        item(const Color(0xFFDCEAFE), 'Leave', circle: false),
       ],
     );
   }
 
   Widget _buildSelectedDayCard() {
-    final snap = _shiftForDay(_selectedDay);
+    final info = _dayInfoFor(_selectedDay);
+    final snap = info.shift;
     final window = _windowOf(snap);
     final dateStr = DateFormat('EEEE, d MMMM yyyy').format(_selectedDay);
 
     final String valueLine;
-    if (snap == null) {
-      valueLine = 'No shift assigned';
-    } else if (snap.isWeekOff) {
-      valueLine = 'Week Off';
-    } else if (window != null) {
-      valueLine = '${snap.displayName} · $window';
-    } else {
-      valueLine = snap.compactLine();
+    switch (info.kind) {
+      case _DayKind.weekOff:
+        valueLine = 'Week Off';
+        break;
+      case _DayKind.holiday:
+        valueLine = (info.note != null && info.note!.isNotEmpty)
+            ? 'Holiday · ${info.note}'
+            : 'Holiday';
+        break;
+      case _DayKind.leave:
+        valueLine = (info.note != null && info.note!.isNotEmpty)
+            ? 'On Leave · ${info.note}'
+            : 'On Leave';
+        break;
+      case _DayKind.working:
+        if (snap == null) {
+          valueLine = 'No shift assigned';
+        } else if (window != null) {
+          valueLine = '${snap.displayName} · $window';
+        } else {
+          valueLine = snap.compactLine();
+        }
+        break;
+      case _DayKind.none:
+        valueLine = 'No shift assigned';
+        break;
     }
 
     return AppCard(

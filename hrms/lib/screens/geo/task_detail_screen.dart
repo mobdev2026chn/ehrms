@@ -19,6 +19,7 @@ import 'package:hrms/services/geo/route_snapping_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/task_movement_summary_util.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 
 class TaskDetailScreen extends StatefulWidget {
@@ -2240,12 +2241,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final pickup = _pickupLatLng;
     final dropoff = _dropoffLatLng;
     if (pickup == null || dropoff == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Source and destination are required. Enable GPS and ensure destination is set.',
-          ),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Source and destination are required. Enable GPS and ensure destination is set.',
+        isError: true,
       );
       return;
     }
@@ -2332,12 +2331,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final pickup = _pickupLatLng;
     final dropoff = _dropoffLatLng;
     if (pickup == null || dropoff == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Source and destination are required. Enable GPS and ensure destination is set.',
-          ),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Source and destination are required. Enable GPS and ensure destination is set.',
+        isError: true,
       );
       return;
     }

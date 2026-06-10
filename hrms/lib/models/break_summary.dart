@@ -56,6 +56,12 @@ class BreakSummary {
   /// Legacy shifts without a configured policy report `false` here, so the
   /// Start Break action stays available for them.
   final bool policyDisabled;
+
+  /// True when breaks are enabled AND a real allowance (allowedMinutes > 0) was
+  /// configured for the shift. False means "enabled but not configured" — the app
+  /// blocks starting a break and asks the employee to contact HR. Defaults to
+  /// `true` so older backends that omit the flag are never falsely blocked.
+  final bool policyConfigured;
   final bool isUnlimited;
   final int allowedMinutes;
 
@@ -78,6 +84,7 @@ class BreakSummary {
     this.totalBreakCount = 0,
     this.policyEnabled = false,
     this.policyDisabled = false,
+    this.policyConfigured = true,
     this.isUnlimited = true,
     this.allowedMinutes = 0,
     this.allowedSeconds,
@@ -129,6 +136,11 @@ class BreakSummary {
       totalBreakCount: _asInt(json['totalBreakCount']),
       policyEnabled: json['policyEnabled'] == true,
       policyDisabled: json['policyDisabled'] == true,
+      // Default to configured=true when the backend omits the flag (older builds)
+      // so the break flow is never blocked on a missing field.
+      policyConfigured: json.containsKey('policyConfigured')
+          ? json['policyConfigured'] == true
+          : true,
       isUnlimited: json['isUnlimited'] == true,
       allowedMinutes: _asInt(json['allowedMinutes']),
       allowedSeconds: allowedSecRaw == null ? null : _asInt(allowedSecRaw),

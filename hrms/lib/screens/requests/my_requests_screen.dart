@@ -17,8 +17,12 @@ import 'package:share_plus/share_plus.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import '../../config/app_colors.dart';
 import '../../config/app_text_styles.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/request_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/attendance_service.dart';
+import '../../services/salary_service.dart';
+import '../../utils/fine_calculation_util.dart';
 import '../../utils/holiday_off_util.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_card.dart';
@@ -1724,7 +1728,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
   /// Allocated days for [type] from the staff's leave template (null = no fixed
   /// allocation, e.g. Unpaid Leave). Sourced from getLeaveTypesForApply.
+  ///
+  /// Half Day is special: the backend sends it as `{type:'Half Day', days:0.5}`
+  /// where `days` is the per-request duration of a half-day leave, NOT an annual
+  /// allocation. Half Day draws from the same shared pool as every other type
+  /// (see backend getAvailableLeavePool), so treat it as having no specific
+  /// allocation and let the entitlement card fall back to the overall pool
+  /// total. Returning 0.5 here would mislabel the pool as "0.5 allocated days".
   double? _allocatedForType(String? type) {
+    if (_isHalfDayLeave(type)) return null;
     final key = _leaveTypeKey(type);
     for (final e in _allowedTypes) {
       if (e is Map && _leaveTypeKey(e['type'] as String?) == key) {
@@ -1735,9 +1747,16 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     return null;
   }
 
-  double _usedForType(String? type) => _usedByType[_leaveTypeKey(type)] ?? 0.0;
-  double _pendingForType(String? type) =>
-      _pendingByType[_leaveTypeKey(type)] ?? 0.0;
+  // Half Day has no allocation of its own — it spends from the shared pool that
+  // every leave type draws down. So its used/pending must reflect the OVERALL
+  // pool usage (all types), not just half-day rows; otherwise the card would
+  // overstate the balance left to spend on a half day.
+  double _usedForType(String? type) => _isHalfDayLeave(type)
+      ? _usedLeaveDays
+      : (_usedByType[_leaveTypeKey(type)] ?? 0.0);
+  double _pendingForType(String? type) => _isHalfDayLeave(type)
+      ? _pendingLeaveDays
+      : (_pendingByType[_leaveTypeKey(type)] ?? 0.0);
 
   /// Loads this employee's Approved (used) and Pending leave days for the
   /// current calendar year from their own records, populating the per-type
@@ -1812,14 +1831,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     if (mounted) {
       if (result['success']) {
         final raw = List<dynamic>.from(result['data'] as List? ?? []);
-        // Ensure Half Day is always present as static option (backend sends it; add if missing)
-        final hasHalfDay = raw.any((e) {
-          final t = (e is Map ? e['type'] as String? : null) ?? '';
-          return t.toLowerCase().replaceAll(RegExp(r'\s+'), '') == 'halfday';
-        });
-        if (!hasHalfDay) {
-          raw.insert(0, {'type': 'Half Day', 'days': 0.5});
-        }
+        // Half Day is gated by the shift's halfDaySettings.enabled: the backend
+        // omits it when the staff's shift disables half-day. Respect that — do
+        // not force-insert it client-side, so disabled shifts can't apply.
         setState(() {
           _allowedTypes = raw;
           if (_allowedTypes.isNotEmpty) {
@@ -5742,6 +5756,7 @@ class RequestPermissionDialog extends StatefulWidget {
 class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   final _formKey = GlobalKey<FormState>();
   final RequestService _requestService = RequestService();
+  final AttendanceService _attendanceService = AttendanceService();
   DateTime _date = DateTime.now();
   String _type = 'both';
   final TextEditingController _minutesController = TextEditingController();
@@ -5758,11 +5773,95 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   bool _showLimitWarning = false;
   String _limitWarningMsg = '';
 
+  // Per-user fine context (DB fine settings + this staff's salary/shift). Used to
+  // preview the late/early fine that an over-quota or disabled permission incurs.
+  Map<String, dynamic>? _fineCalculation;
+  double? _netPerDaySalary;
+  double _shiftHours = 9.0; // Fallback: default 09:30–18:30 shift.
+
   @override
   void initState() {
     super.initState();
     _loadOffConfig();
     _loadPermissionConfig();
+    _loadFineContext();
+    // Live-refresh the fine estimate as the user edits the requested minutes.
+    _minutesController.addListener(_onMinutesChanged);
+  }
+
+  void _onMinutesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Loads the DB fine rules, this user's per-day salary and shift hours so the
+  /// form can estimate the fine for over-quota / disabled-permission minutes.
+  Future<void> _loadFineContext() async {
+    Map<String, dynamic>? fineConfig;
+    try {
+      final fineResult = await _attendanceService.getFineCalculation();
+      if (fineResult['success'] == true) {
+        fineConfig = fineResult['data'] as Map<String, dynamic>?;
+      }
+    } catch (_) {}
+
+    double? net;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      net = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
+      if (net == null || net <= 0) {
+        final gross = prefs.getDouble(kAppGrossPerDaySalaryPrefsKey);
+        if (gross != null && gross > 0) net = gross;
+      }
+    } catch (_) {}
+
+    double shiftHours = _shiftHours;
+    try {
+      final now = DateTime.now();
+      final dateStr =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final att = await _attendanceService.getAttendanceByDate(dateStr);
+      final body = att['data'] as Map<String, dynamic>?;
+      final template = body?['template'] as Map?;
+      final start = template?['shiftStartTime']?.toString().trim();
+      final end = template?['shiftEndTime']?.toString().trim();
+      if (start != null && start.isNotEmpty && end != null && end.isNotEmpty) {
+        final h = calculateShiftHours(start, end);
+        if (h > 0) shiftHours = h;
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _fineCalculation = fineConfig;
+      _netPerDaySalary = net;
+      _shiftHours = shiftHours;
+    });
+  }
+
+  /// Maps the selected permission type to the fine-rule action key.
+  String get _fineActionType {
+    switch (_type) {
+      case 'lateArrival':
+        return 'lateArrival';
+      case 'earlyExit':
+        return 'earlyExit';
+      default:
+        return 'both';
+    }
+  }
+
+  /// Estimated fine (₹) for [minutes] of the selected permission type, using the
+  /// DB fine rules + this user's per-day salary. Returns 0 when salary is unknown.
+  double _estimateFine(int minutes) {
+    final net = _netPerDaySalary;
+    if (net == null || net <= 0 || minutes <= 0) return 0.0;
+    return estimateRuleBasedFine(
+      fineCalculation: _fineCalculation,
+      actionApplyToType: _fineActionType,
+      minutes: minutes,
+      netPerDaySalary: net,
+      shiftHours: _shiftHours,
+    );
   }
 
   Future<void> _loadPermissionConfig() async {
@@ -5881,6 +5980,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
 
   @override
   void dispose() {
+    _minutesController.removeListener(_onMinutesChanged);
     _minutesController.dispose();
     _reasonController.dispose();
     super.dispose();
@@ -5963,6 +6063,81 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     );
   }
 
+  /// The minutes that would actually be fined for the current input, plus a
+  /// human label for why. Returns (0, '') when no fine applies.
+  ({int minutes, String basis}) _finedMinutesForInput() {
+    final requested = int.tryParse(_minutesController.text.trim()) ?? 0;
+    if (requested <= 0) return (minutes: 0, basis: '');
+
+    // Permission disabled for the shift → the whole duration is fined.
+    if (!_loadingConfig && _configured && !_enabled) {
+      return (minutes: requested, basis: 'permission disabled for your shift');
+    }
+
+    // Otherwise only the portion exceeding the remaining monthly quota is fined.
+    final effectiveRemaining =
+        (_quotaMinutes - _consumedMinutes - _pendingMinutes).clamp(
+          0.0,
+          _quotaMinutes,
+        );
+    if (_quotaMinutes > 0 && requested > effectiveRemaining) {
+      final excess = requested - effectiveRemaining.toInt();
+      return (minutes: excess, basis: '$excess min over your monthly quota');
+    }
+    return (minutes: 0, basis: '');
+  }
+
+  /// Orange info banner showing the estimated fine for the current input. Hidden
+  /// when no fine applies or the per-day salary is not yet known.
+  Widget _buildFineEstimate() {
+    final fined = _finedMinutesForInput();
+    if (fined.minutes <= 0) return const SizedBox.shrink();
+    if (_netPerDaySalary == null || _netPerDaySalary! <= 0) {
+      return const SizedBox.shrink();
+    }
+    final fine = _estimateFine(fined.minutes);
+    if (fine <= 0) return const SizedBox.shrink();
+
+    final formatted = NumberFormat('#,##0.00').format(fine);
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.orange.shade300),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outline, size: 18, color: Colors.orange.shade700),
+            const SizedBox(width: 10),
+            Expanded(
+              child: RichText(
+                text: TextSpan(
+                  style: TextStyle(
+                    color: Colors.orange.shade800,
+                    fontSize: 12.5,
+                    height: 1.35,
+                  ),
+                  children: [
+                    const TextSpan(text: 'Estimated fine: '),
+                    TextSpan(
+                      text: '₹$formatted',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    TextSpan(text: '  (${fined.basis}).'),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _submit() async {
     if (!_configured) {
       SnackBarUtils.showSnackBar(
@@ -5997,12 +6172,17 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         );
     if (_quotaMinutes > 0 && minutes > effectiveRemaining) {
       final excess = minutes - effectiveRemaining.toInt();
+      final estimatedFine = _estimateFine(excess);
+      final fineText = estimatedFine > 0
+          ? ' Estimated fine: ₹${NumberFormat('#,##0.00').format(estimatedFine)}.'
+          : '';
       final msg =
           'Monthly permission quota exceeded. '
           'Used: ${_consumedMinutes.toInt()} min, '
           'Pending: ${_pendingMinutes.toInt()} min, '
           'Remaining: ${effectiveRemaining.toInt()} min. '
-          'Requested $minutes min ($excess min excess may be deducted as a fine).';
+          'Requested $minutes min ($excess min excess may be deducted as a fine).'
+          '$fineText';
       setState(() {
         _showLimitWarning = true;
         _limitWarningMsg = msg;
@@ -6176,6 +6356,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                         return null;
                       },
                     ),
+
+                    // Live fine estimate (DB fine settings × this user's salary).
+                    _buildFineEstimate(),
                     const SizedBox(height: 20),
 
                     // Reason

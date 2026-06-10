@@ -1,4 +1,5 @@
-﻿import 'dart:convert';
+﻿import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -107,6 +108,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   List<dynamic> _activeLoans = [];
   bool _isLoadingDashboard = false;
   bool _isFetchingMonthAttendance = false;
+
+  /// Single-flight guard for [_loadData] so overlapping triggers (initState +
+  /// tab focus + refreshTrigger) can't fire concurrent network bursts.
+  bool _isLoadDataInFlight = false;
+
+  /// When the last [_loadData] finished, used to throttle the reload that fires
+  /// every time the Home tab regains focus (see [didUpdateWidget]).
+  DateTime? _lastDashboardLoadAt;
   Map<String, dynamic>? _todayAttendance;
   Map<String, dynamic>? _monthData;
   Map<String, dynamic>? _stats;
@@ -188,9 +197,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       oldWidget.refreshTrigger?.removeListener(_onRefreshTriggered);
       widget.refreshTrigger?.addListener(_onRefreshTriggered);
     }
-    // Whenever user opens or switches to Dashboard tab, refresh all values
+    // When the user returns to the Dashboard tab, refresh — but throttle so a
+    // quick tab in-and-out doesn't trigger a full reload (and flicker) each
+    // time. A stale-data window keeps the screen reasonably fresh without
+    // re-hitting the network on every focus change.
     if (widget.isActiveTab == true && oldWidget.isActiveTab != true) {
-      _loadData();
+      final last = _lastDashboardLoadAt;
+      final isStale = last == null ||
+          DateTime.now().difference(last) > const Duration(seconds: 30);
+      if (isStale) {
+        _loadData();
+      }
       _checkLiveTracking();
     }
   }
@@ -353,6 +370,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   Future<void> _loadData() async {
+    // Single-flight: ignore overlapping triggers while a load is already running
+    // so we don't fire duplicate parallel request bursts.
+    if (_isLoadDataInFlight) return;
+    _isLoadDataInFlight = true;
     final hasCachedData = _stats != null;
     // Full-screen loading only when no cached data; otherwise show cached
     // content and refresh silently (pull-to-refresh shows its own spinner).
@@ -592,39 +613,46 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         }
       }
 
-      // First/cold load: hold the loading state until every card's data has
-      // settled, so the dashboard reveals once — fully populated — instead of
-      // swapping values in piecemeal (loans → performance → salary → ...) over
-      // the following ~1-2s. Capped so a slow external salary call can't stall
-      // the first paint indefinitely. Warm refreshes (cached data present) skip
-      // this and update in place, keeping pull-to-refresh snappy.
-      if (!hasCachedData) {
-        const secondaryWaitTimeout = Duration(seconds: 8);
-        Future<void> guard(Future<void> f) => f
-            .timeout(secondaryWaitTimeout, onTimeout: () {})
-            .catchError((_) {});
-        await Future.wait<void>([
-          guard(monthFuture),
-          guard(loansFuture),
-          guard(breakFuture),
-          guard(perfFuture),
-          guard(enrichFuture),
-          guard(salaryFuture),
-        ]);
+      // Reveal the dashboard the moment the core data (stats + today) is applied
+      // — do NOT hold the full-screen loader waiting on secondary cards. Each
+      // secondary fetch (month attendance, loans, break, performance, salary,
+      // profile enrichment) updates its own card via setState when it lands, and
+      // those cards render their own per-card loaders/placeholders until then.
+      // Holding the global loader here was the main "stuck on spinner" cause:
+      // a slow month/salary/profile call could keep the whole screen blank for
+      // many seconds even after the dashboard data was ready to show.
+      if (!hasCachedData && mounted) {
+        setState(() => _isLoadingDashboard = false);
       }
+      // Let the secondary futures finish in the background; never block the UI.
+      unawaited(
+        Future.wait<void>([
+          monthFuture.catchError((_) {}),
+          loansFuture.catchError((_) {}),
+          breakFuture.catchError((_) {}),
+          perfFuture.catchError((_) {}),
+          enrichFuture.catchError((_) {}),
+          salaryFuture.catchError((_) {}),
+        ]),
+      );
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[DashboardLoad] exception: $e');
       }
       // Keep existing UI data on transient failures.
     } finally {
-      if (widget.onDashboardDataRefreshed != null) {
-        await widget.onDashboardDataRefreshed!.call();
+      // Safety net: ensure the loader is cleared even if the early reveal above
+      // was skipped (e.g. an exception before core data was applied).
+      if (mounted && _isLoadingDashboard) {
+        setState(() => _isLoadingDashboard = false);
       }
-      if (mounted) {
-        setState(() {
-          _isLoadingDashboard = false;
-        });
+      _lastDashboardLoadAt = DateTime.now();
+      _isLoadDataInFlight = false;
+      // Notify the parent without blocking the load's completion: this callback
+      // re-fetches profile + punch nav state and must not gate the in-flight
+      // guard (an unbounded call here used to keep the spinner up).
+      if (widget.onDashboardDataRefreshed != null) {
+        unawaited(Future(() => widget.onDashboardDataRefreshed!.call()));
       }
       if (kDebugMode) {
         debugPrint('[DashboardLoad] finished');
@@ -2304,8 +2332,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       controller: scrollController,
                       children: [
                         if (_todayCelebrations.isNotEmpty) ...[
-                          _buildCelebrationSectionLabel('Today'),
-                          const SizedBox(height: 8),
                           for (final c in _todayCelebrations)
                             _buildCelebrationTile(c, isToday: true),
                           const SizedBox(height: 8),
@@ -2387,6 +2413,28 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return '$years$suffix year';
   }
 
+  /// Age the person turns on their next (or today's) birthday, computed from
+  /// the raw `dob` the backend sends in `date`. Falls back to the backend's
+  /// `turningAge` field. Returns null if neither is usable.
+  int? _birthdayTurningAge(dynamic c) {
+    final raw = c['date']?.toString();
+    if (raw != null && raw.isNotEmpty) {
+      final dob = DateTime.tryParse(raw);
+      if (dob != null) {
+        final now = DateTime.now();
+        // Next occurrence of the birthday (today counts as the upcoming one).
+        var nextYear = now.year;
+        final bdayThisYear = DateTime(now.year, dob.month, dob.day);
+        if (bdayThisYear.isBefore(DateTime(now.year, now.month, now.day))) {
+          nextYear = now.year + 1;
+        }
+        final age = nextYear - dob.year;
+        if (age > 0) return age;
+      }
+    }
+    return (c['turningAge'] is int) ? c['turningAge'] as int : null;
+  }
+
   Widget _buildCelebrationTile(dynamic c, {required bool isToday}) {
     final colorScheme = Theme.of(context).colorScheme;
     final name = c['name']?.toString() ?? '—';
@@ -2396,12 +2444,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final yearsOfService = (c['yearsOfService'] is int)
         ? c['yearsOfService'] as int
         : 1;
+    final turningAge = _birthdayTurningAge(c);
     final typeLabel = isAnniversary
         ? 'Work Anniversary · ${_anniversaryYearsLabel(yearsOfService)}'
-        : 'Birthday';
+        : (turningAge != null
+              ? 'Birthday · turning $turningAge ${turningAge == 1 ? 'year' : 'years'}'
+              : 'Birthday');
     final datePart = displayDate.isNotEmpty ? ' · $displayDate' : '';
     final subtitle = isToday
-        ? '$typeLabel · Today$datePart'
+        ? '$typeLabel$datePart'
         : '$typeLabel · ${daysLeft == 1 ? '1 day left' : '$daysLeft days left'}$datePart';
     final accentColor = AppColors.primary;
 
@@ -2546,6 +2597,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           todayTemplate: _todayAttendanceTemplateMap(),
           appliedHeaderLine: appliedHeaderLine,
           referenceDate: now,
+          initialMonthData: _monthData,
         ),
       ),
     );

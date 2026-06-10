@@ -1291,78 +1291,50 @@ const getPermissionBalance = async (req, res) => {
         const permissionConfig = await resolvePermissionConfig(businessId, staff, y, m);
         let monthlyQuotaMinutes = permissionConfig.monthlyQuotaMinutes;
 
-        // Primary source for app permission balance:
-        // latest attendance record of selected month that already stores
-        // permissionConsumedMinutes / permissionRemainingMinutes.
-        const latestAttendanceWithPermission = await Attendance.findOne({
-            employeeId,
-            date: { $gte: start, $lte: end },
-            $or: [
-                { permissionConsumedMinutes: { $gt: 0 } },
-                { permissionRemainingMinutes: { $gt: 0 } },
-                { permissionApprovedMinutes: { $gt: 0 } }
-            ]
-        })
-            .sort({ date: -1, updatedAt: -1, createdAt: -1 })
-            .select(
-                'date permissionConsumedMinutes permissionRemainingMinutes permissionApprovedMinutes'
-            )
-            .lean();
-
-        let consumedMinutes = 0;
-        let remainingMinutes = 0;
-
-        if (latestAttendanceWithPermission) {
-            consumedMinutes = Math.max(
-                0,
-                Number(latestAttendanceWithPermission.permissionConsumedMinutes || 0)
-            );
-            remainingMinutes = Math.max(
-                0,
-                Number(latestAttendanceWithPermission.permissionRemainingMinutes || 0)
-            );
-            const derivedMonthlyQuota = consumedMinutes + remainingMinutes;
-            if (derivedMonthlyQuota > 0) {
-                monthlyQuotaMinutes = Math.max(monthlyQuotaMinutes, derivedMonthlyQuota);
-            }
-            console.log('[PermissionBalance][Source=latestAttendance]', {
-                employeeId: employeeId?.toString?.() || String(employeeId || ''),
-                businessId: businessId?.toString?.() || String(businessId || ''),
-                month: m,
-                year: y,
-                attendanceDate: latestAttendanceWithPermission.date,
-                consumedMinutes,
-                remainingMinutes,
-                monthlyQuotaMinutes
-            });
-        } else {
-            // Fallback when month has no attendance rows with stored permission counters.
-            const consumedAgg = await Attendance.aggregate([
-                {
-                    $match: {
-                        employeeId,
-                        date: { $gte: start, $lte: end }
-                    }
-                },
-                {
-                    $group: {
-                        _id: null,
-                        total: { $sum: { $ifNull: ['$permissionConsumedMinutes', 0] } }
-                    }
+        // "Used" must reflect permission the employee ACTUALLY consumed, validated
+        // against real punch-in/out times. Each Attendance row stores a PER-DAY
+        // `permissionConsumedMinutes` that is already computed as
+        // min(actualLateness/earlyExit, approvedMinutes) for that day
+        // (see applyPermissionQuotaAdjustment in attendanceController). So an
+        // approved-but-unused permission (e.g. future-dated, or a day the employee
+        // was on time) contributes 0. The month's "Used" is therefore the SUM of
+        // these per-day values across the whole month — not a single day's value.
+        const consumedAgg = await Attendance.aggregate([
+            {
+                $match: {
+                    employeeId,
+                    date: { $gte: start, $lte: end }
                 }
-            ]);
-            consumedMinutes = Math.max(0, Number(consumedAgg?.[0]?.total || 0));
-            remainingMinutes = Math.max(0, monthlyQuotaMinutes - consumedMinutes);
-            console.log('[PermissionBalance][Source=aggregateFallback]', {
-                employeeId: employeeId?.toString?.() || String(employeeId || ''),
-                businessId: businessId?.toString?.() || String(businessId || ''),
-                month: m,
-                year: y,
-                consumedMinutes,
-                remainingMinutes,
-                monthlyQuotaMinutes
-            });
+            },
+            {
+                $group: {
+                    _id: null,
+                    consumed: { $sum: { $ifNull: ['$permissionConsumedMinutes', 0] } },
+                    remaining: { $max: { $ifNull: ['$permissionRemainingMinutes', 0] } }
+                }
+            }
+        ]);
+        let consumedMinutes = Math.max(0, Number(consumedAgg?.[0]?.consumed || 0));
+
+        // Quota can be derived when the shift policy quota is missing/zero: the most
+        // generous remaining ever recorded this month plus what was consumed bounds it.
+        const recordedRemaining = Math.max(0, Number(consumedAgg?.[0]?.remaining || 0));
+        const derivedMonthlyQuota = consumedMinutes + recordedRemaining;
+        if (derivedMonthlyQuota > 0) {
+            monthlyQuotaMinutes = Math.max(monthlyQuotaMinutes, derivedMonthlyQuota);
         }
+        // Never let Used exceed the quota.
+        consumedMinutes = Math.min(consumedMinutes, monthlyQuotaMinutes || consumedMinutes);
+        let remainingMinutes = Math.max(0, monthlyQuotaMinutes - consumedMinutes);
+        console.log('[PermissionBalance][Source=monthAggregate]', {
+            employeeId: employeeId?.toString?.() || String(employeeId || ''),
+            businessId: businessId?.toString?.() || String(businessId || ''),
+            month: m,
+            year: y,
+            consumedMinutes,
+            remainingMinutes,
+            monthlyQuotaMinutes
+        });
 
         // Pending permission minutes for the month (requests awaiting approval).
         const pendingAgg = await PermissionRequest.aggregate([

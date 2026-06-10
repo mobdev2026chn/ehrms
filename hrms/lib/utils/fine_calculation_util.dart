@@ -477,3 +477,114 @@ FineSettings createFineSettingsFromBusinessSettings(
     finePerHour: finePerHour?.toDouble(),
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rule-based fine estimation (DB fine settings)
+//
+// The backend `/attendance/fine-calculation` endpoint returns a per-business
+// fine config of the shape:
+//   { calculationType, fineRules: [ { applyTo, type, customAmount,
+//                                     customAmountUnit }, ... ] }
+// where `applyTo` is one of 'lateArrival' | 'earlyExit' | 'both' (or null = all).
+// These helpers mirror the rule matching + amount math used on the attendance
+// screen (_hasFineRules / _matchFineRuleForAction / _computeFineFromRule) so
+// request forms can preview the exact same per-user fine.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// True when the fine config carries explicit per-action rules.
+bool fineConfigHasRules(Map<String, dynamic>? fineCalculation) {
+  final rules = fineCalculation?['fineRules'];
+  return rules is List && rules.isNotEmpty;
+}
+
+/// Finds the fine rule that applies to [actionApplyToType]
+/// ('lateArrival' | 'earlyExit' | 'both'). A rule matches when its `applyTo`
+/// is null/empty, equals the action, or equals 'both' — mirroring the backend.
+Map<String, dynamic>? matchFineRuleForAction(
+  Map<String, dynamic>? fineCalculation,
+  String actionApplyToType,
+) {
+  final rulesRaw = fineCalculation?['fineRules'];
+  if (rulesRaw is! List || rulesRaw.isEmpty) return null;
+  for (final raw in rulesRaw) {
+    if (raw is! Map) continue;
+    final applyTo = raw['applyTo'];
+    final s = applyTo?.toString().trim() ?? '';
+    if (s.isEmpty || s == actionApplyToType || s == 'both') {
+      return Map<String, dynamic>.from(raw);
+    }
+  }
+  return null;
+}
+
+/// Computes the fine amount for [minutes] late/early using a single DB fine rule.
+/// Supports custom (perMinute/perHour/fixed), halfday, fullday and salary-multiple
+/// (1x/2x/3x) rule types. Mirrors attendance_screen._computeFineFromRule.
+double computeFineFromRule({
+  required Map<String, dynamic> rule,
+  required int minutes,
+  required double netPerDaySalary,
+  required double shiftHours,
+}) {
+  if (minutes <= 0) return 0.0;
+  final type = (rule['type']?.toString() ?? '').toLowerCase();
+
+  if (type == 'custom') {
+    final customAmount = (rule['customAmount'] as num?)?.toDouble() ?? 0.0;
+    final unit =
+        (rule['customAmountUnit']?.toString() ?? 'perHour').toLowerCase();
+    if (unit == 'perminute') return customAmount * minutes;
+    if (unit == 'perhour') return customAmount * (minutes / 60.0);
+    if (unit == 'fixed') return customAmount;
+    return customAmount * (minutes / 60.0);
+  }
+
+  if (type == 'halfday') return netPerDaySalary / 2.0;
+  if (type == 'fullday') return netPerDaySalary;
+
+  // Salary-multiple style rules (1xSalary / 2xSalary / 3xSalary).
+  int multiplier = 1;
+  if (type == '2xsalary') multiplier = 2;
+  if (type == '3xsalary') multiplier = 3;
+
+  final hourlyRate = shiftHours > 0 ? netPerDaySalary / shiftHours : 0.0;
+  return hourlyRate * (minutes / 60.0) * multiplier;
+}
+
+/// Estimates the per-user fine (₹) for [minutes] of a given action
+/// ('lateArrival' | 'earlyExit' | 'both'), reading the rules from
+/// [fineCalculation] (the `/attendance/fine-calculation` payload).
+///
+/// - When the config has explicit rules: uses the matching rule, or returns 0
+///   when no rule applies to the action (matches the backend, which only fines
+///   actions that have a configured rule).
+/// - When the config has no rules: falls back to the shift-based hourly formula
+///   (netPerDaySalary ÷ shiftHours × lateHours).
+///
+/// Returns a value rounded to 2 decimals. Returns 0 when [minutes] or
+/// [netPerDaySalary] are non-positive.
+double estimateRuleBasedFine({
+  required Map<String, dynamic>? fineCalculation,
+  required String actionApplyToType,
+  required int minutes,
+  required double netPerDaySalary,
+  required double shiftHours,
+}) {
+  if (minutes <= 0 || netPerDaySalary <= 0) return 0.0;
+
+  double amount;
+  if (fineConfigHasRules(fineCalculation)) {
+    final rule = matchFineRuleForAction(fineCalculation, actionApplyToType);
+    if (rule == null) return 0.0;
+    amount = computeFineFromRule(
+      rule: rule,
+      minutes: minutes,
+      netPerDaySalary: netPerDaySalary,
+      shiftHours: shiftHours,
+    );
+  } else {
+    final hourlyRate = shiftHours > 0 ? netPerDaySalary / shiftHours : 0.0;
+    amount = hourlyRate * (minutes / 60.0);
+  }
+  return (amount * 100).round() / 100;
+}

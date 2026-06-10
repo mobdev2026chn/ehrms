@@ -267,19 +267,36 @@ class _BreakScreenState extends State<BreakScreen> {
     return 'Break left: ${BreakSummary.formatDuration(remainingSec)}';
   }
 
-  /// Whether starting a NEW break is blocked because the shift's break policy
-  /// explicitly disables breaks. Ending an already-running break is always allowed.
-  bool get _startBreakBlockedByPolicy =>
-      !_isOnBreak && (_breakSummary?.policyDisabled == true);
+  /// Reason a NEW break may not be started because of the shift's break policy,
+  /// or null when starting is allowed. Ending an already-running break is always
+  /// allowed. Two distinct policy states are surfaced:
+  ///  - breaks explicitly disabled            -> "not enabled"
+  ///  - breaks enabled but no allowance set    -> "not configured / contact HR"
+  String? get _breakPolicyBlockMessage {
+    if (_isOnBreak) return null;
+    final summary = _breakSummary;
+    if (summary == null) return null;
+    if (summary.policyDisabled) {
+      return 'Breaks are not enabled for your shift.';
+    }
+    if (summary.policyEnabled && !summary.policyConfigured) {
+      return 'Breaks are not configured for your shift. Please contact HR.';
+    }
+    return null;
+  }
+
+  /// Whether starting a NEW break is blocked by the shift's break policy.
+  bool get _startBreakBlockedByPolicy => _breakPolicyBlockMessage != null;
 
   Future<void> _submit() async {
     if (_isLoading) return;
     // The shift may have breaks turned off — block starting a new one up front
     // (the backend enforces this too), but never block ending an active break.
-    if (_startBreakBlockedByPolicy) {
+    final policyBlock = _breakPolicyBlockMessage;
+    if (policyBlock != null) {
       SnackBarUtils.showSnackBar(
         context,
-        'Breaks are not enabled for your shift.',
+        policyBlock,
         isError: true,
       );
       return;
@@ -634,7 +651,7 @@ class _BreakScreenState extends State<BreakScreen> {
                         ),
                       const SizedBox(height: 16),
                     ],
-                    if (_startBreakBlockedByPolicy) ...[
+                    if (_breakPolicyBlockMessage != null) ...[
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -642,9 +659,9 @@ class _BreakScreenState extends State<BreakScreen> {
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: Colors.orange.shade200),
                         ),
-                        child: const Text(
-                          'Breaks are not enabled for your shift.',
-                          style: TextStyle(fontWeight: FontWeight.w500),
+                        child: Text(
+                          _breakPolicyBlockMessage!,
+                          style: const TextStyle(fontWeight: FontWeight.w500),
                         ),
                       ),
                       const SizedBox(height: 16),

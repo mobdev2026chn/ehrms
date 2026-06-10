@@ -309,6 +309,11 @@ async function getBreakFineContext(staff, dayDate) {
             // Legacy shifts without a configured policy stay null so startBreak
             // preserves prior behaviour instead of blocking them.
             enabledExplicit: policyEnabledExplicit,
+            // True only when breaks are enabled AND a real allowance (allowedMinutes > 0)
+            // was set. Enabled-but-unconfigured (allowedMinutes = 0) reports false so
+            // callers can block with a "contact HR" message instead of silently
+            // falling back to the default allowance.
+            configured: hasConfiguredAllowance,
             isUnlimitedBreak,
             allowedMinutes: effectiveAllowedBreakMin,
             fineEnabled: breakFineEnabled,
@@ -557,6 +562,10 @@ exports.getTodayBreakSummary = async (req, res) => {
                 // True only when the shift explicitly disabled breaks (not legacy).
                 // The app uses this to block starting a new break.
                 policyDisabled: fineCtx.breakPolicy.enabledExplicit === false,
+                // False when breaks are enabled but no allowance was configured
+                // (allowedMinutes = 0). The app blocks starting a break in that case
+                // with a "contact HR" message.
+                policyConfigured: fineCtx.breakPolicy.configured,
                 isUnlimited,
                 allowedMinutes,
                 allowedSeconds,
@@ -613,6 +622,15 @@ exports.startBreak = async (req, res) => {
             return res.status(403).json({
                 success: false,
                 message: 'Breaks are not enabled for your shift.'
+            });
+        }
+        // Breaks are enabled for the shift but no allowance was configured
+        // (allowedMinutes not set). Block with a distinct message so the employee
+        // asks HR to configure a break allowance rather than seeing "not enabled".
+        if (startFineCtx.breakPolicy.enabled === true && startFineCtx.breakPolicy.configured === false) {
+            return res.status(403).json({
+                success: false,
+                message: 'Breaks are not configured for your shift. Please contact HR.'
             });
         }
 
