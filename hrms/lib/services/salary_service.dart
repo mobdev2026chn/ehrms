@@ -46,7 +46,12 @@ void _salaryLog(String message) {
   }
 }
 
-/// `salaryBasis.monthlyNet|GrossSalary` ÷ preview full-month working days (web HRMS parity).
+/// Per-day rates for the fine, using the company's payable-days denominator
+/// (calendar days / exclude week-offs / fixed days) — the same basis the backend
+/// fine uses. Prefers the backend's pre-computed `salaryBasis.perDay*Salary`
+/// (already divided by `payableDaysForRate`); otherwise divides monthly salary by
+/// `payableDaysForRate` / `attendance.payableDaysBase`, falling back to full-month
+/// working days only when no payable-days basis is available.
 Map<String, double>? perDayRatesFromPayrollPreviewForFine(
   Map<String, dynamic>? preview,
 ) {
@@ -56,16 +61,30 @@ Map<String, double>? perDayRatesFromPayrollPreviewForFine(
   if (basis is! Map || att is! Map) return null;
   final b = Map<String, dynamic>.from(basis);
   final a = Map<String, dynamic>.from(att);
+  double r2(double x) => (x * 100).round() / 100;
+
+  // Backend already exposes payable-days-based per-day rates; use them directly.
+  final preNet = (b['perDayNetSalary'] as num?)?.toDouble();
+  final preGross = (b['perDayGrossSalary'] as num?)?.toDouble();
+  if (preNet != null && preNet > 0) {
+    return {
+      'net': r2(preNet),
+      'gross': (preGross != null && preGross > 0) ? r2(preGross) : r2(preNet),
+    };
+  }
+
   final mn = (b['monthlyNetSalary'] as num?)?.toDouble();
   final mg = (b['monthlyGrossSalary'] as num?)?.toDouble();
-  final wd = (a['fullMonthWorkingDays'] as num?)?.toInt() ??
+  // Payable-days denominator first; full-month working days is a last resort.
+  final days = (b['payableDaysForRate'] as num?)?.toInt() ??
+      (a['payableDaysBase'] as num?)?.toInt() ??
+      (a['fullMonthWorkingDays'] as num?)?.toInt() ??
       (a['workingDays'] as num?)?.toInt() ??
       0;
-  if (wd <= 0 || mn == null || mn <= 0) return null;
-  double r2(double x) => (x * 100).round() / 100;
+  if (days <= 0 || mn == null || mn <= 0) return null;
   return {
-    'net': r2(mn / wd),
-    'gross': (mg != null && mg > 0) ? r2(mg / wd) : r2(mn / wd),
+    'net': r2(mn / days),
+    'gross': (mg != null && mg > 0) ? r2(mg / days) : r2(mn / days),
   };
 }
 

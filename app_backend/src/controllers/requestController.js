@@ -1187,21 +1187,16 @@ const createPermissionRequest = async (req, res) => {
         if (!permissionConfig.configured) {
             return res.status(400).json({
                 success: false,
-                error: { message: 'Permission is not configured. Please contact HR.' }
+                error: { message: 'Permission is not configured for your shift. Contact HR.' }
             });
         }
         if (!permissionConfig.enabled) {
-            return res.status(400).json({
-                success: false,
-                error: { message: 'Permission is disabled for your shift. Please contact HR.' }
-            });
+            const disabledMsg = permissionConfig.monthlyQuotaMinutes > 0
+                ? 'Permission is disabled for your shift. Contact HR to enable.'
+                : 'Permission is not configured for your shift. Contact HR.';
+            return res.status(400).json({ success: false, error: { message: disabledMsg } });
         }
-        if (!(permissionConfig.monthlyQuotaMinutes > 0)) {
-            return res.status(400).json({
-                success: false,
-                error: { message: 'Permission quota is not configured for your shift. Please contact HR.' }
-            });
-        }
+        // When enabled with quota = 0: allow the request; the full amount is treated as a fine.
 
         const created = await PermissionRequest.create({
             employeeId,

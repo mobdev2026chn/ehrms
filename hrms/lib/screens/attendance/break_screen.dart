@@ -269,18 +269,20 @@ class _BreakScreenState extends State<BreakScreen> {
 
   /// Reason a NEW break may not be started because of the shift's break policy,
   /// or null when starting is allowed. Ending an already-running break is always
-  /// allowed. Two distinct policy states are surfaced:
-  ///  - breaks explicitly disabled            -> "not enabled"
-  ///  - breaks enabled but no allowance set    -> "not configured / contact HR"
+  /// allowed. Three distinct policy states are surfaced:
+  ///  - disabled with a quota configured → "disabled, contact HR to enable"
+  ///  - disabled with no quota / enabled with no quota → "not configured"
   String? get _breakPolicyBlockMessage {
     if (_isOnBreak) return null;
     final summary = _breakSummary;
     if (summary == null) return null;
     if (summary.policyDisabled) {
-      return 'Breaks are not enabled for your shift.';
+      return summary.configuredAllowedMinutes > 0
+          ? 'Break is disabled for your shift. Contact HR to enable.'
+          : 'Break is not configured for your shift. Contact HR.';
     }
     if (summary.policyEnabled && !summary.policyConfigured) {
-      return 'Breaks are not configured for your shift. Please contact HR.';
+      return 'Break is not configured for your shift. Contact HR.';
     }
     return null;
   }

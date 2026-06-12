@@ -19,7 +19,12 @@
       "Bash(git -C d:/ehrms-main/ehrms status --short)",
       "Bash(git -C d:/ehrms-main/ehrms rev-parse --abbrev-ref HEAD)",
       "Bash(git -C d:/ehrms-main/ehrms add -A)",
-      "Bash(git -C d:/ehrms-main/ehrms commit -m '@ *)"
+      "Bash(git -C d:/ehrms-main/ehrms commit -m '@ *)",
+      "Bash(git -C d:/ehrms-main/ehrms commit --amend -m 'chore: commit all working changes \\(attendance, shifts, performance, requests\\) *)",
+      "Bash(git -C d:/ehrms-main/ehrms log -1 --oneline)",
+      "Bash(git -C d:/ehrms-main/ehrms push origin main)",
+      "Bash(ls -la d:\\\\\\\\ehrms-main\\\\\\\\ehrms)",
+      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update break/shift handling, fine calc, and request flows *)"
     ]
   }
 }

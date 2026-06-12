@@ -959,14 +959,43 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             try {
                 const attendanceStats = await calculateAttendanceStats(staff._id, attendanceMonth1Based, attendanceYear);
                 const thisMonthWorkingDays = attendanceStats.workingDaysFullMonth ?? attendanceStats.workingDays ?? 0;
-                if (thisMonthWorkingDays > 0) {
-                    if (dailyNet == null || dailyNet <= 0) dailyNet = netMonthlySalary / thisMonthWorkingDays;
-                    if ((dailyGross == null || dailyGross <= 0) && grossMonthlySalary > 0) {
-                        dailyGross = grossMonthlySalary / thisMonthWorkingDays;
+                // Per-day denominator follows the company's configured payable-days rule
+                // (calendar days / exclude week-offs / fixed days), resolved by the staff's
+                // businessId via their salary template — same basis payroll uses. Falls back
+                // to full-month working days when no rule is configured. (Handwritten fine
+                // formula: Fine = (Monthly Salary ÷ No. of days in month ÷ work hrs) × (Fine mins ÷ 60).)
+                let payableDenominatorDays = thisMonthWorkingDays;
+                try {
+                    const { resolveTemplateLinkedPayableDenominatorDays } = require('../utils/payableDaysRule');
+                    const weekCfgForFine = await getWeekOffConfigForStaff(staff, company);
+                    const resolvedDenominator = await resolveTemplateLinkedPayableDenominatorDays({
+                        staff,
+                        company,
+                        fullMonthWorkingDays: thisMonthWorkingDays,
+                        calendarContext: {
+                            year: attendanceYear,
+                            month: attendanceMonth1Based,
+                            weeklyOffPattern: weekCfgForFine?.weeklyOffPattern,
+                            weeklyHolidays: weekCfgForFine?.weeklyHolidays,
+                        },
+                    });
+                    if (Number.isFinite(resolvedDenominator) && resolvedDenominator > 0) {
+                        payableDenominatorDays = resolvedDenominator;
                     }
-                    if (!(Number.isFinite(overrideNet) && overrideNet > 0) && !(Number.isFinite(overrideGross) && overrideGross > 0)) {
-                        console.log('[Fine] Daily (web-style): netMonthly=', netMonthlySalary, 'grossMonthly=', grossMonthlySalary, 'wd=', thisMonthWorkingDays, '=> dailyNet=', dailyNet, 'dailyGross=', dailyGross);
+                    console.log('[Fine] Payable-days denominator: workingDays=', thisMonthWorkingDays, '=> payableDenominatorDays=', payableDenominatorDays);
+                } catch (denErr) {
+                    console.error('[Fine] payable-days denominator resolve failed, using working days:', denErr?.message);
+                }
+                if (payableDenominatorDays > 0) {
+                    // Authoritative for the fine: derive per-day from monthly salary ÷ payable
+                    // denominator, overriding any app-sent per-day so the configured rule governs.
+                    dailyNet = netMonthlySalary / payableDenominatorDays;
+                    if (grossMonthlySalary > 0) {
+                        dailyGross = grossMonthlySalary / payableDenominatorDays;
+                    } else if (dailyGross == null || dailyGross <= 0) {
+                        dailyGross = dailyNet;
                     }
+                    console.log('[Fine] Daily (payable-rule): netMonthly=', netMonthlySalary, 'grossMonthly=', grossMonthlySalary, 'denominatorDays=', payableDenominatorDays, '=> dailyNet=', dailyNet, 'dailyGross=', dailyGross);
                 }
             } catch (err) {
                 console.error('[Fine] calculateAttendanceStats failed, using fallback working days:', err.message);
@@ -3676,7 +3705,11 @@ const getMonthAttendance = async (req, res) => {
             // response, which would leave the app's calendar blank/colorless. Guard
             // per-record so one bad row is skipped instead of 500-ing the endpoint.
             try {
-                const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary, doc.date ? new Date(doc.date) : new Date(), staffWithSalary?.joiningDate) : {};
+                // Anchor to the shift stamped on the record (appliedShiftId) so a
+                // historical day's fine uses the shift that was allocated THAT day,
+                // never a later reassignment (spec: future shift changes must not
+                // alter past attendance/fine).
+                const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary, doc.date ? new Date(doc.date) : new Date(), staffWithSalary?.joiningDate, null, doc.appliedShiftId || null) : {};
                 const shiftHours = Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
                 const hasFineMinutes = (Number(doc.fineHours) || 0) > 0 || (Number(doc.lateMinutes) || 0) > 0;
                 const status = (doc.status || '').trim().toLowerCase();

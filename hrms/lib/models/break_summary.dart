@@ -77,6 +77,11 @@ class BreakSummary {
 
   final bool hasActiveBreak;
 
+  /// Raw allowance from the shift template (before the default-60-min fallback).
+  /// 0 when not configured. Used to differentiate "disabled with quota" from
+  /// "disabled with no quota" so the correct message is shown.
+  final int configuredAllowedMinutes;
+
   const BreakSummary({
     this.breaks = const [],
     this.totalBreakSeconds = 0,
@@ -91,6 +96,7 @@ class BreakSummary {
     this.remainingMin,
     this.remainingSeconds,
     this.hasActiveBreak = false,
+    this.configuredAllowedMinutes = 0,
   });
 
   bool get isEmpty => breaks.isEmpty && totalBreakSeconds == 0;
@@ -149,6 +155,7 @@ class BreakSummary {
           ? null
           : _asInt(remainingSecRaw),
       hasActiveBreak: json['hasActiveBreak'] == true,
+      configuredAllowedMinutes: _asInt(json['configuredAllowedMinutes']),
     );
   }
 

@@ -191,9 +191,11 @@ FineCalculationResult calculateFine({
         'fixedPerHour: (net÷shiftH)×lateH = ($baseNet÷$shiftHoursTotal)×$lateHours => finePerHour=${finePerHour.toStringAsFixed(4)}';
   } else {
     // Shift-based calculation (default)
-    // Daily Salary = Monthly Gross Salary / Working Days
-    // Hourly Rate = Daily Salary / Shift Hours
-    // Fine Amount = Hourly Rate * Late Hours
+    // Daily Salary = Monthly Gross Salary / No. of days in month
+    //   (payable-days denominator per company rule: calendar days /
+    //    exclude week-offs / fixed days — supplied via [dailySalary])
+    // Hourly Rate = Daily Salary / Shift Hours (work hrs)
+    // Fine Amount = Hourly Rate * (Fine Minutes / 60)
 
     if (dailySalary != null && dailySalary > 0 && shiftHoursTotal > 0) {
       final hourlyRate = dailySalary / shiftHoursTotal;

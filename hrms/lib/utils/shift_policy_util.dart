@@ -259,8 +259,21 @@ ShiftPolicies resolveShiftPoliciesForDay({
     dayLocal: dayLocal,
     joiningDate: joiningDate,
   );
+  return shiftPoliciesFromRow(row, attendanceTemplate: attendanceTemplate);
+}
+
+/// Builds [ShiftPolicies] directly from an explicit shift [row] — used when the
+/// governing shift is already known (e.g. a historical day's stamped
+/// `appliedShiftId` resolved via `shiftRowForAppliedShiftId`), so the policies,
+/// grace and quotas come from the shift that was actually allocated that day
+/// rather than from re-running rotational resolution. A null [row] falls back to
+/// the attendance template for overtime/grace only.
+ShiftPolicies shiftPoliciesFromRow(
+  Map<String, dynamic>? row, {
+  Map<String, dynamic>? attendanceTemplate,
+}) {
   if (row == null) {
-    // No company shifts: fall back to the attendance template for overtime only.
+    // No shift row: fall back to the attendance template for overtime only.
     return ShiftPolicies(
       breakPolicy:
           const ShiftPolicyInfo(availability: PolicyAvailability.unconfigured),

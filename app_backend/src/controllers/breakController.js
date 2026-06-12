@@ -229,19 +229,48 @@ function parseBreakPolicyEnabled(breakPolicy) {
 
 async function getBreakFineContext(staff, dayDate) {
     const company = await Company.findById(staff.businessId)
-        .select('settings.payroll.fineCalculation settings.attendance.shifts settings.business.timezone settings.attendance.timezone timezone')
+        .select('settings.payroll.fineCalculation settings.attendance.shifts settings.business.timezone settings.business.weeklyOffPattern settings.business.weeklyHolidays settings.attendance.timezone timezone')
         .lean();
     const payrollFineConfig = getEffectiveFineConfig(company || {});
 
-    let dailyNet = Number(staff?.appPerDayNetSalary) || 0;
-    let dailyGross = Number(staff?.appPerdayGrossSalary) || 0;
-    if ((dailyNet <= 0 || dailyGross <= 0) && staff?.salary) {
+    let dailyNet = 0;
+    let dailyGross = 0;
+    if (staff?.salary) {
         const salaryStructure = calculateSalaryStructure(staff.salary);
         const monthlyNet = Number(salaryStructure?.monthly?.netMonthlySalary) || 0;
         const monthlyGross = Number(salaryStructure?.monthly?.grossSalary) || 0;
-        if (dailyNet <= 0 && monthlyNet > 0) dailyNet = monthlyNet / 30;
-        if (dailyGross <= 0 && monthlyGross > 0) dailyGross = monthlyGross / 30;
+        // Per-day denominator follows the company's configured payable-days rule
+        // (calendar days / exclude week-offs / fixed days), resolved by businessId via
+        // the staff's salary template — same basis used by the check-in/out fine and
+        // payroll. Falls back to 30 when no rule/salary is resolvable.
+        let denominatorDays = 30;
+        try {
+            const { resolveTemplateLinkedPayableDenominatorDays } = require('../utils/payableDaysRule');
+            const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
+            const day = dayDate ? new Date(dayDate) : new Date();
+            const weekCfg = await getWeekOffConfigForStaff(staff, company);
+            const resolved = await resolveTemplateLinkedPayableDenominatorDays({
+                staff,
+                company,
+                fullMonthWorkingDays: 30,
+                calendarContext: {
+                    year: day.getFullYear(),
+                    month: day.getMonth() + 1,
+                    weeklyOffPattern: weekCfg?.weeklyOffPattern,
+                    weeklyHolidays: weekCfg?.weeklyHolidays,
+                },
+            });
+            if (Number.isFinite(resolved) && resolved > 0) denominatorDays = resolved;
+        } catch (denErr) {
+            console.error('[Break Fine] payable-days denominator resolve failed, using 30:', denErr?.message);
+        }
+        if (monthlyNet > 0) dailyNet = monthlyNet / denominatorDays;
+        if (monthlyGross > 0) dailyGross = monthlyGross / denominatorDays;
     }
+    // App-sent per-day rates are a fallback only when the salary structure is unavailable,
+    // so the configured payable-days rule governs the break fine when salary is known.
+    if (dailyNet <= 0) dailyNet = Number(staff?.appPerDayNetSalary) || 0;
+    if (dailyGross <= 0) dailyGross = Number(staff?.appPerdayGrossSalary) || 0;
     if (dailyGross <= 0) dailyGross = dailyNet;
 
     const shiftTiming = getShiftTimings(company || {}, staff, dayDate, staff?.joiningDate || null, null);
@@ -314,6 +343,10 @@ async function getBreakFineContext(staff, dayDate) {
             // callers can block with a "contact HR" message instead of silently
             // falling back to the default allowance.
             configured: hasConfiguredAllowance,
+            // Raw configured value from the shift template (before fallback). Used by
+            // callers to differentiate "disabled with an allowance" from "disabled
+            // and no allowance configured" so the correct message is shown.
+            configuredAllowedMinutes: configuredAllowedBreakMin,
             isUnlimitedBreak,
             allowedMinutes: effectiveAllowedBreakMin,
             fineEnabled: breakFineEnabled,
@@ -566,6 +599,9 @@ exports.getTodayBreakSummary = async (req, res) => {
                 // (allowedMinutes = 0). The app blocks starting a break in that case
                 // with a "contact HR" message.
                 policyConfigured: fineCtx.breakPolicy.configured,
+                // Raw allowance from the shift template (0 when not set). Used by the
+                // app to differentiate "disabled with quota" vs "disabled + no quota".
+                configuredAllowedMinutes: fineCtx.breakPolicy.configuredAllowedMinutes ?? 0,
                 isUnlimited,
                 allowedMinutes,
                 allowedSeconds,
@@ -619,18 +655,17 @@ exports.startBreak = async (req, res) => {
         // started for a shift that explicitly turned breaks off.
         const startFineCtx = await getBreakFineContext(staff, resolvedStartTime);
         if (startFineCtx.breakPolicy.enabledExplicit === false) {
-            return res.status(403).json({
-                success: false,
-                message: 'Breaks are not enabled for your shift.'
-            });
+            const breakDisabledMsg = (startFineCtx.breakPolicy.configuredAllowedMinutes ?? 0) > 0
+                ? 'Break is disabled for your shift. Contact HR to enable.'
+                : 'Break is not configured for your shift. Contact HR.';
+            return res.status(403).json({ success: false, message: breakDisabledMsg });
         }
         // Breaks are enabled for the shift but no allowance was configured
-        // (allowedMinutes not set). Block with a distinct message so the employee
-        // asks HR to configure a break allowance rather than seeing "not enabled".
+        // (allowedMinutes not set). Block so the employee asks HR to set an allowance.
         if (startFineCtx.breakPolicy.enabled === true && startFineCtx.breakPolicy.configured === false) {
             return res.status(403).json({
                 success: false,
-                message: 'Breaks are not configured for your shift. Please contact HR.'
+                message: 'Break is not configured for your shift. Contact HR.'
             });
         }
 

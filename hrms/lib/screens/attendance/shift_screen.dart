@@ -100,6 +100,7 @@ class _MonthShiftData {
     required this.weekOffSet,
     required this.alternateWorkSet,
     required this.appliedShiftIdByDate,
+    required this.recordByDate,
     required this.companyDocForApplied,
   });
 
@@ -108,6 +109,11 @@ class _MonthShiftData {
   final Set<String> leaveSet;
   final Set<String> holidaySet;
   final Map<String, String> holidayNameByDate;
+
+  /// Full per-day attendance record ('yyyy-MM-dd' → record) so the day-detail
+  /// sheet can read punch times, fine, break, permission and overtime fields —
+  /// all already computed by the backend against the shift allocated that day.
+  final Map<String, Map<String, dynamic>> recordByDate;
 
   /// Backend-computed week-off dates ('yyyy-MM-dd') — authoritative source that
   /// matches the Attendance Calendar (covers Sundays + any configured pattern).
@@ -208,6 +214,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final weekOffSet = <String>{};
     final alternateWorkSet = <String>{};
     final appliedShiftIdByDate = <String, dynamic>{};
+    final recordByDate = <String, Map<String, dynamic>>{};
 
     String calDate(dynamic v) {
       if (v == null) return '';
@@ -249,6 +256,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
         if (applied != null && applied.toString().trim().isNotEmpty) {
           appliedShiftIdByDate[dateStr] = applied;
         }
+        recordByDate[dateStr] = Map<String, dynamic>.from(entry);
       }
     }
 
@@ -299,6 +307,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
       weekOffSet: weekOffSet,
       alternateWorkSet: alternateWorkSet,
       appliedShiftIdByDate: appliedShiftIdByDate,
+      recordByDate: recordByDate,
       companyDocForApplied: companyForApplied,
     );
   }
@@ -1040,6 +1049,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
                 _selectedDay = selectedDay;
                 _focusedDay = focusedDay;
               });
+              _ensureMonthLoaded(selectedDay);
+              _showDayDetailSheet(selectedDay);
             },
             headerVisible: false,
             calendarFormat: CalendarFormat.month,
@@ -1281,6 +1292,335 @@ class _ShiftScreenState extends State<ShiftScreen> {
     );
   }
 
+  /// The full shift row that governed [day] — the shift the employee was
+  /// allocated that date. Worked/past days use the stamped `appliedShiftId`
+  /// (historical assignment, never rewritten by a later shift change); other
+  /// days fall back to the rotational/current allocation. All policies, grace,
+  /// quotas and OT buffer for the day-detail sheet read off this row.
+  Map<String, dynamic>? _allocatedShiftRowForDate(
+    DateTime day,
+    _MonthShiftData? md,
+  ) {
+    final d = DateTime(day.year, day.month, day.day);
+    final dateStr = HolidayOffConfig.keyFor(d);
+    final appliedId = md?.appliedShiftIdByDate[dateStr];
+    if (appliedId != null) {
+      final row = shiftRowForAppliedShiftId(
+        companyDoc: md?.companyDocForApplied ?? widget.companyDoc,
+        appliedShiftId: appliedId,
+      );
+      if (row != null) return row;
+    }
+    return resolveEffectiveShiftRowForDay(
+      companyDoc: widget.companyDoc,
+      staffShiftKey: widget.staffShiftKey,
+      dayLocal: d,
+      joiningDate: widget.joiningDate,
+    );
+  }
+
+  Map<String, dynamic>? _recordForDate(DateTime day) {
+    final md = _monthFor(day);
+    final dateStr =
+        HolidayOffConfig.keyFor(DateTime(day.year, day.month, day.day));
+    return md?.recordByDate[dateStr];
+  }
+
+  int? _intOf(dynamic v) {
+    if (v is num) return v.round();
+    return int.tryParse(v?.toString().trim() ?? '');
+  }
+
+  double? _doubleOf(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse(v?.toString().trim() ?? '');
+  }
+
+  int? _otBufferFromRow(Map<String, dynamic>? row) => _intOf(row?['otBufferMinutes']);
+
+  String _fmtMins(num? v) {
+    final n = (v ?? 0).round();
+    return '$n min${n == 1 ? '' : 's'}';
+  }
+
+  /// ISO/Date → "h:mm a" in device local time; '—' when absent/unparseable.
+  String _fmtClock(dynamic v) {
+    if (v == null) return '--:--';
+    final s = v.toString().trim();
+    if (s.isEmpty) return '--:--';
+    final dt = DateTime.tryParse(s);
+    if (dt == null) return '--:--';
+    return DateFormat('h:mm a').format(dt.toLocal());
+  }
+
+  /// Decimal hours → "9h 15m"; '—' when null/zero.
+  String _fmtWorkHours(dynamic v) {
+    final h = _doubleOf(v) ?? 0;
+    if (h <= 0) return '—';
+    final whole = h.floor();
+    final mins = ((h - whole) * 60).round();
+    if (whole <= 0) return '${mins}m';
+    return mins > 0 ? '${whole}h ${mins}m' : '${whole}h';
+  }
+
+  /// Opens the day-detail sheet: shift, attendance, fine, break, permission and
+  /// overtime — all derived from the shift allocated for [day] (the spec's
+  /// "tap a calendar day" view).
+  void _showDayDetailSheet(DateTime day) {
+    final info = _dayInfoFor(day);
+    final md = _monthFor(day);
+    final record = _recordForDate(day);
+    final row = _allocatedShiftRowForDate(day, md);
+    final policies =
+        shiftPoliciesFromRow(row, attendanceTemplate: widget.todayTemplate);
+
+    final dateStr = DateFormat('EEEE, d MMMM yyyy').format(day);
+
+    // ── Shift details (from the allocated shift row) ──────────────────────────
+    final shift = info.shift;
+    final shiftName = (row?['name']?.toString().trim().isNotEmpty ?? false)
+        ? row!['name'].toString().trim()
+        : (shift?.displayName ?? policies.shiftName ?? '—');
+    String shiftType;
+    switch (info.kind) {
+      case _DayKind.weekOff:
+        shiftType = 'Week Off';
+        break;
+      case _DayKind.holiday:
+        shiftType = 'Holiday';
+        break;
+      case _DayKind.leave:
+        shiftType = 'Leave';
+        break;
+      default:
+        final st = (row?['shiftType'] ?? shift?.shiftTypeLower ?? 'standard')
+            .toString()
+            .toLowerCase();
+        shiftType = st.contains('open')
+            ? 'Open'
+            : st.contains('rotational')
+                ? 'Rotational'
+                : 'Standard';
+    }
+    final window = _windowOf(shift);
+    final graceMin = policies.graceTimeMinutes;
+
+    // ── Fine details (already computed by backend against the day's shift) ────
+    final lateMin = _intOf(record?['lateMinutes']) ?? 0;
+    final earlyMin = _intOf(record?['earlyMinutes']) ?? 0;
+    final breakObj = record?['break'];
+    final breakMap = breakObj is Map ? Map<String, dynamic>.from(breakObj) : null;
+    final breakFineMin = _intOf(breakMap?['totalBreakFineMins']) ?? 0;
+    final breakUsedMin = _intOf(breakMap?['totalBreakMin']) ?? 0;
+    final breakFineAmount = _doubleOf(breakMap?['totalBreakFineAmount']) ?? 0;
+    final lateEarlyFineAmount = _doubleOf(record?['fineAmount']) ?? 0;
+    final totalFineMin = lateMin + earlyMin + breakFineMin;
+    final totalFineAmount = lateEarlyFineAmount + breakFineAmount;
+
+    // ── Break / permission allocations (from the day's shift policy) ──────────
+    final breakAllocated = policies.breakPolicy.limitMinutes;
+    final breakRemaining = breakAllocated != null
+        ? (breakAllocated - breakUsedMin).clamp(0, breakAllocated)
+        : null;
+    final permAllocated = policies.permission.limitMinutes;
+    final permUsed = _intOf(record?['permissionConsumedMinutes']) ?? 0;
+    final permRemaining = _intOf(record?['permissionRemainingMinutes']);
+
+    final otBuffer = _otBufferFromRow(row);
+    final earnedOt = _intOf(record?['overtime']) ?? 0;
+
+    final hasRecord = record != null;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, controller) => SingleChildScrollView(
+          controller: controller,
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Text(
+                dateStr,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _dayDetailSection('Shift Details', Icons.badge_outlined, [
+                _dayDetailRow('Shift Name', shiftName),
+                _dayDetailRow('Shift Type', shiftType),
+                if (window != null) _dayDetailRow('Shift Timing', window),
+                if (shift?.isOpen ?? false)
+                  _dayDetailRow('Required Hours', _requiredHoursLabel(shift!)),
+                _dayDetailRow('Grace Minutes',
+                    graceMin != null ? _fmtMins(graceMin) : '—'),
+              ]),
+              if (info.kind == _DayKind.working) ...[
+                const SizedBox(height: 16),
+                _dayDetailSection(
+                    'Attendance Details', Icons.access_time_rounded, [
+                  _dayDetailRow('Punch In', _fmtClock(record?['punchIn'])),
+                  _dayDetailRow('Punch Out', _fmtClock(record?['punchOut'])),
+                  _dayDetailRow(
+                      'Working Hours', _fmtWorkHours(record?['workHours'])),
+                ]),
+                const SizedBox(height: 16),
+                _dayDetailSection('Fine Details', Icons.money_off, [
+                  _dayDetailRow('Late Check-In Fine', _fmtMins(lateMin),
+                      valueColor: lateMin > 0 ? Colors.orange.shade700 : null),
+                  _dayDetailRow('Early Exit Fine', _fmtMins(earlyMin),
+                      valueColor: earlyMin > 0 ? Colors.orange.shade700 : null),
+                  _dayDetailRow('Break Fine', _fmtMins(breakFineMin),
+                      valueColor:
+                          breakFineMin > 0 ? Colors.orange.shade700 : null),
+                  _dayDetailRow('Total Fine Minutes', _fmtMins(totalFineMin),
+                      valueColor: Colors.red.shade700),
+                  _dayDetailRow(
+                    'Fine Amount',
+                    '₹${NumberFormat('#,##0.00').format(totalFineAmount)}',
+                    valueColor: Colors.red.shade700,
+                    bold: true,
+                  ),
+                ]),
+                const SizedBox(height: 16),
+                _dayDetailSection(
+                    'Break Details', Icons.free_breakfast_outlined, [
+                  _dayDetailRow(
+                    'Break Allocated',
+                    breakAllocated != null
+                        ? _fmtMins(breakAllocated)
+                        : (policies.breakPolicy.isAllowed
+                            ? 'Not configured'
+                            : 'Not allowed'),
+                  ),
+                  _dayDetailRow('Break Used', _fmtMins(breakUsedMin)),
+                  _dayDetailRow('Break Remaining',
+                      breakRemaining != null ? _fmtMins(breakRemaining) : '—',
+                      valueColor: Colors.green.shade700),
+                ]),
+                const SizedBox(height: 16),
+                _dayDetailSection(
+                    'Permission Details', Icons.fact_check_outlined, [
+                  _dayDetailRow(
+                    'Permission Allocated',
+                    permAllocated != null
+                        ? _fmtMins(permAllocated)
+                        : (policies.permission.isAllowed
+                            ? 'Not configured'
+                            : 'Not allowed'),
+                  ),
+                  _dayDetailRow('Permission Used', _fmtMins(permUsed)),
+                  _dayDetailRow('Permission Remaining',
+                      permRemaining != null ? _fmtMins(permRemaining) : '—',
+                      valueColor: Colors.green.shade700),
+                ]),
+                const SizedBox(height: 16),
+                _dayDetailSection('Overtime Details', Icons.more_time_rounded, [
+                  _dayDetailRow('Overtime Buffer',
+                      otBuffer != null ? _fmtMins(otBuffer) : '—'),
+                  _dayDetailRow('Earned Overtime', _fmtMins(earnedOt),
+                      valueColor: earnedOt > 0 ? Colors.green.shade700 : null),
+                ]),
+              ] else if (!hasRecord) ...[
+                const SizedBox(height: 16),
+                Text(
+                  info.kind == _DayKind.weekOff
+                      ? 'Week Off — no attendance expected.'
+                      : info.kind == _DayKind.holiday
+                          ? 'Holiday${info.note != null && info.note!.isNotEmpty ? ' · ${info.note}' : ''} — no attendance expected.'
+                          : info.kind == _DayKind.leave
+                              ? 'On Leave${info.note != null && info.note!.isNotEmpty ? ' · ${info.note}' : ''}.'
+                              : 'No attendance recorded for this day.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dayDetailSection(String title, IconData icon, List<Widget> rows) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 18, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        AppCard(
+          child: Column(children: rows),
+        ),
+      ],
+    );
+  }
+
+  Widget _dayDetailRow(String label, String value,
+      {Color? valueColor, bool bold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            value,
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+              color: valueColor ?? AppColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSelectedDayCard() {
     final info = _dayInfoFor(_selectedDay);
     final snap = info.shift;
@@ -1317,52 +1657,60 @@ class _ShiftScreenState extends State<ShiftScreen> {
         break;
     }
 
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
+    return GestureDetector(
+      onTap: () => _showDayDetailSheet(_selectedDay),
+      child: AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.event_note_outlined,
+                    color: AppColors.primary,
+                    size: 20,
+                  ),
                 ),
-                child: Icon(
-                  Icons.event_note_outlined,
-                  color: AppColors.primary,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        dateStr,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        valueLine,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textSecondary,
                   size: 20,
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      dateStr,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      valueLine,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
