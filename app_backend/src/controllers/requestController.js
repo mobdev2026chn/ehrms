@@ -1329,12 +1329,16 @@ const getPermissionBalance = async (req, res) => {
         ]);
         let consumedMinutes = Math.max(0, Number(consumedAgg?.[0]?.consumed || 0));
 
-        // Quota can be derived when the shift policy quota is missing/zero: the most
-        // generous remaining ever recorded this month plus what was consumed bounds it.
-        const recordedRemaining = Math.max(0, Number(consumedAgg?.[0]?.remaining || 0));
-        const derivedMonthlyQuota = consumedMinutes + recordedRemaining;
-        if (derivedMonthlyQuota > 0) {
-            monthlyQuotaMinutes = Math.max(monthlyQuotaMinutes, derivedMonthlyQuota);
+        // Derived-quota fallback: only used when the shift has NO configured quota (0).
+        // Do NOT apply when a real quota is already configured — historical attendance
+        // rows may store stale higher values (e.g. from a previous 10h quota) and
+        // Math.max would wrongly override the current configured quota with that stale data.
+        if (monthlyQuotaMinutes === 0) {
+            const recordedRemaining = Math.max(0, Number(consumedAgg?.[0]?.remaining || 0));
+            const derivedMonthlyQuota = consumedMinutes + recordedRemaining;
+            if (derivedMonthlyQuota > 0) {
+                monthlyQuotaMinutes = derivedMonthlyQuota;
+            }
         }
         // Never let Used exceed the quota.
         consumedMinutes = Math.min(consumedMinutes, monthlyQuotaMinutes || consumedMinutes);

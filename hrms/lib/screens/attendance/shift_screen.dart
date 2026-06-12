@@ -471,8 +471,39 @@ class _ShiftScreenState extends State<ShiftScreen> {
     return '${_formatTime12(a)} – ${_formatTime12(b)}';
   }
 
+  /// Raw start/end ("HH:mm") for [day]. Prefers the resolved shift's window;
+  /// for open shifts (which carry no fixed window) it falls back to the
+  /// configured start/end on the day's governing shift row, so the calendar and
+  /// detail views show the from–to time rather than the "Open" name. Null when
+  /// no start/end is configured (a genuine open shift with required-hours only).
+  ({String start, String end})? _windowPartsForDay(
+    DateTime day,
+    EffectiveShiftDay? snap,
+  ) {
+    String? s = snap?.startTime?.trim();
+    String? e = snap?.endTime?.trim();
+    if (s == null || s.isEmpty || e == null || e.isEmpty) {
+      final row = _allocatedShiftRowForDate(day, _monthFor(day));
+      final rs = row?['startTime']?.toString().trim();
+      final re = row?['endTime']?.toString().trim();
+      if (rs != null && rs.isNotEmpty && re != null && re.isNotEmpty) {
+        s = rs;
+        e = re;
+      }
+    }
+    if (s == null || s.isEmpty || e == null || e.isEmpty) return null;
+    return (start: s, end: e);
+  }
+
+  /// Formatted "h:mm a – h:mm a" window for [day], or null when none configured.
+  String? _windowLineForDay(DateTime day, EffectiveShiftDay? snap) {
+    final w = _windowPartsForDay(day, snap);
+    if (w == null) return null;
+    return '${_formatTime12(w.start)} – ${_formatTime12(w.end)}';
+  }
+
   /// Converts a 24-hour "HH:mm" time string to 12-hour clock time, e.g.
-  /// "19:00" → "7:00 PM" (or "7:00p" when [compact] is set, for narrow
+  /// "19:00" → "7:00 PM" (or "7:00 PM" when [compact] is set, for narrow
   /// calendar cells). Returns the input unchanged if it isn't "HH:mm".
   String _formatTime12(String time24, {bool compact = false}) {
     final parts = time24.split(':');
@@ -483,7 +514,6 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final period = h >= 12 ? 'PM' : 'AM';
     final h12 = h % 12 == 0 ? 12 : h % 12;
     final mm = m.toString().padLeft(2, '0');
-    if (compact) return '$h12:$mm${period[0].toLowerCase()}';
     return '$h12:$mm $period';
   }
 
@@ -1122,10 +1152,13 @@ class _ShiftScreenState extends State<ShiftScreen> {
   }) {
     final info = _dayInfoFor(day);
     final snap = info.shift;
-    final start = snap?.startTime?.trim();
-    final end = snap?.endTime?.trim();
-    final hasWindow =
-        start != null && start.isNotEmpty && end != null && end.isNotEmpty;
+    // Open shifts drop their fixed window, but the calendar should still show the
+    // from–to time (not the "Open" name) whenever the allocated shift row carries
+    // a start/end (resolved per day: appliedShiftId for worked days, else the
+    // rotational/current allocation).
+    final winParts = info.kind == _DayKind.working
+        ? _windowPartsForDay(day, snap)
+        : null;
 
     final Color bg;
     final Color border;
@@ -1160,13 +1193,14 @@ class _ShiftScreenState extends State<ShiftScreen> {
         detail = _cellNote(info.label ?? 'L', color: const Color(0xFF2563EB));
         break;
       case _DayKind.working:
-        if (hasWindow) {
+        if (winParts != null) {
           detail = Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _timeRow(Colors.green, _formatTime12(start, compact: true)),
+              _timeRow(
+                  Colors.green, _formatTime12(winParts.start, compact: true)),
               const SizedBox(height: 1),
-              _timeRow(Colors.red, _formatTime12(end, compact: true)),
+              _timeRow(Colors.red, _formatTime12(winParts.end, compact: true)),
             ],
           );
         } else if (snap?.isOpen ?? false) {
@@ -1220,7 +1254,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
     );
   }
 
-  /// One time line in a calendar cell: colored dot + HH:MM.
+  /// One time line in a calendar cell: colored dot + HH:MM AM/PM.
   Widget _timeRow(Color dotColor, String time) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -1231,12 +1265,16 @@ class _ShiftScreenState extends State<ShiftScreen> {
           height: 5,
           decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
         ),
-        const SizedBox(width: 3),
+        const SizedBox(width: 2),
         Text(
           time,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.visible,
           style: TextStyle(
-            fontSize: 8.5,
+            fontSize: 7.5,
             height: 1.0,
+            letterSpacing: -0.2,
             fontWeight: FontWeight.w600,
             color: AppColors.textSecondary,
           ),
@@ -1402,7 +1440,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                 ? 'Rotational'
                 : 'Standard';
     }
-    final window = _windowOf(shift);
+    final window = _windowLineForDay(day, shift);
     final graceMin = policies.graceTimeMinutes;
 
     // ── Fine details (already computed by backend against the day's shift) ────
@@ -1624,7 +1662,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
   Widget _buildSelectedDayCard() {
     final info = _dayInfoFor(_selectedDay);
     final snap = info.shift;
-    final window = _windowOf(snap);
+    final window = _windowLineForDay(_selectedDay, snap);
     final dateStr = DateFormat('EEEE, d MMMM yyyy').format(_selectedDay);
 
     final String valueLine;

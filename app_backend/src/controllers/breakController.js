@@ -275,6 +275,12 @@ async function getBreakFineContext(staff, dayDate) {
 
     const shiftTiming = getShiftTimings(company || {}, staff, dayDate, staff?.joiningDate || null, null);
     const shiftBreakPolicy = shiftTiming?.breakPolicy || {};
+    // Open shifts are fined for early exit (under-worked hours) ONLY — never for
+    // late arrival or break overage. Time spent on breaks already reduces worked
+    // hours, so it is captured by the early-exit shortfall; charging a separate
+    // break fine would double-count it.
+    const shiftTypeLower = (shiftTiming?.shiftType || '').toString().toLowerCase();
+    const isOpenShift = shiftTypeLower === 'open' || shiftTypeLower === 'open shift';
     const policyEnabledExplicit = parseBreakPolicyEnabled(shiftBreakPolicy);
     const policyEnabled = shiftBreakPolicy?.enabled === true;
     const configuredAllowedBreakMin = Math.max(0, Number(shiftBreakPolicy?.allowedMinutes || 0));
@@ -292,6 +298,7 @@ async function getBreakFineContext(staff, dayDate) {
     // Fines only apply when the admin both configured a real allowance and enabled fines.
     // The default 1-hour allowance shows a balance but never charges a fine on its own.
     const breakFineEnabled =
+        !isOpenShift &&
         policyEnabled &&
         hasConfiguredAllowance &&
         shiftBreakPolicy?.fineEnabled === true;
@@ -320,8 +327,7 @@ async function getBreakFineContext(staff, dayDate) {
     }
 
     let shiftHours = 9;
-    const shiftType = (shiftTiming?.shiftType || '').toString().toLowerCase();
-    if (shiftType === 'open' || shiftType === 'open shift') {
+    if (isOpenShift) {
         const openHours = Number(shiftTiming?.openWorkHours || shiftTiming?.workHours);
         if (Number.isFinite(openHours) && openHours > 0) shiftHours = openHours;
     } else {
