@@ -41,9 +41,10 @@ String? normalizeAttendanceDateKeyForSalary(dynamic rawValue) {
 }
 
 /// The day's TOTAL attendance fine amount for a record: late/early
-/// (`fineAmount`) + break overage (`break.totalBreakFineAmount`). Use everywhere
-/// a day's fine is shown so late, early and break fines are all reflected
-/// (matches the attendance + shift detail sheets and the backend).
+/// (`fineAmount`) + break overage (`break.totalBreakFineAmount`) + permission
+/// overage (`permissionFineAmount`). Use everywhere a day's fine is shown so
+/// late, early, break and permission fines are all reflected (matches the
+/// attendance + shift detail sheets and the backend).
 double recordTotalFineAmount(dynamic raw) {
   if (raw is! Map) return 0.0;
   final lateEarly = (raw['fineAmount'] as num?)?.toDouble() ?? 0.0;
@@ -51,12 +52,13 @@ double recordTotalFineAmount(dynamic raw) {
   final breakFine = breakObj is Map
       ? ((breakObj['totalBreakFineAmount'] as num?)?.toDouble() ?? 0.0)
       : 0.0;
-  final total = lateEarly + breakFine;
+  final permissionFine = (raw['permissionFineAmount'] as num?)?.toDouble() ?? 0.0;
+  final total = lateEarly + breakFine + permissionFine;
   return (total * 100).round() / 100;
 }
 
 /// The day's TOTAL fine MINUTES: late + early (`fineHours`) + break
-/// (`break.totalBreakFineMins`).
+/// (`break.totalBreakFineMins`) + permission overage (`permissionFineMinutes`).
 int recordTotalFineMinutes(dynamic raw) {
   if (raw is! Map) return 0;
   final lateEarly = (raw['fineHours'] as num?)?.toInt() ?? 0;
@@ -64,7 +66,8 @@ int recordTotalFineMinutes(dynamic raw) {
   final breakMins = breakObj is Map
       ? ((breakObj['totalBreakFineMins'] as num?)?.toInt() ?? 0)
       : 0;
-  return lateEarly + breakMins;
+  final permissionMins = (raw['permissionFineMinutes'] as num?)?.toInt() ?? 0;
+  return lateEarly + breakMins + permissionMins;
 }
 
 /// Result of aggregating fines from attendance records (web `calculateTotalFine` rules).

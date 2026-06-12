@@ -30,7 +30,9 @@
       "Bash(node -c src/utils/fineCalculationHelper.js)",
       "Bash(node -c src/models/Company.js)",
       "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update fine calculation, break/attendance/request flows *)",
-      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update attendance, break, and salary screens *)"
+      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update attendance, break, and salary screens *)",
+      "Bash(node -c src/models/Attendance.js)",
+      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update attendance models/controller, shift and salary fine logic *)"
     ]
   }
 }

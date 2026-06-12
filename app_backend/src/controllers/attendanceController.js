@@ -1059,60 +1059,61 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             }
         }
 
-        let permissionLateUsed = 0;
-        let permissionEarlyUsed = 0;
-        let permissionApprovedMinutes = 0;
-        let permissionConsumedMinutes = 0;
-        let permissionRemainingMinutes = 0;
+        // Permission = a per-day allowance (mirrors break). Permission used beyond
+        // the day's allowance is FINED (exceed = used − dailyAllowed); it no longer
+        // waives late/early fines. Late/early keep their full fine above.
+        let permissionApprovedMinutes = 0;   // permission used for the day
+        let permissionConsumedMinutes = 0;   // same (today's usage)
+        let permissionRemainingMinutes = 0;  // day's allowance left
+        let permissionFineMinutes = 0;       // used beyond the day's allowance
+        let permissionFineAmount = 0;
         try {
-            const permissionAdj = await applyPermissionQuotaAdjustment({
-                employeeId: staff?._id,
-                businessId: staff?.businessId,
+            const permPolicy = dbShiftTimings?.permissionPolicy || null;
+            const permEnabled = permPolicy?.enabled === true;
+            const dailyAllowed = Math.max(0, Number(permPolicy?.dailyAllowedMinutes || 0));
+            // "Used" for the day = approved permission minutes for that date.
+            const approvedPermissions = await getApprovedPermissionForDate(
+                staff?._id,
+                staff?.businessId,
                 attendanceDate,
-                attendanceId: context?.attendanceId || null,
-                isOpenShiftDay,
-                isCheckout: !!punchOutTime,
-                shiftPermissionPolicy: dbShiftTimings?.permissionPolicy || null,
-                lateMinutes: lateFine.lateMinutes,
-                earlyMinutes: earlyFine.earlyMinutes,
                 businessTimezone
-            });
-            if (permissionAdj) {
-                lateFine.lateMinutes = permissionAdj.adjustedLateMinutes;
-                earlyFine.earlyMinutes = permissionAdj.adjustedEarlyMinutes;
-                permissionLateUsed = permissionAdj.permissionLateMinutes;
-                permissionEarlyUsed = permissionAdj.permissionEarlyMinutes;
-                permissionApprovedMinutes = permissionAdj.permissionApprovedMinutes;
-                permissionConsumedMinutes = permissionAdj.permissionConsumedMinutes;
-                permissionRemainingMinutes = permissionAdj.permissionRemainingMinutes;
-
-                // Recalculate fine amounts after permission reduction.
-                if (fineConfig && fineConfig.enabled === false) {
-                    lateFine.fineAmount = 0;
-                    earlyFine.fineAmount = 0;
-                } else {
-                    lateFine.fineAmount = (lateFine.lateMinutes > 0 && effectiveDailyNet > 0)
-                        ? calculateFineAmount(lateFine.lateMinutes, 'lateArrival', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross)
-                        : 0;
-                    earlyFine.fineAmount = (earlyFine.earlyMinutes > 0 && effectiveDailyNet > 0)
-                        ? calculateFineAmount(earlyFine.earlyMinutes, 'earlyExit', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross)
-                        : 0;
+            );
+            let usedToday = 0;
+            if (Array.isArray(approvedPermissions)) {
+                for (const req of approvedPermissions) {
+                    usedToday += Math.max(0, Math.floor(Number(req?.requestedMinutes) || 0));
                 }
-
-                console.log('[Permission][Fine Adjust]', {
-                    isOpenShiftDay,
-                    policy: dbShiftTimings?.permissionPolicy || null,
-                    permissionApprovedMinutes,
-                    permissionConsumedMinutes,
-                    permissionRemainingMinutes,
-                    lateUsed: permissionLateUsed,
-                    earlyUsed: permissionEarlyUsed,
-                    remainingLate: lateFine.lateMinutes,
-                    remainingEarly: earlyFine.earlyMinutes
-                });
             }
+            permissionApprovedMinutes = usedToday;
+            permissionConsumedMinutes = usedToday;
+            permissionRemainingMinutes = Math.max(0, dailyAllowed - usedToday);
+            // Exceed is fined only when the shift's Permission policy is enabled.
+            // Open shifts are fined for early exit only — no permission fine there.
+            const exceed = (permEnabled && !isOpenShiftDay)
+                ? Math.max(0, usedToday - dailyAllowed)
+                : 0;
+            permissionFineMinutes = exceed;
+            if (exceed > 0 && fineConfig && fineConfig.enabled && effectiveDailyNet > 0) {
+                permissionFineAmount = calculateFineAmount(
+                    exceed,
+                    'earlyExit',
+                    fineConfig,
+                    effectiveDailyNet,
+                    shiftHours,
+                    effectiveDailyGross
+                );
+            }
+            console.log('[Permission][Daily Fine]', {
+                permEnabled,
+                isOpenShiftDay,
+                dailyAllowed,
+                usedToday,
+                exceed,
+                permissionFineMinutes,
+                permissionFineAmount
+            });
         } catch (permissionErr) {
-            console.error('[Permission][Fine Adjust] Failed:', permissionErr?.message);
+            console.error('[Permission][Daily Fine] Failed:', permissionErr?.message);
         }
 
         // Apply fine amounts from payroll.fineCalculation when enabled (allowLateEntry/allowEarlyExit only control blocking punch, not whether fine is charged)
@@ -1178,11 +1179,13 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             fineAmount: fineAmount,
             lateFineAmount,
             earlyFineAmount,
-            permissionLateMinutes: permissionLateUsed,
-            permissionEarlyMinutes: permissionEarlyUsed,
+            permissionLateMinutes: 0,
+            permissionEarlyMinutes: 0,
             permissionApprovedMinutes,
             permissionConsumedMinutes,
-            permissionRemainingMinutes
+            permissionRemainingMinutes,
+            permissionFineMinutes,
+            permissionFineAmount
         };
         console.log('[Fine] Result:', JSON.stringify(out));
         // Formula summary with check-in/check-out times for debugging why lateMinutes might be 0
@@ -1781,7 +1784,9 @@ const checkIn = async (req, res) => {
                     permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? existing.permissionEarlyMinutes ?? 0,
                     permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? existing.permissionApprovedMinutes ?? 0,
                     permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? existing.permissionConsumedMinutes ?? 0,
-                    permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? existing.permissionRemainingMinutes ?? 0
+                    permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? existing.permissionRemainingMinutes ?? 0,
+                    permissionFineMinutes: permissionFromServer?.permissionFineMinutes ?? existing.permissionFineMinutes ?? 0,
+                    permissionFineAmount: permissionFromServer?.permissionFineAmount ?? existing.permissionFineAmount ?? 0
                 }
                 : await calculateCombinedFine(
                     now,
@@ -1838,6 +1843,8 @@ const checkIn = async (req, res) => {
             existing.permissionApprovedMinutes = fineResult.permissionApprovedMinutes ?? 0;
             existing.permissionConsumedMinutes = fineResult.permissionConsumedMinutes ?? 0;
             existing.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
+            existing.permissionFineMinutes = fineResult.permissionFineMinutes ?? 0;
+            existing.permissionFineAmount = fineResult.permissionFineAmount ?? 0;
             // For app punches, prefer app-calculated values so DB matches app formula/logs.
             if (
                 !useAppProvidedFine &&
@@ -2003,7 +2010,9 @@ const checkIn = async (req, res) => {
                 permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? 0,
                 permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? 0,
                 permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? 0,
-                permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? 0
+                permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? 0,
+                permissionFineMinutes: permissionFromServer?.permissionFineMinutes ?? 0,
+                permissionFineAmount: permissionFromServer?.permissionFineAmount ?? 0
             }
             : await calculateCombinedFine(
                 now,
@@ -2043,7 +2052,9 @@ const checkIn = async (req, res) => {
             permissionEarlyMinutes: fineResult.permissionEarlyMinutes ?? 0,
             permissionApprovedMinutes: fineResult.permissionApprovedMinutes ?? 0,
             permissionConsumedMinutes: fineResult.permissionConsumedMinutes ?? 0,
-            permissionRemainingMinutes: fineResult.permissionRemainingMinutes ?? 0
+            permissionRemainingMinutes: fineResult.permissionRemainingMinutes ?? 0,
+            permissionFineMinutes: fineResult.permissionFineMinutes ?? 0,
+            permissionFineAmount: fineResult.permissionFineAmount ?? 0
         });
         // For app punches, prefer app-calculated values so DB matches app formula/logs.
         if (
@@ -2682,7 +2693,9 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
             permissionEarlyMinutes: permissionFromServer?.permissionEarlyMinutes ?? attendance.permissionEarlyMinutes ?? 0,
             permissionApprovedMinutes: permissionFromServer?.permissionApprovedMinutes ?? attendance.permissionApprovedMinutes ?? 0,
             permissionConsumedMinutes: permissionFromServer?.permissionConsumedMinutes ?? attendance.permissionConsumedMinutes ?? 0,
-            permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? attendance.permissionRemainingMinutes ?? 0
+            permissionRemainingMinutes: permissionFromServer?.permissionRemainingMinutes ?? attendance.permissionRemainingMinutes ?? 0,
+            permissionFineMinutes: permissionFromServer?.permissionFineMinutes ?? attendance.permissionFineMinutes ?? 0,
+            permissionFineAmount: permissionFromServer?.permissionFineAmount ?? attendance.permissionFineAmount ?? 0
         }
         : await calculateCombinedFine(
             attendance.punchIn,
@@ -2713,6 +2726,8 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     attendance.permissionApprovedMinutes = fineResult.permissionApprovedMinutes ?? 0;
     attendance.permissionConsumedMinutes = fineResult.permissionConsumedMinutes ?? 0;
     attendance.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
+    attendance.permissionFineMinutes = fineResult.permissionFineMinutes ?? 0;
+    attendance.permissionFineAmount = fineResult.permissionFineAmount ?? 0;
     // For app punches, prefer app-calculated values so DB matches app formula/logs.
     if (
         !useAppProvidedFine &&

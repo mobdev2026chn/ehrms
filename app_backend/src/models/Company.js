@@ -24,6 +24,9 @@ const breakPolicySchema = new Schema({
 const permissionPolicySchema = new Schema({
   enabled: { type: Boolean, default: false },
   monthlyQuotaMinutes: { type: Number, default: 0 },
+  // Per-day permission allowance. Permission used beyond this on a day is fined
+  // (exceed = used − dailyAllowedMinutes), mirroring the break allowance model.
+  dailyAllowedMinutes: { type: Number, default: 0 },
   applyTo: {
     type: String,
     enum: ['lateArrival', 'earlyExit', 'both'],

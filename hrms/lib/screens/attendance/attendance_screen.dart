@@ -1532,17 +1532,23 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         record['break'] is Map ? Map<String, dynamic>.from(record['break'] as Map) : null;
     final breakFineMins = breakMapForFine?['totalBreakFineMins'] as num?;
     final breakFineAmount = breakMapForFine?['totalBreakFineAmount'] as num?;
-    final totalFineMinsDisplay =
-        (fineHours?.toDouble() ?? 0) + (breakFineMins?.toDouble() ?? 0);
-    final totalFineAmountDisplay =
-        (fineAmount?.toDouble() ?? 0) + (breakFineAmount?.toDouble() ?? 0);
+    final permissionFineMins = record['permissionFineMinutes'] as num?;
+    final permissionFineAmount = record['permissionFineAmount'] as num?;
+    final totalFineMinsDisplay = (fineHours?.toDouble() ?? 0) +
+        (breakFineMins?.toDouble() ?? 0) +
+        (permissionFineMins?.toDouble() ?? 0);
+    final totalFineAmountDisplay = (fineAmount?.toDouble() ?? 0) +
+        (breakFineAmount?.toDouble() ?? 0) +
+        (permissionFineAmount?.toDouble() ?? 0);
     final hasFineInfo =
         (lateMinutes != null && lateMinutes > 0) ||
         (earlyMinutes != null && earlyMinutes > 0) ||
         (fineHours != null && fineHours > 0) ||
         (fineAmount != null && fineAmount > 0) ||
         (breakFineMins != null && breakFineMins > 0) ||
-        (breakFineAmount != null && breakFineAmount > 0);
+        (breakFineAmount != null && breakFineAmount > 0) ||
+        (permissionFineMins != null && permissionFineMins > 0) ||
+        (permissionFineAmount != null && permissionFineAmount > 0);
 
     // Permission usage details (stored in attendance collection for this date)
     final permissionLateMinutes = _parseLogNumericValue(
@@ -1740,6 +1746,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                             _buildDayDetailRow(
                               'Break Fine',
                               '${breakFineMins.toInt()} mins',
+                              valueColor: Colors.orange.shade700,
+                            ),
+                          if (permissionFineMins != null &&
+                              permissionFineMins.toInt() > 0)
+                            _buildDayDetailRow(
+                              'Permission Fine',
+                              '${permissionFineMins.toInt()} mins',
                               valueColor: Colors.orange.shade700,
                             ),
                           if (totalFineMinsDisplay > 0)
@@ -2293,37 +2306,48 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           color: Colors.amber.shade900,
         ),
       );
-    } else {
+    } else if (hasImage) {
+      // Punch-in / punch-out selfie — render a proper, tappable thumbnail.
       leading = GestureDetector(
-        onTap: hasImage
-            ? () => _showSelfieDialog(imageUrl, item['title'])
-            : null,
-        child: Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(6),
-            color: Colors.orange.shade100,
-            image: hasImage
-                ? DecorationImage(
-                    image: CachedNetworkImageProvider(imageUrl),
-                    fit: BoxFit.cover,
-                  )
-                : null,
+        onTap: () => _showSelfieDialog(imageUrl, item['title']),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: AppColors.primary.withValues(alpha: 0.25),
+              ),
+              image: DecorationImage(
+                image: CachedNetworkImageProvider(imageUrl),
+                fit: BoxFit.cover,
+              ),
+            ),
           ),
-          child: hasImage
-              ? null
-              : Icon(
-                  Icons.access_time_rounded,
-                  size: 18,
-                  color: AppColors.primary,
-                ),
+        ),
+      );
+    } else {
+      leading = Container(
+        width: 34,
+        height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          color: Colors.orange.shade100,
+        ),
+        child: Icon(
+          Icons.access_time_rounded,
+          size: 18,
+          color: AppColors.primary,
         ),
       );
     }
 
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment:
+          hasImage ? CrossAxisAlignment.center : CrossAxisAlignment.start,
       children: [
         leading,
         const SizedBox(width: 10),
@@ -7729,13 +7753,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // Status style from AppColors
     final st = AppColors.statusStyle(status.toLowerCase());
 
-    // Day-wise total fine = late/early (record.fineAmount) + break overage fine.
-    // Matches the per-day breakdown shown in the detail sheet and shift screen.
+    // Day-wise total fine = late/early (record.fineAmount) + break overage +
+    // permission overage. Matches the detail sheet and shift screen.
     final breakMapForFine =
         record['break'] is Map ? Map<String, dynamic>.from(record['break'] as Map) : null;
     final dayFineAmount =
         ((record['fineAmount'] as num?)?.toDouble() ?? 0) +
-        ((breakMapForFine?['totalBreakFineAmount'] as num?)?.toDouble() ?? 0);
+        ((breakMapForFine?['totalBreakFineAmount'] as num?)?.toDouble() ?? 0) +
+        ((record['permissionFineAmount'] as num?)?.toDouble() ?? 0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),

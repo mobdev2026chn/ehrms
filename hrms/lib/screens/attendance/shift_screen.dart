@@ -1559,16 +1559,20 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final breakFineMin = _intOf(breakMap?['totalBreakFineMins']) ?? 0;
     final breakUsedMin = _intOf(breakMap?['totalBreakMin']) ?? 0;
     final breakFineAmount = _doubleOf(breakMap?['totalBreakFineAmount']) ?? 0;
+    final permissionFineMin = _intOf(record?['permissionFineMinutes']) ?? 0;
+    final permissionFineAmount = _doubleOf(record?['permissionFineAmount']) ?? 0;
     final lateEarlyFineAmount = _doubleOf(record?['fineAmount']) ?? 0;
-    final totalFineMin = lateMin + earlyMin + breakFineMin;
-    final totalFineAmount = lateEarlyFineAmount + breakFineAmount;
+    final totalFineMin = lateMin + earlyMin + breakFineMin + permissionFineMin;
+    final totalFineAmount =
+        lateEarlyFineAmount + breakFineAmount + permissionFineAmount;
 
     // ── Break / permission allocations (from the day's shift policy) ──────────
     final breakAllocated = policies.breakPolicy.limitMinutes;
     final breakRemaining = breakAllocated != null
         ? (breakAllocated - breakUsedMin).clamp(0, breakAllocated)
         : null;
-    final permAllocated = policies.permission.limitMinutes;
+    // Permission allowance is now per-day (permissionPolicy.dailyAllowedMinutes).
+    final permAllocated = _intOf(row?['permissionPolicy']?['dailyAllowedMinutes']);
     final permUsed = _intOf(record?['permissionConsumedMinutes']) ?? 0;
     final permRemaining = _intOf(record?['permissionRemainingMinutes']);
 
@@ -1642,6 +1646,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
                   _dayDetailRow('Break Fine', _fmtMins(breakFineMin),
                       valueColor:
                           breakFineMin > 0 ? Colors.orange.shade700 : null),
+                  _dayDetailRow('Permission Fine', _fmtMins(permissionFineMin),
+                      valueColor:
+                          permissionFineMin > 0 ? Colors.orange.shade700 : null),
                   _dayDetailRow('Total Fine Minutes', _fmtMins(totalFineMin),
                       valueColor: Colors.red.shade700),
                   _dayDetailRow(
