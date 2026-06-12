@@ -1521,16 +1521,28 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final isLateIn = _isLateCheckIn(punchIn, record: record);
     final isEarlyOut = _isEarlyCheckOut(punchOut, record: record);
 
-    // Fine information
+    // Fine information. record.fineAmount / fineHours cover late + early only;
+    // break overage fine is stored separately under record.break, so the day's
+    // TRUE total = late/early + break (matches the Shift Time day-detail sheet).
     final lateMinutes = record['lateMinutes'] as num?;
     final earlyMinutes = record['earlyMinutes'] as num?;
     final fineHours = record['fineHours'] as num?;
     final fineAmount = record['fineAmount'] as num?;
+    final breakMapForFine =
+        record['break'] is Map ? Map<String, dynamic>.from(record['break'] as Map) : null;
+    final breakFineMins = breakMapForFine?['totalBreakFineMins'] as num?;
+    final breakFineAmount = breakMapForFine?['totalBreakFineAmount'] as num?;
+    final totalFineMinsDisplay =
+        (fineHours?.toDouble() ?? 0) + (breakFineMins?.toDouble() ?? 0);
+    final totalFineAmountDisplay =
+        (fineAmount?.toDouble() ?? 0) + (breakFineAmount?.toDouble() ?? 0);
     final hasFineInfo =
         (lateMinutes != null && lateMinutes > 0) ||
         (earlyMinutes != null && earlyMinutes > 0) ||
         (fineHours != null && fineHours > 0) ||
-        (fineAmount != null && fineAmount > 0);
+        (fineAmount != null && fineAmount > 0) ||
+        (breakFineMins != null && breakFineMins > 0) ||
+        (breakFineAmount != null && breakFineAmount > 0);
 
     // Permission usage details (stored in attendance collection for this date)
     final permissionLateMinutes = _parseLogNumericValue(
@@ -1724,16 +1736,22 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                               '${earlyMinutes.toInt()} minutes',
                               valueColor: Colors.orange.shade700,
                             ),
-                          if (fineHours != null && fineHours > 0)
+                          if (breakFineMins != null && breakFineMins.toInt() > 0)
                             _buildDayDetailRow(
-                              'Fine Min',
-                              '${fineHours.toInt()} mins',
+                              'Break Fine',
+                              '${breakFineMins.toInt()} mins',
+                              valueColor: Colors.orange.shade700,
+                            ),
+                          if (totalFineMinsDisplay > 0)
+                            _buildDayDetailRow(
+                              'Total Fine Min',
+                              '${totalFineMinsDisplay.toInt()} mins',
                               valueColor: Colors.red.shade700,
                             ),
-                          if (fineAmount != null && fineAmount > 0)
+                          if (totalFineAmountDisplay > 0)
                             _buildDayDetailRow(
                               'Fine Amount',
-                              '₹${NumberFormat('#,##0.00').format(fineAmount)}',
+                              '₹${NumberFormat('#,##0.00').format(totalFineAmountDisplay)}',
                               valueColor: Colors.red.shade700,
                               isBold: true,
                             ),
@@ -7711,6 +7729,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // Status style from AppColors
     final st = AppColors.statusStyle(status.toLowerCase());
 
+    // Day-wise total fine = late/early (record.fineAmount) + break overage fine.
+    // Matches the per-day breakdown shown in the detail sheet and shift screen.
+    final breakMapForFine =
+        record['break'] is Map ? Map<String, dynamic>.from(record['break'] as Map) : null;
+    final dayFineAmount =
+        ((record['fineAmount'] as num?)?.toDouble() ?? 0) +
+        ((breakMapForFine?['totalBreakFineAmount'] as num?)?.toDouble() ?? 0);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
@@ -7782,6 +7808,25 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       child: Text(t, style: TextStyle(fontSize: 9, color: c, fontWeight: FontWeight.w700)),
                     );
                   }).toList()),
+                ],
+                if (dayFineAmount > 0) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.money_off_rounded,
+                          size: 12, color: Colors.red.shade600),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Fine ₹${NumberFormat('#,##0.00').format(dayFineAmount)}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.red.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ],
             ),

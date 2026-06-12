@@ -290,18 +290,20 @@ class _BreakScreenState extends State<BreakScreen> {
 
   /// Informational notice when break is disabled but a quota was configured
   /// (Scenario 3). Break is still allowed in this state; all time goes to Fine.
+  /// Shown both before starting a break and while a break is active.
   /// Returns null when not in this state.
   String? get _breakDisabledWithQuotaNotice {
-    if (_isOnBreak) return null;
     final summary = _breakSummary;
     if (summary == null) return null;
-    if (summary.policyIsDisabledWithQuota) {
-      final allowed = summary.configuredAllowedMinutes;
-      return 'Break is disabled for your shift. Contact HR to enable.\n'
-          'All break time will be added to Fine '
-          '(${allowed > 0 ? "$allowed min quota" : "full duration"} counts as fine).';
-    }
-    return null;
+    if (!summary.policyIsDisabledWithQuota) return null;
+    final allowed = summary.configuredAllowedMinutes;
+    final takenMin = summary.totalBreakMin;
+    final fineDetail = takenMin > 0
+        ? '$takenMin min taken today will be added to Fine.'
+        : '${allowed > 0 ? "Up to $allowed min" : "All break time"} will be added to Fine.';
+    return 'Break is disabled for your shift.\n'
+        'Contact HR to enable.\n'
+        '$fineDetail';
   }
 
   /// Whether starting a NEW break is blocked by the shift's break policy.
@@ -377,7 +379,10 @@ class _BreakScreenState extends State<BreakScreen> {
 
     if (result['success'] == true) {
       if (_isOnBreak) {
-        SnackBarUtils.showSnackBar(context, 'Break ended successfully');
+        final endMsg = (_breakSummary?.policyIsDisabledWithQuota == true)
+            ? 'Break ended. Your break time will be added to Fine.'
+            : 'Break ended successfully';
+        SnackBarUtils.showSnackBar(context, endMsg);
         Navigator.of(context).pop(true);
         return;
       }

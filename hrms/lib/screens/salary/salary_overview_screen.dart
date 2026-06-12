@@ -3350,7 +3350,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     ],
                     if (fineAmount > 0)
                       _buildComponentRow(
-                        'Late Login Fine',
+                        'Attendance Fine',
                         fineAmount,
                         currencyFormat,
                         isDeduction: true,
@@ -5829,16 +5829,16 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           statusIcon = Icons.check_circle;
           salaryForDay = dailySalary;
         }
-        // Prefer attendance record fine over _dailyFineAmounts (trust backend)
+        // Prefer attendance record fine over _dailyFineAmounts (trust backend).
+        // Total fine = late/early + break overage.
         final dateKey = DateFormat('yyyy-MM-dd').format(date);
-        fineAmount =
-            (record['fineAmount'] as num?)?.toDouble() ??
-            _dailyFineAmounts[dateKey] ??
-            0.0;
-        fineMinutes =
-            (record['lateMinutes'] as num?)?.toInt() ??
-            (record['fineHours'] as num?)?.toInt() ??
-            0;
+        final recordTotal = recordTotalFineAmount(record);
+        fineAmount = recordTotal > 0
+            ? recordTotal
+            : (_dailyFineAmounts[dateKey] ?? 0.0);
+        fineMinutes = recordTotalFineMinutes(record) > 0
+            ? recordTotalFineMinutes(record)
+            : ((record['lateMinutes'] as num?)?.toInt() ?? 0);
       } else if (recordStatus == 'on leave') {
         if (status == 'Comp Off') {
           statusColor = Colors.purple;
@@ -5964,8 +5964,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     Flexible(
                       child: Text(
                         fineMinutes > 0
-                            ? 'Late login fine: ${currencyFormat.format(fineAmount)} ($fineMinutes min)'
-                            : 'Late login fine: ${currencyFormat.format(fineAmount)}',
+                            ? 'Attendance fine: ${currencyFormat.format(fineAmount)} ($fineMinutes min)'
+                            : 'Attendance fine: ${currencyFormat.format(fineAmount)}',
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
@@ -6036,13 +6036,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final recordStatusForFine = (record['status'] as String? ?? '')
         .trim()
         .toLowerCase();
+    // Total day fine = late/early + break overage.
     final fineAmount =
         (recordStatusForFine == 'present' ||
             recordStatusForFine == 'approved' ||
             recordStatusForFine == 'half day')
-        ? ((record['fineAmount'] as num?)?.toDouble() ??
-              _dailyFineAmounts[dateKey] ??
-              0.0)
+        ? (recordTotalFineAmount(record) > 0
+              ? recordTotalFineAmount(record)
+              : (_dailyFineAmounts[dateKey] ?? 0.0))
         : 0.0;
 
     final isHoliday = _holidays.any(
@@ -6076,7 +6077,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         recordStatus == 'half day') {
       salaryForDay = isHalfDay ? dailySalary * 0.5 : dailySalary;
       actualFineAmount = fineAmount;
-      actualLateMinutes = lateMinutes;
+      final totalFineMins = recordTotalFineMinutes(record);
+      actualLateMinutes = totalFineMins > 0 ? totalFineMins : lateMinutes;
     } else if (recordStatus == 'on leave' && isPaidLeave) {
       salaryForDay = dailySalary;
     }
@@ -6184,14 +6186,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                         if (actualFineAmount > 0) ...[
                           const Divider(height: 16),
                           _buildDayDetailRow(
-                            'Late Login Fine',
+                            'Attendance Fine',
                             '- ${currencyFormat.format(actualFineAmount)}',
                             valueColor: Colors.red,
                             isBold: true,
                           ),
                           if (actualLateMinutes > 0)
                             _buildDayDetailRow(
-                              'Late By',
+                              'Fine Minutes',
                               '$actualLateMinutes minutes',
                               valueColor: Colors.red.shade600,
                             ),

@@ -40,6 +40,33 @@ String? normalizeAttendanceDateKeyForSalary(dynamic rawValue) {
   }
 }
 
+/// The day's TOTAL attendance fine amount for a record: late/early
+/// (`fineAmount`) + break overage (`break.totalBreakFineAmount`). Use everywhere
+/// a day's fine is shown so late, early and break fines are all reflected
+/// (matches the attendance + shift detail sheets and the backend).
+double recordTotalFineAmount(dynamic raw) {
+  if (raw is! Map) return 0.0;
+  final lateEarly = (raw['fineAmount'] as num?)?.toDouble() ?? 0.0;
+  final breakObj = raw['break'];
+  final breakFine = breakObj is Map
+      ? ((breakObj['totalBreakFineAmount'] as num?)?.toDouble() ?? 0.0)
+      : 0.0;
+  final total = lateEarly + breakFine;
+  return (total * 100).round() / 100;
+}
+
+/// The day's TOTAL fine MINUTES: late + early (`fineHours`) + break
+/// (`break.totalBreakFineMins`).
+int recordTotalFineMinutes(dynamic raw) {
+  if (raw is! Map) return 0;
+  final lateEarly = (raw['fineHours'] as num?)?.toInt() ?? 0;
+  final breakObj = raw['break'];
+  final breakMins = breakObj is Map
+      ? ((breakObj['totalBreakFineMins'] as num?)?.toInt() ?? 0)
+      : 0;
+  return lateEarly + breakMins;
+}
+
 /// Result of aggregating fines from attendance records (web `calculateTotalFine` rules).
 class SalaryFineSummary {
   SalaryFineSummary({
@@ -88,7 +115,9 @@ SalaryFineSummary aggregateSalaryFineSummary(Iterable<dynamic> records) {
     if (raw is! Map) continue;
     final record = Map<String, dynamic>.from(raw);
 
-    final recordFine = (record['fineAmount'] as num?)?.toDouble() ?? 0.0;
+    // Late/early fine and the day's TOTAL fine (late/early + break overage).
+    final lateEarlyFine = (record['fineAmount'] as num?)?.toDouble() ?? 0.0;
+    final recordFine = recordTotalFineAmount(record);
     final lateMinutes = (record['lateMinutes'] as num?)?.toInt() ?? 0;
     final hasHalfDaySession = record['halfDaySession'] != null;
     final shouldCountFine = hasHalfDaySession
@@ -98,12 +127,15 @@ SalaryFineSummary aggregateSalaryFineSummary(Iterable<dynamic> records) {
     if (!shouldCountFine) continue;
 
     totalFineAmount += recordFine;
+    // "Late days" stays based on an actual late/early fine or late minutes, so a
+    // break-only fine day still contributes to the total amount without inflating
+    // the late-day count.
     if (hasHalfDaySession) {
       if (lateMinutes > 0) {
         lateDays++;
         totalLateMinutes += lateMinutes;
       }
-    } else {
+    } else if (lateEarlyFine > 0 || lateMinutes > 0) {
       lateDays++;
       totalLateMinutes += lateMinutes;
     }

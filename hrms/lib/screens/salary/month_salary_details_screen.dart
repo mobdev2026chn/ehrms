@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
 import '../../services/attendance_service.dart';
 import '../../utils/salary_structure_calculator.dart';
+import '../../utils/salary_fine_summary.dart';
 import '../../utils/attendance_display_util.dart';
 import '../../utils/mongo_date_parse.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -525,7 +526,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             '- ${currencyFormat.format(widget.proratedSalary.proratedDeductions)}',
           ),
           _buildInfoRow(
-            'Late Login Fine',
+            'Attendance Fine',
             '- ${currencyFormat.format(widget.totalFine)}',
           ),
           const Divider(height: 16),
@@ -720,17 +721,17 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
           salaryForDay = widget.dailySalary;
         }
 
-        // Prefer per-day fine from Overview (includes client-calculated when backend missing); else from record
+        // Prefer per-day fine from Overview (already late/early + break); else the
+        // record's own total fine (late/early + break overage).
         final dateKey = DateFormat('yyyy-MM-dd').format(date);
+        final recordTotal = recordTotalFineAmount(record);
         fineAmount =
             widget.dailyFineAmounts?[dateKey] ??
-            (record['fineAmount'] as num?)?.toDouble() ??
-            0.0;
-        // Fine duration in minutes from attendances collection (fineHours = total min, lateMinutes = late only)
-        fineMinutes =
-            (record['lateMinutes'] as num?)?.toInt() ??
-            (record['fineHours'] as num?)?.toInt() ??
-            0;
+            (recordTotal > 0 ? recordTotal : 0.0);
+        // Total fine duration in minutes (late + early + break).
+        fineMinutes = recordTotalFineMinutes(record) > 0
+            ? recordTotalFineMinutes(record)
+            : ((record['lateMinutes'] as num?)?.toInt() ?? 0);
       } else if (recordStatus == 'on leave') {
         if (status == 'Comp Off') {
           statusColor = Colors.purple;
@@ -879,8 +880,8 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                       Flexible(
                         child: Text(
                           fineMinutes > 0
-                              ? 'Late login fine: ${currencyFormat.format(fineAmount)} ($fineMinutes min)'
-                              : 'Late login fine: ${currencyFormat.format(fineAmount)}',
+                              ? 'Attendance fine: ${currencyFormat.format(fineAmount)} ($fineMinutes min)'
+                              : 'Attendance fine: ${currencyFormat.format(fineAmount)}',
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w600,
@@ -954,7 +955,9 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
     final address = record['address'];
     final workHours = record['workHours'];
     final lateMinutes = record['lateMinutes'] ?? 0;
-    final fineAmount = (record['fineAmount'] as num?)?.toDouble() ?? 0.0;
+    // Total day fine = late/early + break overage.
+    final fineAmount = recordTotalFineAmount(record);
+    final fineMinutesTotal = recordTotalFineMinutes(record);
 
     String formatTime(String? isoString) {
       if (isoString == null) return 'Not recorded';
@@ -980,9 +983,11 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
     if (recordStatus == 'present' || recordStatus == 'approved') {
       salaryForDay = isHalfDay ? widget.dailySalary * 0.5 : widget.dailySalary;
 
-      // Get fine and late minutes ONLY from database (no client-side calculation)
+      // Total fine + total fine minutes (late/early + break) from the record.
       actualFineAmount = fineAmount;
-      actualLateMinutes = lateMinutes;
+      actualLateMinutes = fineMinutesTotal > 0
+          ? fineMinutesTotal
+          : ((lateMinutes as num?)?.toInt() ?? 0);
     } else {
       // NO salary and NO FINE for Absent, Pending, On Leave, etc.
       salaryForDay = 0;
@@ -1087,14 +1092,14 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                         if (actualFineAmount > 0) ...[
                           const Divider(height: 16),
                           _buildDetailRow(
-                            'Late Login Fine',
+                            'Attendance Fine',
                             '- ${currencyFormat.format(actualFineAmount)}',
                             valueColor: Colors.red,
                             isBold: true,
                           ),
                           if (actualLateMinutes > 0)
                             _buildDetailRow(
-                              'Late By',
+                              'Fine Minutes',
                               '$actualLateMinutes minutes',
                               valueColor: Colors.red.shade600,
                             ),
