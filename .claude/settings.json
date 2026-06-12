@@ -24,7 +24,8 @@
       "Bash(git -C d:/ehrms-main/ehrms log -1 --oneline)",
       "Bash(git -C d:/ehrms-main/ehrms push origin main)",
       "Bash(ls -la d:\\\\\\\\ehrms-main\\\\\\\\ehrms)",
-      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update break/shift handling, fine calc, and request flows *)"
+      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update break/shift handling, fine calc, and request flows *)",
+      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update app constants *)"
     ]
   }
 }
