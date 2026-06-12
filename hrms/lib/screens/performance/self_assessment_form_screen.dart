@@ -306,7 +306,7 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
                                   strokeWidth: 2,
                                 ),
                               )
-                            : Text('Submit Review'),
+                            : Text('Submit'),
                       ),
                     ),
                   ],

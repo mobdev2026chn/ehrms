@@ -881,7 +881,15 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         // Use halfDaySession enum values ('First Half Day' / 'Second Half Day') - fallback to converting session numbers
         const session = isHalfDay ? (leave.halfDaySession || leave.halfDayType || (leave.session === '1' ? 'First Half Day' : leave.session === '2' ? 'Second Half Day' : null)) : null;
         const { getShiftTimings, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
-        const dbShiftTimings = getShiftTimings(company, staff, attendanceDate, staff?.joiningDate, template);
+        // Prefer the shift actually allocated for this day (stored on the attendance record as
+        // appliedShiftId) so the fine always uses that day's shift — not the employee's current
+        // assignment, which may have changed since. Null/unknown id falls back to live resolution.
+        const forcedShiftId = context?.appliedShiftId || null;
+        const dbShiftTimings = getShiftTimings(company, staff, attendanceDate, staff?.joiningDate, template, forcedShiftId);
+        if (forcedShiftId) {
+            console.log('[Fine] Shift anchored to appliedShiftId for the day:', String(forcedShiftId),
+                '=> resolved shift:', dbShiftTimings?.effectiveShiftName, dbShiftTimings?.startTime, '-', dbShiftTimings?.endTime);
+        }
         console.log('[Fine] calculateCombinedFine: dbShiftTimings=', JSON.stringify(dbShiftTimings));
         const businessTimezone = getBusinessTimezone(company);
         // Company embed may return null window; keep fine math stable with template then defaults.
@@ -1762,7 +1770,7 @@ const checkIn = async (req, res) => {
                         appPerDayNetSalary: req.body?.appPerDayNetSalary,
                         appPerdayGrossSalary: req.body?.appPerdayGrossSalary
                     },
-                    { attendanceId: existing._id }
+                    { attendanceId: existing._id, appliedShiftId: appliedShiftId || existing.appliedShiftId || null }
                 );
             existing.punchIn = punchInAt;
 
@@ -1948,7 +1956,7 @@ const checkIn = async (req, res) => {
                         appPerDayNetSalary: req.body?.appPerDayNetSalary,
                         appPerdayGrossSalary: req.body?.appPerdayGrossSalary
                     },
-                    null
+                    { appliedShiftId: appliedShiftId || null }
                 );
             } catch (permErr) {
                 console.error('[Permission][CHECK-IN][CREATE][APP] calculateCombinedFine failed:', permErr?.message);
@@ -1981,7 +1989,7 @@ const checkIn = async (req, res) => {
                 company,
                 activeLeave,
                 null,
-                null
+                { appliedShiftId: appliedShiftId || null }
             );
         // Create initial attendance record. Store businessId from staff (staffs collection).
         const businessIdToStore = staff.businessId;
@@ -2201,7 +2209,11 @@ const checkOut = async (req, res) => {
             if (!legacyAttendance) {
                 return res.status(404).json({ message: 'No check-in record found for today' });
             }
-            return processCheckOut(
+            // `await` so any rejection from processCheckOut is caught below and
+            // returned as JSON. Without it the rejected promise escapes this
+            // try/catch and Express 5 forwards it to the default error handler,
+            // which replies with an opaque HTML "Internal Server Error" page.
+            return await processCheckOut(
                 legacyAttendance,
                 req,
                 res,
@@ -2227,7 +2239,7 @@ const checkOut = async (req, res) => {
             );
         }
 
-        return processCheckOut(
+        return await processCheckOut(
             attendance,
             req,
             res,
@@ -2274,6 +2286,11 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         earlyMinutes: bodyEarlyMinutes,
         fineAmount: bodyFineAmount
     } = data;
+
+    // Punch-out instant captured by the app at button-click time (falls back to
+    // server now). Recomputed here because `punchOutAt` from the checkOut wrapper
+    // is not in this function's scope — processCheckOut is a sibling, not nested.
+    const punchOutAt = resolveClientPunchTime(req.body?.punchOutTime ?? req.body?.clientTime, now);
 
     const checkoutT0 = Date.now();
     console.log('[Attendance processCheckOut] start', {
@@ -2614,7 +2631,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
                     appPerDayNetSalary: data?.appPerDayNetSalary,
                     appPerdayGrossSalary: data?.appPerdayGrossSalary
                 },
-                { attendanceId: attendance._id }
+                { attendanceId: attendance._id, appliedShiftId: attendance.appliedShiftId || appliedShiftId || null }
             );
         } catch (permErr) {
             console.error('[Permission][CHECK-OUT][APP] calculateCombinedFine failed:', permErr?.message);
@@ -2654,7 +2671,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
                 appPerDayNetSalary: data?.appPerDayNetSalary,
                 appPerdayGrossSalary: data?.appPerdayGrossSalary
             },
-            { attendanceId: attendance._id }
+            { attendanceId: attendance._id, appliedShiftId: attendance.appliedShiftId || appliedShiftId || null }
         );
     const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
     const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
@@ -3083,11 +3100,22 @@ const getTodayAttendance = async (req, res) => {
                 checkInAllowed = checkInResult.allowed;
                 checkOutAllowed = checkOutResult.allowed;
                 // When user is currently in their leave half, never allow check-in/out (override any helper
-                // result) — EXCEPT in the early second-half login window for a First Half Day leave, where
-                // the employee is allowed to punch in ahead of their working (second) half starting.
+                // result) — with exceptions for a First Half Day leave (employee works the SECOND half):
+                //   • In the early second-half login window, OR
+                //   • Anywhere in the first (leave) half: the employee is still allowed to punch in ahead of
+                //     their working (second) half. This mirrors canCheckInWithHalfDayLeave (POST), which
+                //     permits early check-in for a First Half Day leave until shift end; the fine/late logic
+                //     handles the actual session timing. Check-out stays closed until the working half starts.
                 if (inLeaveSessionBlocking) {
-                    checkInAllowed = false;
-                    checkOutAllowed = false;
+                    if (sessionNum === '1') {
+                        // First Half Day leave: honor the check-in helper (allowed before shift end) so the
+                        // employee can punch in early for the second half; keep check-out blocked.
+                        checkInAllowed = checkInResult.allowed;
+                        checkOutAllowed = false;
+                    } else {
+                        checkInAllowed = false;
+                        checkOutAllowed = false;
+                    }
                 } else if (earlySecondHalfLogin) {
                     // Honor the check-in helper's verdict (allowed) but keep check-out closed until the
                     // working half actually starts.

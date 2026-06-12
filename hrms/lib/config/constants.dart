@@ -10,8 +10,8 @@ class AppConstants {
 //  static const String webBaseUrl = 'https://my.ektahr.com/api';
 // =======
   // Dev via `adb reverse tcp:9001 tcp:9001` — device localhost tunnels to the PC's server.
- //static const String baseUrl = 'http://127.0.0.1:9001/api';
-  static const String baseUrl ='https://ehrms.askeva.net/api';
+ static const String baseUrl = 'http://127.0.0.1:9001/api';
+  //static const String baseUrl ='https://ehrms.askeva.net/api';
   //static const String baseUrl ='https://app.ektahr.com/api';//
   // 'http://19B2.168.1.33:9001/api';
   //'https://ehrms.askeva.net/api';

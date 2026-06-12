@@ -57,6 +57,7 @@ class ShiftPolicies {
     required this.permission,
     required this.overtime,
     required this.halfDay,
+    this.graceTimeMinutes,
     this.shiftName,
   });
 
@@ -65,6 +66,11 @@ class ShiftPolicies {
   final ShiftPolicyInfo overtime;
   final ShiftPolicyInfo halfDay;
 
+  /// Late-arrival grace period in minutes, from the shift's `graceTime` (falling
+  /// back to the attendance template's `gracePeriodMinutes`). `null` when neither
+  /// is configured.
+  final int? graceTimeMinutes;
+
   /// Resolved effective shift name for the day (for display), when known.
   final String? shiftName;
 
@@ -72,7 +78,7 @@ class ShiftPolicies {
     breakPolicy: ShiftPolicyInfo(availability: PolicyAvailability.unconfigured),
     permission: ShiftPolicyInfo(availability: PolicyAvailability.unconfigured),
     overtime: ShiftPolicyInfo(availability: PolicyAvailability.unconfigured),
-    halfDay: ShiftPolicyInfo(availability: PolicyAvailability.disabled),
+    halfDay: ShiftPolicyInfo(availability: PolicyAvailability.unconfigured),
   );
 }
 
@@ -174,10 +180,30 @@ ShiftPolicyInfo _overtimeFromRow(
   );
 }
 
-/// Half-day: `halfDaySettings.enabled` (default false → disabled when absent).
+/// Late-arrival grace period: `graceTime.{value, unit}` on the shift row,
+/// converted to minutes. Falls back to the attendance template's flat
+/// `gracePeriodMinutes` when the shift row carries no `graceTime`.
+int? _graceTimeFromRow(
+  Map<String, dynamic> row,
+  Map<String, dynamic>? attendanceTemplate,
+) {
+  final grace = _asMap(row['graceTime']);
+  final value = grace == null ? null : _readInt(grace['value']);
+  if (value != null) {
+    final unit = (grace!['unit']?.toString() ?? 'minutes').toLowerCase();
+    return unit == 'hours' ? value * 60 : value;
+  }
+  return _readInt(attendanceTemplate?['gracePeriodMinutes']);
+}
+
+/// Half-day: `halfDaySettings.enabled`. Absent `halfDaySettings` → unconfigured;
+/// present but `enabled !== true` → disabled (Not Allowed).
 ShiftPolicyInfo _halfDayFromRow(Map<String, dynamic> row) {
   final settings = _asMap(row['halfDaySettings']);
-  final enabled = settings == null ? false : (_readBool(settings['enabled']) ?? false);
+  if (settings == null) {
+    return const ShiftPolicyInfo(availability: PolicyAvailability.unconfigured);
+  }
+  final enabled = _readBool(settings['enabled']) ?? false;
   return ShiftPolicyInfo(
     availability:
         enabled ? PolicyAvailability.enabled : PolicyAvailability.disabled,
@@ -241,7 +267,9 @@ ShiftPolicies resolveShiftPoliciesForDay({
       permission:
           const ShiftPolicyInfo(availability: PolicyAvailability.unconfigured),
       overtime: _overtimeFromRow(const {}, attendanceTemplate),
-      halfDay: const ShiftPolicyInfo(availability: PolicyAvailability.disabled),
+      halfDay:
+          const ShiftPolicyInfo(availability: PolicyAvailability.unconfigured),
+      graceTimeMinutes: _graceTimeFromRow(const {}, attendanceTemplate),
     );
   }
   final name = row['name']?.toString().trim();
@@ -250,6 +278,7 @@ ShiftPolicies resolveShiftPoliciesForDay({
     permission: _permissionFromRow(row),
     overtime: _overtimeFromRow(row, attendanceTemplate),
     halfDay: _halfDayFromRow(row),
+    graceTimeMinutes: _graceTimeFromRow(row, attendanceTemplate),
     shiftName: (name != null && name.isNotEmpty) ? name : null,
   );
 }

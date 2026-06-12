@@ -172,18 +172,22 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         has(t.customer?.customerNumber);
   }
 
-  /// Whether the task's expected-completion calendar day falls within the
-  /// selected range (inclusive). Compared in UTC date parts to match how the
-  /// date is stored (UTC midnight of the calendar date).
+  /// Whether the task's created-date calendar day falls within the selected
+  /// range (inclusive). Uses [Task.assignedDate] (falls back to createdAt in
+  /// the model), matching the date shown on each task card. Compared using
+  /// local date parts since [_filterStartDate]/[_filterEndDate] are derived
+  /// from the device's local "today" (Today/This Week/This Month) —
+  /// comparing against the UTC date could shift tasks into the wrong day near
+  /// midnight depending on the device's timezone offset.
   bool _taskInDateRange(Task t) {
-    final du = t.expectedCompletionDate.toUtc();
-    final day = DateTime.utc(du.year, du.month, du.day);
+    final du = (t.assignedDate ?? t.expectedCompletionDate).toLocal();
+    final day = DateTime(du.year, du.month, du.day);
     final s = _filterStartDate;
-    if (s != null && day.isBefore(DateTime.utc(s.year, s.month, s.day))) {
+    if (s != null && day.isBefore(DateTime(s.year, s.month, s.day))) {
       return false;
     }
     final e = _filterEndDate;
-    if (e != null && day.isAfter(DateTime.utc(e.year, e.month, e.day))) {
+    if (e != null && day.isAfter(DateTime(e.year, e.month, e.day))) {
       return false;
     }
     return true;

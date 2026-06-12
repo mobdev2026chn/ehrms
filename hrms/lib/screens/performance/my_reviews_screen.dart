@@ -427,9 +427,9 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const MyReviewsScreen(),
+                          builder: (_) => ReviewDetailScreen(reviewId: id),
                         ),
-                      );
+                      ).then((_) => _fetchReviews());
                     },
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.primary,
@@ -450,7 +450,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                       ).then((_) => _fetchReviews());
                     },
                     icon: const Icon(Icons.edit_rounded, size: 14),
-                    label: const Text('Submit Review'),
+                    label: const Text('Submit'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,

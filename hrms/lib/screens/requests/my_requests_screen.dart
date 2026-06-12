@@ -5403,11 +5403,30 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   }
 
   void showRequestPermissionDialog() {
-    // Block submission entirely when Permission is not configured for the shift.
+    // Block entirely unless Permission is configured AND enabled for the shift.
     if (_balance != null && _balance?['configured'] == false) {
       SnackBarUtils.showSnackBar(
         context,
         'Permission is not configured. Please contact HR.',
+        isError: true,
+      );
+      return;
+    }
+    if (_balance != null && _balance?['enabled'] == false) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Permission is disabled for your shift. Please contact HR.',
+        isError: true,
+      );
+      return;
+    }
+    if (_balance != null &&
+        _balance?['enabled'] != false &&
+        _balance?['configured'] != false &&
+        ((_balance?['monthlyQuotaMinutes'] as num?) ?? 0) <= 0) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Permission quota is not configured for your shift. Please contact HR.',
         isError: true,
       );
       return;
@@ -5491,31 +5510,34 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   ),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    _balanceTile('Monthly', hoursAndMinutes(quota)),
-                    const SizedBox(width: 8),
-                    _balanceTile('Used', hoursAndMinutes(consumed)),
-                    const SizedBox(width: 8),
-                    _balanceTile('Pending', hoursAndMinutes(pending)),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (!configured)
-                  _permissionNotice(
-                    icon: Icons.error_outline,
-                    color: Colors.red,
-                    message: 'Permission is not configured. Please contact HR.',
-                  )
-                else if (!enabled)
+                // Quota figures only mean something when Permission is
+                // configured and enabled for this shift; otherwise the
+                // numbers (e.g. a leftover monthly quota) would be misleading.
+                if (configured && enabled) ...[
+                  Row(
+                    children: [
+                      _balanceTile('Monthly', hoursAndMinutes(quota)),
+                      const SizedBox(width: 8),
+                      _balanceTile('Used', hoursAndMinutes(consumed)),
+                      const SizedBox(width: 8),
+                      _balanceTile('Pending', hoursAndMinutes(pending)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                // The only permission notice: shown solely when Permission is
+                // disabled for the employee's shift, in which case applying
+                // is blocked entirely. In every other state (enabled, or no
+                // flags from an older backend) nothing is shown.
+                if (!enabled)
                   _permissionNotice(
                     icon: Icons.info_outline,
-                    color: Colors.orange.shade800,
+                    color: Colors.orange,
                     message:
-                        'Permission is disabled for your shift. Requests still work, '
-                        'but applicable late/early fines will be deducted.',
+                        'Permission is disabled for your shift. Please '
+                        'contact HR.',
                   ),
-                if (!configured || !enabled) const SizedBox(height: 12),
+                if (!enabled) const SizedBox(height: 12),
                 if (_showFilters)
                   Card(
                     shape: RoundedRectangleBorder(
@@ -5764,7 +5786,6 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   bool _isSubmitting = false;
   HolidayOffConfig _offConfig = HolidayOffConfig.empty;
   // Permission configuration gate. Defaults keep the form usable until config loads.
-  bool _loadingConfig = true;
   bool _configured = true;
   bool _enabled = true;
   double _quotaMinutes = 0;
@@ -5878,44 +5899,8 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         _quotaMinutes = (data['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
         _consumedMinutes = (data['consumedMinutes'] as num?)?.toDouble() ?? 0;
         _pendingMinutes = (data['pendingMinutes'] as num?)?.toDouble() ?? 0;
-        _loadingConfig = false;
       });
-    } else {
-      setState(() => _loadingConfig = false);
     }
-  }
-
-  Widget _buildPermissionNotice({
-    required IconData icon,
-    required Color color,
-    required String message,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withOpacity(0.4)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 20, color: color),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              message,
-              style: TextStyle(
-                color: color,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                height: 1.35,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _loadOffConfig() async {
@@ -6069,12 +6054,6 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     final requested = int.tryParse(_minutesController.text.trim()) ?? 0;
     if (requested <= 0) return (minutes: 0, basis: '');
 
-    // Permission disabled for the shift → the whole duration is fined.
-    if (!_loadingConfig && _configured && !_enabled) {
-      return (minutes: requested, basis: 'permission disabled for your shift');
-    }
-
-    // Otherwise only the portion exceeding the remaining monthly quota is fined.
     final effectiveRemaining =
         (_quotaMinutes - _consumedMinutes - _pendingMinutes).clamp(
           0.0,
@@ -6085,6 +6064,82 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       return (minutes: excess, basis: '$excess min over your monthly quota');
     }
     return (minutes: 0, basis: '');
+  }
+
+  /// Formats a minute count as "Xh Ym", omitting zero parts (e.g. 90 -> "1h 30m").
+  String _formatMinutesAsHm(int minutes) {
+    final m = minutes < 0 ? 0 : minutes;
+    final h = m ~/ 60;
+    final rem = m % 60;
+    if (h > 0 && rem > 0) return '${h}h ${rem}m';
+    if (h > 0) return '${h}h';
+    return '${rem}m';
+  }
+
+  /// Tooltip message describing how the requested duration will be split
+  /// between permission and fine, based on the remaining monthly quota.
+  /// - Partial overflow (some quota left): "[allowed] will be considered as
+  ///   permission and the remaining [excess] will be applied as a fine."
+  /// - Quota already exhausted: the full requested duration is counted as fine.
+  String? _permissionFineSplitMessage() {
+    final requested = int.tryParse(_minutesController.text.trim()) ?? 0;
+    if (requested <= 0) return null;
+
+    if (_quotaMinutes <= 0) return null;
+
+    final effectiveRemaining =
+        (_quotaMinutes - _consumedMinutes - _pendingMinutes)
+            .clamp(0.0, _quotaMinutes)
+            .toInt();
+
+    if (effectiveRemaining <= 0) {
+      return 'Your available permission limit has been exceeded. '
+          'The full requested duration (${_formatMinutesAsHm(requested)}) will be counted as a fine.';
+    }
+
+    if (requested > effectiveRemaining) {
+      final finePart = requested - effectiveRemaining;
+      return '${_formatMinutesAsHm(effectiveRemaining)} will be considered as permission and '
+          'the remaining ${_formatMinutesAsHm(finePart)} will be applied as a fine.';
+    }
+
+    return null;
+  }
+
+  /// Info tooltip showing the permission/fine split for the current input.
+  /// Hidden when the request fits fully within the remaining quota.
+  Widget _buildPermissionFineSplitNotice() {
+    final msg = _permissionFineSplitMessage();
+    if (msg == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.orange.shade300),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outline, size: 18, color: Colors.orange.shade700),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                msg,
+                style: TextStyle(
+                  color: Colors.orange.shade800,
+                  fontSize: 12.5,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Orange info banner showing the estimated fine for the current input. Hidden
@@ -6147,6 +6202,22 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       );
       return;
     }
+    if (!_enabled) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Permission is disabled for your shift. Please contact HR.',
+        isError: true,
+      );
+      return;
+    }
+    if (_quotaMinutes <= 0) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Permission quota is not configured for your shift. Please contact HR.',
+        isError: true,
+      );
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
 
     final minutes = int.tryParse(_minutesController.text.trim());
@@ -6171,18 +6242,19 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
           _quotaMinutes,
         );
     if (_quotaMinutes > 0 && minutes > effectiveRemaining) {
-      final excess = minutes - effectiveRemaining.toInt();
+      final remainingInt = effectiveRemaining.toInt();
+      final excess = minutes - remainingInt;
       final estimatedFine = _estimateFine(excess);
       final fineText = estimatedFine > 0
           ? ' Estimated fine: ₹${NumberFormat('#,##0.00').format(estimatedFine)}.'
           : '';
-      final msg =
-          'Monthly permission quota exceeded. '
-          'Used: ${_consumedMinutes.toInt()} min, '
-          'Pending: ${_pendingMinutes.toInt()} min, '
-          'Remaining: ${effectiveRemaining.toInt()} min. '
-          'Requested $minutes min ($excess min excess may be deducted as a fine).'
-          '$fineText';
+      final msg = remainingInt <= 0
+          ? 'Your available permission limit has been exceeded. '
+                'The full requested duration (${_formatMinutesAsHm(minutes)}) '
+                'will be counted as a fine.$fineText'
+          : '${_formatMinutesAsHm(remainingInt)} will be considered as '
+                'permission and the remaining ${_formatMinutesAsHm(excess)} '
+                'will be applied as a fine.$fineText';
       setState(() {
         _showLimitWarning = true;
         _limitWarningMsg = msg;
@@ -6285,26 +6357,6 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Permission configuration notice (not configured / disabled).
-                    if (!_loadingConfig && !_configured) ...[
-                      _buildPermissionNotice(
-                        icon: Icons.error_outline,
-                        color: Colors.red,
-                        message:
-                            'Permission is not configured. Please contact HR.',
-                      ),
-                      const SizedBox(height: 20),
-                    ] else if (!_loadingConfig && !_enabled) ...[
-                      _buildPermissionNotice(
-                        icon: Icons.info_outline,
-                        color: Colors.orange.shade800,
-                        message:
-                            'Permission is disabled for your shift. Your request '
-                            'will be accepted, but applicable late/early fines '
-                            'will be deducted.',
-                      ),
-                      const SizedBox(height: 20),
-                    ],
 
                     // Date
                     _sectionLabel('Date'),
@@ -6357,6 +6409,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       },
                     ),
 
+                    // Permission/fine split tooltip for the current input.
+                    _buildPermissionFineSplitNotice(),
+
                     // Live fine estimate (DB fine settings × this user's salary).
                     _buildFineEstimate(),
                     const SizedBox(height: 20),
@@ -6390,7 +6445,11 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: (_isSubmitting || !_configured)
+                        onPressed:
+                            (_isSubmitting ||
+                                !_configured ||
+                                !_enabled ||
+                                _quotaMinutes <= 0)
                             ? null
                             : _submit,
                         style: ElevatedButton.styleFrom(

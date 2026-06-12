@@ -809,8 +809,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     final designation = _staffData?['designation']?.toString() ?? '';
     final department = _staffData?['department']?.toString() ?? '';
     final staffType = _staffData?['staffType']?.toString() ?? '';
-    final joiningDate = _staffData?['joiningDate'];
-    final joinedStr = joiningDate != null ? _formatDate(joiningDate) : 'N/A';
 
     return _buildCardSection(
       icon: Icons.work_outline,
@@ -824,7 +822,6 @@ class _ProfileScreenState extends State<ProfileScreen>
           const SizedBox(height: 20),
           _buildInfoGrid([
             _buildInfoItem('Employee Type', staffType.isEmpty ? 'N/A' : staffType),
-            _buildInfoItem('Joining Date', joinedStr),
           ]),
         ],
       ),

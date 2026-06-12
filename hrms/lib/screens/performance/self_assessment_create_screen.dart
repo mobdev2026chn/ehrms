@@ -438,7 +438,7 @@ class _SelfAssessmentCreateScreenState
                     Icons.star_rounded,
                     size: 40,
                     color: rating <= _overallRating
-                        ? AppColors.warning
+                        ? AppColors.primary
                         : AppColors.divider,
                   ),
                 ),

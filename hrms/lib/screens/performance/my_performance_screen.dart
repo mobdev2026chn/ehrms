@@ -144,22 +144,12 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
   }
 
   Widget _buildOverviewContent() {
-    final emp = _summary?['employee'] as Map<String, dynamic>? ?? {};
     final avgRating = ((_summary?['averageRating'] ?? 0.0) as num).toDouble();
     final totalReviews = (_summary?['totalReviews'] ?? 0) as int;
     final completedReviews = (_summary?['completedReviews'] ?? 0) as int;
     final currentGoals = (_summary?['currentGoals'] ?? 0) as int;
     final latestReview = _summary?['latestReview'] as Map<String, dynamic>?;
     final latestReviewId = latestReview?['_id'] as String?;
-
-    // Subtitle under the hero rating — uses real employee context.
-    final subtitleParts = [
-      (emp['designation'] ?? '').toString(),
-      (emp['department'] ?? '').toString(),
-    ].where((s) => s.isNotEmpty).toList();
-    final heroSubtitle = subtitleParts.isNotEmpty
-        ? subtitleParts.join(' · ')
-        : 'Your performance overview';
 
     // Latest review display value (e.g. "Oct 24") + subtitle.
     String latestValue = latestReview?['reviewCycle']?.toString() ?? 'N/A';
@@ -175,7 +165,7 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 8),
-        _buildHeroRating(avgRating, heroSubtitle),
+        _buildHeroRating(avgRating),
         const SizedBox(height: 20),
         _buildStatTile(
           icon: Icons.rate_review_rounded,
@@ -227,7 +217,7 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
     }
   }
 
-  Widget _buildHeroRating(double rating, String subtitle) {
+  Widget _buildHeroRating(double rating) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
@@ -267,12 +257,6 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: _buildStars(rating),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
           ),
         ],
       ),

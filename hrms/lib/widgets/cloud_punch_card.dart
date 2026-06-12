@@ -311,6 +311,12 @@ class _CloudPunchCardState extends State<CloudPunchCard>
     final summary = widget.breakSummary;
     if (summary == null) return const [];
 
+    // Breaks are turned off for this shift — there is no allocation to track,
+    // so hide the entire break section (heading, allowance bar and rows) on the
+    // punch card. `policyDisabled` is true only when the shift explicitly
+    // disabled breaks; legacy/unconfigured shifts keep showing it.
+    if (summary.policyDisabled) return const [];
+
     return [
       const SizedBox(height: 16),
       Divider(color: Colors.white.withValues(alpha: 0.12), height: 1),

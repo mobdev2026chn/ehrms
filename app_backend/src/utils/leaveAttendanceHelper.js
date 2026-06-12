@@ -1102,7 +1102,8 @@ const getShiftTimings = (
     staff = null,
     attendanceDate = null,
     rotationAnchorDate = null,
-    attendanceTemplateDoc = null
+    attendanceTemplateDoc = null,
+    forcedShiftId = null
 ) => {
     /** No fabricated window: null when company/embed does not provide both start and end. */
     let startTime = null;
@@ -1140,13 +1141,28 @@ const getShiftTimings = (
         const shiftsRaw = company.settings.attendance.shifts;
         const shifts = Array.isArray(shiftsRaw) ? shiftsRaw.map(shiftRowToPlain) : [];
         if (shifts.length > 0) {
+            let shift;
+            let wrapperWasRotational = false;
+            // When the caller supplies the shift actually allocated/applied for this day
+            // (attendance.appliedShiftId), resolve directly to that embedded row and bypass the
+            // current-assignment + rotational resolution. This keeps a day's fine tied to the shift
+            // that was in effect THAT day, even if the employee's shift assignment changed later.
+            // Falls back to assignment-based resolution when the id is missing or no longer present
+            // among embedded shifts (legacy records / deleted shifts).
+            const forcedKey = forcedShiftId != null ? normalizeShiftObjectIdStr(forcedShiftId) : null;
+            const forcedRow = forcedKey
+                ? shifts.find((s) => s && s._id != null && normalizeShiftObjectIdStr(s._id) === forcedKey)
+                : null;
+            if (forcedRow) {
+                shift = enrichStandardShiftTimesFromShiftsList(shifts, shiftRowToPlain(forcedRow));
+            } else {
             const staffShiftKey = staffShiftKeyFromStaff(staff, attendanceTemplateDoc);
             let wrapper = staffShiftKey
                 ? findShiftByStaffKey(shifts, staffShiftKey) || shifts[0]
                 : shifts[0];
             wrapper = enrichWrapperRotationalFromDuplicateRows(shifts, wrapper);
             wrapper = wrapperWithMergedRotationalConfig(shifts, wrapper);
-            const wrapperWasRotational = wrapper != null && isRotationalShiftWrapper(wrapper);
+            wrapperWasRotational = wrapper != null && isRotationalShiftWrapper(wrapper);
 
             // console.log('[API][getShiftTimings] input', {
             //     attendanceDateUtc: attendanceYmd,
@@ -1168,8 +1184,9 @@ const getShiftTimings = (
             //     );
             // }
 
-            let shift = resolveEffectiveShiftRaw(shifts, wrapper, dateForShift, anchor);
+            shift = resolveEffectiveShiftRaw(shifts, wrapper, dateForShift, anchor);
             shift = enrichStandardShiftTimesFromShiftsList(shifts, shift);
+            }
             effectiveShiftName = (shift.name || '').toString().trim() || null;
             effectiveShiftId = shift._id != null ? String(shift._id) : null;
             // console.log('[API][getShiftTimings] resolvedRow', {

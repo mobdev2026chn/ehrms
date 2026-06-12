@@ -33,7 +33,7 @@ const toMonthRange = (year, monthOneBased) => {
 
 // Resolve an employee's effective permission policy for a given month.
 // - `configured`: the resolved shift defines a permissionPolicy object (whether enabled or disabled).
-// - `enabled`: the policy toggle is on (permission waives applicable fines).
+// - `enabled`: the policy toggle is on. Disabled (but configured) blocks applying entirely.
 // When the staff-shift can't be resolved (legacy data), fall back to any business shift that
 // defines a policy so employees with valid configuration are not wrongly treated as unconfigured.
 const resolvePermissionConfig = async (businessId, staff, year, month) => {
@@ -51,7 +51,12 @@ const resolvePermissionConfig = async (businessId, staff, year, month) => {
             result.enabled = policy.enabled === true;
             result.monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
         }
-        if (!result.configured) {
+        // Fallback ONLY when the staff's own shift could not be resolved at all
+        // (legacy data with no usable shift). When the shift resolves but simply
+        // has no permissionPolicy, the employee genuinely has no permission config
+        // for THEIR shift — do not borrow another shift's policy/quota, otherwise a
+        // not-configured employee would inherit an unrelated shift's monthly quota.
+        if (!result.configured && !shiftTiming) {
             const shifts = company?.settings?.attendance?.shifts || [];
             for (const shift of shifts) {
                 if (shift?.permissionPolicy && typeof shift.permissionPolicy === 'object') {
@@ -1169,8 +1174,9 @@ const createPermissionRequest = async (req, res) => {
         const attendanceDate = new Date(date);
         attendanceDate.setHours(0, 0, 0, 0);
 
-        // Block submission when Permission is not configured for the employee's shift.
-        // A disabled-but-configured policy still allows submission (fines are deducted later).
+        // Block submission unless Permission is configured AND enabled for the
+        // employee's shift. When enabled, the request is allowed up to the
+        // allocated monthly quota and any over-quota minutes are fined later.
         const staff = await Staff.findById(employeeId).select('shiftId shiftName joiningDate');
         const permissionConfig = await resolvePermissionConfig(
             businessId,
@@ -1182,6 +1188,18 @@ const createPermissionRequest = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 error: { message: 'Permission is not configured. Please contact HR.' }
+            });
+        }
+        if (!permissionConfig.enabled) {
+            return res.status(400).json({
+                success: false,
+                error: { message: 'Permission is disabled for your shift. Please contact HR.' }
+            });
+        }
+        if (!(permissionConfig.monthlyQuotaMinutes > 0)) {
+            return res.status(400).json({
+                success: false,
+                error: { message: 'Permission quota is not configured for your shift. Please contact HR.' }
             });
         }
 

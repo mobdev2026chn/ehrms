@@ -108,7 +108,7 @@ class _PerformanceModuleScreenState extends State<PerformanceModuleScreen> {
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
       floatingActionButton: _currentIndex == 1 ? _buildFab() : null,
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 

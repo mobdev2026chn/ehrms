@@ -1,13 +1,10 @@
 // hrms/lib/screens/attendance/shift_screen.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 import '../../config/app_colors.dart';
 import '../../services/attendance_service.dart';
-import '../../services/salary_service.dart';
-import '../../utils/fine_calculation_util.dart';
 import '../../utils/holiday_off_util.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../utils/shift_policy_util.dart';
@@ -143,13 +140,6 @@ class _ShiftScreenState extends State<ShiftScreen> {
   /// `year-month` keys currently being fetched (de-dupes in-flight requests).
   final Set<String> _loadingMonths = {};
 
-  /// Company fine config (`/attendance/fine-calculation`) and this user's
-  /// per-day salary — used to show the fine rules that apply to this staff,
-  /// with salary-based rules resolved to a per-user ₹ rate.
-  Map<String, dynamic>? _fineCalculation;
-  double? _netPerDaySalary;
-  bool _fineLoaded = false;
-
   @override
   void initState() {
     super.initState();
@@ -160,7 +150,6 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final j = widget.joiningDate;
     _joiningMonthStart = j != null ? DateTime(j.year, j.month, 1) : DateTime(2020);
     _loadWeekOffConfig();
-    _loadFineSettings();
 
     // Seed the reference month from the dashboard's payload, then ensure the
     // focused month is loaded.
@@ -176,35 +165,6 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final config = await loadHolidayOffConfig();
     if (!mounted) return;
     setState(() => _offConfig = config);
-  }
-
-  /// Fetches the company fine config and this user's per-day salary so the Fine
-  /// Settings card can show the rules + the resolved per-user amount.
-  Future<void> _loadFineSettings() async {
-    Map<String, dynamic>? fineConfig;
-    try {
-      final result = await _attendanceService.getFineCalculation();
-      if (result['success'] == true) {
-        fineConfig = result['data'] as Map<String, dynamic>?;
-      }
-    } catch (_) {}
-
-    double? net;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      net = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
-      if (net == null || net <= 0) {
-        final gross = prefs.getDouble(kAppGrossPerDaySalaryPrefsKey);
-        if (gross != null && gross > 0) net = gross;
-      }
-    } catch (_) {}
-
-    if (!mounted) return;
-    setState(() {
-      _fineCalculation = fineConfig;
-      _netPerDaySalary = net;
-      _fineLoaded = true;
-    });
   }
 
   // ── Month data ───────────────────────────────────────────────────────────
@@ -467,8 +427,19 @@ class _ShiftScreenState extends State<ShiftScreen> {
       }
     }
 
-    // 5. Fallback: rotational / standard window from the current assignment.
-    if (base == null) return const _ShiftDayInfo(kind: _DayKind.none);
+    // 5. Fallback → the currently allocated shift. An allocation stays in effect
+    //    until it is actually changed, so the calendar should keep showing the
+    //    previously allocated shift for every day (past, today, and future)
+    //    rather than going blank where there is no attendance record yet. A real
+    //    shift change still wins: a worked day shows its stamped appliedShiftId
+    //    (step 1) and the rotation/assignment itself advances the allocation, so
+    //    days after a change resolve to the new shift here.
+    if (base == null) {
+      return const _ShiftDayInfo(kind: _DayKind.none);
+    }
+    if (base.isWeekOff) {
+      return _ShiftDayInfo(kind: _DayKind.weekOff, shift: base);
+    }
     return _ShiftDayInfo(kind: _DayKind.working, shift: base);
   }
 
@@ -488,7 +459,23 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final a = s.startTime?.trim();
     final b = s.endTime?.trim();
     if (a == null || b == null || a.isEmpty || b.isEmpty) return null;
-    return '$a – $b';
+    return '${_formatTime12(a)} – ${_formatTime12(b)}';
+  }
+
+  /// Converts a 24-hour "HH:mm" time string to 12-hour clock time, e.g.
+  /// "19:00" → "7:00 PM" (or "7:00p" when [compact] is set, for narrow
+  /// calendar cells). Returns the input unchanged if it isn't "HH:mm".
+  String _formatTime12(String time24, {bool compact = false}) {
+    final parts = time24.split(':');
+    if (parts.length != 2) return time24;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return time24;
+    final period = h >= 12 ? 'PM' : 'AM';
+    final h12 = h % 12 == 0 ? 12 : h % 12;
+    final mm = m.toString().padLeft(2, '0');
+    if (compact) return '$h12:$mm${period[0].toLowerCase()}';
+    return '$h12:$mm $period';
   }
 
 
@@ -582,10 +569,6 @@ class _ShiftScreenState extends State<ShiftScreen> {
           ],
           const SizedBox(height: 16),
           _buildPoliciesCard(),
-          if (_fineLoaded && _fineCalculation != null) ...[
-            const SizedBox(height: 16),
-            _buildFineSettingsCard(),
-          ],
           const SizedBox(height: 16),
           _buildShiftCalendarCard(),
           const SizedBox(height: 16),
@@ -866,6 +849,21 @@ class _ShiftScreenState extends State<ShiftScreen> {
             ),
           ),
           const SizedBox(height: 4),
+          if (policies.graceTimeMinutes != null) ...[
+            _infoRow(
+              Icons.timelapse_outlined,
+              'Grace Time',
+              _minutesLabel(policies.graceTimeMinutes!),
+            ),
+          ] else ...[
+            _infoRow(
+              Icons.timelapse_outlined,
+              'Grace Time',
+              'Not Configured',
+              valueColor: AppColors.textSecondary,
+            ),
+          ],
+          _policyDivider(),
           _policyRow(
             Icons.coffee_outlined,
             'Break',
@@ -873,7 +871,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
             allowedLabel: (p) => p.limitMinutes != null
                 ? 'Allowed · ${_minutesLabel(p.limitMinutes!)}/day'
                 : 'Allowed',
-            unconfiguredLabel: 'Default · 1h/day',
+            unconfiguredLabel: 'Not Configured',
           ),
           _policyDivider(),
           _policyRow(
@@ -883,7 +881,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
             allowedLabel: (p) => p.limitMinutes != null
                 ? 'Allowed · ${_minutesLabel(p.limitMinutes!)}/month'
                 : 'Allowed',
-            unconfiguredLabel: 'Available',
+            unconfiguredLabel: 'Not Configured',
           ),
           _policyDivider(),
           _policyRow(
@@ -893,7 +891,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
             allowedLabel: (p) => p.multiplier != null
                 ? 'Allowed · ${_multiplierLabel(p.multiplier!)}'
                 : 'Allowed',
-            unconfiguredLabel: 'As per template',
+            unconfiguredLabel: 'Not Configured',
           ),
           _policyDivider(),
           _policyRow(
@@ -901,7 +899,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
             'Half Day',
             policies.halfDay,
             allowedLabel: (_) => 'Allowed',
-            unconfiguredLabel: 'Not allowed',
+            unconfiguredLabel: 'Not Configured',
           ),
         ],
       ),
@@ -913,12 +911,41 @@ class _ShiftScreenState extends State<ShiftScreen> {
         color: AppColors.textSecondary.withValues(alpha: 0.12),
       );
 
+  /// Plain value row (no enabled/disabled styling) — used for informational
+  /// shift settings like the late-arrival grace period.
+  Widget _infoRow(IconData icon, String label, String value, {Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.primary),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+          const Spacer(),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: valueColor ?? AppColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _policyRow(
     IconData icon,
     String label,
     ShiftPolicyInfo info, {
     required String Function(ShiftPolicyInfo) allowedLabel,
     required String unconfiguredLabel,
+    String disabledLabel = 'Not Allowed',
+    Color? disabledColor,
   }) {
     final String value;
     final Color valueColor;
@@ -928,8 +955,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
         valueColor = AppColors.success;
         break;
       case PolicyAvailability.disabled:
-        value = 'Not allowed';
-        valueColor = Colors.red.shade600;
+        value = disabledLabel;
+        valueColor = disabledColor ?? Colors.red.shade600;
         break;
       case PolicyAvailability.unconfigured:
         value = unconfiguredLabel;
@@ -978,215 +1005,6 @@ class _ShiftScreenState extends State<ShiftScreen> {
     return '$s×';
   }
 
-  // ── Fine settings ────────────────────────────────────────────────────────────
-
-  /// Late-arrival / early-exit fine config for this user, read from the company
-  /// `/attendance/fine-calculation` rules and resolved against this staff's
-  /// per-day salary + shift hours (so salary-based rules show a real ₹ rate).
-  Widget _buildFineSettingsCard() {
-    final fc = _fineCalculation;
-    if (fc == null) return const SizedBox.shrink();
-
-    final disabled = fc['enabled'] == false || fc['applyFines'] == false;
-    final method = (fc['calculationMethod'] ?? fc['calculationType'] ?? 'shiftBased')
-        .toString();
-    final methodLabel =
-        method == 'fixedPerHour' ? 'Fixed per hour' : 'Shift-based';
-    final shiftHours = _representativeShiftHours();
-    final grace = _graceMinutes();
-
-    final children = <Widget>[
-      Text(
-        'Fine Settings',
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.bold,
-          color: AppColors.textPrimary,
-        ),
-      ),
-      const SizedBox(height: 4),
-    ];
-
-    if (disabled) {
-      children.add(
-        _fineRow(Icons.verified_outlined, 'Status', 'No fines applied',
-            color: AppColors.success),
-      );
-    } else {
-      children.add(
-        _fineRow(Icons.gavel_outlined, 'Status', 'Active',
-            color: AppColors.success),
-      );
-      if (grace != null) {
-        children.add(_fineDivider());
-        children.add(
-          _fineRow(Icons.timelapse_outlined, 'Grace Period',
-              _minutesLabel(grace),
-              color: AppColors.textPrimary),
-        );
-      }
-      children.add(_fineDivider());
-      final late = _fineValueFor('lateArrival', shiftHours);
-      children.add(
-        _fineRow(Icons.login_rounded, 'Late Arrival', late.text,
-            color: late.color),
-      );
-      children.add(_fineDivider());
-      final early = _fineValueFor('earlyExit', shiftHours);
-      children.add(
-        _fineRow(Icons.logout_rounded, 'Early Exit', early.text,
-            color: early.color),
-      );
-      children.add(_fineDivider());
-      children.add(
-        _fineRow(Icons.calculate_outlined, 'Method', methodLabel,
-            color: AppColors.textSecondary),
-      );
-      if (_netPerDaySalary == null || _netPerDaySalary! <= 0) {
-        children.add(const SizedBox(height: 8));
-        children.add(
-          Text(
-            'Amounts are estimated from your salary once your latest payslip syncs.',
-            style: TextStyle(
-              fontSize: 11.5,
-              height: 1.35,
-              color: AppColors.textCaption,
-            ),
-          ),
-        );
-      }
-    }
-
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: children,
-      ),
-    );
-  }
-
-  Widget _fineDivider() => Divider(
-        height: 1,
-        color: AppColors.textSecondary.withValues(alpha: 0.12),
-      );
-
-  /// Resolves the displayed fine for [actionType] ('lateArrival' | 'earlyExit')
-  /// to a label + colour. "No fine" (green) when no rule applies to the action.
-  ({String text, Color color}) _fineValueFor(String actionType, double shiftHours) {
-    if (fineConfigHasRules(_fineCalculation)) {
-      final rule = matchFineRuleForAction(_fineCalculation, actionType);
-      if (rule == null) {
-        return (text: 'No fine', color: AppColors.success);
-      }
-      return (
-        text: _fineRuleDescription(rule, shiftHours),
-        color: Colors.red.shade600,
-      );
-    }
-    // No explicit rules → the shift-based hourly fine applies.
-    return (text: _hourlySalaryLabel(1, shiftHours), color: Colors.red.shade600);
-  }
-
-  /// Human description of a single fine rule (per-min/-hour/fixed/half/full-day
-  /// or salary-multiple), surfacing the per-user ₹ rate where salary is known.
-  String _fineRuleDescription(Map<String, dynamic> rule, double shiftHours) {
-    final type = (rule['type']?.toString() ?? '').toLowerCase();
-
-    if (type == 'custom') {
-      final amt = (rule['customAmount'] as num?)?.toDouble() ?? 0.0;
-      final unit =
-          (rule['customAmountUnit']?.toString() ?? 'perHour').toLowerCase();
-      final a = _money(amt);
-      if (unit == 'perminute') return '₹$a / min';
-      if (unit == 'fixed') return '₹$a (fixed)';
-      return '₹$a / hour';
-    }
-    if (type == 'halfday') return _salaryFractionLabel('Half-day salary', 0.5);
-    if (type == 'fullday') return _salaryFractionLabel('Full-day salary', 1.0);
-
-    final mult = type == '2xsalary'
-        ? 2
-        : type == '3xsalary'
-            ? 3
-            : 1;
-    return _hourlySalaryLabel(mult, shiftHours);
-  }
-
-  /// "1× hourly salary (≈ ₹120/hr)" — appends the resolved hourly amount when
-  /// this user's per-day salary and shift hours are both known.
-  String _hourlySalaryLabel(int multiplier, double shiftHours) {
-    final base = '$multiplier× hourly salary';
-    final net = _netPerDaySalary;
-    if (net != null && net > 0 && shiftHours > 0) {
-      final perHour = (net / shiftHours) * multiplier;
-      return '$base (≈ ₹${_money(perHour)}/hr)';
-    }
-    return base;
-  }
-
-  /// "Half-day salary (≈ ₹500)" using this user's per-day salary when known.
-  String _salaryFractionLabel(String base, double fraction) {
-    final net = _netPerDaySalary;
-    if (net != null && net > 0) {
-      return '$base (≈ ₹${_money(net * fraction)})';
-    }
-    return base;
-  }
-
-  String _money(double v) => NumberFormat('#,##0.##').format(v);
-
-  /// Grace period (minutes) for the fine — prefers the shift template, then the
-  /// fine config's company-level fallback. Null when neither is set.
-  int? _graceMinutes() {
-    final t = widget.todayTemplate?['gracePeriodMinutes'];
-    if (t is num && t > 0) return t.toInt();
-    final g = _fineCalculation?['graceTimeMinutes'];
-    if (g is num && g > 0) return g.toInt();
-    return null;
-  }
-
-  /// Today's shift length in hours for the salary-based fine rate. Falls back to
-  /// a standard 9h day when today has no fixed window (week-off / open shift).
-  double _representativeShiftHours() {
-    final s = _shiftForDay(_today);
-    final start = s?.startTime?.trim();
-    final end = s?.endTime?.trim();
-    if (start != null && start.isNotEmpty && end != null && end.isNotEmpty) {
-      final h = calculateShiftHours(start, end);
-      if (h > 0) return h;
-    }
-    return 9.0;
-  }
-
-  Widget _fineRow(IconData icon, String label, String value,
-      {required Color color}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: AppColors.primary),
-          const SizedBox(width: 12),
-          Text(
-            label,
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-          ),
-          const Spacer(),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: color,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ── Shift calendar ─────────────────────────────────────────────────────────
 
   Widget _buildShiftCalendarCard() {
@@ -1230,8 +1048,11 @@ class _ShiftScreenState extends State<ShiftScreen> {
             rowHeight: 64,
             calendarBuilders: CalendarBuilders(
               defaultBuilder: (context, day, _) => _buildDayCell(day),
+              // Selecting a day (tap) only updates the "Selected Day" card
+              // below — it should not draw its own highlight box unless the
+              // selected day is also today.
               selectedBuilder: (context, day, _) =>
-                  _buildDayCell(day, selected: true),
+                  _buildDayCell(day, isToday: isSameDay(day, _today)),
               todayBuilder: (context, day, _) =>
                   _buildDayCell(day, isToday: true),
               outsideBuilder: (context, day, _) => const SizedBox.shrink(),
@@ -1286,7 +1107,6 @@ class _ShiftScreenState extends State<ShiftScreen> {
 
   Widget _buildDayCell(
     DateTime day, {
-    bool selected = false,
     bool isToday = false,
   }) {
     final info = _dayInfoFor(day);
@@ -1298,10 +1118,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
 
     final Color bg;
     final Color border;
-    if (selected) {
-      bg = AppColors.primary.withValues(alpha: 0.12);
-      border = AppColors.primary;
-    } else if (isToday) {
+    if (isToday) {
       bg = AppColors.primary.withValues(alpha: 0.06);
       border = AppColors.primary.withValues(alpha: 0.5);
     } else if (info.kind == _DayKind.holiday) {
@@ -1336,9 +1153,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
           detail = Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _timeRow(Colors.green, start),
+              _timeRow(Colors.green, _formatTime12(start, compact: true)),
               const SizedBox(height: 1),
-              _timeRow(Colors.red, end),
+              _timeRow(Colors.red, _formatTime12(end, compact: true)),
             ],
           );
         } else if (snap?.isOpen ?? false) {
@@ -1380,9 +1197,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
               '${day.day}',
               style: TextStyle(
                 fontSize: 13,
-                fontWeight: isToday || selected
-                    ? FontWeight.bold
-                    : FontWeight.w500,
+                fontWeight: isToday ? FontWeight.bold : FontWeight.w500,
                 color: AppColors.textPrimary,
               ),
             ),
@@ -1491,7 +1306,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
         if (snap == null) {
           valueLine = 'No shift assigned';
         } else if (window != null) {
-          valueLine = '${snap.displayName} · $window';
+          // Show the shift time window, not the shift name.
+          valueLine = window;
         } else {
           valueLine = snap.compactLine();
         }
@@ -1502,44 +1318,49 @@ class _ShiftScreenState extends State<ShiftScreen> {
     }
 
     return AppCard(
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              Icons.event_note_outlined,
-              color: AppColors.primary,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  dateStr,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                  ),
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  valueLine,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
+                child: Icon(
+                  Icons.event_note_outlined,
+                  color: AppColors.primary,
+                  size: 20,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      dateStr,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      valueLine,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),

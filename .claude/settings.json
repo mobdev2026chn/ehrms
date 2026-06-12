@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze *)",
+      "Bash(node --check app_backend/src/controllers/requestController.js)",
+      "Bash(node --check src/controllers/attendanceController.js)",
+      "Bash(node -e ' *)",
+      "Bash(findstr /v \"\\\\[Fine\\\\]\")",
+      "Bash(node -e \"console.log\\('express', require\\('express/package.json'\\).version\\)\")",
+      "Bash(cd /d/ehrms-main/ehrms/app_backend && ls src/models/ | grep -iE \"roster|schedule|shift|assign\"; echo \"===ROTATION FUNCS===\"; grep -rln \"resolveEffectiveShiftRaw\\\\|isRotationalShiftWrapper\\\\|rotation\" src/utils/ | head)",
+      "Read(//d/d/ehrms-main/ehrms/app_backend/src/**)",
+      "Bash(timeout 90 node src/scripts/diagShiftForFine.js)",
+      "Bash(timeout 90 node src/scripts/diagList.js)",
+      "Bash(timeout 90 node src/scripts/diag11.js)",
+      "Bash(timeout 120 node src/scripts/diagCompare.js)",
+      "Bash(timeout 120 node src/scripts/diagVerifyFix.js)",
+      "Bash(git -C /d/ehrms-main/ehrms status --short app_backend/src/utils/leaveAttendanceHelper.js app_backend/src/controllers/attendanceController.js)",
+      "Bash(node -c src/controllers/requestController.js)",
+      "Bash(git -C d:/ehrms-main/ehrms status --short)",
+      "Bash(git -C d:/ehrms-main/ehrms rev-parse --abbrev-ref HEAD)",
+      "Bash(git -C d:/ehrms-main/ehrms add -A)",
+      "Bash(git -C d:/ehrms-main/ehrms commit -m '@ *)"
+    ]
+  }
+}

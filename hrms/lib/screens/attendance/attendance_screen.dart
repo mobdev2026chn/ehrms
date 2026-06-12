@@ -116,6 +116,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   final Map<String, String> _dayCompensationTypeByDate = {};
   final Map<String, num?> _dayWorkHoursByDate = {};
   final Set<String> _holidayDateSet = {};
+  // Holiday name (e.g. "Pongal", "Christmas") keyed by yyyy-MM-dd. Kept even when a
+  // holiday overlaps a week-off so the holiday name can still be surfaced on that date.
+  final Map<String, String> _holidayNameByDate = {};
   final Set<String> _weekOffDateSet = {};
   final Set<String> _alternateWorkDatesInMonth = {};
   final Set<String> _presentDateSet = {};
@@ -810,6 +813,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _dayCompensationTypeByDate.clear();
         _dayWorkHoursByDate.clear();
         _holidayDateSet.clear();
+        _holidayNameByDate.clear();
         _weekOffDateSet.clear();
         _alternateWorkDatesInMonth.clear();
         _presentDateSet.clear();
@@ -897,6 +901,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 if (d.year != year || d.month != month) continue;
                 final dateStr = DateFormat('yyyy-MM-dd').format(d);
                 _holidayDateSet.add(dateStr);
+                final hName = (h['name'] ?? '').toString().trim();
+                if (hName.isNotEmpty) {
+                  _holidayNameByDate[dateStr] = hName;
+                }
               } catch (_) {
                 continue;
               }
@@ -1218,6 +1226,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     } catch (e) {
       return '--:--';
     }
+  }
+
+  /// Converts a 24-hour "HH:mm" shift-time string to 12-hour clock time, e.g.
+  /// "19:00" → "7:00 PM". Returns the input unchanged if it isn't "HH:mm".
+  String _formatShiftTime12(String time24) {
+    final parts = time24.split(':');
+    if (parts.length != 2) return time24;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return time24;
+    final period = h >= 12 ? 'PM' : 'AM';
+    final h12 = h % 12 == 0 ? 12 : h % 12;
+    final mm = m.toString().padLeft(2, '0');
+    return '$h12:$mm $period';
   }
 
   String _formatApprovedAt(dynamic value) {
@@ -3423,9 +3445,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               : h.toStringAsFixed(1);
           return 'Open shift · $label hrs required';
         }
-        final a = r.startTime ?? 'N/A';
-        final b = r.endTime ?? 'N/A';
-        return '$a - $b';
+        final a = r.startTime;
+        final b = r.endTime;
+        if (a == null || b == null) return 'N/A - N/A';
+        return '${_formatShiftTime12(a)} - ${_formatShiftTime12(b)}';
       }
     }
     if (_isOpenShiftTemplate()) {
@@ -3442,7 +3465,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final end = halfDayTimings != null
         ? halfDayTimings['endTime'] ?? 'N/A'
         : _attendanceTemplate?['shiftEndTime']?.toString() ?? 'N/A';
-    return '$start - $end';
+    if (start == 'N/A' || end == 'N/A') return '$start - $end';
+    return '${_formatShiftTime12(start)} - ${_formatShiftTime12(end)}';
   }
 
   /// Grace period in minutes from DB (template). Prefers [gracePeriodMinutes],
@@ -4130,7 +4154,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     try {
       final date = DateTime.parse(isoString.toString()).toLocal();
-      return DateFormat('HH:mm').format(date);
+      return DateFormat('hh:mm a').format(date);
     } catch (_) {
       return '--:--';
     }
@@ -4205,6 +4229,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     bool isLowHours = false;
     bool isFuture = false;
     String? leaveTypeAbbr;
+    // True when a holiday falls on a week-off: the cell is styled as a Week Off,
+    // but we still mark the holiday with a small indigo dot so it stays visible.
+    bool showHolidayDot = false;
 
     if (isCurrentMonth) {
       final bool isHoliday = _holidayDateSet.contains(dateStr);
@@ -4220,6 +4247,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           !_alternateWorkDatesInMonth.contains(dateStr)) {
         isWeekOff = true;
       }
+
+      // When a holiday and a week-off land on the same date, the date is shown as a
+      // Week Off (grey "WF"), but the holiday is still flagged with an indigo dot.
+      showHolidayDot = isHoliday && isWeekOff;
 
       final bool isPresentFromBackend = _presentDateSet.contains(dateStr);
       final bool isAbsentFromBackend = _absentDateSet.contains(dateStr);
@@ -4260,8 +4291,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               _attendanceTemplate?['allowAttendanceOnWeeklyOff'] == true)) {
         bgColor = const Color(0xFFFCEFD2); // Present - Light Amber (Figma)
       }
-      // 3. Holiday
-      else if (isHoliday) {
+      // 3. Holiday (only when it is NOT also a week-off — overlap shows as Week Off below)
+      else if (isHoliday && !isWeekOff) {
         bgColor = const Color(0xFFEEF0FF); // Holiday - Light Indigo (Figma)
       }
       // 3.5. Alternate Working Day (compensation week-off day when employee can check-in)
@@ -4340,7 +4371,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           isHoliday &&
           _attendanceTemplate?['allowAttendanceOnHolidays'] == true) {
         leaveTypeAbbr = 'P';
-      } else if (isHoliday) {
+      } else if (isHoliday && !isWeekOff) {
         leaveTypeAbbr = 'H';
       } else if (isWeekOff &&
           !(isPresentStatusForAbbr &&
@@ -4438,6 +4469,21 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 height: 6,
                 decoration: const BoxDecoration(
                   color: Colors.red,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          // Indigo dot (top-right) when a holiday overlaps a week-off: the cell is
+          // styled as Week Off, but this marks that the date is also a holiday.
+          if (showHolidayDot)
+            Positioned(
+              top: 4,
+              right: 4,
+              child: Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: AppColors.indigo,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -7590,6 +7636,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         (status.toString().toLowerCase() == 'on leave')) {
       displayStatus = 'WF';
     }
+    // Holiday name (e.g. "Pongal") for this date — shown even when the date is
+    // displayed as a Weekend/Week Off because the holiday overlaps a week-off.
+    final holidayName = _holidayNameByDate[dateStr];
     if (status == 'Pending' && punchIn != null) displayStatus = 'Waiting';
 
     String? locationAddress;
@@ -7632,8 +7681,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final dateTextColor = isToday ? Colors.white : AppColors.primary;
 
     // Build time range string like "08:52 AM - 06:02 PM"
-    final inStr  = _formatTimeShort(punchIn);
-    final outStr = _formatTimeShort(punchOut);
+    final inStr  = _formatTime(punchIn);
+    final outStr = _formatTime(punchOut);
     final timeRange = (inStr != '--:--' && outStr != '--:--')
         ? '$inStr - $outStr'
         : (inStr != '--:--' ? inStr : 'N/A');
@@ -7692,6 +7741,26 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 const SizedBox(height: 3),
                 Text(displayTime,
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textSecondary)),
+                // if (holidayName != null && holidayName.isNotEmpty) ...[
+                //   const SizedBox(height: 4),
+                  // Row(
+                  //   mainAxisSize: MainAxisSize.min,
+                  //   children: [
+                  //     Icon(Icons.celebration_rounded,
+                  //         size: 12, color: AppColors.indigo),
+                  //     const SizedBox(width: 4),
+                  //     Flexible(
+                  //       child: Text(holidayName,
+                  //           maxLines: 1,
+                  //           overflow: TextOverflow.ellipsis,
+                  //           style: TextStyle(
+                  //               fontSize: 11,
+                  //               fontWeight: FontWeight.w600,
+                  //               color: AppColors.indigo)),
+                  //     ),
+                  //   ],
+                  // ),
+                // ],
                 if (locationAddress != null) ...[
                   const SizedBox(height: 2),
                   Text(locationAddress,
