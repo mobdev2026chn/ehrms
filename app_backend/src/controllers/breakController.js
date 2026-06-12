@@ -239,30 +239,26 @@ async function getBreakFineContext(staff, dayDate) {
         const salaryStructure = calculateSalaryStructure(staff.salary);
         const monthlyNet = Number(salaryStructure?.monthly?.netMonthlySalary) || 0;
         const monthlyGross = Number(salaryStructure?.monthly?.grossSalary) || 0;
-        // Per-day denominator follows the company's configured payable-days rule
-        // (calendar days / exclude week-offs / fixed days), resolved by businessId via
-        // the staff's salary template — same basis used by the check-in/out fine and
-        // payroll. Falls back to 30 when no rule/salary is resolvable.
+        // Per-day denominator follows the company-level basis on the businesses table
+        // (settings.payroll.fineCalculation.daysBasis): fixed days / exclude week-offs /
+        // calendar days. Default (incl. legacy docs) is exclude-week-offs. Falls back to
+        // 30 when unresolvable. Same basis as the check-in/out fine.
         let denominatorDays = 30;
         try {
-            const { resolveTemplateLinkedPayableDenominatorDays } = require('../utils/payableDaysRule');
+            const { resolveFineDenominatorDays } = require('../utils/fineCalculationHelper');
             const { getWeekOffConfigForStaff } = require('../utils/weekOffHelper');
             const day = dayDate ? new Date(dayDate) : new Date();
             const weekCfg = await getWeekOffConfigForStaff(staff, company);
-            const resolved = await resolveTemplateLinkedPayableDenominatorDays({
-                staff,
+            const resolved = resolveFineDenominatorDays({
                 company,
-                fullMonthWorkingDays: 30,
-                calendarContext: {
-                    year: day.getFullYear(),
-                    month: day.getMonth() + 1,
-                    weeklyOffPattern: weekCfg?.weeklyOffPattern,
-                    weeklyHolidays: weekCfg?.weeklyHolidays,
-                },
+                year: day.getFullYear(),
+                month1: day.getMonth() + 1,
+                weeklyOffPattern: weekCfg?.weeklyOffPattern,
+                weeklyHolidays: weekCfg?.weeklyHolidays,
             });
             if (Number.isFinite(resolved) && resolved > 0) denominatorDays = resolved;
         } catch (denErr) {
-            console.error('[Break Fine] payable-days denominator resolve failed, using 30:', denErr?.message);
+            console.error('[Break Fine] days-basis denominator resolve failed, using 30:', denErr?.message);
         }
         if (monthlyNet > 0) dailyNet = monthlyNet / denominatorDays;
         if (monthlyGross > 0) dailyGross = monthlyGross / denominatorDays;
@@ -284,24 +280,25 @@ async function getBreakFineContext(staff, dayDate) {
     const policyEnabledExplicit = parseBreakPolicyEnabled(shiftBreakPolicy);
     const policyEnabled = shiftBreakPolicy?.enabled === true;
     const configuredAllowedBreakMin = Math.max(0, Number(shiftBreakPolicy?.allowedMinutes || 0));
-    // Business rule:
-    // - An explicit allowance is configured only when the policy is enabled AND
-    //   allowedMinutes > 0; that value is honoured as-is.
-    // - Otherwise (policy disabled or allowedMinutes=0) we fall back to a default
-    //   1 hour/day allowance so the app always shows a concrete break balance.
-    //   Breaks are therefore never treated as "unlimited".
+    // Scenario 3: disabled + quota > 0 → breaks are allowed but ALL minutes go to fine.
+    const isDisabledWithQuota = policyEnabledExplicit === false && configuredAllowedBreakMin > 0;
     const hasConfiguredAllowance = policyEnabled && configuredAllowedBreakMin > 0;
+    // Business rules:
+    // - Enabled + quota > 0: allowance = configured value.
+    // - Disabled + quota > 0: allowance = 0 so every minute is "exceeded" and fined.
+    // - Enabled/disabled + quota = 0: use default 60-min display allowance (no fines).
     const effectiveAllowedBreakMin = hasConfiguredAllowance
         ? configuredAllowedBreakMin
-        : DEFAULT_BREAK_ALLOWED_MINUTES;
+        : (isDisabledWithQuota ? 0 : DEFAULT_BREAK_ALLOWED_MINUTES);
     const isUnlimitedBreak = false;
-    // Fines only apply when the admin both configured a real allowance and enabled fines.
-    // The default 1-hour allowance shows a balance but never charges a fine on its own.
+    // Fines apply when:
+    //   (a) enabled + quota > 0 + fineEnabled, OR
+    //   (b) disabled + quota > 0 (all break is fine, open shifts excluded).
     const breakFineEnabled =
-        !isOpenShift &&
-        policyEnabled &&
-        hasConfiguredAllowance &&
-        shiftBreakPolicy?.fineEnabled === true;
+        !isOpenShift && (
+            isDisabledWithQuota ||
+            (policyEnabled && hasConfiguredAllowance && shiftBreakPolicy?.fineEnabled === true)
+        );
     const allowedBreakMin = effectiveAllowedBreakMin;
 
     let fineConfig = payrollFineConfig;
@@ -349,10 +346,10 @@ async function getBreakFineContext(staff, dayDate) {
             // callers can block with a "contact HR" message instead of silently
             // falling back to the default allowance.
             configured: hasConfiguredAllowance,
-            // Raw configured value from the shift template (before fallback). Used by
-            // callers to differentiate "disabled with an allowance" from "disabled
-            // and no allowance configured" so the correct message is shown.
+            // Raw configured value from the shift template (before fallback).
             configuredAllowedMinutes: configuredAllowedBreakMin,
+            // True when break is disabled but a quota was set → breaks allowed, all as fine.
+            isDisabledWithQuota,
             isUnlimitedBreak,
             allowedMinutes: effectiveAllowedBreakMin,
             fineEnabled: breakFineEnabled,
@@ -605,9 +602,10 @@ exports.getTodayBreakSummary = async (req, res) => {
                 // (allowedMinutes = 0). The app blocks starting a break in that case
                 // with a "contact HR" message.
                 policyConfigured: fineCtx.breakPolicy.configured,
-                // Raw allowance from the shift template (0 when not set). Used by the
-                // app to differentiate "disabled with quota" vs "disabled + no quota".
+                // Raw allowance from the shift template (0 when not set).
                 configuredAllowedMinutes: fineCtx.breakPolicy.configuredAllowedMinutes ?? 0,
+                // True when disabled + quota > 0: breaks allowed, all minutes → fine.
+                policyIsDisabledWithQuota: fineCtx.breakPolicy.isDisabledWithQuota ?? false,
                 isUnlimited,
                 allowedMinutes,
                 allowedSeconds,
@@ -660,14 +658,14 @@ exports.startBreak = async (req, res) => {
         // policy is disabled, but enforce it server-side too so a break can never be
         // started for a shift that explicitly turned breaks off.
         const startFineCtx = await getBreakFineContext(staff, resolvedStartTime);
-        if (startFineCtx.breakPolicy.enabledExplicit === false) {
-            const breakDisabledMsg = (startFineCtx.breakPolicy.configuredAllowedMinutes ?? 0) > 0
-                ? 'Break is disabled for your shift. Contact HR to enable.'
-                : 'Break is not configured for your shift. Contact HR.';
-            return res.status(403).json({ success: false, message: breakDisabledMsg });
+        // Block only when no quota is configured (quota = 0), regardless of enabled/disabled.
+        // disabled + quota > 0 (isDisabledWithQuota): break is ALLOWED, all minutes go to fine.
+        if (startFineCtx.breakPolicy.enabledExplicit === false && !startFineCtx.breakPolicy.isDisabledWithQuota) {
+            return res.status(403).json({
+                success: false,
+                message: 'Break is not configured for your shift. Contact HR.'
+            });
         }
-        // Breaks are enabled for the shift but no allowance was configured
-        // (allowedMinutes not set). Block so the employee asks HR to set an allowance.
         if (startFineCtx.breakPolicy.enabled === true && startFineCtx.breakPolicy.configured === false) {
             return res.status(403).json({
                 success: false,

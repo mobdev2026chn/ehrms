@@ -293,6 +293,18 @@ const CompanySchema = new Schema(
             enum: ['shiftBased', 'fixedPerHour', 'custom'],
             default: 'shiftBased'
           },
+          // Per-day salary denominator basis for fines (company-wide):
+          //   Per Day Salary = Monthly (gross) Salary ÷ (number of days by this basis)
+          //   - 'excludeWeekOffs' (default): month days minus weekly offs only
+          //   - 'calendarDays': calendar length of month (28–31)
+          //   - 'fixedDays': the configured `fixedDays` value (e.g. 30)
+          daysBasis: {
+            type: String,
+            enum: ['fixedDays', 'excludeWeekOffs', 'calendarDays'],
+            default: 'excludeWeekOffs'
+          },
+          // Used only when daysBasis === 'fixedDays'.
+          fixedDays: { type: Number, default: 30 },
           formula: {
             type: String,
             default: 'Fine = (Daily Salary ÷ Shift Hours) × Late Hours. Example: If shift is 9 hours (10 AM - 7 PM) and daily salary is ₹1000, hourly rate is ₹111.11. For 1 hour late, fine = ₹111.11'

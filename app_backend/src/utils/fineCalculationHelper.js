@@ -5,6 +5,49 @@
  * When fineRules exist, applies matching rule by applyTo ('lateArrival' | 'earlyExit' | 'both').
  */
 
+const { getCalendarDaysInMonth, calculateDaysExcludingWeeklyOffsOnly } = require('./salaryCalendarDays.util');
+
+/**
+ * Per-day salary denominator for fines, configured per company (businesses table)
+ * at `settings.payroll.fineCalculation.daysBasis`. Implements the formula:
+ *   Per Day Salary = Monthly (gross) Salary ÷ (number of days by this basis)
+ *   Fine = (Per Day Salary ÷ Working Hours) × (Fine minutes ÷ 60)
+ *
+ * Basis:
+ *   - 'calendarDays'    → calendar length of month (28–31)
+ *   - 'fixedDays'       → `fixedDays` value (e.g. 30); falls back to excludeWeekOffs when unset
+ *   - 'excludeWeekOffs' → month days minus weekly offs only (DEFAULT for every business,
+ *                          including legacy docs where the field is absent)
+ *
+ * @param {Object} params
+ * @param {Object} params.company - Company doc (reads settings.payroll.fineCalculation + business week-off)
+ * @param {number} params.year
+ * @param {number} params.month1 - 1–12
+ * @param {string} [params.weeklyOffPattern]
+ * @param {Array<{day:number}>} [params.weeklyHolidays]
+ * @returns {number} day count (>= 1)
+ */
+function resolveFineDenominatorDays({ company, year, month1, weeklyOffPattern, weeklyHolidays }) {
+    const m0 = Number(month1) - 1;
+    const fc = company?.settings?.payroll?.fineCalculation || {};
+    const basis = String(fc.daysBasis || 'excludeWeekOffs').trim().toLowerCase().replace(/[_\s]/g, '');
+    const excludeWeekOffs = () => Math.max(1, calculateDaysExcludingWeeklyOffsOnly(
+        year,
+        m0,
+        weeklyOffPattern === 'oddEvenSaturday' ? 'oddEvenSaturday' : 'standard',
+        null,
+        Array.isArray(weeklyHolidays) ? weeklyHolidays : null,
+    ));
+    if (basis === 'calendardays' || basis === 'calendar') {
+        return Math.max(1, getCalendarDaysInMonth(year, m0));
+    }
+    if (basis === 'fixeddays' || basis === 'fixed') {
+        const fixed = Number(fc.fixedDays) || 0;
+        return fixed > 0 ? Math.max(1, Math.floor(fixed)) : excludeWeekOffs();
+    }
+    return excludeWeekOffs();
+}
+
 /**
  * Get effective fine config from company. Only reads settings.payroll.fineCalculation.
  * @param {Object} company - Company document
@@ -275,5 +318,6 @@ module.exports = {
     getEffectiveFineConfig,
     calculateFineAmount,
     applyRuleAmount,
-    calculateOvertimePayAmount
+    calculateOvertimePayAmount,
+    resolveFineDenominatorDays
 };

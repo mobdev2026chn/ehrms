@@ -959,32 +959,28 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             try {
                 const attendanceStats = await calculateAttendanceStats(staff._id, attendanceMonth1Based, attendanceYear);
                 const thisMonthWorkingDays = attendanceStats.workingDaysFullMonth ?? attendanceStats.workingDays ?? 0;
-                // Per-day denominator follows the company's configured payable-days rule
-                // (calendar days / exclude week-offs / fixed days), resolved by the staff's
-                // businessId via their salary template — same basis payroll uses. Falls back
-                // to full-month working days when no rule is configured. (Handwritten fine
-                // formula: Fine = (Monthly Salary ÷ No. of days in month ÷ work hrs) × (Fine mins ÷ 60).)
+                // Per-day denominator follows the company-level basis configured on the
+                // businesses table (settings.payroll.fineCalculation.daysBasis): fixed days /
+                // exclude week-offs / calendar days — resolved from the staff's businessId.
+                // Default (incl. legacy docs) is exclude-week-offs. Per Day Salary =
+                // Monthly Gross ÷ this day count; Fine = (Per Day ÷ work hrs) × (fine mins ÷ 60).
                 let payableDenominatorDays = thisMonthWorkingDays;
                 try {
-                    const { resolveTemplateLinkedPayableDenominatorDays } = require('../utils/payableDaysRule');
+                    const { resolveFineDenominatorDays } = require('../utils/fineCalculationHelper');
                     const weekCfgForFine = await getWeekOffConfigForStaff(staff, company);
-                    const resolvedDenominator = await resolveTemplateLinkedPayableDenominatorDays({
-                        staff,
+                    const resolvedDenominator = resolveFineDenominatorDays({
                         company,
-                        fullMonthWorkingDays: thisMonthWorkingDays,
-                        calendarContext: {
-                            year: attendanceYear,
-                            month: attendanceMonth1Based,
-                            weeklyOffPattern: weekCfgForFine?.weeklyOffPattern,
-                            weeklyHolidays: weekCfgForFine?.weeklyHolidays,
-                        },
+                        year: attendanceYear,
+                        month1: attendanceMonth1Based,
+                        weeklyOffPattern: weekCfgForFine?.weeklyOffPattern,
+                        weeklyHolidays: weekCfgForFine?.weeklyHolidays,
                     });
                     if (Number.isFinite(resolvedDenominator) && resolvedDenominator > 0) {
                         payableDenominatorDays = resolvedDenominator;
                     }
-                    console.log('[Fine] Payable-days denominator: workingDays=', thisMonthWorkingDays, '=> payableDenominatorDays=', payableDenominatorDays);
+                    console.log('[Fine] Days-basis denominator:', company?.settings?.payroll?.fineCalculation?.daysBasis || 'excludeWeekOffs(default)', '=> payableDenominatorDays=', payableDenominatorDays, '(workingDaysFallback=', thisMonthWorkingDays, ')');
                 } catch (denErr) {
-                    console.error('[Fine] payable-days denominator resolve failed, using working days:', denErr?.message);
+                    console.error('[Fine] days-basis denominator resolve failed, using working days:', denErr?.message);
                 }
                 if (payableDenominatorDays > 0) {
                     // Authoritative for the fine: derive per-day from monthly salary ÷ payable

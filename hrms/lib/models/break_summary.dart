@@ -82,6 +82,10 @@ class BreakSummary {
   /// "disabled with no quota" so the correct message is shown.
   final int configuredAllowedMinutes;
 
+  /// True when the shift explicitly disabled breaks but a quota > 0 was configured.
+  /// In this state breaks are ALLOWED and all break time is added to Fine.
+  final bool policyIsDisabledWithQuota;
+
   const BreakSummary({
     this.breaks = const [],
     this.totalBreakSeconds = 0,
@@ -97,6 +101,7 @@ class BreakSummary {
     this.remainingSeconds,
     this.hasActiveBreak = false,
     this.configuredAllowedMinutes = 0,
+    this.policyIsDisabledWithQuota = false,
   });
 
   bool get isEmpty => breaks.isEmpty && totalBreakSeconds == 0;
@@ -156,6 +161,7 @@ class BreakSummary {
           : _asInt(remainingSecRaw),
       hasActiveBreak: json['hasActiveBreak'] == true,
       configuredAllowedMinutes: _asInt(json['configuredAllowedMinutes']),
+      policyIsDisabledWithQuota: json['policyIsDisabledWithQuota'] == true,
     );
   }
 

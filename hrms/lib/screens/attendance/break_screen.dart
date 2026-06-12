@@ -269,20 +269,37 @@ class _BreakScreenState extends State<BreakScreen> {
 
   /// Reason a NEW break may not be started because of the shift's break policy,
   /// or null when starting is allowed. Ending an already-running break is always
-  /// allowed. Three distinct policy states are surfaced:
-  ///  - disabled with a quota configured → "disabled, contact HR to enable"
-  ///  - disabled with no quota / enabled with no quota → "not configured"
+  /// allowed. Two scenarios are blocked:
+  ///  - disabled + quota = 0 → "not configured"
+  ///  - enabled + not configured → "not configured"
+  /// disabled + quota > 0 is NOT blocked here — break is allowed (all time → fine).
   String? get _breakPolicyBlockMessage {
     if (_isOnBreak) return null;
     final summary = _breakSummary;
     if (summary == null) return null;
     if (summary.policyDisabled) {
-      return summary.configuredAllowedMinutes > 0
-          ? 'Break is disabled for your shift. Contact HR to enable.'
-          : 'Break is not configured for your shift. Contact HR.';
+      // disabled + quota > 0: allow (informational notice shown separately)
+      if (summary.configuredAllowedMinutes > 0) return null;
+      return 'Break is not configured for your shift. Contact HR.';
     }
     if (summary.policyEnabled && !summary.policyConfigured) {
       return 'Break is not configured for your shift. Contact HR.';
+    }
+    return null;
+  }
+
+  /// Informational notice when break is disabled but a quota was configured
+  /// (Scenario 3). Break is still allowed in this state; all time goes to Fine.
+  /// Returns null when not in this state.
+  String? get _breakDisabledWithQuotaNotice {
+    if (_isOnBreak) return null;
+    final summary = _breakSummary;
+    if (summary == null) return null;
+    if (summary.policyIsDisabledWithQuota) {
+      final allowed = summary.configuredAllowedMinutes;
+      return 'Break is disabled for your shift. Contact HR to enable.\n'
+          'All break time will be added to Fine '
+          '(${allowed > 0 ? "$allowed min quota" : "full duration"} counts as fine).';
     }
     return null;
   }
@@ -657,13 +674,52 @@ class _BreakScreenState extends State<BreakScreen> {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.red.shade200),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.block, size: 16, color: Colors.red.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _breakPolicyBlockMessage!,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.red.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    if (_breakDisabledWithQuotaNotice != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
                           color: Colors.orange.shade50,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange.shade200),
+                          border: Border.all(color: Colors.orange.shade300),
                         ),
-                        child: Text(
-                          _breakPolicyBlockMessage!,
-                          style: const TextStyle(fontWeight: FontWeight.w500),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.info_outline, size: 16, color: Colors.orange.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _breakDisabledWithQuotaNotice!,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.orange.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 16),

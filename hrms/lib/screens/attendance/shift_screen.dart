@@ -5,6 +5,7 @@ import 'package:table_calendar/table_calendar.dart';
 
 import '../../config/app_colors.dart';
 import '../../services/attendance_service.dart';
+import '../../services/auth_service.dart';
 import '../../utils/holiday_off_util.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../utils/shift_policy_util.dart';
@@ -129,6 +130,16 @@ class _MonthShiftData {
 
 class _ShiftScreenState extends State<ShiftScreen> {
   final AttendanceService _attendanceService = AttendanceService();
+  final AuthService _authService = AuthService();
+
+  /// Live copies of the shift-resolution inputs the dashboard seeded. Held in
+  /// state (not read straight from [widget]) so pull-to-refresh can re-fetch the
+  /// profile + today template and reflect a freshly-assigned shift without
+  /// reopening the screen.
+  Map<String, dynamic>? _companyDoc;
+  String? _staffShiftKey;
+  Map<String, dynamic>? _todayTemplate;
+  String? _appliedHeaderLine;
 
   late DateTime _focusedDay;
   late DateTime _selectedDay;
@@ -149,6 +160,10 @@ class _ShiftScreenState extends State<ShiftScreen> {
   @override
   void initState() {
     super.initState();
+    _companyDoc = widget.companyDoc;
+    _staffShiftKey = widget.staffShiftKey;
+    _todayTemplate = widget.todayTemplate;
+    _appliedHeaderLine = widget.appliedHeaderLine;
     final r = widget.referenceDate;
     _today = DateTime(r.year, r.month, r.day);
     _focusedDay = _today;
@@ -295,7 +310,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
         },
       };
     } else {
-      companyForApplied = widget.companyDoc;
+      companyForApplied = _companyDoc;
     }
 
     return _MonthShiftData(
@@ -326,12 +341,12 @@ class _ShiftScreenState extends State<ShiftScreen> {
   EffectiveShiftDay? _shiftForDay(DateTime day) {
     final d = DateTime(day.year, day.month, day.day);
     final base = effectiveShiftForCalendarDay(
-      companyDoc: widget.companyDoc,
-      staffShiftKey: widget.staffShiftKey,
+      companyDoc: _companyDoc,
+      staffShiftKey: _staffShiftKey,
       dayLocal: d,
       joiningDate: widget.joiningDate,
       attendanceTodayTemplate:
-          isSameDay(d, _today) ? widget.todayTemplate : null,
+          isSameDay(d, _today) ? _todayTemplate : null,
     );
     if (base != null && base.isWeekOff) return base;
     if (_offConfig.isWeeklyOff(d)) {
@@ -355,7 +370,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
   /// Resolves a stamped `appliedShiftId` to its shift window via company shifts.
   EffectiveShiftDay? _shiftFromAppliedId(dynamic appliedId, _MonthShiftData md) {
     final res = appliedShiftPastResolvedFromCompany(
-      companyDoc: md.companyDocForApplied ?? widget.companyDoc,
+      companyDoc: md.companyDocForApplied ?? _companyDoc,
       appliedShiftId: appliedId,
     );
     if (res == null) return null;
@@ -539,6 +554,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
     _months.remove(key);
     await Future.wait([
       _loadWeekOffConfig(),
+      _refreshShiftContext(),
       _attendanceService
           .getMonthAttendance(f.year, f.month, forceRefresh: true)
           .then((result) {
@@ -551,6 +567,95 @@ class _ShiftScreenState extends State<ShiftScreen> {
         }
       }).catchError((_) {}),
     ]);
+  }
+
+  /// Re-fetches the profile + today template so a freshly-assigned (or swapped)
+  /// shift updates the summary/detail cards on pull-to-refresh — these inputs
+  /// were seeded once by the dashboard and would otherwise stay stale.
+  Future<void> _refreshShiftContext() async {
+    try {
+      final results = await Future.wait([
+        _authService.getProfile(),
+        _attendanceService.getTodayAttendance(forceRefresh: true),
+      ]);
+      if (!mounted) return;
+      final profileRes = results[0];
+      final todayRes = results[1];
+
+      Map<String, dynamic>? company = _companyDoc;
+      String? shiftKey = _staffShiftKey;
+      if (profileRes['success'] == true && profileRes['data'] is Map) {
+        final data = Map<String, dynamic>.from(profileRes['data'] as Map);
+        final staff = data['staffData'];
+        if (staff is Map) {
+          final m = Map<String, dynamic>.from(staff);
+          Map<String, dynamic>? populated;
+          final bid = m['businessId'];
+          if (bid is Map) populated = Map<String, dynamic>.from(bid);
+          company = companyDocForShiftResolution(
+                profilePopulatedCompany: populated,
+              ) ??
+              company;
+          shiftKey = staffShiftKeyFromProfileMap(m) ?? shiftKey;
+        }
+      }
+
+      Map<String, dynamic>? todayTemplate = _todayTemplate;
+      dynamic todayAppliedId;
+      if (todayRes['success'] == true && todayRes['data'] is Map) {
+        final td = Map<String, dynamic>.from(todayRes['data'] as Map);
+        final t = td['template'];
+        if (t is Map) todayTemplate = Map<String, dynamic>.from(t);
+        todayAppliedId = td['appliedShiftId'];
+      }
+
+      // Applied (swapped) shift line for today, if the day carries one.
+      final md = _monthFor(_today);
+      final appliedId =
+          md?.appliedShiftIdByDate[HolidayOffConfig.keyFor(_today)] ??
+              todayAppliedId;
+      String? appliedLine = _appliedHeaderLine;
+      if (appliedId != null) {
+        final res = appliedShiftPastResolvedFromCompany(
+          companyDoc: md?.companyDocForApplied ?? company,
+          appliedShiftId: appliedId,
+        );
+        if (res != null) appliedLine = _appliedCompactLine(res);
+      }
+
+      setState(() {
+        _companyDoc = company;
+        _staffShiftKey = shiftKey;
+        _todayTemplate = todayTemplate;
+        _appliedHeaderLine = appliedLine;
+      });
+    } catch (_) {
+      // Keep the previously seeded context if the refresh fetch fails.
+    }
+  }
+
+  /// Compact "Name · 09:00-18:00" / "Name · Open · 8h required" line for an
+  /// applied-shift resolution — mirrors the dashboard's header text.
+  String _appliedCompactLine(
+    ({
+      String shiftName,
+      bool isOpen,
+      String? startTime,
+      String? endTime,
+      double? openWorkHours,
+    }) r,
+  ) {
+    if (r.isOpen) {
+      final h = r.openWorkHours;
+      if (h == null || h <= 0) return '${r.shiftName} · Open';
+      final label =
+          h == h.roundToDouble() ? '${h.toInt()}h' : h.toStringAsFixed(1);
+      return '${r.shiftName} · Open · $label required';
+    }
+    final a = r.startTime ?? '';
+    final b = r.endTime ?? '';
+    if (a.isEmpty || b.isEmpty) return r.shiftName;
+    return '${r.shiftName} · $a-$b';
   }
 
   @override
@@ -625,7 +730,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final rotName = snap?.rotationTemplateName?.trim();
     final shiftName = snap?.displayName.trim() ?? '';
     final window = _windowOf(snap);
-    final compactLine = widget.appliedHeaderLine ?? snap?.compactLine();
+    final compactLine = _appliedHeaderLine ?? snap?.compactLine();
 
     // Status-only days (off / holiday / leave) show a single headline line.
     String? statusHeadline;
@@ -868,11 +973,11 @@ class _ShiftScreenState extends State<ShiftScreen> {
   /// permission balance, half-day in Apply Leave).
   Widget _buildPoliciesCard() {
     final policies = resolveShiftPoliciesForDay(
-      companyDoc: widget.companyDoc,
-      staffShiftKey: widget.staffShiftKey,
+      companyDoc: _companyDoc,
+      staffShiftKey: _staffShiftKey,
       dayLocal: _today,
       joiningDate: widget.joiningDate,
-      attendanceTemplate: widget.todayTemplate,
+      attendanceTemplate: _todayTemplate,
     );
 
     return AppCard(
@@ -1261,22 +1366,25 @@ class _ShiftScreenState extends State<ShiftScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 5,
-          height: 5,
+          width: 4,
+          height: 4,
           decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
         ),
         const SizedBox(width: 2),
-        Text(
-          time,
-          maxLines: 1,
-          softWrap: false,
-          overflow: TextOverflow.visible,
-          style: TextStyle(
-            fontSize: 7.5,
-            height: 1.0,
-            letterSpacing: -0.2,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textSecondary,
+        Flexible(
+          child: Text(
+            time,
+            maxLines: 1,
+            softWrap: false,
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.clip,
+            style: TextStyle(
+              fontSize: 7,
+              height: 1.0,
+              letterSpacing: -0.2,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
           ),
         ),
       ],
@@ -1344,14 +1452,14 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final appliedId = md?.appliedShiftIdByDate[dateStr];
     if (appliedId != null) {
       final row = shiftRowForAppliedShiftId(
-        companyDoc: md?.companyDocForApplied ?? widget.companyDoc,
+        companyDoc: md?.companyDocForApplied ?? _companyDoc,
         appliedShiftId: appliedId,
       );
       if (row != null) return row;
     }
     return resolveEffectiveShiftRowForDay(
-      companyDoc: widget.companyDoc,
-      staffShiftKey: widget.staffShiftKey,
+      companyDoc: _companyDoc,
+      staffShiftKey: _staffShiftKey,
       dayLocal: d,
       joiningDate: widget.joiningDate,
     );
@@ -1410,7 +1518,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final record = _recordForDate(day);
     final row = _allocatedShiftRowForDate(day, md);
     final policies =
-        shiftPoliciesFromRow(row, attendanceTemplate: widget.todayTemplate);
+        shiftPoliciesFromRow(row, attendanceTemplate: _todayTemplate);
 
     final dateStr = DateFormat('EEEE, d MMMM yyyy').format(day);
 

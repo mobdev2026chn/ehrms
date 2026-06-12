@@ -26,7 +26,10 @@
       "Bash(ls -la d:\\\\\\\\ehrms-main\\\\\\\\ehrms)",
       "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update break/shift handling, fine calc, and request flows *)",
       "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update app constants *)",
-      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update break/request controllers and shift screen *)"
+      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update break/request controllers and shift screen *)",
+      "Bash(node -c src/utils/fineCalculationHelper.js)",
+      "Bash(node -c src/models/Company.js)",
+      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update fine calculation, break/attendance/request flows *)"
     ]
   }
 }
