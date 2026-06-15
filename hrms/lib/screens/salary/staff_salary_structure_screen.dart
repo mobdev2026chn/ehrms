@@ -315,8 +315,8 @@ Future<void> _load() async {
           Center(
             child: TextButton(
               style: TextButton.styleFrom(
-                backgroundColor: AppColors.secondary.withOpacity(0.12),
-                foregroundColor: AppColors.secondary,
+                backgroundColor: AppColors.primary.withOpacity(0.12),
+                foregroundColor: AppColors.primary,
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -403,7 +403,7 @@ class _RevisionNoticeCard extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.secondary,
+                      color: AppColors.primary,
                     ),
                   ),
                 ),

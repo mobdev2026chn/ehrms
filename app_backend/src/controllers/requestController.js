@@ -1145,7 +1145,7 @@ const downloadPayslipRequest = async (req, res) => {
 // @access  Private
 const createPermissionRequest = async (req, res) => {
     try {
-        const { date, type = 'both', requestedMinutes, reason } = req.body || {};
+        const { date, type = 'both', requestedMinutes, reason, fromTime, toTime } = req.body || {};
 
         if (!date || Number.isNaN(new Date(date).getTime())) {
             return res.status(400).json({ success: false, error: { message: 'Valid date is required' } });
@@ -1159,6 +1159,17 @@ const createPermissionRequest = async (req, res) => {
         }
         if (!['lateArrival', 'earlyExit', 'both'].includes(String(type))) {
             return res.status(400).json({ success: false, error: { message: 'Invalid permission type' } });
+        }
+        // Custom-time window (HH:mm) — only meaningful for `both`. Validate format
+        // when provided so the dashboard Permission Out/In has a clean window to show.
+        const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+        const cleanFromTime = fromTime != null ? String(fromTime).trim() : '';
+        const cleanToTime = toTime != null ? String(toTime).trim() : '';
+        if (cleanFromTime && !HHMM.test(cleanFromTime)) {
+            return res.status(400).json({ success: false, error: { message: 'fromTime must be in HH:mm format' } });
+        }
+        if (cleanToTime && !HHMM.test(cleanToTime)) {
+            return res.status(400).json({ success: false, error: { message: 'toTime must be in HH:mm format' } });
         }
 
         const employeeId = req.staff?._id || req.user?._id;
@@ -1206,6 +1217,8 @@ const createPermissionRequest = async (req, res) => {
             date: attendanceDate,
             type,
             requestedMinutes: Math.floor(minutes),
+            ...(cleanFromTime && { fromTime: cleanFromTime }),
+            ...(cleanToTime && { toTime: cleanToTime }),
             reason: String(reason).trim(),
             status: 'Pending'
         });
@@ -1282,6 +1295,92 @@ const cancelPermissionRequest = async (req, res) => {
     } catch (error) {
         console.error('Cancel Permission Request Error:', error);
         return res.status(500).json({ success: false, error: { message: error.message || 'Failed to cancel permission request' } });
+    }
+};
+
+// True when a permission's stored date (midnight) is the current calendar day.
+const isPermissionForToday = (permissionDate) => {
+    if (!permissionDate) return false;
+    const d = new Date(permissionDate);
+    const now = new Date();
+    return d.getFullYear() === now.getFullYear()
+        && d.getMonth() === now.getMonth()
+        && d.getDate() === now.getDate();
+};
+
+// Shared loader + guards for the Permission Out / In actions.
+const loadOwnApprovedTodayPermission = async (req, res) => {
+    const employeeId = req.staff?._id || req.user?._id;
+    if (!employeeId) {
+        res.status(400).json({ success: false, error: { message: 'Employee context required' } });
+        return null;
+    }
+    const permission = await PermissionRequest.findById(req.params.id);
+    if (!permission) {
+        res.status(404).json({ success: false, error: { message: 'Permission request not found' } });
+        return null;
+    }
+    if (permission.employeeId.toString() !== employeeId.toString()) {
+        res.status(403).json({ success: false, error: { message: 'You can only update your own requests' } });
+        return null;
+    }
+    if (permission.status !== 'Approved') {
+        res.status(400).json({ success: false, error: { message: 'Only approved permissions can be used' } });
+        return null;
+    }
+    if (!isPermissionForToday(permission.date)) {
+        res.status(400).json({ success: false, error: { message: 'This action is only allowed on the permission date' } });
+        return null;
+    }
+    return permission;
+};
+
+// @desc    Record Permission Out (employee stepped out) for an approved custom-time permission
+// @route   POST /api/requests/permission/:id/out
+// @access  Private
+const permissionOut = async (req, res) => {
+    try {
+        const permission = await loadOwnApprovedTodayPermission(req, res);
+        if (!permission) return; // response already sent
+        if (permission.actualOutAt) {
+            return res.status(400).json({ success: false, error: { message: 'Permission Out already recorded' } });
+        }
+        permission.actualOutAt = new Date();
+        await permission.save();
+        return res.json({ success: true, data: { permission } });
+    } catch (error) {
+        console.error('Permission Out Error:', error);
+        return res.status(500).json({ success: false, error: { message: error.message || 'Failed to record permission out' } });
+    }
+};
+
+// @desc    Record Permission In (employee returned); computes actual/overrun minutes.
+//          The overrun fine is folded into that day's attendance.fineAmount by the
+//          attendance fine pipeline (calculateCombinedFine) on the next recompute
+//          (typically at punch-out), keeping fine math in one place.
+// @route   POST /api/requests/permission/:id/in
+// @access  Private
+const permissionIn = async (req, res) => {
+    try {
+        const permission = await loadOwnApprovedTodayPermission(req, res);
+        if (!permission) return; // response already sent
+        if (!permission.actualOutAt) {
+            return res.status(400).json({ success: false, error: { message: 'Record Permission Out before Permission In' } });
+        }
+        if (permission.actualInAt) {
+            return res.status(400).json({ success: false, error: { message: 'Permission In already recorded' } });
+        }
+        const now = new Date();
+        const actualMinutes = Math.max(0, Math.round((now.getTime() - new Date(permission.actualOutAt).getTime()) / 60000));
+        const overrunMinutes = Math.max(0, actualMinutes - Math.floor(Number(permission.requestedMinutes) || 0));
+        permission.actualInAt = now;
+        permission.actualMinutes = actualMinutes;
+        permission.overrunMinutes = overrunMinutes;
+        await permission.save();
+        return res.json({ success: true, data: { permission, actualMinutes, overrunMinutes } });
+    } catch (error) {
+        console.error('Permission In Error:', error);
+        return res.status(500).json({ success: false, error: { message: error.message || 'Failed to record permission in' } });
     }
 };
 
@@ -1412,5 +1511,7 @@ module.exports = {
     createPermissionRequest,
     getPermissionRequests,
     cancelPermissionRequest,
+    permissionOut,
+    permissionIn,
     getPermissionBalance
 };

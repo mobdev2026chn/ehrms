@@ -1513,39 +1513,39 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     tooltip: 'Filter tasks',
                     onPressed: _openTaskFilterBottomSheet,
                   ),
-                if (_isSelectionMode || _mainTabController.index == 0)
-                  IconButton(
-                    icon: _exporting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(
-                            _isSelectionMode
-                                ? Icons.file_download
-                                : Icons.download_outlined,
-                            color: _isSelectionMode
-                                ? colorScheme.primary
-                                : null,
-                          ),
-                    tooltip: _isSelectionMode
-                        ? 'Export selected tasks'
-                        : 'Select tasks to export',
-                    onPressed: _exporting
-                        ? null
-                        : () {
-                            if (_isSelectionMode) {
-                              _exportSelectedToExcel();
-                            } else {
-                              setState(() => _isSelectionMode = true);
-                              SnackBarUtils.showSnackBar(
-                                context,
-                                'Select tasks to export, then tap Export again.',
-                              );
-                            }
-                          },
-                  ),
+                //if (_isSelectionMode || _mainTabController.index == 0)
+                  // IconButton(
+                  //   icon: _exporting
+                  //       ? const SizedBox(
+                  //           width: 20,
+                  //           height: 20,
+                  //           child: CircularProgressIndicator(strokeWidth: 2),
+                  //         )
+                  //       : Icon(
+                  //           _isSelectionMode
+                  //               ? Icons.file_download
+                  //               : Icons.download_outlined,
+                  //           color: _isSelectionMode
+                  //               ? colorScheme.primary
+                  //               : null,
+                  //         ),
+                  //   tooltip: _isSelectionMode
+                  //       ? 'Export selected tasks'
+                  //       : 'Select tasks to export',
+                  //   onPressed: _exporting
+                  //       ? null
+                  //       : () {
+                  //           if (_isSelectionMode) {
+                  //             _exportSelectedToExcel();
+                  //           } else {
+                  //             setState(() => _isSelectionMode = true);
+                  //             SnackBarUtils.showSnackBar(
+                  //               context,
+                  //               'Select tasks to export, then tap Export again.',
+                  //             );
+                  //           }
+                  //         },
+                  // ),
               ],
             ),
             body: TabBarView(

@@ -758,9 +758,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.blue.shade50,
+        color: AppColors.primary.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.blue.shade100),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -771,12 +771,12 @@ class _ShiftScreenState extends State<ShiftScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade100,
+                  color: AppColors.primary.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
                   Icons.access_time_rounded,
-                  color: Colors.blue.shade800,
+                  color: AppColors.primary,
                   size: 22,
                 ),
               ),
@@ -790,7 +790,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Colors.blue.shade900,
+                        color: AppColors.primary,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -798,7 +798,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                       refFmt,
                       style: TextStyle(
                         fontSize: 11,
-                        color: Colors.blue.shade700,
+                        color: AppColors.primary,
                       ),
                     ),
                   ],
@@ -1625,78 +1625,97 @@ class _ShiftScreenState extends State<ShiftScreen> {
                 if (window != null) _dayDetailRow('Shift Timing', window),
                 if (shift?.isOpen ?? false)
                   _dayDetailRow('Required Hours', _requiredHoursLabel(shift!)),
-                _dayDetailRow('Grace Minutes',
-                    graceMin != null ? _fmtMins(graceMin) : '—'),
+                if (graceMin != null && graceMin > 0)
+                  _dayDetailRow('Grace Minutes', _fmtMins(graceMin)),
               ]),
               if (info.kind == _DayKind.working) ...[
-                const SizedBox(height: 16),
-                _dayDetailSection(
-                    'Attendance Details', Icons.access_time_rounded, [
-                  _dayDetailRow('Punch In', _fmtClock(record?['punchIn'])),
-                  _dayDetailRow('Punch Out', _fmtClock(record?['punchOut'])),
-                  _dayDetailRow(
-                      'Working Hours', _fmtWorkHours(record?['workHours'])),
-                ]),
-                const SizedBox(height: 16),
-                _dayDetailSection('Fine Details', Icons.money_off, [
-                  _dayDetailRow('Late Check-In Fine', _fmtMins(lateMin),
-                      valueColor: lateMin > 0 ? Colors.orange.shade700 : null),
-                  _dayDetailRow('Early Exit Fine', _fmtMins(earlyMin),
-                      valueColor: earlyMin > 0 ? Colors.orange.shade700 : null),
-                  _dayDetailRow('Break Fine', _fmtMins(breakFineMin),
-                      valueColor:
-                          breakFineMin > 0 ? Colors.orange.shade700 : null),
-                  _dayDetailRow('Permission Fine', _fmtMins(permissionFineMin),
-                      valueColor:
-                          permissionFineMin > 0 ? Colors.orange.shade700 : null),
-                  _dayDetailRow('Total Fine Minutes', _fmtMins(totalFineMin),
-                      valueColor: Colors.red.shade700),
-                  _dayDetailRow(
-                    'Fine Amount',
-                    '₹${NumberFormat('#,##0.00').format(totalFineAmount)}',
-                    valueColor: Colors.red.shade700,
-                    bold: true,
-                  ),
-                ]),
-                const SizedBox(height: 16),
-                _dayDetailSection(
-                    'Break Details', Icons.free_breakfast_outlined, [
-                  _dayDetailRow(
-                    'Break Allocated',
-                    breakAllocated != null
-                        ? _fmtMins(breakAllocated)
-                        : (policies.breakPolicy.isAllowed
-                            ? 'Not configured'
-                            : 'Not allowed'),
-                  ),
-                  _dayDetailRow('Break Used', _fmtMins(breakUsedMin)),
-                  _dayDetailRow('Break Remaining',
-                      breakRemaining != null ? _fmtMins(breakRemaining) : '—',
-                      valueColor: Colors.green.shade700),
-                ]),
-                const SizedBox(height: 16),
-                _dayDetailSection(
-                    'Permission Details', Icons.fact_check_outlined, [
-                  _dayDetailRow(
-                    'Permission Allocated',
-                    permAllocated != null
-                        ? _fmtMins(permAllocated)
-                        : (policies.permission.isAllowed
-                            ? 'Not configured'
-                            : 'Not allowed'),
-                  ),
-                  _dayDetailRow('Permission Used', _fmtMins(permUsed)),
-                  _dayDetailRow('Permission Remaining',
-                      permRemaining != null ? _fmtMins(permRemaining) : '—',
-                      valueColor: Colors.green.shade700),
-                ]),
-                const SizedBox(height: 16),
-                _dayDetailSection('Overtime Details', Icons.more_time_rounded, [
-                  _dayDetailRow('Overtime Buffer',
-                      otBuffer != null ? _fmtMins(otBuffer) : '—'),
-                  _dayDetailRow('Earned Overtime', _fmtMins(earnedOt),
-                      valueColor: earnedOt > 0 ? Colors.green.shade700 : null),
-                ]),
+                if (_attendanceRows(record).isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  _dayDetailSection('Attendance Details',
+                      Icons.access_time_rounded, _attendanceRows(record)),
+                ],
+                if (totalFineMin > 0 || totalFineAmount > 0) ...[
+                  const SizedBox(height: 16),
+                  _dayDetailSection('Fine Details', Icons.money_off, [
+                    if (lateMin > 0)
+                      _dayDetailRow('Late Check-In Fine', _fmtMins(lateMin),
+                          valueColor: Colors.orange.shade700),
+                    if (earlyMin > 0)
+                      _dayDetailRow('Early Exit Fine', _fmtMins(earlyMin),
+                          valueColor: Colors.orange.shade700),
+                    if (breakFineMin > 0)
+                      _dayDetailRow('Break Fine', _fmtMins(breakFineMin),
+                          valueColor: Colors.orange.shade700),
+                    if (permissionFineMin > 0)
+                      _dayDetailRow(
+                          'Permission Fine', _fmtMins(permissionFineMin),
+                          valueColor: Colors.orange.shade700),
+                    if (totalFineMin > 0)
+                      _dayDetailRow('Total Fine Minutes', _fmtMins(totalFineMin),
+                          valueColor: Colors.red.shade700),
+                    if (totalFineAmount > 0)
+                      _dayDetailRow(
+                        'Fine Amount',
+                        '₹${NumberFormat('#,##0.00').format(totalFineAmount)}',
+                        valueColor: Colors.red.shade700,
+                        bold: true,
+                      ),
+                  ]),
+                ],
+                Builder(builder: (_) {
+                  final breakRows = <Widget>[
+                    if (breakAllocated != null && breakAllocated > 0)
+                      _dayDetailRow('Break Allocated', _fmtMins(breakAllocated)),
+                    if (breakUsedMin > 0)
+                      _dayDetailRow('Break Used', _fmtMins(breakUsedMin)),
+                    if (breakRemaining != null && breakRemaining > 0)
+                      _dayDetailRow(
+                          'Break Remaining', _fmtMins(breakRemaining),
+                          valueColor: Colors.green.shade700),
+                  ];
+                  if (breakRows.isEmpty) return const SizedBox.shrink();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 16),
+                      _dayDetailSection('Break Details',
+                          Icons.free_breakfast_outlined, breakRows),
+                    ],
+                  );
+                }),
+                Builder(builder: (_) {
+                  final permRows = <Widget>[
+                    if (permAllocated != null && permAllocated > 0)
+                      _dayDetailRow(
+                          'Permission Allocated', _fmtMins(permAllocated)),
+                    if (permUsed > 0)
+                      _dayDetailRow('Permission Used', _fmtMins(permUsed)),
+                    if (permRemaining != null && permRemaining > 0)
+                      _dayDetailRow(
+                          'Permission Remaining', _fmtMins(permRemaining),
+                          valueColor: Colors.green.shade700),
+                  ];
+                  if (permRows.isEmpty) return const SizedBox.shrink();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 16),
+                      _dayDetailSection('Permission Details',
+                          Icons.fact_check_outlined, permRows),
+                    ],
+                  );
+                }),
+                if ((otBuffer != null && otBuffer > 0) || earnedOt > 0) ...[
+                  const SizedBox(height: 16),
+                  _dayDetailSection(
+                      'Overtime Details', Icons.more_time_rounded, [
+                    if (otBuffer != null && otBuffer > 0)
+                      _dayDetailRow('Overtime Buffer', _fmtMins(otBuffer)),
+                    if (earnedOt > 0)
+                      _dayDetailRow('Earned Overtime', _fmtMins(earnedOt),
+                          valueColor: Colors.green.shade700),
+                  ]),
+                ],
               ] else if (!hasRecord) ...[
                 const SizedBox(height: 16),
                 Text(
@@ -1720,7 +1739,19 @@ class _ShiftScreenState extends State<ShiftScreen> {
     );
   }
 
+  List<Widget> _attendanceRows(Map<String, dynamic>? record) {
+    final punchIn = _fmtClock(record?['punchIn']);
+    final punchOut = _fmtClock(record?['punchOut']);
+    final workHours = _fmtWorkHours(record?['workHours']);
+    return [
+      if (punchIn != '--:--') _dayDetailRow('Punch In', punchIn),
+      if (punchOut != '--:--') _dayDetailRow('Punch Out', punchOut),
+      if (workHours != '—') _dayDetailRow('Working Hours', workHours),
+    ];
+  }
+
   Widget _dayDetailSection(String title, IconData icon, List<Widget> rows) {
+    if (rows.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

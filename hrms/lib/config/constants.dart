@@ -104,6 +104,20 @@ class AppConstants {
   /// When false, only on-device face detection runs; no server-side face matching.
   static const bool enableAttendanceFaceMatching = false;
 
+  /// Punch/break selfies captured BEFORE this instant were stored upside-down:
+  /// the front-camera EXIF rotation was stripped server-side (Cloudinary) before
+  /// the capture-time orientation bake shipped, so the saved pixels are rotated
+  /// 180°. Those images are rotated 180° on display to look correct. Selfies
+  /// captured at/after this instant already store upright pixels and render as-is.
+  ///
+  /// SET THIS to the UTC instant the build containing the selfie-orientation fix
+  /// goes live. Any selfie taken before it is treated as a legacy (flipped) image.
+  static final DateTime selfieOrientationFixCutoffUtc = DateTime.utc(
+    2026,
+    6,
+    16,
+  );
+
   /// When true, show the lead/form fill step on arrived screen after getting a call (task).
   /// When false, form step is hidden and task can be completed without filling the form (code remains, just not shown).
   static const bool showLeadFormAfterCall = false;

@@ -5819,7 +5819,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   final RequestService _requestService = RequestService();
   final AttendanceService _attendanceService = AttendanceService();
   DateTime _date = DateTime.now();
-  String _type = 'both';
+  String _type = 'lateArrival';
+  // Planned out/in window — only used for the 'both' (custom-time) type.
+  TimeOfDay? _fromTime;
+  TimeOfDay? _toTime;
   final TextEditingController _minutesController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
   bool _isSubmitting = false;
@@ -6029,6 +6032,61 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         _showLimitWarning = false;
       });
     }
+  }
+
+  /// 24h "HH:mm" wire format expected by the backend.
+  String _formatTimeHHmm(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  Future<void> _pickTime({required bool isFrom}) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: (isFrom ? _fromTime : _toTime) ?? TimeOfDay.now(),
+    );
+    if (picked != null) {
+      setState(() {
+        if (isFrom) {
+          _fromTime = picked;
+        } else {
+          _toTime = picked;
+        }
+      });
+    }
+  }
+
+  /// Grey tappable card showing a selected time (or a hint) — matches the date card.
+  Widget _buildTimeField({
+    required TimeOfDay? value,
+    required String hint,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        decoration: BoxDecoration(
+          color: AppColors.inputFill,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.schedule, size: 18, color: AppColors.primary),
+            const SizedBox(width: 10),
+            Text(
+              value != null ? value.format(context) : hint,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: value != null
+                    ? AppColors.textPrimary
+                    : AppColors.textCaption,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildPermissionLimitBanner(String message) {
@@ -6284,6 +6342,15 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       SnackBarUtils.showSnackBar(context, 'Reason is required', isError: true);
       return;
     }
+    // 'both' captures a planned out/in window; require both ends.
+    if (_type == 'both' && (_fromTime == null || _toTime == null)) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Select both From and To time',
+        isError: true,
+      );
+      return;
+    }
 
     // Disabled with quota > 0 → entire amount is fine (warn then allow, Scenario 3).
     if (!_enabled && _quotaMinutes > 0) {
@@ -6386,6 +6453,12 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       type: _type,
       requestedMinutes: minutes,
       reason: reason,
+      fromTime: _type == 'both' && _fromTime != null
+          ? _formatTimeHHmm(_fromTime!)
+          : null,
+      toTime: _type == 'both' && _toTime != null
+          ? _formatTimeHHmm(_toTime!)
+          : null,
     );
     if (!mounted) return;
     setState(() => _isSubmitting = false);
@@ -6470,7 +6543,6 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       ),
                       decoration: _fieldDecoration(),
                       items: const [
-                        DropdownMenuItem(value: 'both', child: Text('Both')),
                         DropdownMenuItem(
                           value: 'lateArrival',
                           child: Text('Late Arrival'),
@@ -6479,10 +6551,48 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                           value: 'earlyExit',
                           child: Text('Early Exit'),
                         ),
+                        DropdownMenuItem(value: 'both', child: Text('Both')),
                       ],
-                      onChanged: (v) => setState(() => _type = v ?? 'both'),
+                      onChanged: (v) =>
+                          setState(() => _type = v ?? 'lateArrival'),
                     ),
                     const SizedBox(height: 20),
+
+                    // Out/In window — only for the 'both' (custom-time) type.
+                    if (_type == 'both') ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _sectionLabel('From Time'),
+                                _buildTimeField(
+                                  value: _fromTime,
+                                  hint: 'Out',
+                                  onTap: () => _pickTime(isFrom: true),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _sectionLabel('To Time'),
+                                _buildTimeField(
+                                  value: _toTime,
+                                  hint: 'In',
+                                  onTap: () => _pickTime(isFrom: false),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                    ],
 
                     // Requested Minutes
                     _sectionLabel('Requested Minutes'),

@@ -13,6 +13,8 @@ const {
   createPermissionRequest,
   getPermissionRequests,
   cancelPermissionRequest,
+  permissionOut,
+  permissionIn,
   getPermissionBalance
 } = require('../controllers/requestController');
 
@@ -49,5 +51,7 @@ router.get('/permission', protect, getPermissionRequests);
 router.get('/permission/balance', protect, getPermissionBalance);
 router.post('/permission', protect, createPermissionRequest);
 router.patch('/permission/:id/cancel', protect, cancelPermissionRequest);
+router.post('/permission/:id/out', protect, permissionOut); // stamp actual step-out
+router.post('/permission/:id/in', protect, permissionIn);   // stamp return + compute overrun
 
 module.exports = router;

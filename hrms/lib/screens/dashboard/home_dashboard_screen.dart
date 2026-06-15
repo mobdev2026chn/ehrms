@@ -39,6 +39,8 @@ import '../../utils/salary_fine_summary.dart';
 import '../../utils/attendance_display_util.dart';
 import '../../utils/absent_alert_helper.dart';
 import '../../utils/rotational_shift_util.dart';
+import '../../utils/snackbar_utils.dart';
+import '../../utils/error_message_utils.dart';
 import '../attendance/shift_screen.dart';
 
 class HomeDashboardScreen extends StatefulWidget {
@@ -96,6 +98,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   /// Today's break summary (list + total) for the punch card.
   BreakSummary? _breakSummary;
+
+  /// Today's approved custom-time ('both') permission, if any. Drives the
+  /// Permission Out / Permission In control shown under the punch card.
+  Map<String, dynamic>? _todayPermission;
+  bool _isPermissionStamping = false;
 
   /// Overall performance rating from completed review cycles. Stays `null`
   /// until the summary loads; `<= 0` means performance has not been evaluated
@@ -369,6 +376,202 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
   }
 
+  /// Loads today's APPROVED custom-time ('both') permission so the punch card can
+  /// offer Permission Out / Permission In. Stores the first match in
+  /// [_todayPermission]; clears it when none applies. Non-fatal on error.
+  Future<void> _fetchTodayPermission() async {
+    try {
+      final result = await _requestService.getPermissionRequests(
+        status: 'Approved',
+      );
+      if (!mounted) return;
+      final data = result['data'];
+      final list = data is Map ? data['permissions'] : null;
+      Map<String, dynamic>? found;
+      if (list is List) {
+        final now = DateTime.now();
+        for (final raw in list) {
+          if (raw is! Map) continue;
+          final p = Map<String, dynamic>.from(raw);
+          if (p['type']?.toString() != 'both') continue;
+          final d = DateTime.tryParse(p['date']?.toString() ?? '')?.toLocal();
+          if (d == null ||
+              d.year != now.year ||
+              d.month != now.month ||
+              d.day != now.day) {
+            continue;
+          }
+          found = p;
+          break;
+        }
+      }
+      setState(() => _todayPermission = found);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[TodayPermission] ERROR | $e');
+    }
+  }
+
+  /// Stamp Permission Out ([isOut] true) or Permission In on today's approved
+  /// permission, then refresh. On Permission In with overrun, warn that a fine
+  /// was applied for that day.
+  Future<void> _handlePermissionStamp(bool isOut) async {
+    final id = _todayPermission?['_id']?.toString();
+    if (id == null || id.isEmpty || _isPermissionStamping) return;
+    setState(() => _isPermissionStamping = true);
+    final result = isOut
+        ? await _requestService.permissionOut(id)
+        : await _requestService.permissionIn(id);
+    if (!mounted) return;
+    setState(() => _isPermissionStamping = false);
+
+    if (result['success'] == true) {
+      if (!isOut) {
+        final data = result['data'];
+        final overrun = data is Map
+            ? (num.tryParse('${data['overrunMinutes'] ?? 0}') ?? 0)
+            : 0;
+        SnackBarUtils.showSnackBar(
+          context,
+          overrun > 0
+              ? 'Permission In recorded. You overran by ${overrun.toInt()} min — '
+                    'a fine will apply for today.'
+              : 'Permission In recorded.',
+          isError: overrun > 0,
+        );
+      } else {
+        SnackBarUtils.showSnackBar(context, 'Permission Out recorded.');
+      }
+      await _fetchTodayPermission();
+    } else {
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.sanitizeForDisplay(
+          result['message']?.toString(),
+          fallback: 'Failed to record permission ${isOut ? 'out' : 'in'}',
+        ),
+        isError: true,
+      );
+    }
+  }
+
+  /// Permission Out / In control rendered under the punch card. Returns an empty
+  /// box unless an approved custom-time permission exists for today.
+  Widget _buildPermissionStampCard() {
+    final p = _todayPermission;
+    if (p == null) return const SizedBox.shrink();
+
+    final hasOut = (p['actualOutAt']?.toString().trim().isNotEmpty) ?? false;
+    final hasIn = (p['actualInAt']?.toString().trim().isNotEmpty) ?? false;
+    final from = p['fromTime']?.toString() ?? '';
+    final to = p['toTime']?.toString() ?? '';
+    final windowLabel = (from.isNotEmpty && to.isNotEmpty)
+        ? '$from – $to'
+        : '${p['requestedMinutes'] ?? ''} min';
+    final overrun = num.tryParse('${p['overrunMinutes'] ?? 0}') ?? 0;
+
+    final bool actionable = !hasIn;
+    final bool isOutAction = !hasOut;
+    final String buttonLabel = isOutAction ? 'Permission Out' : 'Permission In';
+    final IconData buttonIcon =
+        isOutAction ? Icons.logout_rounded : Icons.login_rounded;
+
+    String statusLine;
+    if (!hasOut) {
+      statusLine = 'Approved permission ($windowLabel). Tap when you step out.';
+    } else if (!hasIn) {
+      statusLine = 'Out since ${_fmtStamp(p['actualOutAt'])}. Tap when you return.';
+    } else {
+      statusLine = overrun > 0
+          ? 'Completed — overran by ${overrun.toInt()} min (fine applied).'
+          : 'Completed within the approved window.';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.event_available_rounded,
+              color: AppColors.primary, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Permission',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  statusLine,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textCaption,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (actionable)
+            ElevatedButton.icon(
+              onPressed:
+                  _isPermissionStamping ? null : () => _handlePermissionStamp(isOutAction),
+              icon: _isPermissionStamping
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(buttonIcon, size: 18),
+              label: Text(buttonLabel),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+            )
+          else
+            Icon(Icons.check_circle_rounded,
+                color: Colors.green.shade500, size: 24),
+        ],
+      ),
+    );
+  }
+
+  /// Local "hh:mm a" for an ISO timestamp; '-' when unparseable.
+  String _fmtStamp(dynamic value) {
+    final d = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
+    if (d == null) return '-';
+    return DateFormat('hh:mm a').format(d);
+  }
+
   Future<void> _loadData() async {
     // Single-flight: ignore overlapping triggers while a load is already running
     // so we don't fire duplicate parallel request bursts.
@@ -443,6 +646,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final monthFuture = _fetchMonthAttendance(forceRefresh: true);
       final loansFuture = _fetchActiveLoans();
       final breakFuture = _fetchBreakSummary();
+      final permissionFuture = _fetchTodayPermission();
       final perfFuture = _fetchPerformanceSummary();
       final fcmFuture = FcmService.getStoredNotifications();
       if (kDebugMode) {
@@ -630,6 +834,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           monthFuture.catchError((_) {}),
           loansFuture.catchError((_) {}),
           breakFuture.catchError((_) {}),
+          permissionFuture.catchError((_) {}),
           perfFuture.catchError((_) {}),
           enrichFuture.catchError((_) {}),
           salaryFuture.catchError((_) {}),
@@ -1767,11 +1972,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           context,
         ).push(MaterialPageRoute(builder: (_) => const RequestPayslipScreen())),
       ),
-      (
-        Icons.access_time_outlined,
-        'Attendance History',
-        () => onNavigate?.call(4, subTabIndex: 1),
-      ),
+      // (
+      //   Icons.access_time_outlined,
+      //   'Attendance History',
+      //   () => onNavigate?.call(4, subTabIndex: 1),
+      // ),
       // (
       //   Icons.calendar_month_outlined,
       //   'Shifts',
@@ -2217,7 +2422,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               _todayCelebrationsLabel(),
               style: TextStyle(
                 fontSize: 11,
-                color: const Color(0xFF1F2937).withValues(alpha: 0.75),
+                color: const Color(0xFF1F2937).withValues(alpha: 0.15),
               ),
             ),
             const SizedBox(height: 4),
@@ -2332,16 +2537,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       controller: scrollController,
                       children: [
                         if (_todayCelebrations.isNotEmpty) ...[
-                          for (final c in _todayCelebrations)
-                            _buildCelebrationTile(c, isToday: true),
+                          ..._buildGroupedCelebrationTiles(
+                            _todayCelebrations,
+                            isToday: true,
+                          ),
                           const SizedBox(height: 8),
                         ],
                         if (_isAdminLike &&
                             _upcomingCelebrations.isNotEmpty) ...[
                           _buildCelebrationSectionLabel('Upcoming'),
                           const SizedBox(height: 8),
-                          for (final c in _upcomingCelebrations)
-                            _buildCelebrationTile(c, isToday: false),
+                          ..._buildGroupedCelebrationTiles(
+                            _upcomingCelebrations,
+                            isToday: false,
+                          ),
                         ],
                         if (_todayCelebrations.isEmpty &&
                             (!_isAdminLike ||
@@ -2384,15 +2593,84 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
-  Widget _buildCelebrationSectionLabel(String label) {
-    return Text(
-      label,
-      style: const TextStyle(
-        fontSize: 13,
-        fontWeight: FontWeight.w700,
-        color: Color(0xFF64748B),
-        letterSpacing: 0.3,
-      ),
+  /// Splits a mixed celebration list into Birthdays and Work Anniversaries,
+  /// each under its own section label (birthdays first). Sections with no
+  /// entries are omitted; whenever a section has at least one entry its label
+  /// is shown — so even a single birthday or single anniversary appears under
+  /// the correct header.
+  List<Widget> _buildGroupedCelebrationTiles(
+    List<dynamic> items, {
+    required bool isToday,
+  }) {
+    final birthdays = items.where((c) => !_isAnniversary(c)).toList();
+    final anniversaries = items.where((c) => _isAnniversary(c)).toList();
+    final widgets = <Widget>[];
+
+    if (birthdays.isNotEmpty) {
+      widgets.add(
+        _buildCelebrationSectionLabel(
+          birthdays.length == 1 ? 'Birthday' : 'Birthdays',
+          count: birthdays.length,
+        ),
+      );
+      widgets.add(const SizedBox(height: 10));
+      for (final c in birthdays) {
+        widgets.add(_buildCelebrationTile(c, isToday: isToday));
+      }
+    }
+
+    if (anniversaries.isNotEmpty) {
+      if (birthdays.isNotEmpty) widgets.add(const SizedBox(height: 16));
+      widgets.add(
+        _buildCelebrationSectionLabel(
+          anniversaries.length == 1
+              ? 'Work Anniversary'
+              : 'Work Anniversaries',
+          count: anniversaries.length,
+        ),
+      );
+      widgets.add(const SizedBox(height: 10));
+      for (final c in anniversaries) {
+        widgets.add(_buildCelebrationTile(c, isToday: isToday));
+      }
+    }
+
+    return widgets;
+  }
+
+  Widget _buildCelebrationSectionLabel(String label, {int? count}) {
+    return Row(
+      children: [
+        Container(
+          width: 3,
+          height: 14,
+          margin: const EdgeInsets.only(right: 8),
+          decoration: BoxDecoration(
+            color: AppColors.primary,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF334155),
+            letterSpacing: 0.2,
+          ),
+        ),
+        if (count != null) ...[
+          const SizedBox(width: 6),
+          Text(
+            '($count)',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF94A3B8),
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -2450,10 +2728,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         : (turningAge != null
               ? 'Birthday · turning $turningAge ${turningAge == 1 ? 'year' : 'years'}'
               : 'Birthday');
-    final datePart = displayDate.isNotEmpty ? ' · $displayDate' : '';
     final subtitle = isToday
-        ? '$typeLabel$datePart'
-        : '$typeLabel · ${daysLeft == 1 ? '1 day left' : '$daysLeft days left'}$datePart';
+        ? typeLabel
+        : '$typeLabel · ${daysLeft == 1 ? '1 day left' : '$daysLeft days left'}';
     final accentColor = AppColors.primary;
 
     return Container(
@@ -3362,6 +3639,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             ),
             const SizedBox(height: 16),
           ],
+          // Permission Out / In for an approved custom-time permission today.
+          // Shown regardless of punch state (the window may start before punch-in).
+          _buildPermissionStampCard(),
           // _buildTodayAttendanceSubCard(
           //   showCalendarIconInHeader: false,
           //   standaloneDashboardCard: true,

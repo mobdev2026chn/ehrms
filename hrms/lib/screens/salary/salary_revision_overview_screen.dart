@@ -156,7 +156,7 @@ class _EmployeeHeader extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFE3F2FD),
+        color: AppColors.primary.withOpacity(0.12),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -164,7 +164,7 @@ class _EmployeeHeader extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 28,
-            backgroundColor: AppColors.secondary,
+            backgroundColor: AppColors.primary,
             child: const Icon(Icons.person, color: Colors.white, size: 32),
           ),
           const SizedBox(width: 14),
@@ -263,6 +263,7 @@ class _ChartCard extends StatelessWidget {
               style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
             ),
           ),
+          SizedBox(height: 12),
           Expanded(
             child: LineChart(
               LineChartData(

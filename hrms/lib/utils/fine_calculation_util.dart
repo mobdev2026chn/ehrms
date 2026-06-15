@@ -502,18 +502,40 @@ bool fineConfigHasRules(Map<String, dynamic>? fineCalculation) {
 /// Finds the fine rule that applies to [actionApplyToType]
 /// ('lateArrival' | 'earlyExit' | 'both'). A rule matches when its `applyTo`
 /// is null/empty, equals the action, or equals 'both' — mirroring the backend.
+///
+/// Fallback (also mirroring the backend): when no direct/`both`/empty rule
+/// exists, the leftover minutes are still fined by whatever side rule IS
+/// configured. The backend fines a `both` request's over-quota minutes by
+/// splitting them and applying the lateArrival rule to the late part and the
+/// earlyExit rule to the early part (and an open-shift earlyExit checkout reuses
+/// the lateArrival rule — see attendanceController calculateFineAmount). The app
+/// has no late/early split for a single "Requested Minutes" input, so for
+/// `both`/`earlyExit` it falls back to the lateArrival rule (then earlyExit) so
+/// the preview is non-zero instead of wrongly showing ₹0.
 Map<String, dynamic>? matchFineRuleForAction(
   Map<String, dynamic>? fineCalculation,
   String actionApplyToType,
 ) {
   final rulesRaw = fineCalculation?['fineRules'];
   if (rulesRaw is! List || rulesRaw.isEmpty) return null;
+
+  // Primary: no applyTo (= all), an exact match, or an explicit `both` rule.
   for (final raw in rulesRaw) {
     if (raw is! Map) continue;
-    final applyTo = raw['applyTo'];
-    final s = applyTo?.toString().trim() ?? '';
+    final s = raw['applyTo']?.toString().trim() ?? '';
     if (s.isEmpty || s == actionApplyToType || s == 'both') {
       return Map<String, dynamic>.from(raw);
+    }
+  }
+
+  // Fallback for `both`/`earlyExit`: reuse a side rule (lateArrival first).
+  if (actionApplyToType == 'both' || actionApplyToType == 'earlyExit') {
+    for (final pref in const ['lateArrival', 'earlyExit']) {
+      for (final raw in rulesRaw) {
+        if (raw is! Map) continue;
+        final s = raw['applyTo']?.toString().trim() ?? '';
+        if (s == pref) return Map<String, dynamic>.from(raw);
+      }
     }
   }
   return null;

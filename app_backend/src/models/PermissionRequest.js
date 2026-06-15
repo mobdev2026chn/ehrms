@@ -20,6 +20,17 @@ const permissionRequestSchema = new mongoose.Schema(
       required: true,
     },
     requestedMinutes: { type: Number, required: true, min: 1 },
+    // Planned out/in window for a `both` (custom-time) permission, stored as
+    // "HH:mm" strings. Optional — only set when the employee picks a window.
+    fromTime: { type: String, trim: true },
+    toTime: { type: String, trim: true },
+    // Real stamps recorded when the employee taps Permission Out / Permission In
+    // on the dashboard. actualMinutes is the measured out→in duration; any
+    // overrunMinutes beyond requestedMinutes is fined for that day.
+    actualOutAt: { type: Date },
+    actualInAt: { type: Date },
+    actualMinutes: { type: Number, default: 0, min: 0 },
+    overrunMinutes: { type: Number, default: 0, min: 0 },
     reason: { type: String, required: true, trim: true },
     status: {
       type: String,

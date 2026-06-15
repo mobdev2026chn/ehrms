@@ -644,6 +644,8 @@ class RequestService {
     required String type,
     required int requestedMinutes,
     required String reason,
+    String? fromTime,
+    String? toTime,
   }) async {
     try {
       await _setToken();
@@ -654,6 +656,8 @@ class RequestService {
           'type': type,
           'requestedMinutes': requestedMinutes,
           'reason': reason,
+          if (fromTime != null && fromTime.isNotEmpty) 'fromTime': fromTime,
+          if (toTime != null && toTime.isNotEmpty) 'toTime': toTime,
         },
       );
       final body = response.data;
@@ -714,6 +718,42 @@ class RequestService {
       return {'success': false, 'message': _handleException(e)};
     }
   }
+
+  /// Stamp Permission Out / Permission In for an approved custom-time permission.
+  /// [action] is 'out' or 'in'. On 'in', the backend returns actualMinutes and
+  /// overrunMinutes so the caller can warn when a fine was applied.
+  Future<Map<String, dynamic>> _permissionStamp(String id, String action) async {
+    try {
+      await _setToken();
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/requests/permission/$id/$action',
+      );
+      final body = response.data;
+      punchFlowLog(
+        '[Permission][App][permission$action] status=${response.statusCode} '
+        'id=$id raw=$body',
+      );
+      if (body != null && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? body};
+      }
+      return {'success': false, 'message': 'Failed to record permission $action'};
+    } on DioException catch (e) {
+      punchFlowLog(
+        '[Permission][App][permission$action] DioException '
+        'status=${e.response?.statusCode} data=${e.response?.data}',
+      );
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      punchFlowLog('[Permission][App][permission$action] error=$e');
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  Future<Map<String, dynamic>> permissionOut(String id) =>
+      _permissionStamp(id, 'out');
+
+  Future<Map<String, dynamic>> permissionIn(String id) =>
+      _permissionStamp(id, 'in');
 
   Future<Map<String, dynamic>> getPermissionBalance({
     int? month,

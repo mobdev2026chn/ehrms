@@ -19,6 +19,20 @@ class StaffCustomFieldsService {
     return a == b;
   }
 
+  /// Treats a field as active only when its flag is an affirmative value.
+  /// Accepts bool `true`, `"true"`, `1`, `"1"` (different JSON sources serialize
+  /// the toggle differently); everything else (false/0/null/missing) is inactive
+  /// so deactivated fields never reach the profile UI.
+  static bool _isFieldActive(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value == 1;
+    if (value is String) {
+      final v = value.trim().toLowerCase();
+      return v == 'true' || v == '1';
+    }
+    return false;
+  }
+
   static String _normalizeToken(String? token) {
     if (token == null) return '';
     var t = token.trim();
@@ -50,7 +64,7 @@ class StaffCustomFieldsService {
         for (final e in raw) {
           if (e is! Map) continue;
           final m = Map<String, dynamic>.from(e);
-          if (m['isActive'] != true) continue;
+          if (!_isFieldActive(m['isActive'])) continue;
           out.add(m);
         }
         out.sort((a, b) {

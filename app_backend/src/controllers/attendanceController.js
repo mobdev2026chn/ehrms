@@ -1054,6 +1054,11 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         let permissionRemainingMinutes = 0;  // day's allowance left
         let permissionFineMinutes = 0;       // used beyond the day's allowance
         let permissionFineAmount = 0;
+        // Custom-time (`both`) overrun: minutes the actual Permission Out→In duration
+        // exceeded the requested window (stored on PermissionRequest.overrunMinutes by
+        // the permissionIn endpoint). Fined with the same per-day formula as late/early.
+        let permissionOverrunMinutes = 0;
+        let permissionOverrunFineAmount = 0;
         try {
             const permPolicy = dbShiftTimings?.permissionPolicy || null;
             const permEnabled = permPolicy?.enabled === true;
@@ -1069,7 +1074,20 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             if (Array.isArray(approvedPermissions)) {
                 for (const req of approvedPermissions) {
                     usedToday += Math.max(0, Math.floor(Number(req?.requestedMinutes) || 0));
+                    permissionOverrunMinutes += Math.max(0, Math.floor(Number(req?.overrunMinutes) || 0));
                 }
+            }
+            // Overrun is fined whenever fines are enabled (it is the employee exceeding
+            // their OWN approved window), independent of the shift's daily-allowance policy.
+            if (permissionOverrunMinutes > 0 && fineConfig && fineConfig.enabled && effectiveDailyNet > 0) {
+                permissionOverrunFineAmount = calculateFineAmount(
+                    permissionOverrunMinutes,
+                    'both',
+                    fineConfig,
+                    effectiveDailyNet,
+                    shiftHours,
+                    effectiveDailyGross
+                );
             }
             permissionApprovedMinutes = usedToday;
             permissionConsumedMinutes = usedToday;
@@ -1108,7 +1126,7 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         const earlyFineAmount = (fineConfig && fineConfig.enabled) ? (earlyFine.fineAmount || 0) : 0;
 
         const fineHours = lateFine.lateMinutes + earlyFine.earlyMinutes;
-        const fineAmount = lateFineAmount + earlyFineAmount;
+        const fineAmount = lateFineAmount + earlyFineAmount + permissionOverrunFineAmount;
 
         // Reference shiftBased breakdown for manual testing (actual lines may use fineRules; see [Fine][formula][test] per leg)
         const testTag = '[Fine][formula][test]';
@@ -1172,7 +1190,9 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             permissionConsumedMinutes,
             permissionRemainingMinutes,
             permissionFineMinutes,
-            permissionFineAmount
+            permissionFineAmount,
+            permissionOverrunMinutes,
+            permissionOverrunFineAmount
         };
         console.log('[Fine] Result:', JSON.stringify(out));
         // Formula summary with check-in/check-out times for debugging why lateMinutes might be 0
@@ -2700,7 +2720,8 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         );
     const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
     const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
-    const totalFineAmount = lateFineAmount + earlyFineAmount;
+    const permissionOverrunFineAmount = Number(fineResult.permissionOverrunFineAmount) || 0;
+    const totalFineAmount = lateFineAmount + earlyFineAmount + permissionOverrunFineAmount;
 
     attendance.lateMinutes = fineResult.lateMinutes ?? attendance.lateMinutes ?? 0;
     attendance.earlyMinutes = fineResult.earlyMinutes ?? 0;
@@ -2715,6 +2736,8 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     attendance.permissionRemainingMinutes = fineResult.permissionRemainingMinutes ?? 0;
     attendance.permissionFineMinutes = fineResult.permissionFineMinutes ?? 0;
     attendance.permissionFineAmount = fineResult.permissionFineAmount ?? 0;
+    attendance.permissionOverrunMinutes = fineResult.permissionOverrunMinutes ?? 0;
+    attendance.permissionOverrunFineAmount = permissionOverrunFineAmount;
     // For app punches, prefer app-calculated values so DB matches app formula/logs.
     if (
         !useAppProvidedFine &&
@@ -3741,7 +3764,10 @@ const getMonthAttendance = async (req, res) => {
                 if (isEligible && fineMinutes > 0 && fineConfig && fineConfig.enabled && shiftHours > 0 && dailyGrossForEnrich > 0) {
                     const lateAmt = lateMin > 0 ? calculateFineAmount(lateMin, 'lateArrival', fineConfig, dailySalaryForEnrich, shiftHours, dailyGrossForEnrich) : 0;
                     const earlyAmt = earlyMin > 0 ? calculateFineAmount(earlyMin, 'earlyExit', fineConfig, dailySalaryForEnrich, shiftHours, dailyGrossForEnrich) : 0;
-                    const recomputed = Math.round((lateAmt + earlyAmt) * 100) / 100;
+                    // Permission overrun fine was computed + stored at punch time; carry it
+                    // through so the recompute doesn't drop it back to just late+early.
+                    const overrunAmt = Math.max(0, Number(doc.permissionOverrunFineAmount) || 0);
+                    const recomputed = Math.round((lateAmt + earlyAmt + overrunAmt) * 100) / 100;
                     if (Number(doc.fineAmount) !== recomputed) {
                         console.log('[getMonthAttendance][Fine recompute]', { date: doc.date, appliedShiftId: doc.appliedShiftId ? String(doc.appliedShiftId) : null, shiftHours, lateMin, earlyMin, dailyGross: Math.round(dailyGrossForEnrich * 100) / 100, was: doc.fineAmount, now: recomputed });
                     }

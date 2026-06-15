@@ -59,7 +59,10 @@ const attendanceSchema = new mongoose.Schema(
     /** Permission used beyond the shift's per-day allowance (exceed minutes), and the fine charged on it. */
     permissionFineMinutes: { type: Number, default: 0 },
     permissionFineAmount: { type: Number, default: 0 },
-    /** Total fine amount in currency (late + early) from payroll fine calculation. */
+    /** Minutes a custom-time (`both`) permission's actual out→in exceeded the requested window, and the fine charged on them. Folded into fineAmount. */
+    permissionOverrunMinutes: { type: Number, default: 0 },
+    permissionOverrunFineAmount: { type: Number, default: 0 },
+    /** Total fine amount in currency (late + early + permission overrun) from payroll fine calculation. */
     fineAmount: Number,
     break: {
       totalBreakMin: { type: Number, default: 0 },

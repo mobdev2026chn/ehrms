@@ -1264,7 +1264,29 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return true;
   }
 
-  void _showSelfieDialog(String imageUrl, [String title = "Selfie View"]) {
+  /// Legacy punch/break selfies (captured before
+  /// [AppConstants.selfieOrientationFixCutoffUtc]) were stored upside-down, so
+  /// the displayed image must be rotated 180°. Newer selfies store upright pixels
+  /// and render as-is. Returns true when [punchWhen] predates the fix.
+  bool _selfieNeedsFlip(dynamic punchWhen) {
+    final when = _parseAnyDateTimeToLocal(punchWhen);
+    if (when == null) return false;
+    return when.toUtc().isBefore(AppConstants.selfieOrientationFixCutoffUtc);
+  }
+
+  void _showSelfieDialog(
+    String imageUrl, [
+    String title = "Selfie View",
+    bool flip = false,
+  ]) {
+    Widget image = Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => _buildImageNotFoundPlaceholder(),
+    );
+    if (flip) {
+      image = RotatedBox(quarterTurns: 2, child: image);
+    }
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -1284,14 +1306,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 ],
               ),
             ),
-            SizedBox(
-              width: double.infinity,
-              child: Image.network(
-                imageUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _buildImageNotFoundPlaceholder(),
-              ),
-            ),
+            SizedBox(width: double.infinity, child: image),
           ],
         ),
       ),
@@ -2189,6 +2204,23 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         final breakDuration = action == 'BREAK_END'
             ? _formatBreakDuration(log['totalBreakSeconds'])
             : null;
+        // Punch tiles carry the selfie under action-specific keys; structured
+        // logs may omit it, so fall back to the record-level punch selfie URLs.
+        final selfie = switch (action) {
+          'PUNCH_OUT' =>
+            log['punchOutSelfie'] ??
+                log['punchOutSelfieUrl'] ??
+                log['selfieUrl'] ??
+                log['selfie'] ??
+                punchOutSelfieUrl,
+          'PUNCH_IN' =>
+            log['punchInSelfie'] ??
+                log['punchInSelfieUrl'] ??
+                log['selfieUrl'] ??
+                log['selfie'] ??
+                punchInSelfieUrl,
+          _ => log['selfieUrl'] ?? log['selfie'],
+        };
         final headlineParts = [
           _formatLogTime(when),
           if (branchName != null && branchName.trim().isNotEmpty)
@@ -2203,8 +2235,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             log['performedByName']?.toString(),
             when,
           ),
-          'imageUrl': log['selfieUrl']?.toString(),
+          'imageUrl': selfie?.toString(),
           'tileIcon': null,
+          'flip': _selfieNeedsFlip(when),
           'sortMs': logSortMsFrom(when),
         });
       }
@@ -2221,6 +2254,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'subtitle': _formatLogByline(null, punchOut),
           'imageUrl': punchOutSelfieUrl,
           'tileIcon': null,
+          'flip': _selfieNeedsFlip(punchOut),
           'sortMs': logSortMsFrom(punchOut),
         });
       }
@@ -2236,6 +2270,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           'subtitle': _formatLogByline(null, punchIn),
           'imageUrl': punchInSelfieUrl,
           'tileIcon': null,
+          'flip': _selfieNeedsFlip(punchIn),
           'sortMs': logSortMsFrom(punchIn),
         });
       }
@@ -2263,6 +2298,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final subtitle = item['subtitle']?.toString();
     final headline = item['headline']?.toString() ?? '';
     final tileIcon = item['tileIcon']?.toString();
+    final flip = item['flip'] == true;
 
     Widget leading;
     if (tileIcon == 'rejection') {
@@ -2308,21 +2344,26 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       );
     } else if (hasImage) {
       // Punch-in / punch-out selfie — render a proper, tappable thumbnail.
+      // Legacy selfies (stored upside-down before the orientation fix) are
+      // rotated 180° here so they display upright.
       leading = GestureDetector(
-        onTap: () => _showSelfieDialog(imageUrl, item['title']),
+        onTap: () => _showSelfieDialog(imageUrl, item['title'], flip),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: AppColors.primary.withValues(alpha: 0.25),
-              ),
-              image: DecorationImage(
-                image: CachedNetworkImageProvider(imageUrl),
-                fit: BoxFit.cover,
+          child: RotatedBox(
+            quarterTurns: flip ? 2 : 0,
+            child: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: AppColors.primary.withValues(alpha: 0.25),
+                ),
+                image: DecorationImage(
+                  image: CachedNetworkImageProvider(imageUrl),
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
           ),

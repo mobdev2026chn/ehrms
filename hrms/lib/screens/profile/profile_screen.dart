@@ -361,6 +361,16 @@ class _ProfileScreenState extends State<ProfileScreen>
                     ),
                     const SizedBox(height: 24),
                   ],
+                  if (_fieldsForCategory('Profile Information').isNotEmpty) ...[
+                    _buildCardSection(
+                      icon: Icons.account_circle_outlined,
+                      title: 'Profile Information',
+                      content: _buildCustomFieldColumnForCard(
+                        _fieldsForCategory('Profile Information'),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
                   _buildPersonalSection(),
                   const SizedBox(height: 24),
                   _buildEmploymentInfoSection(),
@@ -726,38 +736,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: rows,
-    );
-  }
-
-  Widget _buildHeaderProfileCustomFields() {
-    final fields = _fieldsForCategory('Profile Information');
-    if (fields.isEmpty) return const SizedBox.shrink();
-    const labelStyle = TextStyle(
-      fontSize: 11,
-      fontWeight: FontWeight.w600,
-      color: Colors.white70,
-    );
-    const valueStyle = TextStyle(
-      fontSize: _profileValueSize,
-      fontWeight: FontWeight.w500,
-      color: Colors.white,
-    );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final f in fields) ...[
-          Text(
-            f['label']?.toString() ?? f['name']?.toString() ?? '',
-            style: labelStyle,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            _displayCustomFieldValue(f),
-            style: valueStyle,
-          ),
-          const SizedBox(height: 10),
-        ],
-      ],
     );
   }
 
