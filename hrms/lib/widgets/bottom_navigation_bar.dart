@@ -47,6 +47,10 @@ class AppBottomNavigationBar extends StatefulWidget {
   /// When false, hides the tea-break control for shifts with `breakPolicy.enabled == false`.
   final bool showBreakNavButton;
 
+  /// When false, the employee has no salary configured: the Punch button is
+  /// dimmed and shows a "Salary is not configured. Contact HR." tooltip.
+  final bool salaryConfigured;
+
   const AppBottomNavigationBar({
     super.key,
     this.currentIndex = 0,
@@ -60,6 +64,7 @@ class AppBottomNavigationBar extends StatefulWidget {
     this.activeBreakStartTime,
     this.onEndBreakTap,
     this.showBreakNavButton = true,
+    this.salaryConfigured = true,
   });
 
   static int getCurrentIndex(BuildContext context) {
@@ -442,7 +447,15 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
                   width: 72,
                   child: canRenderPunchButton
                       ? Center(
-                          child: GestureDetector(
+                          child: Tooltip(
+                            message: widget.salaryConfigured
+                                ? ''
+                                : 'Salary is not configured. Contact HR.',
+                            triggerMode: widget.salaryConfigured
+                                ? TooltipTriggerMode.manual
+                                : TooltipTriggerMode.tap,
+                            preferBelow: false,
+                            child: GestureDetector(
                             onTap: () {
                               HapticFeedback.mediumImpact();
                               _handleNavigation(context, 5);
@@ -459,6 +472,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
                                 duration: const Duration(milliseconds: 150),
                                 opacity:
                                     (widget.isPunchActionInProgress ||
+                                        !widget.salaryConfigured ||
                                         (widget.isPunchCompletedToday ??
                                             _isPunchCompletedToday))
                                     ? 0.5
@@ -510,6 +524,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
                                 ),
                               ),
                             ),
+                          ),
                           ),
                         )
                       : const SizedBox.shrink(),

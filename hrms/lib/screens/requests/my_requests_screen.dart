@@ -2105,6 +2105,22 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
         _totalAllowed > 0 ? _totalAllowed : _availableCasualLeaves,
       );
 
+  /// Combined allocated days across ALL leave types in the staff's template
+  /// (sum of every type's `days`). Half Day is excluded (its 0.5 is a
+  /// per-request duration, not an allocation) and types without a fixed
+  /// allocation (e.g. Unpaid Leave, days == null) contribute nothing.
+  double get _totalAllocatedAllTypes {
+    double sum = 0;
+    for (final e in _allowedTypes) {
+      if (e is! Map) continue;
+      final type = e['type'] as String?;
+      if (_isHalfDayLeave(type)) continue;
+      final d = e['days'];
+      if (d is num) sum += d.toDouble();
+    }
+    return sum;
+  }
+
   /// Remaining days for the selected leave type = its allocated days minus that
   /// type's used and pending days. This is what the entitlement card shows.
   double get _selectedTypeRemaining {
@@ -2188,13 +2204,16 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   /// Amber "Leave Entitlement" hero - shows the selected leave type's allocated
   /// days as the remaining figure (allocated - used - pending for that type).
   Widget _buildEntitlementCard() {
-    // Allocated days for the selected leave type (falls back to the overall
-    // template total when a type has no specific allocation).
-    final allocated = _allocatedForType(_leaveType) ?? _totalAllowed;
+    // Show the COMBINED entitlement across all leave types (sum of the
+    // template's per-type allocations), not just the selected type. Falls back
+    // to the backend overall total if the template carries no per-type days.
+    final allocated =
+        _totalAllocatedAllTypes > 0 ? _totalAllocatedAllTypes : _totalAllowed;
     final total = allocated;
-    final usedType = _usedForType(_leaveType);
-    final pendingType = _pendingForType(_leaveType);
-    final remaining = _selectedTypeRemaining;
+    final usedType = _usedLeaveDays;
+    final pendingType = _pendingLeaveDays;
+    final remaining = (total - usedType - pendingType)
+        .clamp(0.0, total > 0 ? total : double.infinity);
     final usedClamped = usedType > allocated ? allocated : usedType;
     final progress = total > 0 ? (usedClamped / total).clamp(0.0, 1.0) : 0.0;
     return Container(
@@ -2313,7 +2332,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       ),
       items: _allowedTypes.map((e) {
         final type = e['type'] as String? ?? '';
-        return DropdownMenuItem<String>(value: type, child: Text(type));
+        // Show the leave template's total allocated count next to the type.
+        // Skip Half Day (its 0.5 is a per-request duration, not an annual
+        // allocation) and Unpaid Leave / untyped allocations (days == null).
+        final days = (!_isHalfDayLeave(type) && e is Map) ? e['days'] : null;
+        final countLabel = days is num ? '  ·  ${_trimNum(days)} days' : '';
+        return DropdownMenuItem<String>(
+          value: type,
+          child: Text('$type$countLabel'),
+        );
       }).toList(),
       onChanged: (val) {
         setState(() {

@@ -88,6 +88,12 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   /// From company shift [breakPolicy.enabled] for today's [appliedShiftId] (tea-break icon).
   bool _showBreakNavForShiftPolicy = true;
+
+  /// Whether the employee has a salary configured (basicSalary > 0). When false,
+  /// punch-in is blocked and the Punch button shows a "contact HR" tooltip.
+  /// Defaults to true so the button isn't gated before profile data loads; the
+  /// punch-tap validation re-checks against fresh profile data regardless.
+  bool _salaryConfigured = true;
   Map<String, dynamic>? _activeBreak;
 
   /// Last-known break balance, shown instantly on the selfie screen.
@@ -1214,6 +1220,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         final staffRaw = data['staffData'];
         if (staffRaw is Map) {
           final staff = Map<String, dynamic>.from(staffRaw);
+          _updateSalaryConfigured(staff);
           final raw = staff['salaryDetailsAccessEnabled'];
           final enabled = raw == true;
           _logSalaryAccessTest(
@@ -1681,6 +1688,24 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   /// Fetches profile + today attendance for fingerprint validation (same data as attendance screen).
+  /// Salary is "configured" when staffData carries a salary map with a positive
+  /// basicSalary — same rule used by the home dashboard salary card.
+  bool _isSalaryConfiguredFromStaff(Map<String, dynamic>? staffData) {
+    final salary = staffData?['salary'];
+    if (salary is! Map) return false;
+    final basicSalary = salary['basicSalary'];
+    return basicSalary is num && basicSalary > 0;
+  }
+
+  /// Updates [_salaryConfigured] from a freshly fetched staffData map so the
+  /// Punch button tooltip/dim state reflects the latest HR configuration.
+  void _updateSalaryConfigured(Map<String, dynamic>? staffData) {
+    final configured = _isSalaryConfiguredFromStaff(staffData);
+    if (mounted && configured != _salaryConfigured) {
+      setState(() => _salaryConfigured = configured);
+    }
+  }
+
   Future<Map<String, dynamic>?> _fetchAttendanceValidationData() async {
     try {
       const validationTimeout = Duration(seconds: 12);
@@ -1705,6 +1730,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       final result = settled[1] as Map<String, dynamic>;
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
+      _updateSalaryConfigured(staffData);
       final templateId = staffData?['attendanceTemplateId'];
       punchFlowLog(
         '[PunchFlow] validation data settled in ${sw.elapsedMilliseconds}ms | '
@@ -2375,6 +2401,14 @@ class _DashboardScreenState extends State<DashboardScreen>
       }
     }
 
+    final salaryStaffData = data['staffData'] as Map<String, dynamic>?;
+    _updateSalaryConfigured(salaryStaffData);
+    if (!_isSalaryConfiguredFromStaff(salaryStaffData)) {
+      await _showValidationAlertDialog(
+        'Salary is not configured. Contact HR.',
+      );
+      return false;
+    }
     if (staffHasTemplate != true) {
       await _showValidationAlertDialog(
         'Attendance template is not assigned. Contact HR.',
@@ -3531,6 +3565,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             activeBreakStartTime: _activeBreakStartTime(),
             onEndBreakTap: _endBreakFlow,
             showBreakNavButton: _showBreakNavForShiftPolicy,
+            salaryConfigured: _salaryConfigured,
             onTap: (index) async {
               if (index == 6) {
                 if (_activeBreak != null) {

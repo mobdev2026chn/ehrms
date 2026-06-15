@@ -3608,7 +3608,7 @@ const getMonthAttendance = async (req, res) => {
         const Staff = require('../models/Staff');
         const Leave = require('../models/Leave');
         const { getRecordFineAmount } = require('./payrollController');
-        const { getEffectiveFineConfig } = require('../utils/fineCalculationHelper');
+        const { getEffectiveFineConfig, calculateFineAmount, resolveFineDenominatorDays } = require('../utils/fineCalculationHelper');
         const { getShiftTimings, calculateWorkHoursFromShift, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
 
         // Balance the load: these reads are independent of each other, so issue them on one concurrent
@@ -3692,9 +3692,20 @@ const getMonthAttendance = async (req, res) => {
         }
         const workingDaysFullMonth = daysInMonthForSalary - weeklyOffDaysFull - holidaysFull;
 
-        let dailySalaryForEnrich = 0;
+        let dailySalaryForEnrich = 0;   // daily NET (fixedPerHour derivation)
+        let dailyGrossForEnrich = 0;    // daily GROSS (shiftBased / rule base — the formula's base)
         try {
-            const thisMonthWorkingDays = workingDaysFullMonth;
+            // Per-day denominator follows the company day-basis (settings.payroll.fineCalculation.daysBasis):
+            // fixedDays / excludeWeekOffs (default) / calendarDays — SAME resolver used by check-in/out
+            // (calculateCombinedFine) and break fines, so history matches the stored/punch-time math.
+            // Falls back to full-month working days when month/week-off context is unavailable.
+            const thisMonthWorkingDays = resolveFineDenominatorDays({
+                company: companyForFine,
+                year: Number(year),
+                month1: Number(month),
+                weeklyOffPattern,
+                weeklyHolidays,
+            }) || workingDaysFullMonth;
             if (thisMonthWorkingDays > 0 && staffWithSalary && staffWithSalary.salary) {
                 const s = staffWithSalary.salary;
                 const gf = (s.basicSalary || 0) + (s.dearnessAllowance || 0) + (s.houseRentAllowance || 0) + (s.specialAllowance || 0);
@@ -3704,6 +3715,7 @@ const getMonthAttendance = async (req, res) => {
                 const empPF = (s.employeePFRate || 0) / 100 * (s.basicSalary || 0);
                 const empESI = (s.employeeESIRate || 0) / 100 * gross;
                 dailySalaryForEnrich = (gross - empPF - empESI) / thisMonthWorkingDays;
+                dailyGrossForEnrich = gross / thisMonthWorkingDays;
             }
         } catch (e) {
             console.warn('[getMonthAttendance] Could not compute daily salary for fine enrichment:', e?.message);
@@ -3721,11 +3733,36 @@ const getMonthAttendance = async (req, res) => {
                 // never a later reassignment (spec: future shift changes must not
                 // alter past attendance/fine).
                 const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary, doc.date ? new Date(doc.date) : new Date(), staffWithSalary?.joiningDate, null, doc.appliedShiftId || null) : {};
-                const shiftHours = Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
-                const hasFineMinutes = (Number(doc.fineHours) || 0) > 0 || (Number(doc.lateMinutes) || 0) > 0;
+                // Open shifts have no fixed window — their "shift hours" are the required
+                // daily work hours, not (end − start). Using start/end there would fabricate
+                // a 9h window and skew the per-hour rate.
+                const isOpenShift = String(shiftTimings.shiftType || '').toLowerCase().includes('open');
+                const shiftHours = isOpenShift
+                    ? (Number(shiftTimings.openWorkHours || shiftTimings.workHours) || 9)
+                    : Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
+
                 const status = (doc.status || '').trim().toLowerCase();
                 const isEligible = status === 'present' || status === 'approved' || (doc.leaveType || '').trim().toLowerCase() === 'half day';
-                if (hasFineMinutes && isEligible && !(Number(doc.fineAmount) > 0)) {
+                const lateMin = Math.max(0, Number(doc.lateMinutes) || 0);
+                const earlyMin = Math.max(0, Number(doc.earlyMinutes) || 0);
+                const fineMinutes = lateMin + earlyMin || (Number(doc.fineHours) || 0);
+
+                // Always (re)compute the day's late/early fine from the FORMULA using the day's
+                // allocated shift hours and daily GROSS — so attendance history reflects
+                // (dailyGross ÷ shiftHours) × (minutes ÷ 60) for the shift that applied that day,
+                // not a stale stored value computed against a since-changed shift. Stored minutes
+                // are already net of any waived permission, so the formula stays correct.
+                // (Break-overage fine is stored/shown separately under doc.break.)
+                if (isEligible && fineMinutes > 0 && fineConfig && fineConfig.enabled && shiftHours > 0 && dailyGrossForEnrich > 0) {
+                    const lateAmt = lateMin > 0 ? calculateFineAmount(lateMin, 'lateArrival', fineConfig, dailySalaryForEnrich, shiftHours, dailyGrossForEnrich) : 0;
+                    const earlyAmt = earlyMin > 0 ? calculateFineAmount(earlyMin, 'earlyExit', fineConfig, dailySalaryForEnrich, shiftHours, dailyGrossForEnrich) : 0;
+                    const recomputed = Math.round((lateAmt + earlyAmt) * 100) / 100;
+                    if (Number(doc.fineAmount) !== recomputed) {
+                        console.log('[getMonthAttendance][Fine recompute]', { date: doc.date, appliedShiftId: doc.appliedShiftId ? String(doc.appliedShiftId) : null, shiftHours, lateMin, earlyMin, dailyGross: Math.round(dailyGrossForEnrich * 100) / 100, was: doc.fineAmount, now: recomputed });
+                    }
+                    doc.fineAmount = recomputed;
+                } else if (isEligible && fineMinutes > 0 && !(Number(doc.fineAmount) > 0)) {
+                    // Fallback (no salary/shift config available): keep prior fill-when-zero behavior.
                     const amount = getRecordFineAmount(doc, dailySalaryForEnrich, shiftHours, fineConfig);
                     if (amount > 0) doc.fineAmount = amount;
                 }

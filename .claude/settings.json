@@ -32,7 +32,20 @@
       "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update fine calculation, break/attendance/request flows *)",
       "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update attendance, break, and salary screens *)",
       "Bash(node -c src/models/Attendance.js)",
-      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update attendance models/controller, shift and salary fine logic *)"
+      "Bash(git -C d:/ehrms-main/ehrms commit -m 'chore: update attendance models/controller, shift and salary fine logic *)",
+      "Bash(timeout 120 node src/scripts/diagHistoryFine.js)",
+      "Bash(timeout 90 node src/scripts/diagCount.js)",
+      "Bash(timeout 90 node src/scripts/diagDbs.js)",
+      "Bash(timeout 150 node src/scripts/diagHist2.js)",
+      "Bash(git -C /d/ehrms-main/ehrms status --short)",
+      "Bash(xargs grep -l \"leave\" -i)",
+      "Bash(xargs grep -l \"LeaveType\\\\|leave_type\")",
+      "Bash(xargs grep -l \"class.*Leave\\\\|LeaveTemplate\")",
+      "Bash(timeout 150 node src/scripts/diagVerifyHistory.js)",
+      "Bash(xargs grep -l \"class.*Leave\\\\|@JsonSerializable\")",
+      "Bash(git -C /d/ehrms-main/ehrms status --short app_backend/)",
+      "Bash(cd /d/ehrms-main/ehrms/hrms && grep -n \"_trimNum\\\\|bool get _isUnpaidLeave\\\\|bool _isHalfDayLeave\\\\|_isUnpaidLeave =>\" lib/screens/requests/my_requests_screen.dart | head -20)",
+      "Read(//d/d/ehrms-main/ehrms/hrms/lib/screens/requests/**)"
     ]
   }
 }
