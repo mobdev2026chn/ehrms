@@ -24,6 +24,41 @@ function getCalendarDaysInMonth(year, monthIndex0) {
 }
 
 /**
+ * Whether `currentDate` is a weekly off per a Weekly Holiday Template's `weeklyHolidays`
+ * entries, honoring optional `nthWeeks` (which occurrences of that weekday are off).
+ *
+ * Each entry: { day: 0-6, nthWeeks?: number[] }.
+ *   - No/empty nthWeeks  → that weekday is off EVERY week.
+ *   - nthWeeks present    → off only on listed occurrences. Week-of-month = ceil(date/7) (1..5);
+ *                           `-1` means the LAST occurrence of that weekday in the month.
+ * This lets "2nd & 4th Saturday" (nthWeeks [2,4]) exclude only those Saturdays instead of all.
+ *
+ * @param {Date} currentDate
+ * @param {Array<{day:number, nthWeeks?:number[]}>} weeklyHolidays
+ * @param {number} year
+ * @param {number} monthIndex0
+ * @returns {boolean}
+ */
+function isTemplateWeeklyOff(currentDate, weeklyHolidays, year, monthIndex0) {
+    if (!Array.isArray(weeklyHolidays) || weeklyHolidays.length === 0) return false;
+    const dayOfWeek = currentDate.getDay();
+    const dom = currentDate.getDate();
+    const weekOfMonth = Math.ceil(dom / 7); // 1..5
+    const lastDom = new Date(year, monthIndex0 + 1, 0).getDate();
+    const isLastOccurrence = dom + 7 > lastDom; // no later same-weekday in this month
+    return weeklyHolidays.some((wh) => {
+        if (Number(wh?.day) !== dayOfWeek) return false;
+        const nth = Array.isArray(wh?.nthWeeks)
+            ? wh.nthWeeks.map(Number).filter((n) => !Number.isNaN(n))
+            : null;
+        if (!nth || nth.length === 0) return true; // every occurrence
+        if (nth.includes(weekOfMonth)) return true;
+        if (nth.includes(-1) && isLastOccurrence) return true;
+        return false;
+    });
+}
+
+/**
  * @param {number} year
  * @param {number} monthIndex0 - 0 = January (same as JS Date month)
  * @param {'standard'|'oddEvenSaturday'} weeklyOffPattern
@@ -51,25 +86,23 @@ function calculateDaysExcludingWeeklyOffsOnly(
 
     const endDay = lastDay.getDate();
     let count = 0;
-    const weeklyHolidayDays =
-        weeklyHolidays && weeklyHolidays.length > 0
-            ? new Set(weeklyHolidays.map((wh) => Number(wh.day)))
-            : null;
+    const hasTemplateHolidays = Array.isArray(weeklyHolidays) && weeklyHolidays.length > 0;
 
     for (let day = 1; day <= endDay; day++) {
         const currentDate = new Date(year, monthIndex0, day);
         currentDate.setHours(0, 0, 0, 0);
         const dayOfWeek = currentDate.getDay();
 
+        let isOff;
         if (weeklyOffPattern === 'oddEvenSaturday') {
-            if (!isOddEvenSaturdayWeeklyOffWeb(currentDate)) count++;
-        } else if (weeklyHolidayDays && weeklyHolidayDays.has(dayOfWeek)) {
-            /* week off */
-        } else if (!weeklyHolidayDays && (dayOfWeek === 0 || dayOfWeek === 6)) {
-            /* default Sat–Sun */
+            isOff = isOddEvenSaturdayWeeklyOffWeb(currentDate);
+        } else if (hasTemplateHolidays) {
+            // Honor the Weekly Holiday Template, including nthWeeks (e.g. only 2nd & 4th Saturday).
+            isOff = isTemplateWeeklyOff(currentDate, weeklyHolidays, year, monthIndex0);
         } else {
-            count++;
+            isOff = dayOfWeek === 0 || dayOfWeek === 6; // default Sat–Sun
         }
+        if (!isOff) count++;
     }
 
     return count;
@@ -79,4 +112,5 @@ module.exports = {
     getCalendarDaysInMonth,
     calculateDaysExcludingWeeklyOffsOnly,
     isOddEvenSaturdayWeeklyOffWeb,
+    isTemplateWeeklyOff,
 };
