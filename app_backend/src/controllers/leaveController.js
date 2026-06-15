@@ -9,6 +9,7 @@ const mongoose = require('mongoose');
 const { markAttendanceForApprovedLeave, calculateAvailableLeaves, getShiftTimings } = require('../utils/leaveAttendanceHelper');
 const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
+const { isTemplateWeeklyOff } = require('../utils/salaryCalendarDays.util');
 
 // Helper for date calculation
 const calculateDays = (start, end) => {
@@ -114,7 +115,7 @@ const getEffectiveWorkDatesInRange = async (staff, startDate, endDate) => {
                 if (isOddEvenSaturdayWeeklyOff(y, mi, dom, 'utc')) isWeekOff = true;
             }
         } else {
-            isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
+            isWeekOff = isTemplateWeeklyOff(d, weeklyHolidays, 'utc');
         }
         return !isWeekOff;
     });
@@ -171,7 +172,7 @@ const getEffectiveWorkDatesFromList = async (staff, dateStrings) => {
                 if (isOddEvenSaturdayWeeklyOff(y, mi, dom, 'utc')) isWeekOff = true;
             }
         } else {
-            isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
+            isWeekOff = isTemplateWeeklyOff(d, weeklyHolidays, 'utc');
         }
         return !isWeekOff;
     });
@@ -635,7 +636,7 @@ const getLeaveDateCheckDetails = async (employeeId, staff, dateStrings) => {
                 if (isOddEvenSaturdayWeeklyOff(y, mi, dom, 'utc')) isWeekOff = true;
             }
         } else {
-            isWeekOff = (weeklyHolidays || []).some((h) => h.day === dayOfWeek);
+            isWeekOff = isTemplateWeeklyOff(d, weeklyHolidays, 'utc');
         }
         if (isWeekOff) weekOffDates.push(dateStr);
     });

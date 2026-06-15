@@ -33,18 +33,21 @@ function getCalendarDaysInMonth(year, monthIndex0) {
  *                           `-1` means the LAST occurrence of that weekday in the month.
  * This lets "2nd & 4th Saturday" (nthWeeks [2,4]) exclude only those Saturdays instead of all.
  *
- * @param {Date} currentDate
+ * @param {Date} currentDate - year/month/day derived from this date
  * @param {Array<{day:number, nthWeeks?:number[]}>} weeklyHolidays
- * @param {number} year
- * @param {number} monthIndex0
+ * @param {'local'|'utc'} [calendar='local'] - which calendar the date encodes (callers using
+ *        UTC-anchored dates, e.g. leave-day loops, must pass 'utc' so the weekday/week-of-month match).
  * @returns {boolean}
  */
-function isTemplateWeeklyOff(currentDate, weeklyHolidays, year, monthIndex0) {
+function isTemplateWeeklyOff(currentDate, weeklyHolidays, calendar = 'local') {
     if (!Array.isArray(weeklyHolidays) || weeklyHolidays.length === 0) return false;
-    const dayOfWeek = currentDate.getDay();
-    const dom = currentDate.getDate();
+    const utc = calendar === 'utc';
+    const dayOfWeek = utc ? currentDate.getUTCDay() : currentDate.getDay();
+    const dom = utc ? currentDate.getUTCDate() : currentDate.getDate();
+    const y = utc ? currentDate.getUTCFullYear() : currentDate.getFullYear();
+    const mo = utc ? currentDate.getUTCMonth() : currentDate.getMonth();
     const weekOfMonth = Math.ceil(dom / 7); // 1..5
-    const lastDom = new Date(year, monthIndex0 + 1, 0).getDate();
+    const lastDom = new Date(y, mo + 1, 0).getDate(); // days-in-month (calendar-independent)
     const isLastOccurrence = dom + 7 > lastDom; // no later same-weekday in this month
     return weeklyHolidays.some((wh) => {
         if (Number(wh?.day) !== dayOfWeek) return false;
@@ -98,7 +101,7 @@ function calculateDaysExcludingWeeklyOffsOnly(
             isOff = isOddEvenSaturdayWeeklyOffWeb(currentDate);
         } else if (hasTemplateHolidays) {
             // Honor the Weekly Holiday Template, including nthWeeks (e.g. only 2nd & 4th Saturday).
-            isOff = isTemplateWeeklyOff(currentDate, weeklyHolidays, year, monthIndex0);
+            isOff = isTemplateWeeklyOff(currentDate, weeklyHolidays);
         } else {
             isOff = dayOfWeek === 0 || dayOfWeek === 6; // default Sat–Sun
         }

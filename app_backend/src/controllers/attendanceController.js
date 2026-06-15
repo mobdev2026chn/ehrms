@@ -10,6 +10,7 @@ const { reverseGeocode } = require('../services/geocodingService');
 const { logTrackingWrite } = require('../utils/trackingLogger');
 const { calculateAttendanceStats } = require('./payrollController');
 const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
+const { isTemplateWeeklyOff } = require('../utils/salaryCalendarDays.util');
 const { getHolidayTemplateForStaff, getHolidayForDate, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
 const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const digitalOceanService = require('../services/digitalOceanService');
@@ -376,7 +377,7 @@ function calculateWorkingDays(year, month, holidays, weeklyOffPattern, weeklyHol
             if (dayOfWeek === 0) isWeekOff = true;
             else if (isOddEvenSaturdayWeeklyOff(year, month, d, 'local')) isWeekOff = true;
         } else {
-            isWeekOff = weeklyHolidays.some(h => h.day === dayOfWeek);
+            isWeekOff = isTemplateWeeklyOff(date, weeklyHolidays);
         }
         
         if (!isWeekOff) {
@@ -1620,7 +1621,7 @@ const checkIn = async (req, res) => {
             if (dayOfWeek === 0) isWeeklyOff = true;
             else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(now.getFullYear(), now.getMonth(), now.getDate(), 'local')) isWeeklyOff = true;
         } else {
-            isWeeklyOff = weekOffConfig.weeklyHolidays.some(h => h.day === dayOfWeek);
+            isWeeklyOff = isTemplateWeeklyOff(now, weekOffConfig.weeklyHolidays);
         }
         if (isWeeklyOff && template.allowAttendanceOnWeeklyOff === false) {
             // If it's the oddEvenSaturday pattern and today is Saturday, allow check-in regardless of the template setting
@@ -3335,7 +3336,7 @@ const getTodayAttendance = async (req, res) => {
             if (dayOfWeek === 0) isWeeklyOff = true;
             else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(queryDate.getFullYear(), queryDate.getMonth(), queryDate.getDate(), 'local')) isWeeklyOff = true;
         } else {
-            isWeeklyOff = weekOffConfig.weeklyHolidays.some(h => h.day === dayOfWeek);
+            isWeeklyOff = isTemplateWeeklyOff(queryDate, weekOffConfig.weeklyHolidays);
         }
 
         // If this date is a week-off (or we're checking), see if it's an alternate work date for this employee
@@ -3686,7 +3687,7 @@ const getMonthAttendance = async (req, res) => {
                 if (dow === 0) isWoff = true;
                 else if (dow === 6 && isOddEvenSaturdayWeeklyOff(year, month - 1, day, 'local')) isWoff = true;
             } else {
-                isWoff = weeklyHolidays.some(h => h.day === dow);
+                isWoff = isTemplateWeeklyOff(new Date(year, month - 1, day), weeklyHolidays);
             }
             if (isWoff) weeklyOffDaysFull++;
         }
@@ -3837,7 +3838,7 @@ const getMonthAttendance = async (req, res) => {
                 if (dayOfWeek === 0) isWeekOff = true;
                 else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(year, month - 1, d, 'local')) isWeekOff = true;
             } else {
-                isWeekOff = weeklyHolidays.some(h => h.day === dayOfWeek);
+                isWeekOff = isTemplateWeeklyOff(date, weeklyHolidays);
             }
 
             if (isWeekOff) {
@@ -3867,8 +3868,8 @@ const getMonthAttendance = async (req, res) => {
                     isWeekOff = true; // Even Saturdays are week off
                 }
             } else {
-                // Standard pattern: Check weeklyHolidays array
-                isWeekOff = weeklyHolidays.some(h => h.day === dayOfWeek);
+                // Standard pattern: Check weeklyHolidays array (honors nthWeeks, e.g. 2nd/4th Saturday)
+                isWeekOff = isTemplateWeeklyOff(date, weeklyHolidays);
             }
 
             if (isWeekOff) {
@@ -4022,7 +4023,7 @@ const getMonthAttendance = async (req, res) => {
                     isWeekOff = true; // Even Saturdays are week off
                 }
             } else {
-                isWeekOff = weeklyHolidays.some(h => h.day === dayOfWeek);
+                isWeekOff = isTemplateWeeklyOff(new Date(year, month - 1, d), weeklyHolidays);
             }
             
             // IMPORTANT: Sundays (day 0) are ALWAYS week off, regardless of configuration

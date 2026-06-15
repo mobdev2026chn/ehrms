@@ -12,6 +12,7 @@ const { getShiftTimings } = require('../utils/leaveAttendanceHelper');
 const { calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
 const { getHolidayTemplateForStaff, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
 const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
+const { isTemplateWeeklyOff } = require('../utils/salaryCalendarDays.util');
 const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays, resolveTemplateLinkedPayableDenominatorDays } = require('../utils/payableDaysRule');
 
 const _idLog = (v) => {
@@ -1178,7 +1179,8 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
                 // dayOfWeek: 0=Sunday, 1=Monday, ..., 6=Saturday
                 // Dashboard uses: isWeekOff = weeklyHolidays.some(h => h.day === dayOfWeek)
                 // Keep same logic - weeklyHolidays is array of objects with 'day' property
-                if (weeklyHolidays.some(h => h.day === dayOfWeek)) {
+                // (honors nthWeeks, e.g. only 2nd & 4th Saturday)
+                if (isTemplateWeeklyOff(currentDate, weeklyHolidays)) {
                     isWeeklyOff = true;
                 }
             }
@@ -1208,7 +1210,7 @@ const calculateAttendanceStats = async (employeeId, month, year) => {
                 if (dayOfWeek === 0) isWeeklyOff = true;
                 else if (dayOfWeek === 6 && isOddEvenSaturdayWeeklyOff(year, month - 1, day, 'local')) isWeeklyOff = true;
             } else {
-                isWeeklyOff = weeklyHolidays.some(h => h.day === dayOfWeek);
+                isWeeklyOff = isTemplateWeeklyOff(currentDate, weeklyHolidays);
             }
             if (isWeeklyOff) weeklyOffDaysFull++;
         }
