@@ -333,32 +333,18 @@ function scheduleDeferredAttendanceSelfieUpload(attendanceId, imageInput, req, c
 }
 
 // Helper function to calculate salary structure
+// Monthly salary structure for FINES — matches the web "Salary Structure Overview":
+// Employer PF on (Basic+DA) with the 15k/21k PF/ESI thresholds + ₹1,800 static PF, NOT PF on Basic.
+// Delegates to the shared helper so fine, break-fine, history and the salary page all agree.
 function calculateSalaryStructure(salary) {
     if (!salary) return null;
-    
-    const basicSalary = salary.basicSalary || 0;
-    const dearnessAllowance = salary.dearnessAllowance || (basicSalary > 0 ? basicSalary * 0.5 : 0);
-    const houseRentAllowance = salary.houseRentAllowance || (basicSalary > 0 ? basicSalary * 0.2 : 0);
-    const specialAllowance = salary.specialAllowance || 0;
-    const employerPFRate = salary.employerPFRate || 0;
-    const employerESIRate = salary.employerESIRate || 0;
-    const employeePFRate = salary.employeePFRate || 0;
-    const employeeESIRate = salary.employeeESIRate || 0;
-
-    const grossFixedSalary = basicSalary + dearnessAllowance + houseRentAllowance + specialAllowance;
-    const employerPF = employerPFRate > 0 ? (basicSalary * employerPFRate / 100) : 0;
-    const employerESI = employerESIRate > 0 ? (grossFixedSalary * employerESIRate / 100) : 0;
-    const grossSalary = grossFixedSalary + employerPF + employerESI;
-    
-    const employeePF = employeePFRate > 0 ? (basicSalary * employeePFRate / 100) : 0;
-    const employeeESI = employeeESIRate > 0 ? (grossSalary * employeeESIRate / 100) : 0;
-    const netMonthlySalary = grossSalary - employeePF - employeeESI;
-
+    const { computeTemplateMonthlySalary } = require('../utils/fineCalculationHelper');
+    const t = computeTemplateMonthlySalary(salary);
     return {
         monthly: {
-            basicSalary,
-            grossSalary,
-            netMonthlySalary
+            basicSalary: Number(salary.basicSalary) || 0,
+            grossSalary: t.grossSalary,
+            netMonthlySalary: t.netMonthlySalary
         }
     };
 }
@@ -3609,7 +3595,7 @@ const getMonthAttendance = async (req, res) => {
         const Staff = require('../models/Staff');
         const Leave = require('../models/Leave');
         const { getRecordFineAmount } = require('./payrollController');
-        const { getEffectiveFineConfig, calculateFineAmount, resolveFineDenominatorDays } = require('../utils/fineCalculationHelper');
+        const { getEffectiveFineConfig, calculateFineAmount, resolveFineDenominatorDays, computeTemplateMonthlySalary } = require('../utils/fineCalculationHelper');
         const { getShiftTimings, calculateWorkHoursFromShift, getBusinessTimezone } = require('../utils/leaveAttendanceHelper');
 
         // Balance the load: these reads are independent of each other, so issue them on one concurrent
@@ -3708,15 +3694,11 @@ const getMonthAttendance = async (req, res) => {
                 weeklyHolidays,
             }) || workingDaysFullMonth;
             if (thisMonthWorkingDays > 0 && staffWithSalary && staffWithSalary.salary) {
-                const s = staffWithSalary.salary;
-                const gf = (s.basicSalary || 0) + (s.dearnessAllowance || 0) + (s.houseRentAllowance || 0) + (s.specialAllowance || 0);
-                const epf = (s.employerPFRate || 0) / 100 * (s.basicSalary || 0);
-                const eesi = (s.employerESIRate || 0) / 100 * gf;
-                const gross = gf + epf + eesi;
-                const empPF = (s.employeePFRate || 0) / 100 * (s.basicSalary || 0);
-                const empESI = (s.employeeESIRate || 0) / 100 * gross;
-                dailySalaryForEnrich = (gross - empPF - empESI) / thisMonthWorkingDays;
-                dailyGrossForEnrich = gross / thisMonthWorkingDays;
+                // Template-accurate monthly gross/net (PF on Basic+DA with 15k/21k thresholds +
+                // ₹1,800 static PF), matching the web Salary Structure and the check-in/out fine.
+                const t = computeTemplateMonthlySalary(staffWithSalary.salary);
+                dailySalaryForEnrich = t.netMonthlySalary / thisMonthWorkingDays;
+                dailyGrossForEnrich = t.grossSalary / thisMonthWorkingDays;
             }
         } catch (e) {
             console.warn('[getMonthAttendance] Could not compute daily salary for fine enrichment:', e?.message);

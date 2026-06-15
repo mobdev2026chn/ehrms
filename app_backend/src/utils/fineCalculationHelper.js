@@ -8,6 +8,57 @@
 const { getCalendarDaysInMonth, calculateDaysExcludingWeeklyOffsOnly } = require('./salaryCalendarDays.util');
 
 /**
+ * Monthly salary structure matching the web "Salary Structure Overview" (assigned-template logic),
+ * so the per-day GROSS used for fines equals what staff see on their salary structure.
+ *
+ * Rules (parity with the web template + statutory thresholds):
+ *   - PF applicable only when (Basic + DA) < 15,000; otherwise employer PF = 0 and a ₹1,800
+ *     statutory (fixed) PF amount applies.
+ *   - ESI applicable only when (Basic + DA + HRA) < 21,000; otherwise 0.
+ *   - Employer PF  = employerPFRate%  × (Basic + DA)        [configured rate, on Basic+DA — NOT Basic only]
+ *   - Employer ESI = employerESIRate% × (Basic + DA + HRA)
+ *   - Gross = (Basic + DA + HRA + SA) + employerPF + employerESI + staticPF
+ *   - Net (take-home) = (Basic+DA+HRA+SA) − employeePF − employeeESI − employeeStaticPF
+ *   - isPFEnabled / isESIEnabled === false force the respective component off.
+ *
+ * @param {Object} salary - staff.salary
+ * @returns {{grossSalary:number, netMonthlySalary:number, grossFixedSalary:number,
+ *            employerPF:number, employerESI:number, employeePF:number, employeeESI:number,
+ *            pfStaticAmount:number}}
+ */
+function computeTemplateMonthlySalary(salary) {
+    const s = salary || {};
+    const basic = Number(s.basicSalary) || 0;
+    const da = Number(s.dearnessAllowance) || 0;
+    const hra = Number(s.houseRentAllowance) || 0;
+    const sa = Number(s.specialAllowance) || 0;
+    const bda = basic + da;
+    const bdah = basic + da + hra;
+    const pfEnabled = s.isPFEnabled !== false;
+    const esiEnabled = s.isESIEnabled !== false;
+    const pfApplicable = pfEnabled && bda < 15000;
+    const esiApplicable = esiEnabled && bdah < 21000;
+    const employerPF = pfApplicable ? ((Number(s.employerPFRate) || 0) / 100) * bda : 0;
+    const employeePF = pfApplicable ? ((Number(s.employeePFRate) || 0) / 100) * bda : 0;
+    const employerESI = esiApplicable ? ((Number(s.employerESIRate) || 0) / 100) * bdah : 0;
+    const employeeESI = esiApplicable ? ((Number(s.employeeESIRate) || 0) / 100) * bdah : 0;
+    const staticPF = (pfEnabled && !pfApplicable) ? 1800 : 0;
+    const grossFixedSalary = basic + da + hra + sa;
+    const grossSalary = grossFixedSalary + employerPF + employerESI + staticPF;
+    const netMonthlySalary = grossFixedSalary - employeePF - employeeESI - staticPF;
+    return {
+        grossSalary,
+        netMonthlySalary,
+        grossFixedSalary,
+        employerPF,
+        employerESI,
+        employeePF,
+        employeeESI,
+        pfStaticAmount: staticPF,
+    };
+}
+
+/**
  * Per-day salary denominator for fines, configured per company (businesses table)
  * at `settings.payroll.fineCalculation.daysBasis`. Implements the formula:
  *   Per Day Salary = Monthly (gross) Salary ÷ (number of days by this basis)
@@ -319,5 +370,6 @@ module.exports = {
     calculateFineAmount,
     applyRuleAmount,
     calculateOvertimePayAmount,
-    resolveFineDenominatorDays
+    resolveFineDenominatorDays,
+    computeTemplateMonthlySalary
 };

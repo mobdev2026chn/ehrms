@@ -184,16 +184,12 @@ async function getAttendanceIdForDate(employeeId, eventDate) {
     return attendanceDoc?._id || null;
 }
 
+// Break fine uses the SAME gross as check-in/out fines and the web Salary Structure:
+// Employer PF on (Basic+DA) with PF/ESI thresholds + ₹1,800 static PF (NOT Basic+DA+HRA+SA only).
 function calculateSalaryStructure(salary = {}) {
-    const grossSalary =
-        (salary.basicSalary || 0)
-        + (salary.dearnessAllowance || 0)
-        + (salary.houseRentAllowance || 0)
-        + (salary.specialAllowance || 0);
-    const employeePF = grossSalary * ((salary.employeePFRate || 0) / 100);
-    const employeeESI = grossSalary * ((salary.employeeESIRate || 0) / 100);
-    const netMonthlySalary = grossSalary - employeePF - employeeESI;
-    return { monthly: { grossSalary, netMonthlySalary } };
+    const { computeTemplateMonthlySalary } = require('../utils/fineCalculationHelper');
+    const t = computeTemplateMonthlySalary(salary);
+    return { monthly: { grossSalary: t.grossSalary, netMonthlySalary: t.netMonthlySalary } };
 }
 
 function resolveBreakDurationMinutes(breakDoc) {
