@@ -3725,7 +3725,9 @@ const getMonthAttendance = async (req, res) => {
                     : Math.max(0, calculateWorkHoursFromShift(shiftTimings.startTime || '09:30', shiftTimings.endTime || '18:30') || 9);
 
                 const status = (doc.status || '').trim().toLowerCase();
-                const isEligible = status === 'present' || status === 'approved' || (doc.leaveType || '').trim().toLowerCase() === 'half day';
+                // Include 'pending' — a checked-in-but-unapproved day still has late/early minutes and
+                // shows a fine in the app ("Approval Pending"); excluding it left the stale stored fine.
+                const isEligible = status === 'present' || status === 'approved' || status === 'pending' || (doc.leaveType || '').trim().toLowerCase() === 'half day';
                 const lateMin = Math.max(0, Number(doc.lateMinutes) || 0);
                 const earlyMin = Math.max(0, Number(doc.earlyMinutes) || 0);
                 const fineMinutes = lateMin + earlyMin || (Number(doc.fineHours) || 0);
