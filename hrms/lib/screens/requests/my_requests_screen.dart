@@ -6050,7 +6050,20 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         } else {
           _toTime = picked;
         }
+        _syncMinutesFromWindow();
       });
+    }
+  }
+
+  /// The From/To window is authoritative for 'both': total minutes (To − From)
+  /// drive the quota/fine, so auto-fill Requested Minutes from the picked window.
+  void _syncMinutesFromWindow() {
+    final from = _fromTime;
+    final to = _toTime;
+    if (from == null || to == null) return;
+    final minutes = (to.hour * 60 + to.minute) - (from.hour * 60 + from.minute);
+    if (minutes > 0) {
+      _minutesController.text = minutes.toString();
     }
   }
 
@@ -6594,20 +6607,32 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       const SizedBox(height: 20),
                     ],
 
-                    // Requested Minutes
-                    _sectionLabel('Requested Minutes'),
+                    // Requested Minutes. For 'both' this is derived from the
+                    // From/To window and shown read-only.
+                    _sectionLabel(
+                      _type == 'both'
+                          ? 'Requested Minutes (from window)'
+                          : 'Requested Minutes',
+                    ),
                     TextFormField(
                       controller: _minutesController,
                       keyboardType: TextInputType.number,
+                      readOnly: _type == 'both',
                       style: const TextStyle(
                         fontWeight: FontWeight.w500,
                         color: AppColors.textPrimary,
                       ),
-                      decoration: _fieldDecoration(hint: 'Enter minutes'),
+                      decoration: _fieldDecoration(
+                        hint: _type == 'both'
+                            ? 'Auto from From/To'
+                            : 'Enter minutes',
+                      ),
                       validator: (value) {
                         final mins = int.tryParse((value ?? '').trim());
                         if (mins == null || mins <= 0) {
-                          return 'Enter valid minutes';
+                          return _type == 'both'
+                              ? 'Pick a valid From/To window'
+                              : 'Enter valid minutes';
                         }
                         return null;
                       },

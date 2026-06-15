@@ -1171,6 +1171,18 @@ const createPermissionRequest = async (req, res) => {
         if (cleanToTime && !HHMM.test(cleanToTime)) {
             return res.status(400).json({ success: false, error: { message: 'toTime must be in HH:mm format' } });
         }
+        // For 'both', the From/To window is authoritative: total minutes (To − From)
+        // drive the quota + overrun, so derive requestedMinutes from it server-side.
+        let effectiveMinutes = Math.floor(minutes);
+        if (String(type) === 'both' && cleanFromTime && cleanToTime) {
+            const [fh, fm] = cleanFromTime.split(':').map(Number);
+            const [th, tm] = cleanToTime.split(':').map(Number);
+            const windowMinutes = (th * 60 + tm) - (fh * 60 + fm);
+            if (windowMinutes <= 0) {
+                return res.status(400).json({ success: false, error: { message: 'To time must be after From time' } });
+            }
+            effectiveMinutes = windowMinutes;
+        }
 
         const employeeId = req.staff?._id || req.user?._id;
         const businessId = req.staff?.businessId || req.user?.businessId || req.companyId;
@@ -1216,7 +1228,7 @@ const createPermissionRequest = async (req, res) => {
             businessId,
             date: attendanceDate,
             type,
-            requestedMinutes: Math.floor(minutes),
+            requestedMinutes: effectiveMinutes,
             ...(cleanFromTime && { fromTime: cleanFromTime }),
             ...(cleanToTime && { toTime: cleanToTime }),
             reason: String(reason).trim(),
@@ -1338,11 +1350,42 @@ const loadOwnTodayPermission = async (req, res) => {
     return permission;
 };
 
+// Appends a selfie-stamped permission punch to TODAY's attendance record (the
+// per-day log). Uses the same UTC day-bucket as check-in so the right record is
+// found. No-op (logged) when the employee has no attendance row yet today.
+const appendPermissionPunchToAttendance = async (employeeId, kind, at, selfie, minutes) => {
+    try {
+        const now = new Date();
+        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+        const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+        const attendance = await Attendance.findOne({ employeeId, date: { $gte: startOfDay, $lte: endOfDay } });
+        if (!attendance) {
+            console.log('[Permission][Punch] No attendance row for today; attendance log skipped', { employeeId: String(employeeId), kind });
+            return;
+        }
+        if (!Array.isArray(attendance.permissionPunches)) attendance.permissionPunches = [];
+        attendance.permissionPunches.push({
+            kind,
+            at,
+            selfie: selfie ? String(selfie) : undefined,
+            minutes: Math.max(0, Math.floor(Number(minutes) || 0))
+        });
+        await attendance.save();
+        console.log('[Permission][Punch] logged to attendance', { employeeId: String(employeeId), kind, minutes });
+    } catch (e) {
+        console.error('[Permission][Punch] append failed:', e?.message);
+    }
+};
+
 // @desc    Record Permission Out (employee stepped out) for an approved custom-time permission
 // @route   POST /api/requests/permission/:id/out
 // @access  Private
 const permissionOut = async (req, res) => {
     try {
+        const { selfie } = req.body || {};
+        if (!selfie || !String(selfie).trim()) {
+            return res.status(400).json({ success: false, error: { message: 'Selfie is required' } });
+        }
         const permission = await loadOwnTodayPermission(req, res);
         if (!permission) return; // response already sent
         if (permission.actualOutAt) {
@@ -1350,6 +1393,9 @@ const permissionOut = async (req, res) => {
         }
         permission.actualOutAt = new Date();
         await permission.save();
+        await appendPermissionPunchToAttendance(
+            permission.employeeId, 'out', permission.actualOutAt, selfie, permission.requestedMinutes
+        );
         return res.json({ success: true, data: { permission } });
     } catch (error) {
         console.error('Permission Out Error:', error);
@@ -1365,6 +1411,10 @@ const permissionOut = async (req, res) => {
 // @access  Private
 const permissionIn = async (req, res) => {
     try {
+        const { selfie } = req.body || {};
+        if (!selfie || !String(selfie).trim()) {
+            return res.status(400).json({ success: false, error: { message: 'Selfie is required' } });
+        }
         const permission = await loadOwnTodayPermission(req, res);
         if (!permission) return; // response already sent
         if (!permission.actualOutAt) {
@@ -1380,6 +1430,9 @@ const permissionIn = async (req, res) => {
         permission.actualMinutes = actualMinutes;
         permission.overrunMinutes = overrunMinutes;
         await permission.save();
+        await appendPermissionPunchToAttendance(
+            permission.employeeId, 'in', permission.actualInAt, selfie, permission.requestedMinutes
+        );
         return res.json({ success: true, data: { permission, actualMinutes, overrunMinutes } });
     } catch (error) {
         console.error('Permission In Error:', error);

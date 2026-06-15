@@ -1,9 +1,12 @@
 ﻿import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
@@ -41,6 +44,10 @@ import '../../utils/absent_alert_helper.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
+import '../../utils/face_detection_helper.dart';
+import '../../utils/attendance_selfie_compress.dart';
+import '../attendance/selfie_camera_screen.dart'
+    show SelfieCameraScreen, useImagePickerFallback;
 import '../attendance/shift_screen.dart';
 
 class HomeDashboardScreen extends StatefulWidget {
@@ -412,16 +419,67 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
   }
 
-  /// Stamp Permission Out ([isOut] true) or Permission In on today's approved
-  /// permission, then refresh. On Permission In with overrun, warn that a fine
-  /// was applied for that day.
+  /// Captures a required in-app selfie (single face) and returns it as a
+  /// compressed base64 data URL, or null if cancelled / camera denied / no face.
+  Future<String?> _capturePermissionSelfie() async {
+    var status = await Permission.camera.status;
+    if (!status.isGranted) {
+      status = await Permission.camera.request();
+      if (!mounted) return null;
+      if (!status.isGranted) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Camera permission is required for permission selfie.',
+          isError: true,
+        );
+        return null;
+      }
+    }
+    if (!mounted) return null;
+    final captureResult =
+        await SelfieCameraScreen.captureSelfie(context, title: 'Permission Selfie');
+    File? file;
+    if (captureResult is File) {
+      file = captureResult;
+    } else if (identical(captureResult, useImagePickerFallback)) {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.front,
+        imageQuality: 85,
+        maxWidth: 1024,
+      );
+      if (picked != null) file = File(picked.path);
+    }
+    if (file == null || !mounted) return null;
+
+    final result = await FaceDetectionHelper.detectFromFile(file);
+    if (!mounted) return null;
+    if (!result.valid) {
+      SnackBarUtils.showSnackBar(
+        context,
+        result.message ?? 'Please take a selfie with exactly one face visible.',
+        isError: true,
+      );
+      return null;
+    }
+    final bytes = await file.readAsBytes();
+    return AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
+  }
+
+  /// Stamp Permission Out ([isOut] true) or Permission In on today's permission,
+  /// then refresh. Requires a selfie. On Permission In with overrun, warn that a
+  /// fine was applied for that day.
   Future<void> _handlePermissionStamp(bool isOut) async {
     final id = _todayPermission?['_id']?.toString();
     if (id == null || id.isEmpty || _isPermissionStamping) return;
+
+    final selfie = await _capturePermissionSelfie();
+    if (selfie == null || selfie.isEmpty || !mounted) return;
+
     setState(() => _isPermissionStamping = true);
     final result = isOut
-        ? await _requestService.permissionOut(id)
-        : await _requestService.permissionIn(id);
+        ? await _requestService.permissionOut(id, selfie: selfie)
+        : await _requestService.permissionIn(id, selfie: selfie);
     if (!mounted) return;
     setState(() => _isPermissionStamping = false);
 

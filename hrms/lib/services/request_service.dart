@@ -720,13 +720,19 @@ class RequestService {
   }
 
   /// Stamp Permission Out / Permission In for an approved custom-time permission.
-  /// [action] is 'out' or 'in'. On 'in', the backend returns actualMinutes and
-  /// overrunMinutes so the caller can warn when a fine was applied.
-  Future<Map<String, dynamic>> _permissionStamp(String id, String action) async {
+  /// [action] is 'out' or 'in'. A [selfie] (base64 data URL) is required by the
+  /// backend. On 'in', the backend returns actualMinutes and overrunMinutes so
+  /// the caller can warn when a fine was applied.
+  Future<Map<String, dynamic>> _permissionStamp(
+    String id,
+    String action, {
+    required String selfie,
+  }) async {
     try {
       await _setToken();
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/requests/permission/$id/$action',
+        data: {'selfie': selfie},
       );
       final body = response.data;
       punchFlowLog(
@@ -749,11 +755,13 @@ class RequestService {
     }
   }
 
-  Future<Map<String, dynamic>> permissionOut(String id) =>
-      _permissionStamp(id, 'out');
+  Future<Map<String, dynamic>> permissionOut(String id,
+          {required String selfie}) =>
+      _permissionStamp(id, 'out', selfie: selfie);
 
-  Future<Map<String, dynamic>> permissionIn(String id) =>
-      _permissionStamp(id, 'in');
+  Future<Map<String, dynamic>> permissionIn(String id,
+          {required String selfie}) =>
+      _permissionStamp(id, 'in', selfie: selfie);
 
   Future<Map<String, dynamic>> getPermissionBalance({
     int? month,

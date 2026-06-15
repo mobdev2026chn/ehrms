@@ -113,6 +113,14 @@ const attendanceSchema = new mongoose.Schema(
     punchOutSelfie: String,
     punchInFaceMatch: Number,
     punchOutFaceMatch: Number,
+    /** Selfie-stamped log of custom-time ('both') permission step-outs/returns for the day.
+     *  `minutes` is the approved window total (To−From) at the time of stamping. */
+    permissionPunches: [{
+      kind: { type: String, enum: ['out', 'in'] },
+      at: { type: Date },
+      selfie: { type: String },
+      minutes: { type: Number, default: 0 }
+    }],
     leaveTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveTemplate' },
     leaveId: { type: mongoose.Schema.Types.ObjectId, ref: 'Leave' },
     compensationType: { type: String, enum: ['paid', 'unpaid', 'weekOff', 'compOff'] },
