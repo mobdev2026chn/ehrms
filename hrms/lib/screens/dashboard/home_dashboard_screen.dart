@@ -376,14 +376,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
   }
 
-  /// Loads today's APPROVED custom-time ('both') permission so the punch card can
-  /// offer Permission Out / Permission In. Stores the first match in
+  /// Loads today's custom-time ('both') permission so the punch card can offer
+  /// Permission Out / Permission In. Accepts Pending (applied) or Approved so the
+  /// employee can stamp as soon as they apply. Stores the first match in
   /// [_todayPermission]; clears it when none applies. Non-fatal on error.
   Future<void> _fetchTodayPermission() async {
     try {
-      final result = await _requestService.getPermissionRequests(
-        status: 'Approved',
-      );
+      final result = await _requestService.getPermissionRequests();
       if (!mounted) return;
       final data = result['data'];
       final list = data is Map ? data['permissions'] : null;
@@ -394,6 +393,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           if (raw is! Map) continue;
           final p = Map<String, dynamic>.from(raw);
           if (p['type']?.toString() != 'both') continue;
+          final status = p['status']?.toString();
+          if (status != 'Pending' && status != 'Approved') continue;
           final d = DateTime.tryParse(p['date']?.toString() ?? '')?.toLocal();
           if (d == null ||
               d.year != now.year ||
@@ -475,9 +476,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final IconData buttonIcon =
         isOutAction ? Icons.logout_rounded : Icons.login_rounded;
 
+    final pending = p['status']?.toString() == 'Pending';
     String statusLine;
     if (!hasOut) {
-      statusLine = 'Approved permission ($windowLabel). Tap when you step out.';
+      statusLine =
+          '${pending ? 'Permission (pending approval)' : 'Permission'} ($windowLabel). '
+          'Tap when you step out.';
     } else if (!hasIn) {
       statusLine = 'Out since ${_fmtStamp(p['actualOutAt'])}. Tap when you return.';
     } else {

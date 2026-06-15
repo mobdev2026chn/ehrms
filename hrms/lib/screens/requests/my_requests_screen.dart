@@ -6551,7 +6551,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                           value: 'earlyExit',
                           child: Text('Early Exit'),
                         ),
-                        DropdownMenuItem(value: 'both', child: Text('Both')),
+                        DropdownMenuItem(value: 'both', child: Text('Custom')),
                       ],
                       onChanged: (v) =>
                           setState(() => _type = v ?? 'lateArrival'),

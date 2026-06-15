@@ -1308,8 +1308,11 @@ const isPermissionForToday = (permissionDate) => {
         && d.getDate() === now.getDate();
 };
 
-// Shared loader + guards for the Permission Out / In actions.
-const loadOwnApprovedTodayPermission = async (req, res) => {
+// Shared loader + guards for the Permission Out / In actions. Allows both
+// Pending (applied, awaiting approval) and Approved requests so employees can
+// stamp out/in as soon as they apply; the overrun fine still only settles once
+// the request is Approved (calculateCombinedFine reads approved permissions).
+const loadOwnTodayPermission = async (req, res) => {
     const employeeId = req.staff?._id || req.user?._id;
     if (!employeeId) {
         res.status(400).json({ success: false, error: { message: 'Employee context required' } });
@@ -1324,8 +1327,8 @@ const loadOwnApprovedTodayPermission = async (req, res) => {
         res.status(403).json({ success: false, error: { message: 'You can only update your own requests' } });
         return null;
     }
-    if (permission.status !== 'Approved') {
-        res.status(400).json({ success: false, error: { message: 'Only approved permissions can be used' } });
+    if (!['Pending', 'Approved'].includes(permission.status)) {
+        res.status(400).json({ success: false, error: { message: 'This permission can no longer be used' } });
         return null;
     }
     if (!isPermissionForToday(permission.date)) {
@@ -1340,7 +1343,7 @@ const loadOwnApprovedTodayPermission = async (req, res) => {
 // @access  Private
 const permissionOut = async (req, res) => {
     try {
-        const permission = await loadOwnApprovedTodayPermission(req, res);
+        const permission = await loadOwnTodayPermission(req, res);
         if (!permission) return; // response already sent
         if (permission.actualOutAt) {
             return res.status(400).json({ success: false, error: { message: 'Permission Out already recorded' } });
@@ -1362,7 +1365,7 @@ const permissionOut = async (req, res) => {
 // @access  Private
 const permissionIn = async (req, res) => {
     try {
-        const permission = await loadOwnApprovedTodayPermission(req, res);
+        const permission = await loadOwnTodayPermission(req, res);
         if (!permission) return; // response already sent
         if (!permission.actualOutAt) {
             return res.status(400).json({ success: false, error: { message: 'Record Permission Out before Permission In' } });
