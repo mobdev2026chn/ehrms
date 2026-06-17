@@ -12,6 +12,7 @@ const payslipGeneratorService = require('../services/payslipGeneratorService');
 const { calculateAttendanceStats } = require('./payrollController');
 const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays } = require('../utils/payableDaysRule');
 const { getShiftTimings } = require('../utils/leaveAttendanceHelper');
+const { rollFaceReferenceFromSelfie } = require('../utils/faceReference');
 
 const _idLog = (v) => {
     if (v == null) return 'n/a';
@@ -1396,6 +1397,13 @@ const permissionOut = async (req, res) => {
         await appendPermissionPunchToAttendance(
             permission.employeeId, 'out', permission.actualOutAt, selfie, permission.requestedMinutes
         );
+        // Roll the face-validation reference forward to this permission-out selfie
+        // (uploads it to Spaces off the response path). Fire-and-forget.
+        void rollFaceReferenceFromSelfie(
+            permission.employeeId, selfie, req,
+            req.staff?.businessId ? String(req.staff.businessId) : undefined,
+            req.staff?.name, 'permission-out'
+        );
         return res.json({ success: true, data: { permission } });
     } catch (error) {
         console.error('Permission Out Error:', error);
@@ -1432,6 +1440,12 @@ const permissionIn = async (req, res) => {
         await permission.save();
         await appendPermissionPunchToAttendance(
             permission.employeeId, 'in', permission.actualInAt, selfie, permission.requestedMinutes
+        );
+        // Roll the face-validation reference forward to this permission-in selfie. Fire-and-forget.
+        void rollFaceReferenceFromSelfie(
+            permission.employeeId, selfie, req,
+            req.staff?.businessId ? String(req.staff.businessId) : undefined,
+            req.staff?.name, 'permission-in'
         );
         return res.json({ success: true, data: { permission, actualMinutes, overrunMinutes } });
     } catch (error) {

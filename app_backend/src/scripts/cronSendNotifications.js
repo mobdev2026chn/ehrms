@@ -7,6 +7,8 @@ const connectDB = require('../config/db');
 const fcmService = require('../services/fcmService');
 // const Leave = require('../models/Leave');
 const Staff = require('../models/Staff');
+const Announcement = require('../models/Announcement');
+const mongoose = require('mongoose');
 // const Expense = require('../models/Expense');
 // const Reimbursement = require('../models/Reimbursement');
 // const PayslipRequest = require('../models/PayslipRequest');
@@ -28,6 +30,23 @@ const CELEBRATION_CRON_TZ = (process.env.CELEBRATION_CRON_TZ || 'Asia/Kolkata').
 /** 24-hour clock: 6 = 6:00 AM, 18 = 6:00 PM */
 const CELEBRATION_CRON_HOUR = Math.min(23, Math.max(0, parseInt(process.env.CELEBRATION_CRON_HOUR || '6', 10)));
 const CELEBRATION_CRON_MINUTE = Math.min(59, Math.max(0, parseInt(process.env.CELEBRATION_CRON_MINUTE || '0', 10)));
+
+/** How often (seconds) to poll for newly-published announcements that need a push. */
+const ANNOUNCEMENT_POLL_INTERVAL_SEC = Math.max(15, parseInt(process.env.ANNOUNCEMENT_POLL_INTERVAL_SEC || '60', 10));
+/**
+ * Only announcements published/created at or after this instant are notified, so that turning the cron
+ * on does NOT blast a push for every pre-existing announcement. The persistent fcmNotificationSentAt flag
+ * then prevents duplicate sends across ticks/restarts. Set ANNOUNCEMENT_NOTIFY_SINCE (ISO date) to backfill
+ * older announcements on purpose.
+ */
+const ANNOUNCEMENT_NOTIFY_SINCE = (() => {
+    const raw = (process.env.ANNOUNCEMENT_NOTIFY_SINCE || '').trim();
+    if (raw) {
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) return d;
+    }
+    return new Date(); // process start
+})();
 
 /* OTHER FCM CRON — disabled here (separate worker). Remove this wrapper to restore.
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -452,6 +471,78 @@ async function runCelebrationWishNotifications() {
     return sent;
 }
 
+/** Active staff (with an FCM token) who should receive a given announcement, per its audience rules. */
+async function resolveAnnouncementAudience(ann) {
+    const baseQuery = {
+        status: { $regex: /^active$/i },
+        fcmToken: { $exists: true, $ne: null, $nin: [null, ''] },
+    };
+    if (ann.businessId) baseQuery.businessId = ann.businessId;
+
+    // "specific" audience → only the targeted staff. Anything else → everyone in the business.
+    const isSpecific = ann.audienceType === 'specific';
+    const legacyIds = Array.isArray(ann.assignedTo) ? ann.assignedTo : [];
+    if (isSpecific || (legacyIds.length > 0 && ann.audienceType !== 'all')) {
+        const ids = (isSpecific ? (ann.targetStaffIds || []) : legacyIds)
+            .filter((x) => x && mongoose.Types.ObjectId.isValid(x));
+        if (ids.length === 0) return [];
+        baseQuery._id = { $in: ids };
+    }
+    return Staff.find(baseQuery).select('fcmToken _id').lean();
+}
+
+/**
+ * Send a push for every newly-published announcement that hasn't been notified yet.
+ * Guarded by ANNOUNCEMENT_NOTIFY_SINCE so pre-existing announcements are never back-blasted, and by the
+ * persistent fcmNotificationSentAt flag so each announcement notifies its audience exactly once.
+ */
+async function runAnnouncementNotifications() {
+    let sent = 0;
+    try {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const pending = await Announcement.find({
+            status: { $in: ['published', 'Active'] },
+            $or: [{ fcmNotificationSentAt: null }, { fcmNotificationSentAt: { $exists: false } }],
+            // Published/effective now or earlier...
+            $and: [
+                { $or: [{ publishDate: { $lte: now } }, { effectiveDate: { $lte: now } }] },
+                // ...not expired...
+                { $or: [{ expiryDate: null }, { expiryDate: { $exists: false } }, { expiryDate: { $gte: startOfToday } }] },
+                { $or: [{ endDate: null }, { endDate: { $exists: false } }, { endDate: { $gte: startOfToday } }] },
+                // ...and created/published only after the notifier went live (no back-blast of history).
+                { $or: [{ publishDate: { $gte: ANNOUNCEMENT_NOTIFY_SINCE } }, { createdAt: { $gte: ANNOUNCEMENT_NOTIFY_SINCE } }] },
+            ],
+        }).lean();
+
+        for (const ann of pending) {
+            const audience = await resolveAnnouncementAudience(ann);
+            let delivered = 0;
+            for (const staff of audience) {
+                const token = staff.fcmToken && String(staff.fcmToken).trim();
+                if (!token) continue;
+                const res = await fcmService.sendAnnouncementNotificationToToken(token, ann);
+                if (res.success) { delivered++; sent++; }
+                else if (res.invalidToken) {
+                    await Staff.findByIdAndUpdate(staff._id, { $unset: { fcmToken: 1 } });
+                }
+            }
+            // Mark as notified regardless of audience size so we don't re-scan it every tick.
+            await Announcement.findByIdAndUpdate(ann._id, { fcmNotificationSentAt: new Date() });
+            console.log('[Cron] Announcement "%s" (%s): pushed to %d/%d staff', ann.title, String(ann._id), delivered, audience.length);
+        }
+    } catch (e) {
+        console.error('[Cron] announcement notifications:', e.message);
+    }
+    return sent;
+}
+
+function scheduleAnnouncementPoll() {
+    setInterval(() => {
+        runAnnouncementNotifications().catch((e) => console.error('[Cron] announcement poll:', e.message));
+    }, ANNOUNCEMENT_POLL_INTERVAL_SEC * 1000);
+}
+
 async function start() {
     console.log(
         '[Cron] Started — daily celebration wishes at',
@@ -461,6 +552,12 @@ async function start() {
     await connectDB();
     fcmService.init();
     scheduleCelebrationCron();
+    console.log(
+        '[Cron] Announcement push poller every', ANNOUNCEMENT_POLL_INTERVAL_SEC, 's;',
+        'notifying announcements published on/after', ANNOUNCEMENT_NOTIFY_SINCE.toISOString(),
+    );
+    runAnnouncementNotifications().catch((e) => console.error('[Cron] announcement initial:', e.message));
+    scheduleAnnouncementPoll();
 }
 
 start().catch((e) => {

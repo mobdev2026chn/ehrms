@@ -26,6 +26,8 @@ const announcementSchema = new mongoose.Schema({
     status: { type: String, default: 'Active' },
     attachments: { type: Array, default: [] },
     subsections: { type: Array, default: [] },
+    /** App push: set once an FCM announcement push has been sent to the audience (prevents re-sending each poll tick). */
+    fcmNotificationSentAt: { type: Date },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Announcement', announcementSchema);

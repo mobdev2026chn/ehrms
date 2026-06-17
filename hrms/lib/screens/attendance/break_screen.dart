@@ -7,7 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'selfie_camera_screen.dart'
     show SelfieCameraScreen, useImagePickerFallback;
 import '../../config/app_colors.dart';
+import '../../config/constants.dart';
 import '../../models/break_summary.dart';
+import '../../services/auth_service.dart';
 import '../../services/break_service.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
@@ -32,6 +34,7 @@ class BreakScreen extends StatefulWidget {
 
 class _BreakScreenState extends State<BreakScreen> {
   final BreakService _breakService = BreakService();
+  final AuthService _authService = AuthService();
 
   File? _imageFile;
   Position? _position;
@@ -349,6 +352,38 @@ class _BreakScreenState extends State<BreakScreen> {
 
     final selfie = await _encodeSelfie();
     if (selfie == null) return;
+
+    // Validate the break selfie against the rolling face reference before submitting,
+    // mirroring the attendance punch flow.
+    if (AppConstants.enableAttendanceFaceMatching &&
+        selfie.isNotEmpty) {
+      setState(() => _isLoading = true);
+      Map<String, dynamic> verify;
+      try {
+        verify = await _authService.verifyFace(selfie);
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        SnackBarUtils.showSnackBar(
+          context,
+          'Face verification failed. Please try again.',
+          isError: true,
+        );
+        return;
+      }
+      if (!mounted) return;
+      if (!verify['success'] || verify['match'] != true) {
+        setState(() => _isLoading = false);
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.sanitizeForDisplay(
+            verify['message']?.toString() ?? 'Face not matching. Please try again.',
+          ),
+          isError: true,
+        );
+        return;
+      }
+    }
 
     setState(() => _isLoading = true);
     final result = _isOnBreak

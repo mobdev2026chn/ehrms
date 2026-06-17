@@ -14,6 +14,7 @@ const { isTemplateWeeklyOff } = require('../utils/salaryCalendarDays.util');
 const { getHolidayTemplateForStaff, getHolidayForDate, getHolidaysForMonth } = require('../utils/holidayTemplateHelper');
 const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const digitalOceanService = require('../services/digitalOceanService');
+const { setFaceReferenceUrl } = require('../utils/faceReference');
 const {
     getBranchGeofenceTargets,
     isLatLngInsideBranchGeofence,
@@ -308,7 +309,7 @@ async function uploadAttendanceSelfie(imageInput, req, companyId, employeeName, 
  * Upload punch selfie after HTTP response so the client is not blocked on Spaces latency.
  * Updates attendances.[fieldKey] when upload succeeds (punchInSelfie | punchOutSelfie).
  */
-function scheduleDeferredAttendanceSelfieUpload(attendanceId, imageInput, req, companyId, employeeName, fieldKey) {
+function scheduleDeferredAttendanceSelfieUpload(attendanceId, imageInput, req, companyId, employeeName, fieldKey, staffId) {
     const id = attendanceId;
     const punchType = fieldKey === 'punchOutSelfie' ? 'punch-out' : 'punch-in';
     setImmediate(() => {
@@ -318,6 +319,10 @@ function scheduleDeferredAttendanceSelfieUpload(attendanceId, imageInput, req, c
                 const url = await uploadAttendanceSelfie(imageInput, req, companyId, employeeName, punchType);
                 if (url) {
                     await Attendance.findByIdAndUpdate(id, { [fieldKey]: url });
+                    // Roll the face-validation reference forward to this punch image so
+                    // the next punch validates against the most recent selfie (seeds the
+                    // first-image + profile photo on the very first capture).
+                    if (staffId) await setFaceReferenceUrl(staffId, url);
                 }
                 console.log('[Attendance] deferred selfie upload', {
                     attendanceId: String(id),
@@ -1923,6 +1928,7 @@ const checkIn = async (req, res) => {
                     staff.businessId ? String(staff.businessId) : undefined,
                     staff.name,
                     'punchInSelfie',
+                    staff._id,
                 );
             }
             void Promise.allSettled([
@@ -2136,6 +2142,7 @@ const checkIn = async (req, res) => {
                 staff.businessId ? String(staff.businessId) : undefined,
                 staff.name,
                 'punchInSelfie',
+                staff._id,
             );
         }
         void Promise.allSettled([
@@ -2811,6 +2818,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
             companyIdForDefer,
             staff.name,
             'punchOutSelfie',
+            staff._id,
         );
     }
 

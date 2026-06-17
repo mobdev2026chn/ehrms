@@ -414,10 +414,22 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
               index: _tabController.index,
               sizing: StackFit.expand,
               children: [
-                LeaveRequestsTab(key: _leaveKey),
-                PermissionRequestsTab(key: _permissionKey),
-                ExpenseRequestsTab(key: _expenseKey),
-                LoanRequestsTab(key: _loanKey),
+                LeaveRequestsTab(
+                  key: _leaveKey,
+                  isVisible: () => _tabController.index == 0,
+                ),
+                PermissionRequestsTab(
+                  key: _permissionKey,
+                  isVisible: () => _tabController.index == 1,
+                ),
+                ExpenseRequestsTab(
+                  key: _expenseKey,
+                  isVisible: () => _tabController.index == 2,
+                ),
+                LoanRequestsTab(
+                  key: _loanKey,
+                  isVisible: () => _tabController.index == 3,
+                ),
               ],
             ),
           ),
@@ -904,7 +916,13 @@ class _PaginationBar extends StatelessWidget {
 // --- LEAVE TAB ---
 
 class LeaveRequestsTab extends StatefulWidget {
-  const LeaveRequestsTab({super.key});
+  /// Returns true when this tab is the one currently visible in the parent's
+  /// IndexedStack. Used to suppress load-error toasts for background tabs, which
+  /// all fetch at screen open and would otherwise pop up while the user is on a
+  /// different tab. Null is treated as visible.
+  final bool Function()? isVisible;
+
+  const LeaveRequestsTab({super.key, this.isVisible});
 
   @override
   State<LeaveRequestsTab> createState() => _LeaveRequestsTabState();
@@ -926,6 +944,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     'Pending',
     'Approved',
     'Rejected',
+    'Cancelled',
   ];
   Timer? _debounce;
   final TextEditingController _searchController = TextEditingController();
@@ -1022,14 +1041,16 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
         });
       } else {
         setState(() => _isLoading = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            result['message']?.toString(),
-            fallback: 'Failed to fetch leaves',
-          ),
-          isError: true,
-        );
+        if (widget.isVisible?.call() ?? true) {
+          SnackBarUtils.showSnackBar(
+            context,
+            ErrorMessageUtils.sanitizeForDisplay(
+              result['message']?.toString(),
+              fallback: 'Failed to fetch leaves',
+            ),
+            isError: true,
+          );
+        }
       }
     }
   }
@@ -1142,7 +1163,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
             _detailRow('Rejected By', rejectedBy),
             if (rejectionReason != null && rejectionReason.isNotEmpty)
               _detailRow('Rejection Reason', rejectionReason),
-          ] else
+          ] else if (leave['status'] == 'Approved')
             _detailRow('Approved By', approvedBy),
           if (leave['reason'] != null && leave['reason'].toString().isNotEmpty)
             _detailRow('Reason', leave['reason']),
@@ -2665,7 +2686,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 // --- LOAN TAB ---
 
 class LoanRequestsTab extends StatefulWidget {
-  const LoanRequestsTab({super.key});
+  /// See [LeaveRequestsTab.isVisible].
+  final bool Function()? isVisible;
+
+  const LoanRequestsTab({super.key, this.isVisible});
 
   @override
   State<LoanRequestsTab> createState() => _LoanRequestsTabState();
@@ -2752,14 +2776,16 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
         });
       } else {
         setState(() => _isLoading = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            result['message']?.toString(),
-            fallback: 'Failed to fetch loan requests',
-          ),
-          isError: true,
-        );
+        if (widget.isVisible?.call() ?? true) {
+          SnackBarUtils.showSnackBar(
+            context,
+            ErrorMessageUtils.sanitizeForDisplay(
+              result['message']?.toString(),
+              fallback: 'Failed to fetch loan requests',
+            ),
+            isError: true,
+          );
+        }
       }
     }
   }
@@ -3952,7 +3978,10 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
 // --- EXPENSE TAB ---
 
 class ExpenseRequestsTab extends StatefulWidget {
-  const ExpenseRequestsTab({super.key});
+  /// See [LeaveRequestsTab.isVisible].
+  final bool Function()? isVisible;
+
+  const ExpenseRequestsTab({super.key, this.isVisible});
 
   @override
   State<ExpenseRequestsTab> createState() => _ExpenseRequestsTabState();
@@ -4098,14 +4127,16 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
         });
       } else {
         setState(() => _isLoading = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            result['message']?.toString(),
-            fallback: 'Failed to fetch expense requests',
-          ),
-          isError: true,
-        );
+        if (widget.isVisible?.call() ?? true) {
+          SnackBarUtils.showSnackBar(
+            context,
+            ErrorMessageUtils.sanitizeForDisplay(
+              result['message']?.toString(),
+              fallback: 'Failed to fetch expense requests',
+            ),
+            isError: true,
+          );
+        }
       }
     }
   }
@@ -5263,7 +5294,10 @@ class _DashedRRectPainter extends CustomPainter {
 // --- PERMISSION TAB ---
 
 class PermissionRequestsTab extends StatefulWidget {
-  const PermissionRequestsTab({super.key});
+  /// See [LeaveRequestsTab.isVisible].
+  final bool Function()? isVisible;
+
+  const PermissionRequestsTab({super.key, this.isVisible});
 
   @override
   State<PermissionRequestsTab> createState() => _PermissionRequestsTabState();
@@ -5331,14 +5365,16 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
       });
     } else {
       setState(() => _isLoading = false);
-      SnackBarUtils.showSnackBar(
-        context,
-        ErrorMessageUtils.sanitizeForDisplay(
-          result['message']?.toString(),
-          fallback: 'Failed to fetch permission requests',
-        ),
-        isError: true,
-      );
+      if (widget.isVisible?.call() ?? true) {
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.sanitizeForDisplay(
+            result['message']?.toString(),
+            fallback: 'Failed to fetch permission requests',
+          ),
+          isError: true,
+        );
+      }
     }
   }
 

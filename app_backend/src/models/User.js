@@ -20,6 +20,10 @@ const userSchema = new mongoose.Schema({
     loginOTP: { type: String },
     loginOTPExpiry: { type: Date },
     avatar: { type: String },
+    // Face-validation images (URLs); see Staff.faceFirstImage / faceReferenceImage.
+    // Used as a fallback when there is no staff record.
+    faceFirstImage: { type: String },
+    faceReferenceImage: { type: String },
     officeLocation: {
         latitude: Number,
         longitude: Number,

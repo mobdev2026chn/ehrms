@@ -1264,14 +1264,27 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return true;
   }
 
-  /// Legacy punch/break selfies (captured before
-  /// [AppConstants.selfieOrientationFixCutoffUtc]) were stored upside-down, so
-  /// the displayed image must be rotated 180°. Newer selfies store upright pixels
-  /// and render as-is. Returns true when [punchWhen] predates the fix.
-  bool _selfieNeedsFlip(dynamic punchWhen) {
-    final when = _parseAnyDateTimeToLocal(punchWhen);
-    if (when == null) return false;
-    return when.toUtc().isBefore(AppConstants.selfieOrientationFixCutoffUtc);
+  /// Punch / break / permission selfies are captured with the front camera,
+  /// which on these devices writes pixels rotated 180° while reporting EXIF
+  /// orientation = 1. That makes the capture-time orientation bake a no-op, so
+  /// the stored image is always upside-down (the date-cutoff scheme this used to
+  /// rely on never actually corrected newer captures). We therefore always
+  /// rotate selfies 180° on display so they render upright. [punchWhen] is kept
+  /// for call-site compatibility.
+  bool _selfieNeedsFlip(dynamic punchWhen) => true;
+
+  /// Builds an [ImageProvider] for a selfie that may be either a remote
+  /// (Cloudinary) http URL or an inline base64 `data:` URL. Punch/break selfies
+  /// are uploaded and referenced by http URL; permission step-out/in selfies are
+  /// stored inline on the attendance record as a data URL. Returns null when the
+  /// value is neither / fails to decode.
+  ImageProvider? _selfieImageProvider(String url) {
+    if (url.startsWith('http')) return CachedNetworkImageProvider(url);
+    if (url.startsWith('data:')) {
+      final bytes = Uri.parse(url).data?.contentAsBytes();
+      if (bytes != null && bytes.isNotEmpty) return MemoryImage(bytes);
+    }
+    return null;
   }
 
   void _showSelfieDialog(
@@ -1279,11 +1292,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     String title = "Selfie View",
     bool flip = false,
   ]) {
-    Widget image = Image.network(
-      imageUrl,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _buildImageNotFoundPlaceholder(),
-    );
+    final provider = _selfieImageProvider(imageUrl);
+    Widget image = provider == null
+        ? _buildImageNotFoundPlaceholder()
+        : Image(
+            image: provider,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _buildImageNotFoundPlaceholder(),
+          );
     if (flip) {
       image = RotatedBox(quarterTurns: 2, child: image);
     }
@@ -1744,7 +1760,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       ),
                       if (hasFineInfo) ...[
                         const SizedBox(height: 20),
-                        _buildDayDetailSection('Fine Details', Icons.money_off, [
+                        _buildDayDetailSection('Fine Details', Icons.currency_rupee, [
                           if (lateMinutes != null && lateMinutes.toInt() > 0)
                             _buildDayDetailRow(
                               'Late Check-in',
@@ -1832,6 +1848,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                             punchIn: punchIn,
                             punchOut: punchOut,
                             branchName: branchName,
+                            permissionPunches: record['permissionPunches'],
                             punchInSelfieUrl: hasPunchInSelfie
                                 ? punchInSelfieUrl.toString()
                                 : null,
@@ -2087,6 +2104,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required dynamic punchIn,
     required dynamic punchOut,
     String? branchName,
+    dynamic permissionPunches,
     String? punchInSelfieUrl,
     String? punchOutSelfieUrl,
   }) {
@@ -2276,6 +2294,36 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
     }
 
+    // Custom-time ('both') permission step-outs/returns are stamped (with a
+    // selfie) into the per-day attendance record under `permissionPunches`.
+    // Surface them in the same Log timeline as Permission Out / Permission In.
+    if (permissionPunches is List) {
+      for (final raw in permissionPunches) {
+        if (raw is! Map) continue;
+        final punch = Map<String, dynamic>.from(raw);
+        final kind = (punch['kind'] ?? '').toString().trim().toLowerCase();
+        if (kind != 'out' && kind != 'in') continue;
+        final when = punch['at'];
+        final selfie = punch['selfie']?.toString();
+        final title = kind == 'out' ? 'Permission Out' : 'Permission In';
+        final headlineParts = [
+          _formatLogTime(when),
+          if (branchName != null && branchName.trim().isNotEmpty)
+            branchName.trim(),
+        ];
+        final hasSelfie = selfie != null && selfie.trim().isNotEmpty;
+        items.add({
+          'title': title,
+          'headline': headlineParts.whereType<String>().join(' | '),
+          'subtitle': _formatLogByline(null, when),
+          'imageUrl': hasSelfie ? selfie : null,
+          'tileIcon': hasSelfie ? null : 'permission',
+          'flip': _selfieNeedsFlip(when),
+          'sortMs': logSortMsFrom(when),
+        });
+      }
+    }
+
     items.sort((a, b) {
       final aMs = (a['sortMs'] as num?)?.toInt() ?? -1;
       final bMs = (b['sortMs'] as num?)?.toInt() ?? -1;
@@ -2294,7 +2342,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   Widget _buildAttendanceLogTile(Map<String, dynamic> item) {
     final imageUrl = item['imageUrl']?.toString();
-    final hasImage = imageUrl != null && imageUrl.startsWith('http');
+    final imageProvider = (imageUrl != null &&
+            (imageUrl.startsWith('http') || imageUrl.startsWith('data:')))
+        ? _selfieImageProvider(imageUrl)
+        : null;
+    final hasImage = imageProvider != null;
     final subtitle = item['subtitle']?.toString();
     final headline = item['headline']?.toString() ?? '';
     final tileIcon = item['tileIcon']?.toString();
@@ -2342,12 +2394,27 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           color: Colors.amber.shade900,
         ),
       );
+    } else if (tileIcon == 'permission') {
+      leading = Container(
+        width: 34,
+        height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          color: Colors.indigo.shade50,
+        ),
+        child: Icon(
+          Icons.fact_check_outlined,
+          size: 18,
+          color: Colors.indigo.shade700,
+        ),
+      );
     } else if (hasImage) {
-      // Punch-in / punch-out selfie — render a proper, tappable thumbnail.
-      // Legacy selfies (stored upside-down before the orientation fix) are
-      // rotated 180° here so they display upright.
+      // Punch / break / permission selfie — render a proper, tappable
+      // thumbnail. Stored selfies are upside-down (front-camera capture), so
+      // they're rotated 180° here to display upright.
       leading = GestureDetector(
-        onTap: () => _showSelfieDialog(imageUrl, item['title'], flip),
+        onTap: () => _showSelfieDialog(imageUrl!, item['title'], flip),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
           child: RotatedBox(
@@ -2361,7 +2428,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   color: AppColors.primary.withValues(alpha: 0.25),
                 ),
                 image: DecorationImage(
-                  image: CachedNetworkImageProvider(imageUrl),
+                  image: imageProvider,
                   fit: BoxFit.cover,
                 ),
               ),
@@ -4318,17 +4385,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
     if (isCurrentMonth) {
       final bool isHoliday = _holidayDateSet.contains(dateStr);
-      final int dayOfWeek = day.weekday; // 1=Mon, ..., 7=Sun
 
-      // Week off from backend, plus force Sundays as week off
+      // Week off strictly from backend-configured weekly off pattern.
       // Do NOT show violet for alternate work dates (compensation week-off days when employee can check-in)
       bool isWeekOff = _weekOffDateSet.contains(dateStr);
       if (isWeekOff && _alternateWorkDatesInMonth.contains(dateStr)) {
         isWeekOff = false;
-      }
-      if (dayOfWeek == DateTime.sunday &&
-          !_alternateWorkDatesInMonth.contains(dateStr)) {
-        isWeekOff = true;
       }
 
       // When a holiday and a week-off land on the same date, the date is shown as a
@@ -4367,11 +4429,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       else if (isHalfDayStatus) {
         bgColor = const Color(0xFFBFDBFE); // Half Day - On Leave blue
       }
-      // 2.5. Present on holiday when allowAttendanceOnHolidays or allowAttendanceOnWeeklyOff is enabled → show as Present
+      // 2.5. Present on holiday when allowAttendanceOnHolidays is enabled → show as Present.
+      // Use only the holiday flag here (the week-off flag governs the separate
+      // present-on-week-off case at step 3.7). This keeps the background in sync
+      // with the "P"/"H" label logic below, which also keys on allowAttendanceOnHolidays.
       else if (isPresentStatus &&
           isHoliday &&
-          (_attendanceTemplate?['allowAttendanceOnHolidays'] == true ||
-              _attendanceTemplate?['allowAttendanceOnWeeklyOff'] == true)) {
+          _attendanceTemplate?['allowAttendanceOnHolidays'] == true) {
         bgColor = const Color(0xFFFCEFD2); // Present - Light Amber (Figma)
       }
       // 3. Holiday (only when it is NOT also a week-off — overlap shows as Week Off below)
@@ -7853,14 +7917,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   //   ],
                   // ),
                 // ],
+                // Always show working hours so every log carries the same
+                // baseline info; show the location address as an extra line when
+                // it was captured at punch-in (previously an either/or, which made
+                // some cards show hours and others show location).
+                if (totalHoursStr.isNotEmpty && totalHoursStr != '--:--') ...[
+                  const SizedBox(height: 2),
+                  Text(totalHoursStr,
+                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                ],
                 if (locationAddress != null) ...[
                   const SizedBox(height: 2),
                   Text(locationAddress,
                       maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                ] else if (totalHoursStr.isNotEmpty && totalHoursStr != '--:--') ...[
-                  const SizedBox(height: 2),
-                  Text(totalHoursStr,
                       style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                 ],
                 if (tags.isNotEmpty) ...[
@@ -7880,7 +7949,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.money_off_rounded,
+                      Icon(Icons.currency_rupee_rounded,
                           size: 12, color: Colors.red.shade600),
                       const SizedBox(width: 4),
                       Text(

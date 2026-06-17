@@ -41,6 +41,13 @@ const staffSchema = new mongoose.Schema({
     status: { type: String, default: 'Active' },
     joiningDate: { type: Date, default: Date.now },
     avatar: { type: String },
+    // Face-validation images. faceFirstImage = the very first selfie ever captured
+    // (punch/break/permission), set once and never overwritten. faceReferenceImage =
+    // the most recent selfie (rolling), updated on every successful capture so the
+    // next capture validates against the latest image. avatar is also seeded from
+    // the first capture when empty.
+    faceFirstImage: { type: String },
+    faceReferenceImage: { type: String },
     gender: { type: String },
     maritalStatus: { type: String },
     dob: { type: Date },

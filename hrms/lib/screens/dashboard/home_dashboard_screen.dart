@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
 import '../../config/app_text_styles.dart';
+import '../../config/constants.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
@@ -35,6 +36,7 @@ import '../../services/break_service.dart';
 import '../../services/performance_service.dart';
 import '../../models/break_summary.dart';
 import '../salary/salary_structure_detail_screen.dart';
+import '../salary/staff_salary_structure_screen.dart';
 import '../salary/request_payslip_screen.dart';
 import '../performance/my_performance_screen.dart';
 import '../../utils/salary_structure_calculator.dart';
@@ -475,6 +477,37 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
     final selfie = await _capturePermissionSelfie();
     if (selfie == null || selfie.isEmpty || !mounted) return;
+
+    // Validate the permission selfie against the rolling face reference before
+    // stamping, mirroring the attendance punch and break flows.
+    if (AppConstants.enableAttendanceFaceMatching) {
+      setState(() => _isPermissionStamping = true);
+      Map<String, dynamic> verify;
+      try {
+        verify = await _authService.verifyFace(selfie);
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _isPermissionStamping = false);
+        SnackBarUtils.showSnackBar(
+          context,
+          'Face verification failed. Please try again.',
+          isError: true,
+        );
+        return;
+      }
+      if (!mounted) return;
+      if (!verify['success'] || verify['match'] != true) {
+        setState(() => _isPermissionStamping = false);
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.sanitizeForDisplay(
+            verify['message']?.toString() ?? 'Face not matching. Please try again.',
+          ),
+          isError: true,
+        );
+        return;
+      }
+    }
 
     setState(() => _isPermissionStamping = true);
     final result = isOut
@@ -2482,9 +2515,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             const SizedBox(height: 8),
             Text(
               _todayCelebrationsLabel(),
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 11,
-                color: const Color(0xFF1F2937).withValues(alpha: 0.15),
+                color: Color(0xFF1F2937),
+                fontWeight: FontWeight.w500,
               ),
             ),
             const SizedBox(height: 4),
@@ -3340,13 +3374,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   /// Figma: This Month Net white card (bottom-right of 2-col row)
+  /// Tapping "This Month Net" opens the Salary Structure page, which loads the
+  /// staff salary bundle and handles its own access-denied messaging.
+  void _openSalaryStructure() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const StaffSalaryStructureScreen(),
+      ),
+    );
+  }
+
   Widget _buildThisMonthNetSummaryCard(
     String mtdAmount,
     String? monthlyAmount,
     String presentDaysSubtitle,
   ) {
     return AppCard(
-      onTap: () => widget.onNavigate?.call(2),
+      onTap: _openSalaryStructure,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,

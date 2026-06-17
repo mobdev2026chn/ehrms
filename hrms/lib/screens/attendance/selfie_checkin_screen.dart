@@ -735,9 +735,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   bool get _isCheckInDisabled => !_isCheckedIn && !_checkInAllowed;
   bool get _isCheckOutDisabled => _isCheckedIn && !_checkOutAllowed;
 
-  /// Selfie is required only on punch-out, not on punch-in.
-  bool get _requireSelfieForCurrentAction =>
-      _isCheckedIn ? (_template?['requireSelfie'] ?? true) : false;
+  /// Selfie is required on both punch-in and punch-out (when the template asks
+  /// for it) so image-based face validation runs on every punch.
+  bool get _requireSelfieForCurrentAction => _template?['requireSelfie'] ?? true;
   bool get _isButtonDisabled =>
       _isCompleted ||
       _isLoading ||

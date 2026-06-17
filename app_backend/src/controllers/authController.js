@@ -1366,16 +1366,20 @@ const verifyFace = async (req, res) => {
         const staff = req.staff;
         // Always fetch latest avatar from DB so face matching uses only the current profile photo
         // (after user updates photo in profile, this returns the new URL; no cache)
-        const fullUser = await User.findById(user._id).select('avatar').lean();
+        const fullUser = await User.findById(user._id).select('faceReferenceImage').lean();
         let fullStaff = null;
-        if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('avatar').lean();
-        const profilePhotoUrl = fullUser?.avatar || fullStaff?.avatar;
+        if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('faceReferenceImage').lean();
+        // Validation reference = the most recent punch image (rolling self-reference),
+        // not the static profile avatar. On the very first punch no reference exists yet,
+        // so accept it — the punch flow stores this image as the reference (and seeds the
+        // profile photo), and the next punch validates against it.
+        const profilePhotoUrl = fullStaff?.faceReferenceImage || fullUser?.faceReferenceImage;
 
         if (!profilePhotoUrl || !profilePhotoUrl.startsWith('http')) {
             return res.status(200).json({
                 success: true,
-                match: false,
-                message: 'No profile photo uploaded. Please upload a profile photo first.'
+                match: true,
+                message: 'First punch captured as your face reference.'
             });
         }
 

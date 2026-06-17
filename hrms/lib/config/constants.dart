@@ -102,7 +102,7 @@ class AppConstants {
 
   /// When true, attendance selfie is verified against profile photo (face matching).
   /// When false, only on-device face detection runs; no server-side face matching.
-  static const bool enableAttendanceFaceMatching = false;
+  static const bool enableAttendanceFaceMatching = true;
 
   /// Punch/break selfies captured BEFORE this instant were stored upside-down:
   /// the front-camera EXIF rotation was stripped server-side (Cloudinary) before

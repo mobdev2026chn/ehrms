@@ -480,9 +480,40 @@ async function sendPerformanceReviewStatusChangeNotification(reviewDoc, staff = 
     }, { androidTag });
 }
 
+/**
+ * Send an announcement push to ONE device token. Data-only (like every other push here) so the app's
+ * background handler stores it and shows it in the Notifications screen even if never tapped. The data
+ * keys (module/screen/type/announcementId) match the app's _isAnnouncementNotification + announcement
+ * routing, so a tap opens the announcement's detail screen.
+ * @param {string} token - FCM device token of one staff member
+ * @param {object} announcementDoc - Announcement document (title/subject/description/_id)
+ * @returns {Promise<{ success: boolean, error?: string, invalidToken?: boolean }>}
+ */
+async function sendAnnouncementNotificationToToken(token, announcementDoc) {
+    if (!announcementDoc) return { success: false, error: 'No announcement' };
+    const id = String(announcementDoc._id || '');
+    const title = (announcementDoc.title && String(announcementDoc.title).trim()) || 'New Announcement';
+    const rawBody = announcementDoc.subject || announcementDoc.description || '';
+    let body = String(rawBody).replace(/\s+/g, ' ').trim();
+    if (body.length > 160) body = body.slice(0, 157).trimEnd() + '…';
+    if (!body) body = 'A new announcement has been posted.';
+    return sendToToken(token, {
+        title,
+        body,
+        data: {
+            module: 'announcement',
+            screen: 'announcement',
+            type: 'announcement',
+            announcementId: id,
+        },
+        androidTag: id ? `announcement_${id}` : null,
+    });
+}
+
 module.exports = {
     init,
     sendToToken,
+    sendAnnouncementNotificationToToken,
     inferModuleAndTypeFromText,
     sendLeaveApprovedNotification,
     sendLeaveRejectedNotification,

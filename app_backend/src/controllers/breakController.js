@@ -7,6 +7,7 @@ const AttendanceLog = require('../models/AttendanceLog');
 const digitalOceanService = require('../services/digitalOceanService');
 const { getEffectiveFineConfig, calculateFineAmount } = require('../utils/fineCalculationHelper');
 const { getShiftTimings, calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
+const { setFaceReferenceUrl } = require('../utils/faceReference');
 
 function buildBreakLocation(payload = {}) {
     const latitude = payload.latitude ?? payload.lat ?? null;
@@ -390,7 +391,7 @@ async function uploadBreakSelfie(base64String, req, companyId, employeeName, typ
  * on S3 latency. Back-fills breakStartSelfie / breakEndSelfie on the Break doc once
  * the upload succeeds (mirrors the deferred attendance-selfie path).
  */
-function scheduleDeferredBreakSelfieUpload(breakId, base64String, req, companyId, employeeName, type, fieldKey) {
+function scheduleDeferredBreakSelfieUpload(breakId, base64String, req, companyId, employeeName, type, fieldKey, staffId) {
     if (!base64String) return;
     setImmediate(() => {
         void (async () => {
@@ -399,6 +400,9 @@ function scheduleDeferredBreakSelfieUpload(breakId, base64String, req, companyId
                 const url = await uploadBreakSelfie(base64String, req, companyId, employeeName, type);
                 if (url) {
                     await Break.findByIdAndUpdate(breakId, { [fieldKey]: url });
+                    // Roll the face-validation reference forward to this break selfie so
+                    // the next punch/break validates against the most recent image.
+                    if (staffId) await setFaceReferenceUrl(staffId, url);
                 }
                 console.log('[Break] deferred selfie upload', {
                     breakId: String(breakId),
@@ -749,7 +753,8 @@ exports.startBreak = async (req, res) => {
             String(staff.businessId),
             staff.name,
             'break-start',
-            'breakStartSelfie'
+            'breakStartSelfie',
+            staff._id
         );
 
         return res.status(201).json({
@@ -984,7 +989,8 @@ exports.endBreak = async (req, res) => {
             String(staff.businessId),
             staff.name,
             'break-end',
-            'breakEndSelfie'
+            'breakEndSelfie',
+            staff._id
         );
 
         return res.status(200).json({

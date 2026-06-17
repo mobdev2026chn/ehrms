@@ -334,15 +334,15 @@ class _ChartCard extends StatelessWidget {
                   LineChartBarData(
                     spots: spots,
                     isCurved: true,
-                    color: AppColors.success,
+                    color: AppColors.primary,
                     barWidth: 3,
                     dotData: const FlDotData(show: true),
                     belowBarData: BarAreaData(
                       show: true,
                       gradient: LinearGradient(
                         colors: [
-                          AppColors.success.withOpacity(0.35),
-                          AppColors.success.withOpacity(0.02),
+                          AppColors.primary.withOpacity(0.35),
+                          AppColors.primary.withOpacity(0.02),
                         ],
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,

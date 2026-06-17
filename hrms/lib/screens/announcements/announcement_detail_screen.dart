@@ -431,6 +431,16 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
         _parseLocalDate(field('endDate'));
   }
 
+  /// The expiry instant for *display*, parsed without timezone conversion so it
+  /// matches the value as entered and the list screen's card (which use
+  /// [_parseDate]). [_expiryDate] applies `.toLocal()` for the now-comparison in
+  /// [_isExpired]; using it for display would shift a stored UTC midnight by the
+  /// local offset (e.g. +5:30 IST → "5:30 AM" instead of "12:00 AM").
+  DateTime? get _expiryDisplayDate {
+    dynamic field(String key) => _detail?[key] ?? widget.announcement[key];
+    return _parseDate(field('expiryDate')) ?? _parseDate(field('endDate'));
+  }
+
   /// True once the announcement's expiry/end date has passed. Mirrors the list
   /// screen's expiry check so an expired announcement opened from any entry
   /// point (notification, deep link) can no longer be engaged with.
@@ -593,6 +603,49 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
     );
   }
 
+  /// Normalize the announcement's `subsections` array into a list of maps.
+  /// The web backend stores each sub-section as an object (heading + body and
+  /// optionally its own images/attachments); tolerate plain strings too.
+  static List<Map<String, dynamic>> _getSubsections(Map<String, dynamic> a) {
+    final raw = a['subsections'];
+    final list = <Map<String, dynamic>>[];
+    if (raw is! List) return list;
+    for (final item in raw) {
+      if (item is Map) {
+        final m = <String, dynamic>{};
+        item.forEach((k, v) => m[k.toString()] = v);
+        list.add(m);
+      } else if (item is String && item.trim().isNotEmpty) {
+        list.add({'description': item});
+      }
+    }
+    return list;
+  }
+
+  /// Heading text of a sub-section, across the key names the web might use.
+  static String _subsectionHeading(Map<String, dynamic> s) =>
+      (s['title'] ??
+              s['heading'] ??
+              s['name'] ??
+              s['subject'] ??
+              s['header'] ??
+              s['label'])
+          ?.toString()
+          .trim() ??
+      '';
+
+  /// Body/content text of a sub-section, across the key names the web might use.
+  static String _subsectionBody(Map<String, dynamic> s) =>
+      (s['description'] ??
+              s['content'] ??
+              s['body'] ??
+              s['text'] ??
+              s['details'] ??
+              s['value'])
+          ?.toString()
+          .trim() ??
+      '';
+
   static List<Map<String, dynamic>> _getAttachments(Map<String, dynamic> a) {
     final list = <Map<String, dynamic>>[];
     final attachments = a['attachments'];
@@ -622,6 +675,12 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
         : '';
     final imageUrls = _getImageUrls(widget.announcement);
     final attachments = _getAttachments(widget.announcement);
+    // Prefer the freshly-fetched doc for sub-sections (the list payload may omit
+    // them), falling back to the announcement passed into this screen.
+    var subsections = _getSubsections(_detail ?? const {});
+    if (subsections.isEmpty) {
+      subsections = _getSubsections(widget.announcement);
+    }
 
     return Scaffold(
       backgroundColor: colorScheme.surfaceContainerHighest,
@@ -775,13 +834,15 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                     color: colorScheme.onSurfaceVariant,
                                   ),
                                   const SizedBox(width: 6),
-                                  Text(
-                                    'Expires: '
-                                    '${DateFormat('d MMM y, h:mm a').format(_expiryDate!)}',
-                                    style: TextStyle(
-                                      color: colorScheme.onSurfaceVariant,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
+                                  Expanded(
+                                    child: Text(
+                                      'Expires: '
+                                      '${DateFormat('d MMM y, h:mm a').format(_expiryDisplayDate ?? _expiryDate!)}',
+                                      style: TextStyle(
+                                        color: colorScheme.onSurfaceVariant,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -851,6 +912,98 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                       ],
                     ),
                   ),
+                ],
+                if (subsections.isNotEmpty) ...[
+                  ...subsections.map((sub) {
+                    final heading = _subsectionHeading(sub);
+                    final body = _subsectionBody(sub);
+                    final subImages = _getImageUrls(sub);
+                    final subAttachments = _getAttachments(sub);
+                    if (heading.isEmpty &&
+                        body.isEmpty &&
+                        subImages.isEmpty &&
+                        subAttachments.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border(
+                            left: BorderSide(color: widget.accent, width: 4),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: colorScheme.shadow.withValues(alpha: 0.08),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (heading.isNotEmpty) ...[
+                              Text(
+                                heading,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                  color: widget.accent,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                            if (body.isNotEmpty)
+                              Text(
+                                body,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  color: colorScheme.onSurface,
+                                  height: 1.5,
+                                ),
+                              ),
+                            if (subImages.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              ...subImages.map(
+                                (url) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Image.network(
+                                      url,
+                                      width: double.infinity,
+                                      height: 220,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const SizedBox.shrink(),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (subAttachments.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              ...subAttachments.map(
+                                (att) => _buildAttachmentTile(
+                                  context,
+                                  name: att['name'] as String,
+                                  url: att['url'] as String,
+                                  mimeType: att['mimeType'] as String? ?? '',
+                                  accent: widget.accent,
+                                  colorScheme: colorScheme,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
                 ],
                 if (attachments.isNotEmpty) ...[
                   const SizedBox(height: 20),
