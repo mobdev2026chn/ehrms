@@ -15,10 +15,16 @@ const digitalOceanService = require('../services/digitalOceanService');
 async function setFaceReferenceUrl(staffId, url) {
     if (!staffId || !url) return;
     try {
-        const staffDoc = await Staff.findById(staffId).select('avatar faceFirstImage').lean();
+        const staffDoc = await Staff.findById(staffId).select('faceFirstImage').lean();
         const update = { faceReferenceImage: url };
-        if (!staffDoc?.faceFirstImage) update.faceFirstImage = url; // 1st taken image (permanent)
-        if (!staffDoc?.avatar) update.avatar = url;                 // seed profile photo
+        if (!staffDoc?.faceFirstImage) {
+            // First capture ever (in practice the first punch — punch-in is required
+            // before any break/permission): this image becomes the permanent first
+            // image AND the profile photo, overwriting any existing avatar.
+            update.faceFirstImage = url;
+            update.faceFirstImageAt = new Date();
+            update.avatar = url;
+        }
         await Staff.findByIdAndUpdate(staffId, update);
     } catch (e) {
         console.error('[FaceReference] setFaceReferenceUrl failed', String(staffId), e?.message);

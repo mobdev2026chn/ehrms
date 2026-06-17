@@ -1,13 +1,34 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:camerawesome/camerawesome_plugin.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import '../../config/app_colors.dart';
 
 /// Sentinel returned when camera init fails; caller should use image_picker fallback.
 const Object useImagePickerFallback = Object();
+
+/// The front camera (camerawesome) writes pixels rotated 180° while reporting EXIF
+/// orientation = 1 on our target devices, so the saved file is upside-down and the
+/// EXIF-orientation bake at upload time is a no-op. Bake a 180° rotation into the
+/// pixels here, at capture time, so the stored/uploaded image is upright EVERYWHERE
+/// (review screen, server, profile avatar, server-side face match) — not just where
+/// the app applies a display-time flip. Runs in a background isolate via [compute].
+/// Returns the SAME [raw] instance if decoding fails, so the caller can skip a write.
+Uint8List bakeSelfieUpright180(Uint8List raw) {
+  try {
+    final decoded = img.decodeImage(raw);
+    if (decoded == null) return raw;
+    final rotated = img.copyRotate(decoded, angle: 180);
+    return Uint8List.fromList(img.encodeJpg(rotated, quality: 92));
+  } catch (_) {
+    return raw;
+  }
+}
 
 /// In-app selfie camera with face-scan overlay UI.
 /// Returns [File] on capture, null if cancelled, or [useImagePickerFallback] if init failed.
@@ -138,6 +159,23 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     });
   }
 
+  /// Bake the captured front-camera photo upright (see [bakeSelfieUpright180]) and
+  /// overwrite the file, then show the review screen. The rotation runs off the UI
+  /// isolate so the camera does not jank; on failure the original file is kept.
+  Future<void> _finalizeCapture(String path) async {
+    try {
+      final file = File(path);
+      final raw = await file.readAsBytes();
+      final upright = await compute(bakeSelfieUpright180, raw);
+      if (!identical(upright, raw)) {
+        await file.writeAsBytes(upright, flush: true);
+      }
+    } catch (_) {
+      // Keep the original capture if rotation fails.
+    }
+    if (mounted) setState(() => _capturedFilePath = path);
+  }
+
   void _takePhoto() {
     _cameraState?.when(
       onPhotoMode: (photoState) => photoState.takePhoto(),
@@ -251,7 +289,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                           single: (single) {
                             final path = single.file?.path;
                             if (path != null && context.mounted) {
-                              setState(() => _capturedFilePath = path);
+                              _finalizeCapture(path);
                             }
                           },
                           multiple: (_) {},

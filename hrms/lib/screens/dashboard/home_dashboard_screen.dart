@@ -96,6 +96,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   String _userName = 'User';
   String _companyName = '';
   String? _avatarUrl;
+  // Legacy avatars seeded from a pre-fix (upside-down) punch need a 180° display flip.
+  bool _avatarNeedsFlip = false;
 
   final RequestService _requestService = RequestService();
   final AttendanceService _attendanceService = AttendanceService();
@@ -727,6 +729,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     av.trim().startsWith('http'))
                 ? av.trim()
                 : null;
+            _avatarNeedsFlip = _computeAvatarFlip(
+              _avatarUrl,
+              data['faceFirstImage']?.toString(),
+              data['faceFirstImageAt'],
+            );
           });
         }
       }
@@ -800,10 +807,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           }
           if (profileSettled['success'] == true &&
               profileSettled['data'] is Map) {
+            final profileData =
+                Map<String, dynamic>.from(profileSettled['data'] as Map);
             _applyShiftContextFromProfile(
-              Map<String, dynamic>.from(profileSettled['data'] as Map),
+              profileData,
               businessFromSettingsApi: businessFromSettings,
             );
+            // Refresh the header avatar from the latest profile so the first-punch
+            // image (which the backend saves as the profile photo) shows up here.
+            unawaited(_applyAvatarFromProfile(profileData));
           }
           if (kDebugMode) {
             debugPrint(
@@ -993,6 +1005,74 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       _profileStaffShiftName = newKey;
       _profileShiftIsRotational = rotational;
     });
+  }
+
+  /// Refresh the header avatar from the latest profile. The backend saves the
+  /// first punch selfie as the profile photo (Staff.avatar / User.avatar), so once
+  /// an employee punches in this picks it up and shows it in the header circle.
+  /// Also persists to the cached `user` so it sticks across screens and relaunch.
+  Future<void> _applyAvatarFromProfile(Map<String, dynamic> data) async {
+    String? av;
+    String? faceFirstImage;
+    dynamic faceFirstImageAt;
+    final staffData = data['staffData'];
+    if (staffData is Map) {
+      if (staffData['avatar'] != null) av = staffData['avatar']?.toString();
+      faceFirstImage = staffData['faceFirstImage']?.toString();
+      faceFirstImageAt = staffData['faceFirstImageAt'];
+    }
+    if (av == null || av.trim().isEmpty) {
+      final profile = data['profile'];
+      if (profile is Map && profile['avatar'] != null) {
+        av = profile['avatar']?.toString();
+      }
+    }
+    if ((av == null || av.trim().isEmpty) && data['avatar'] != null) {
+      av = data['avatar']?.toString();
+    }
+    if (av == null || !av.trim().startsWith('http')) return;
+    final url = av.trim();
+    final flip = _computeAvatarFlip(url, faceFirstImage, faceFirstImageAt);
+    if (url == _avatarUrl && flip == _avatarNeedsFlip) return;
+    if (mounted) {
+      setState(() {
+        _avatarUrl = url;
+        _avatarNeedsFlip = flip;
+      });
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userStr = prefs.getString('user');
+      if (userStr != null) {
+        final user = jsonDecode(userStr) as Map<String, dynamic>;
+        user['avatar'] = url;
+        user['photoUrl'] = url;
+        if (faceFirstImage != null) user['faceFirstImage'] = faceFirstImage;
+        if (faceFirstImageAt != null) {
+          user['faceFirstImageAt'] = faceFirstImageAt.toString();
+        }
+        await prefs.setString('user', jsonEncode(user));
+      }
+    } catch (_) {}
+  }
+
+  /// The header avatar is seeded from the employee's first punch selfie. Legacy
+  /// seeds (captured before the EHRMS capture-time orientation fix) were stored
+  /// upside-down, so flip them 180° on display. Only flip when the avatar IS the
+  /// seeded first image (not a manual profile-photo upload, which is upright) and
+  /// that image predates the fix — a missing timestamp means a legacy seed.
+  bool _computeAvatarFlip(
+    String? avatarUrl,
+    String? faceFirstImage,
+    dynamic faceFirstImageAt,
+  ) {
+    if (avatarUrl == null || faceFirstImage == null) return false;
+    if (avatarUrl.trim() != faceFirstImage.trim()) return false;
+    final iso = faceFirstImageAt?.toString();
+    if (iso == null || iso.isEmpty) return true;
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return true;
+    return dt.toUtc().isBefore(AppConstants.selfieOrientationFixCutoffUtc);
   }
 
   /// Company.shifts + staff.shiftName + joiningDate (web: full shifts from GET /settings/business).
@@ -2194,22 +2274,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   ),
                 ],
               ),
-              child: CircleAvatar(
-                radius: 24,
-                backgroundColor: Colors.white.withValues(alpha: 0.25),
-                backgroundImage: hasAvatar
-                    ? CachedNetworkImageProvider(_avatarUrl!)
-                    : null,
-                child: hasAvatar
-                    ? null
-                    : Text(
-                        initial,
-                        style: const TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+              // Flip legacy (pre-fix, upside-down) seeded avatars 180° on display.
+              child: RotatedBox(
+                quarterTurns: (hasAvatar && _avatarNeedsFlip) ? 2 : 0,
+                child: CircleAvatar(
+                  radius: 24,
+                  backgroundColor: Colors.white.withValues(alpha: 0.25),
+                  backgroundImage: hasAvatar
+                      ? CachedNetworkImageProvider(_avatarUrl!)
+                      : null,
+                  child: hasAvatar
+                      ? null
+                      : Text(
+                          initial,
+                          style: const TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
-                      ),
+                ),
               ),
             ),
           ),

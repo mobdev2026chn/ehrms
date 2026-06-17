@@ -47,6 +47,7 @@ const staffSchema = new mongoose.Schema({
     // next capture validates against the latest image. avatar is also seeded from
     // the first capture when empty.
     faceFirstImage: { type: String },
+    faceFirstImageAt: { type: Date }, // when faceFirstImage/avatar was seeded (decides legacy 180° flip)
     faceReferenceImage: { type: String },
     gender: { type: String },
     maritalStatus: { type: String },

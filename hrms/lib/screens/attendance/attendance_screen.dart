@@ -1264,14 +1264,23 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return true;
   }
 
-  /// Punch / break / permission selfies are captured with the front camera,
-  /// which on these devices writes pixels rotated 180° while reporting EXIF
-  /// orientation = 1. That makes the capture-time orientation bake a no-op, so
-  /// the stored image is always upside-down (the date-cutoff scheme this used to
-  /// rely on never actually corrected newer captures). We therefore always
-  /// rotate selfies 180° on display so they render upright. [punchWhen] is kept
-  /// for call-site compatibility.
-  bool _selfieNeedsFlip(dynamic punchWhen) => true;
+  /// Legacy punch/break/permission selfies were stored upside-down: the front
+  /// camera (camerawesome) wrote pixels rotated 180° with EXIF orientation = 1, so
+  /// the upload-time orientation bake was a no-op. As of the capture-time rotation
+  /// fix (see SelfieCameraScreen.bakeSelfieUpright180 /
+  /// AppConstants.selfieOrientationFixCutoffUtc) new captures are stored UPRIGHT, so
+  /// only images taken BEFORE the cutoff need the 180° display flip. Selfies with no
+  /// usable timestamp are assumed new (upright) and not flipped.
+  bool _selfieNeedsFlip(dynamic punchWhen) {
+    DateTime? when;
+    if (punchWhen is DateTime) {
+      when = punchWhen;
+    } else if (punchWhen != null) {
+      when = DateTime.tryParse(punchWhen.toString());
+    }
+    if (when == null) return false;
+    return when.toUtc().isBefore(AppConstants.selfieOrientationFixCutoffUtc);
+  }
 
   /// Builds an [ImageProvider] for a selfie that may be either a remote
   /// (Cloudinary) http URL or an inline base64 `data:` URL. Punch/break selfies

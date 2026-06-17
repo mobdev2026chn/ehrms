@@ -23,6 +23,7 @@ const userSchema = new mongoose.Schema({
     // Face-validation images (URLs); see Staff.faceFirstImage / faceReferenceImage.
     // Used as a fallback when there is no staff record.
     faceFirstImage: { type: String },
+    faceFirstImageAt: { type: Date },
     faceReferenceImage: { type: String },
     officeLocation: {
         latitude: Number,
