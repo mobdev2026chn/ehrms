@@ -1748,7 +1748,9 @@ const checkIn = async (req, res) => {
 
         if (existing && isHalfDayDay) {
             // Update existing Half Day record with punchIn (do not create new, do not return "Already checked in")
-            const deferHalfDaySelfie = Boolean(selfieInput && template.requireSelfie !== false);
+            // Store any provided selfie (e.g. face-kiosk punches) even when the template
+            // doesn't *require* one, so it's visible in the app + face dashboard.
+            const deferHalfDaySelfie = Boolean(selfieInput);
             const fineShiftStartTime = shiftTiming?.startTime || template.shiftStartTime || '09:30';
             const fineShiftEndTime = shiftTiming?.endTime || template.shiftEndTime || '18:30';
             const fineGracePeriod = shiftTiming?.gracePeriodMinutes ?? template.gracePeriodMinutes ?? 0;
@@ -1952,7 +1954,8 @@ const checkIn = async (req, res) => {
             return res.status(400).json({ message: 'Already checked in today' });
         }
 
-        const deferCreateSelfie = Boolean(selfieInput && template.requireSelfie !== false);
+        // Store any provided selfie even if the template doesn't require one.
+        const deferCreateSelfie = Boolean(selfieInput);
 
         const locationData = {
             latitude: userLat,
@@ -2546,7 +2549,8 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         }
     }
 
-    const deferCheckoutSelfie = Boolean(selfie && template.requireSelfie !== false);
+    // Store any provided selfie even if the template doesn't require one.
+    const deferCheckoutSelfie = Boolean(selfie);
     const companyIdForDefer = staff.businessId ? String(staff.businessId) : undefined;
     if (deferCheckoutSelfie) {
         attendance.punchOutSelfie = null;
