@@ -33,7 +33,6 @@ import '../../services/geo/location_service.dart';
 import '../../services/presence_tracking_service.dart';
 import '../../services/salary_service.dart';
 import '../../bloc/attendance/attendance_bloc.dart';
-import '../../utils/face_detection_helper.dart';
 import '../../utils/attendance_template_util.dart';
 import '../../utils/absent_alert_helper.dart';
 import '../../utils/fine_calculation_util.dart';
@@ -1366,17 +1365,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     required Map<String, dynamic>? activeBreak,
     _ResolvedLocation? prefetchedLocation,
   }) async {
-    final detection = await FaceDetectionHelper.detectFromFile(file);
+    // No client-side ML Kit face gate — server FACE-MATCH (verifyFace) is the single check.
     if (!mounted) return;
-    if (!detection.valid) {
-      SnackBarUtils.showSnackBar(
-        context,
-        detection.message ??
-            'Please take a selfie with exactly one face visible.',
-        isError: true,
-      );
-      return;
-    }
 
     final location = prefetchedLocation ?? await _getCurrentLocation();
     if (!mounted) return;
@@ -3086,19 +3076,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     final todayFuture = _attendanceService.getTodayAttendance(
       forceRefresh: true,
     );
-    final result = await FaceDetectionHelper.detectFromFile(file);
+    // No client-side ML Kit face gate — server FACE-MATCH (verifyFace) is the single check.
     if (!mounted) return;
-    if (!result.valid) {
-      _isSubmittingFromFingerprint = false;
-      _setPunchActionInProgress(false);
-      _dismissSubmitAttendanceDialogIfVisible(context);
-      SnackBarUtils.showSnackBar(
-        context,
-        result.message ?? 'Please take a selfie with exactly one face visible.',
-        isError: true,
-      );
-      return;
-    }
 
     // Use pre-fetched location if provided; otherwise fetch now
     Position? usePosition = position;

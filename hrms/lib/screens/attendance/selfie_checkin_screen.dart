@@ -19,7 +19,6 @@ import '../../services/geo/location_service.dart';
 import '../../services/geo/movement_classification_service.dart';
 import '../../services/presence_tracking_service.dart';
 import '../../bloc/attendance/attendance_bloc.dart';
-import '../../utils/face_detection_helper.dart';
 import '../../utils/request_guard.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/attendance_selfie_compress.dart';
@@ -533,19 +532,8 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
       }
       if (file == null || !mounted) return;
 
-      setState(() => _isDetectingFace = true);
-      final result = await FaceDetectionHelper.detectFromFile(file);
+      // No client-side ML Kit face gate — server FACE-MATCH (verifyFace) is the single check.
       if (!mounted) return;
-      setState(() => _isDetectingFace = false);
-
-      if (!result.valid) {
-        SnackBarUtils.showSnackBar(
-          context,
-          result.message ?? 'Please take a selfie with exactly one face visible.',
-          isError: true,
-        );
-        return;
-      }
 
       setState(() => _imageFile = file);
     } catch (e) {

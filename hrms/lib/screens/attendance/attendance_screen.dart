@@ -23,7 +23,6 @@ import '../../services/presence_tracking_service.dart';
 import '../../utils/attendance_display_util.dart';
 import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/attendance_template_util.dart';
-import '../../utils/face_detection_helper.dart';
 import '../../bloc/attendance/attendance_bloc.dart';
 import 'selfie_camera_screen.dart';
 import '../../utils/snackbar_utils.dart';
@@ -6026,18 +6025,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required String? pincode,
     required bool isCheckedIn,
   }) async {
-    final result = await FaceDetectionHelper.detectFromFile(file);
+    // No client-side ML Kit face gate — the server FACE-MATCH (verifyFace) below is the
+    // single validation. Once the face matches, the punch goes through.
     if (!mounted) return;
-    if (!result.valid) {
-      _setPunchActionInProgress(false);
-      if (mounted) Navigator.of(context).pop();
-      SnackBarUtils.showSnackBar(
-        context,
-        result.message ?? 'Please take a selfie with exactly one face visible.',
-        isError: true,
-      );
-      return;
-    }
     final requireSelfie = _attendanceTemplate?['requireSelfie'] ?? true;
     final requireGeolocation =
         _attendanceTemplate?['requireGeolocation'] ?? true;

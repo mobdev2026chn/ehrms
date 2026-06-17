@@ -46,7 +46,6 @@ import '../../utils/absent_alert_helper.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
-import '../../utils/face_detection_helper.dart';
 import '../../utils/attendance_selfie_compress.dart';
 import '../attendance/selfie_camera_screen.dart'
     show SelfieCameraScreen, useImagePickerFallback;
@@ -455,17 +454,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       if (picked != null) file = File(picked.path);
     }
     if (file == null || !mounted) return null;
-
-    final result = await FaceDetectionHelper.detectFromFile(file);
-    if (!mounted) return null;
-    if (!result.valid) {
-      SnackBarUtils.showSnackBar(
-        context,
-        result.message ?? 'Please take a selfie with exactly one face visible.',
-        isError: true,
-      );
-      return null;
-    }
+    // No client-side ML Kit face gate — server FACE-MATCH (verifyFace) is the single check.
     final bytes = await file.readAsBytes();
     return AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
   }

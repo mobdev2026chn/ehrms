@@ -56,10 +56,11 @@ def main():
         }))
         sys.exit(1)
 
-    # Strict thresholds; use OpenFace only for speed (one model, one order).
+    # Lenient thresholds — match the punch selfie against the previous/profile image
+    # without over-rejecting on lighting/angle. (Raised from 0.15; OpenFace for speed.)
     model_name = 'OpenFace'
-    threshold = 0.15
-    lenient_cap = 0.18
+    threshold = 0.40
+    lenient_cap = 0.45
 
     try:
         result = DeepFace.verify(

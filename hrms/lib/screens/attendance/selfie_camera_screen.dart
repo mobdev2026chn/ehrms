@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import '../../config/app_colors.dart';
+import '../../utils/face_detection_helper.dart';
 
 /// Sentinel returned when camera init fails; caller should use image_picker fallback.
 const Object useImagePickerFallback = Object();
@@ -19,12 +20,36 @@ const Object useImagePickerFallback = Object();
 /// (review screen, server, profile avatar, server-side face match) — not just where
 /// the app applies a display-time flip. Runs in a background isolate via [compute].
 /// Returns the SAME [raw] instance if decoding fails, so the caller can skip a write.
+// Crop to the on-screen guide box (widthFactor 0.82 × heightFactor 0.90) so the saved
+// selfie is just what was framed — not the full camera frame.
+img.Image _cropToFrame(img.Image im) {
+  final w = im.width, h = im.height;
+  final cw = (w * 0.82).round();
+  final ch = (h * 0.90).round();
+  final x = ((w - cw) / 2).round();
+  final y = ((h - ch) / 2).round();
+  return img.copyCrop(im, x: x, y: y, width: cw, height: ch);
+}
+
+/// Inverted capture (front camera wrote pixels upside-down): rotate 180° then crop.
 Uint8List bakeSelfieUpright180(Uint8List raw) {
   try {
     final decoded = img.decodeImage(raw);
     if (decoded == null) return raw;
-    final rotated = img.copyRotate(decoded, angle: 180);
-    return Uint8List.fromList(img.encodeJpg(rotated, quality: 92));
+    final cropped = _cropToFrame(img.copyRotate(decoded, angle: 180));
+    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+  } catch (_) {
+    return raw;
+  }
+}
+
+/// Upright capture: crop only (no rotation).
+Uint8List cropSelfieOnly(Uint8List raw) {
+  try {
+    final decoded = img.decodeImage(raw);
+    if (decoded == null) return raw;
+    final cropped = _cropToFrame(decoded);
+    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
   } catch (_) {
     return raw;
   }
@@ -87,7 +112,6 @@ class SelfieCameraScreen extends StatefulWidget {
 class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     with SingleTickerProviderStateMixin {
   static const Duration _initTimeout = Duration(seconds: 12);
-  late final AnimationController _scanController;
   Timer? _timeoutTimer;
   bool _showTimeoutOverlay = false;
   String? _locationText;
@@ -102,10 +126,6 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     super.initState();
     _locationText = widget.locationText;
     _infoText = widget.infoText;
-    _scanController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    )..repeat(reverse: true);
     if (widget.loadLocationOnOpen && widget.onRefreshLocation != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _refreshLocation());
     }
@@ -134,7 +154,6 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
 
   @override
   void dispose() {
-    _scanController.dispose();
     _timeoutTimer?.cancel();
     super.dispose();
   }
@@ -159,19 +178,30 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     });
   }
 
-  /// Bake the captured front-camera photo upright (see [bakeSelfieUpright180]) and
-  /// overwrite the file, then show the review screen. The rotation runs off the UI
-  /// isolate so the camera does not jank; on failure the original file is kept.
+  /// Auto-detect orientation and crop the captured selfie, then show the review
+  /// screen. ML Kit runs on the as-captured file: if it finds NO face the front
+  /// camera wrote the pixels upside-down, so rotate 180°; otherwise keep upright.
+  /// Either way crop to the guide box. Heavy work runs off the UI isolate; on
+  /// failure the original file is kept.
   Future<void> _finalizeCapture(String path) async {
     try {
       final file = File(path);
+      bool inverted = false;
+      try {
+        final det = await FaceDetectionHelper.detectFromFile(file);
+        // No face as-captured ⇒ image is upside-down for this device.
+        inverted = det.faceCount == 0;
+      } catch (_) {
+        // If detection fails, assume upright (crop only).
+      }
       final raw = await file.readAsBytes();
-      final upright = await compute(bakeSelfieUpright180, raw);
-      if (!identical(upright, raw)) {
-        await file.writeAsBytes(upright, flush: true);
+      final processed =
+          await compute(inverted ? bakeSelfieUpright180 : cropSelfieOnly, raw);
+      if (!identical(processed, raw)) {
+        await file.writeAsBytes(processed, flush: true);
       }
     } catch (_) {
-      // Keep the original capture if rotation fails.
+      // Keep the original capture if processing fails.
     }
     if (mounted) setState(() => _capturedFilePath = path);
   }
@@ -329,19 +359,8 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                     padding: const EdgeInsets.all(18),
                     child: CustomPaint(painter: _FaceOutlinePainter()),
                   ),
-                  // Animated scan line sweeping over the guide.
-                  Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: AnimatedBuilder(
-                      animation: _scanController,
-                      builder: (_, __) => CustomPaint(
-                        painter: _ScanLinePainter(
-                          _scanController.value,
-                          AppColors.primary,
-                        ),
-                      ),
-                    ),
-                  ),
+                  // Capture mode: no scan-line animation — the user positions their
+                  // face and taps the shutter to capture.
                 ],
               ),
             ),
@@ -375,7 +394,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
           ),
           const SizedBox(width: 8),
           const Text(
-            'READY TO SCAN',
+            'TAP TO CAPTURE',
             style: TextStyle(
               color: Colors.white,
               fontSize: 13,
@@ -826,55 +845,4 @@ class _FaceOutlinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-/// A soft glowing horizontal line that sweeps vertically over the face guide,
-/// fading out at the edges — the "scanning" motion in face-capture flows.
-class _ScanLinePainter extends CustomPainter {
-  /// Raw controller value (0→1); the line eases toward the ends for a smooth turn.
-  final double progress;
-  final Color color;
-
-  _ScanLinePainter(this.progress, this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-
-    // Ease the sweep so it slows at the top/bottom turns.
-    final eased = Curves.easeInOut.transform(progress);
-    final top = h * 0.06;
-    final bottom = h * 0.88;
-    final y = top + eased * (bottom - top);
-
-    // Horizontal fade so the line dissolves at the frame edges.
-    final lineRect = Rect.fromLTWH(0, y - 1, w, 2);
-    final linePaint = Paint()
-      ..shader = LinearGradient(
-        colors: [
-          color.withValues(alpha: 0),
-          color.withValues(alpha: 0.95),
-          color.withValues(alpha: 0),
-        ],
-        stops: const [0.12, 0.5, 0.88],
-      ).createShader(lineRect)
-      ..strokeWidth = 2
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(Offset(0, y), Offset(w, y), linePaint);
-
-    // Soft trailing glow band behind the line.
-    final bandRect = Rect.fromLTWH(0, y - 22, w, 24);
-    final bandPaint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.bottomCenter,
-        end: Alignment.topCenter,
-        colors: [color.withValues(alpha: 0.22), color.withValues(alpha: 0)],
-      ).createShader(bandRect);
-    canvas.drawRect(bandRect, bandPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _ScanLinePainter oldDelegate) =>
-      oldDelegate.progress != progress || oldDelegate.color != color;
 }

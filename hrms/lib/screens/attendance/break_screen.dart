@@ -16,7 +16,6 @@ import '../../services/geo/accurate_location_helper.dart';
 import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/break_datetime_util.dart';
 import '../../utils/error_message_utils.dart';
-import '../../utils/face_detection_helper.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/break_status_card.dart';
@@ -229,20 +228,8 @@ class _BreakScreenState extends State<BreakScreen> {
 
     if (file == null || !mounted) return;
 
-    setState(() => _isDetectingFace = true);
-    final result = await FaceDetectionHelper.detectFromFile(file);
-    if (!mounted) return;
-    setState(() => _isDetectingFace = false);
-
-    if (!result.valid) {
-      SnackBarUtils.showSnackBar(
-        context,
-        result.message ?? 'Please keep exactly one face visible.',
-        isError: true,
-      );
-      return;
-    }
-
+    // No client-side ML Kit face gate — server FACE-MATCH (verifyFace) is the single
+    // validation; a matched face proceeds.
     setState(() => _imageFile = file);
   }
 
