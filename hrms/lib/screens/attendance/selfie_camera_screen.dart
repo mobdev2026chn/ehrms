@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:camerawesome/camerawesome_plugin.dart';
 import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
@@ -31,8 +32,22 @@ img.Image _cropToFrame(img.Image im) {
   return img.copyCrop(im, x: x, y: y, width: cw, height: ch);
 }
 
-/// Inverted capture (front camera wrote pixels upside-down): rotate 180° then crop.
-Uint8List bakeSelfieUpright180(Uint8List raw) {
+/// Crop the (already downscaled + correctly-rotated) selfie to the guide frame.
+Uint8List cropSelfieOnly(Uint8List raw) {
+  try {
+    final decoded = img.decodeImage(raw);
+    if (decoded == null) return raw;
+    final cropped = _cropToFrame(decoded);
+    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+  } catch (_) {
+    return raw;
+  }
+}
+
+/// Rotate 180° (deterministic raw-pixel flip) then crop — for captures the front
+/// camera writes upside-down. Done in the Dart image package so it doesn't depend
+/// on EXIF or the native rotate semantics.
+Uint8List rotate180AndCrop(Uint8List raw) {
   try {
     final decoded = img.decodeImage(raw);
     if (decoded == null) return raw;
@@ -43,13 +58,14 @@ Uint8List bakeSelfieUpright180(Uint8List raw) {
   }
 }
 
-/// Upright capture: crop only (no rotation).
-Uint8List cropSelfieOnly(Uint8List raw) {
+/// Pure 180° flip (no crop) — used by the manual "Rotate" button on the review
+/// screen when auto-orientation guessed wrong.
+Uint8List flip180Only(Uint8List raw) {
   try {
     final decoded = img.decodeImage(raw);
     if (decoded == null) return raw;
-    final cropped = _cropToFrame(decoded);
-    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+    return Uint8List.fromList(
+        img.encodeJpg(img.copyRotate(decoded, angle: 180), quality: 92));
   } catch (_) {
     return raw;
   }
@@ -120,6 +136,10 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   String? _capturedFilePath;
   CameraState? _cameraState;
   String? _infoText;
+  // Bumped after a manual rotate so the review Image rebuilds from disk (FileImage
+  // caches by path, and the path is unchanged after we overwrite the bytes).
+  int _reviewRev = 0;
+  bool _rotatingReview = false;
 
   @override
   void initState() {
@@ -199,20 +219,41 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
         final det = await FaceDetectionHelper.detectFromFile(file);
         faceCount = det.faceCount;
         faceMessage = det.message;
-        // No face as-captured ⇒ image is upside-down for this device.
-        inverted = det.faceCount == 0;
+        // ML Kit detects upside-down faces too, so face COUNT can't tell
+        // orientation. Use the face's roll angle: ~±180° ⇒ upside-down. If no
+        // face was found at all, assume inverted (this device captures flipped).
+        if (det.faceCount > 0) {
+          inverted = det.isUpsideDown;
+        } else {
+          inverted = true;
+        }
+        debugPrint('[Selfie][orient] faces=${det.faceCount} '
+            'rollZ=${det.rollZ?.toStringAsFixed(1)} inverted=$inverted');
       } catch (_) {
         // If detection fails, assume upright (crop only).
       }
-      final raw = await file.readAsBytes();
+
+      // Downscale NATIVELY (fast) — avoids decoding the full-res JPEG in Dart
+      // (~1-2s). Keep EXIF auto-correction (default) so the small image matches
+      // what ML Kit saw. The 180° flip (if needed) is then a DETERMINISTIC raw-
+      // pixel rotate in Dart on the small image — no reliance on native rotate
+      // semantics or EXIF interplay.
+      final small = await FlutterImageCompress.compressWithFile(
+        path,
+        minWidth: 1280,
+        minHeight: 1280,
+        quality: 90,
+      );
+      final working = (small != null && small.isNotEmpty)
+          ? small
+          : await file.readAsBytes();
       final processed =
-          await compute(inverted ? bakeSelfieUpright180 : cropSelfieOnly, raw);
-      if (!identical(processed, raw)) {
-        await file.writeAsBytes(processed, flush: true);
-      }
-      // For the inverted case the as-captured pass saw 0 faces (upside-down), so
-      // re-run detection on the now-upright image to get a true face count for
-      // the multi-face gate.
+          await compute(inverted ? rotate180AndCrop : cropSelfieOnly, working);
+      await file.writeAsBytes(processed, flush: true);
+
+      // Multi-face gate. For the upright case we already have the count from the
+      // first pass. For the inverted case the first pass saw 0 faces (upside-down),
+      // so re-check on the now-small upright file (fast — it's ~1280px, not full-res).
       if (inverted) {
         try {
           final det = await FaceDetectionHelper.detectFromFile(file);
@@ -237,6 +278,29 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       return;
     }
     setState(() => _capturedFilePath = path);
+  }
+
+  /// Manual 180° flip from the review screen — the guaranteed fix when the
+  /// auto-orientation guessed wrong. Rotates the captured file in place and
+  /// rebuilds the preview from disk.
+  Future<void> _rotateReview() async {
+    final path = _capturedFilePath;
+    if (path == null || _rotatingReview) return;
+    setState(() => _rotatingReview = true);
+    try {
+      final raw = await File(path).readAsBytes();
+      final flipped = await compute(flip180Only, raw);
+      await File(path).writeAsBytes(flipped, flush: true);
+      await FileImage(File(path)).evict(); // drop the cached (old-orientation) image
+    } catch (_) {
+      // Keep the current image if the flip fails.
+    }
+    if (mounted) {
+      setState(() {
+        _rotatingReview = false;
+        _reviewRev++;
+      });
+    }
   }
 
   /// Shows a transient validation error over the live camera (e.g. multiple
@@ -529,7 +593,30 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.file(File(path), fit: BoxFit.cover),
+                    Image.file(File(path),
+                        key: ValueKey(_reviewRev), fit: BoxFit.cover),
+                    // Manual flip — guaranteed fix if auto-orientation was wrong.
+                    Positioned(
+                      bottom: 12,
+                      right: 12,
+                      child: Material(
+                        color: Colors.black54,
+                        shape: const CircleBorder(),
+                        child: IconButton(
+                          tooltip: 'Flip if upside down',
+                          icon: _rotatingReview
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.screen_rotation,
+                                  color: Colors.white, size: 20),
+                          onPressed: _rotatingReview ? null : _rotateReview,
+                        ),
+                      ),
+                    ),
                     // FACE MATCHED badge (top-left) — per Figma.
                     Positioned(
                       top: 12,

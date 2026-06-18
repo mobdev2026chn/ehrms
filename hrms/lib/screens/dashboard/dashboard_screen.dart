@@ -94,6 +94,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   /// punch-tap validation re-checks against fresh profile data regardless.
   bool _salaryConfigured = true;
   Map<String, dynamic>? _activeBreak;
+  Timer? _breakReconcileTimer;
 
   /// Last-known break balance, shown instantly on the selfie screen.
   BreakSummary? _breakSummary;
@@ -212,6 +213,13 @@ class _DashboardScreenState extends State<DashboardScreen>
     BreakService.stateRevision.addListener(_onBreakStateChanged);
     unawaited(_fetchBreakSummary());
     unawaited(_fetchFineCalculation());
+    // While a break shows as ongoing, poll the server so a break ended on another
+    // device/app (e.g. the Face kiosk) clears this bar instead of ticking forever.
+    _breakReconcileTimer =
+        Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!mounted || _activeBreak == null) return;
+      unawaited(_fetchActiveBreak());
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _showLocationCardsAfterDelay();
       if (_openBreakAfterBuild) {
@@ -225,6 +233,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     BreakService.stateRevision.removeListener(_onBreakStateChanged);
+    _breakReconcileTimer?.cancel();
     _dashboardRefreshTrigger.dispose();
     super.dispose();
   }
@@ -234,6 +243,11 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (state == AppLifecycleState.resumed) {
       BreakReminderService.setAppInForeground(true);
       unawaited(_fetchPunchStatusForNavBar());
+      // Reconcile the break card with the server: a break may have been ended
+      // elsewhere (e.g. the Face kiosk app) while this app was backgrounded, so
+      // refresh so a stale "Break Ongoing" bar clears instead of ticking forever.
+      unawaited(_fetchActiveBreak());
+      unawaited(_fetchBreakSummary());
       // Surface any break reminders the OS delivered to the tray while the app
       // was backgrounded/closed into the in-app Notifications list.
       unawaited(BreakReminderService.onAppResumed());
@@ -3566,6 +3580,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                 // the button-tap moment, not when the selfie + upload settles.
                 _pendingPunchClickTime = DateTime.now().toUtc().toIso8601String();
                 _setPunchActionInProgress(true);
+                // Kick off location resolution NOW, in parallel with the validation
+                // network calls below. GPS fix + reverse-geocode is the slowest step
+                // in the punch; overlapping it with validations (instead of running it
+                // after) cuts several seconds off the time-to-punch.
+                final locationFuture = _getCurrentLocation();
                 // Same validations as attendance screen before check-in/check-out
                 final validationData = await _fetchAttendanceValidationData();
                 punchFlowLog(
@@ -3637,7 +3656,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ),
                   ),
                 );
-                final location = await _getCurrentLocation();
+                // Already started in parallel above — usually resolved by now.
+                final location = await locationFuture;
                 punchFlowLog(
                   '[PunchFlow] location resolved in ${punchFlowSw.elapsedMilliseconds}ms | '
                   'hasPosition=${location.position != null}',

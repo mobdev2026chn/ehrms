@@ -8,11 +8,21 @@ class FaceDetectionResult {
   final int faceCount;
   final String? message;
 
+  /// Roll angle (headEulerAngleZ, degrees) of the detected face. ~0 = upright,
+  /// ~±180 = upside-down. Null when no face was found. Used to decide whether a
+  /// front-camera capture needs a 180° flip (ML Kit detects upside-down faces, so
+  /// face-count alone can't tell orientation).
+  final double? rollZ;
+
   const FaceDetectionResult({
     required this.valid,
     required this.faceCount,
     this.message,
+    this.rollZ,
   });
+
+  /// True when a face is present and clearly upside-down.
+  bool get isUpsideDown => rollZ != null && rollZ!.abs() > 90;
 }
 
 /// Helper for on-device face detection using ML Kit.
@@ -57,17 +67,24 @@ class FaceDetectionHelper {
         );
       }
 
+      // Largest face drives the orientation decision.
+      faces.sort((a, b) => (b.boundingBox.width * b.boundingBox.height)
+          .compareTo(a.boundingBox.width * a.boundingBox.height));
+      final rollZ = faces.first.headEulerAngleZ;
+
       if (faces.length > 1) {
         return FaceDetectionResult(
           valid: false,
           faceCount: faces.length,
           message: 'Multiple faces detected. Please take a selfie with only your face in frame.',
+          rollZ: rollZ,
         );
       }
 
-      return const FaceDetectionResult(
+      return FaceDetectionResult(
         valid: true,
         faceCount: 1,
+        rollZ: rollZ,
       );
     } catch (e) {
       return FaceDetectionResult(
