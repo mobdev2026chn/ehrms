@@ -41,6 +41,17 @@ double? monthlyCtcFromSalaryMap(Map<String, dynamic>? salary) {
   return y / 12.0;
 }
 
+/// Whether a `salaryRevisionHistory` entry is an *actual* salary revision
+/// rather than the initial salary assignment created at joining. A real
+/// revision carries a `previousSalary` (the CTC before the change); the
+/// seed/initial entry has none, so its "Previous CTC" would render as "—" and
+/// it must not surface a "Revised CTC" before any revision has been performed.
+bool isActualSalaryRevision(Map<String, dynamic> entry) {
+  final prev = entry['previousSalary'];
+  if (prev is! Map || prev.isEmpty) return false;
+  return yearlyCtcFromSalaryMap(Map<String, dynamic>.from(prev)) != null;
+}
+
 bool salaryMapHasNumericComponents(Map<String, dynamic>? m) {
   if (m == null || m.isEmpty) return false;
   return m.containsKey('basicSalary') ||

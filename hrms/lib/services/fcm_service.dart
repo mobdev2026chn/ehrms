@@ -178,6 +178,10 @@ class FcmService {
   static const String _logTag = '[FCM]';
   static const String _kFcmNotificationsKey = 'fcm_notifications';
   static const String _kFcmNotificationsFileName = 'fcm_notifications.json';
+  // Per-owner "last opened the notifications list" watermark. Notifications
+  // received after this instant count as unread and drive the dashboard bell
+  // badge; opening the list advances it so the badge clears.
+  static const String _kFcmNotificationsSeenKeyPrefix = 'fcm_notifications_seen_at_';
   static const Duration _kFcmNotificationRetention = Duration(hours: 24);
   static const String _kLocalNotificationChannelId = kFcmNotificationChannelId;
   static const Duration _kDedupeWindow = Duration(minutes: 2);
@@ -1133,6 +1137,65 @@ class FcmService {
     return visible;
   }
 
+  /// SharedPreferences key for the current user's "notifications seen" watermark.
+  static Future<String> _notificationsSeenPrefsKey() async {
+    final owner = await currentOwnerId();
+    return '$_kFcmNotificationsSeenKeyPrefix${owner ?? ''}';
+  }
+
+  /// Records that the user has just viewed the notifications list. Watermarks at
+  /// "now", so every notification currently shown is treated as read and the
+  /// dashboard bell badge clears; anything arriving afterwards counts as unread
+  /// again. Scoped per user so one person's reads don't clear another's badge.
+  static Future<void> markNotificationsSeen() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        await _notificationsSeenPrefsKey(),
+        DateTime.now().toUtc().toIso8601String(),
+      );
+      debugPrint('$_logTag markNotificationsSeen: watermark updated');
+    } catch (e) {
+      debugPrint('$_logTag markNotificationsSeen: $e');
+    }
+  }
+
+  /// The instant the current user last opened the notifications list, or null if
+  /// they never have (then every stored notification is considered unread).
+  static Future<DateTime?> getNotificationsLastSeen() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(await _notificationsSeenPrefsKey());
+      if (raw == null) return null;
+      return DateTime.tryParse(raw);
+    } catch (e) {
+      debugPrint('$_logTag getNotificationsLastSeen: $e');
+      return null;
+    }
+  }
+
+  /// Count of unread notifications for the dashboard bell badge: stored,
+  /// owner-visible items with a non-empty body that were received after the user
+  /// last opened the notifications list.
+  static int unreadCountFor(List<dynamic> notifications, DateTime? lastSeen) {
+    return notifications.where((e) {
+      if (e is! Map) return false;
+      final body = (e['body']?.toString() ?? '').trim();
+      if (body.isEmpty) return false;
+      if (lastSeen == null) return true;
+      final dt = DateTime.tryParse(e['receivedAt']?.toString() ?? '');
+      return dt != null && dt.isAfter(lastSeen);
+    }).length;
+  }
+
+  /// Convenience: reads stored notifications and the watermark, returns the
+  /// unread badge count. Use when the caller doesn't already hold the list.
+  static Future<int> getUnreadNotificationCount() async {
+    final list = await getStoredNotifications();
+    final lastSeen = await getNotificationsLastSeen();
+    return unreadCountFor(list, lastSeen);
+  }
+
   /// Removes every stored notification from this device. Call on logout so a
   /// user's personal notifications never linger for the next person to sign in.
   static Future<void> clearStoredNotifications() async {
@@ -1142,6 +1205,7 @@ class FcmService {
       if (await file.exists()) await file.delete();
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_kFcmNotificationsKey);
+      await prefs.remove(await _notificationsSeenPrefsKey());
       debugPrint('$_logTag clearStoredNotifications: cleared');
     } catch (e) {
       debugPrint('$_logTag clearStoredNotifications: $e');

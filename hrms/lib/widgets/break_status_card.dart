@@ -8,6 +8,13 @@ class BreakStatusCard extends StatefulWidget {
   final bool isBusy;
   final bool showSuccessBanner;
 
+  /// When set, the live timer stops advancing and is pinned to this instant.
+  /// Passed by the parent at the moment the user taps "End Break" — the same
+  /// button-tap instant that becomes the recorded break end time — so the
+  /// displayed elapsed equals the saved duration instead of drifting upward
+  /// while the end selfie/face-verification/network round-trip completes.
+  final DateTime? freezeAt;
+
   /// Seconds of COMPLETED breaks taken earlier today (excludes the ongoing one).
   /// When non-null, the card shows a live "Taken today" total = this + the
   /// current break's running elapsed. Null hides that line.
@@ -20,6 +27,7 @@ class BreakStatusCard extends StatefulWidget {
     this.isBusy = false,
     this.showSuccessBanner = false,
     this.completedBreakSecondsToday,
+    this.freezeAt,
   });
 
   @override
@@ -67,6 +75,19 @@ class _BreakStatusCardState extends State<BreakStatusCard>
       _elapsed = Duration.zero;
       _tick();
     }
+    // Once the parent pins a freeze instant (End Break tapped), stop the ticker
+    // so the displayed elapsed stays at the recorded value during the
+    // selfie/face-verification/network round-trip instead of climbing past it.
+    if (oldWidget.freezeAt != widget.freezeAt) {
+      if (widget.freezeAt != null) {
+        _timer?.cancel();
+        _timer = null;
+      } else {
+        // Freeze released (end aborted) — resume the live ticker.
+        _timer ??= Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+      }
+      _tick();
+    }
   }
 
   @override
@@ -78,7 +99,9 @@ class _BreakStatusCardState extends State<BreakStatusCard>
 
   void _tick() {
     if (!mounted) return;
-    final now = DateTime.now();
+    // While ending, pin "now" to the tap instant so elapsed matches the saved
+    // break duration rather than continuing to advance during the end request.
+    final now = widget.freezeAt ?? DateTime.now();
     if (_anchorStart.isAfter(now.add(const Duration(seconds: 3)))) {
       setState(() {
         _anchorStart = now;

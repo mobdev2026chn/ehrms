@@ -841,7 +841,20 @@ exports.endBreak = async (req, res) => {
         const currentBreakMin = resolveBreakDurationMinutes(doc);
 
         const totalBreakAfterCurrent = previousTotalBreakMin + currentBreakMin;
-        const totalFineMinsAfterCurrent = Math.max(0, totalBreakAfterCurrent - fineCtx.allowedBreakMin);
+        // Break-overage fine is computed at SECOND precision and floored to whole
+        // minutes, so a sub-minute overage is never rounded up into a fined minute
+        // (e.g. an allowance of 2 min with an actual break of 2m56s exceeds by 56s
+        // → 0 fine min, not the 1 min that minute-rounded break time produced).
+        // Seconds accumulate across the day; flooring happens only on the final
+        // exceeded total, so multiple sub-minute overages still aggregate correctly.
+        // Legacy rows without totalBreakSeconds fall back to the rounded-minute total.
+        const previousTotalBreakSeconds =
+            Number(attendanceDoc?.break?.totalBreakSeconds) || (previousTotalBreakMin * 60);
+        const totalBreakSecondsAfterCurrent = previousTotalBreakSeconds + totalSeconds;
+        const allowedBreakSeconds = Math.max(0, fineCtx.allowedBreakMin) * 60;
+        const totalFineMinsAfterCurrent = Math.floor(
+            Math.max(0, totalBreakSecondsAfterCurrent - allowedBreakSeconds) / 60
+        );
         const currentBreakFineMins = Math.max(0, totalFineMinsAfterCurrent - Math.max(0, previousTotalFineMins));
         const currentBreakFineAmount = currentBreakFineMins > 0
             ? calculateFineAmount(
@@ -857,12 +870,16 @@ exports.endBreak = async (req, res) => {
         const breakTestTag = '[BreakFine][formula][test]';
         console.log(
             breakTestTag,
-            'incremental | prevTotalBreakMin=',
-            previousTotalBreakMin,
+            'incremental | prevTotalBreakSec=',
+            previousTotalBreakSeconds,
+            '| currentBreakSec=',
+            totalSeconds,
+            '| totalBreakSecAfter=',
+            totalBreakSecondsAfterCurrent,
+            '| allowedBreakSec=',
+            allowedBreakSeconds,
             '| currentBreakMin=',
             currentBreakMin,
-            '| allowedBreakMin=',
-            fineCtx.allowedBreakMin,
             '| currentBreakFineMins=',
             currentBreakFineMins,
             '| prevTotalFineAmount=',
@@ -904,6 +921,7 @@ exports.endBreak = async (req, res) => {
                     $set: {
                         break: {
                             totalBreakMin: totalBreakAfterCurrent,
+                            totalBreakSeconds: totalBreakSecondsAfterCurrent,
                             totalBreakCount: previousTotalBreakCount + 1,
                             totalBreakFineMins: totalFineMinsAfterCurrent,
                             totalBreakFineAmount: totalFineAmountAfterCurrent,

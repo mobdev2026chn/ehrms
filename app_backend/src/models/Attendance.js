@@ -66,6 +66,10 @@ const attendanceSchema = new mongoose.Schema(
     fineAmount: Number,
     break: {
       totalBreakMin: { type: Number, default: 0 },
+      // Accumulated break duration in seconds — the source of truth for break-overage
+      // fines, which are computed at second precision then floored to whole minutes
+      // (so a sub-minute overage isn't rounded up into a fined minute).
+      totalBreakSeconds: { type: Number, default: 0 },
       totalBreakCount: { type: Number, default: 0 },
       totalBreakFineMins: { type: Number, default: 0 },
       totalBreakFineAmount: { type: Number, default: 0 },

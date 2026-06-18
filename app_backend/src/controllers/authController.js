@@ -1475,13 +1475,19 @@ const verifyFace = async (req, res) => {
 
         const user = req.user;
         const staff = req.staff;
-        const fullUser = await User.findById(user._id).select('faceReferenceImage').lean();
+        const fullUser = await User.findById(user._id).select('faceReferenceImage avatar').lean();
         let fullStaff = null;
-        if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('faceReferenceImage').lean();
+        if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('faceReferenceImage avatar').lean();
         // Validation reference = the most recent punch image (rolling self-reference).
-        // On the very first punch no reference exists yet, so accept it — that image
-        // becomes the reference for the next punch.
-        const referenceUrl = fullStaff?.faceReferenceImage || fullUser?.faceReferenceImage;
+        // On the FIRST punch there is no rolling reference yet — fall back to the
+        // user's onboarding/profile avatar so the first punch is still validated and
+        // can't be impersonated. Only when the user has NO image anywhere do we
+        // accept blindly (nothing exists to compare against).
+        const rollingRef = fullStaff?.faceReferenceImage || fullUser?.faceReferenceImage;
+        const onboardingRef = fullStaff?.avatar || fullUser?.avatar;
+        const referenceUrl = (rollingRef && rollingRef.startsWith('http'))
+            ? rollingRef
+            : ((onboardingRef && onboardingRef.startsWith('http')) ? onboardingRef : null);
 
         if (!referenceUrl || !referenceUrl.startsWith('http')) {
             return res.status(200).json({

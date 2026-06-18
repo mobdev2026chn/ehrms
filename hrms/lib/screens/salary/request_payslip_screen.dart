@@ -134,7 +134,14 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     int first = 1;
     int last = 12;
     if (_selectedYear == _joiningYear) first = _joiningMonth;
-    if (_selectedYear == _currentYear) last = _currentMonth - 1;
+    if (_selectedYear == _currentYear) {
+      last = _currentMonth - 1;
+      // A mid-month joiner should still be able to request their joining
+      // month even though it is the current (not-yet-completed) month.
+      if (_selectedYear == _joiningYear && last < _joiningMonth) {
+        last = _joiningMonth;
+      }
+    }
     if (first > last) return const [];
     return [for (int m = last; m >= first; m--) _months[m - 1]];
   }

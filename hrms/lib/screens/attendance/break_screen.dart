@@ -50,6 +50,12 @@ class _BreakScreenState extends State<BreakScreen> {
   bool _isDetectingFace = false;
   bool _showStartedBanner = false;
 
+  /// Tap instant of "End Break" once the end request is committed. Pins the
+  /// status card's live timer to the same moment recorded as the break end so
+  /// the on-screen elapsed matches the saved duration (no upward drift while
+  /// the face-verification/network round-trip runs).
+  DateTime? _endClickTime;
+
   bool get _isOnBreak => _activeBreak != null;
   String get _submitLabel => _isOnBreak ? 'End Break' : 'Start Break';
   String get _selfieLabel =>
@@ -251,8 +257,12 @@ class _BreakScreenState extends State<BreakScreen> {
     final summary = _breakSummary;
     if (summary == null) return null;
     if (summary.isUnlimited) return 'Break: Unlimited';
-    final remainingSec =
-        summary.remainingSeconds ?? (summary.remainingMin ?? 0) * 60;
+    // Remaining is computed from completed breaks only — an ongoing break is not
+    // deducted until it has been properly ended.
+    final allowedSec = summary.allowedSeconds ?? (summary.allowedMinutes * 60);
+    final remainingSec = allowedSec - summary.completedBreakSeconds > 0
+        ? allowedSec - summary.completedBreakSeconds
+        : 0;
     if (remainingSec <= 0) return 'Break limit reached';
     return 'Break left: ${BreakSummary.formatDuration(remainingSec)}';
   }
@@ -315,7 +325,8 @@ class _BreakScreenState extends State<BreakScreen> {
     // Capture the break instant at the moment the button is tapped, before the
     // location/selfie/network work below, so loading latency does not push the
     // saved break start/end time forward.
-    final String clickTime = DateTime.now().toUtc().toIso8601String();
+    final DateTime clickInstant = DateTime.now();
+    final String clickTime = clickInstant.toUtc().toIso8601String();
     if (_imageFile == null) {
       SnackBarUtils.showSnackBar(
         context,
@@ -340,6 +351,13 @@ class _BreakScreenState extends State<BreakScreen> {
     final selfie = await _encodeSelfie();
     if (selfie == null) return;
 
+    // Ending: pin the status card's live timer to the tap instant now that the
+    // end is committed, so it stops climbing during face-verification/network
+    // and the shown elapsed equals the recorded break duration.
+    if (_isOnBreak && mounted) {
+      setState(() => _endClickTime = clickInstant);
+    }
+
     // Validate the break selfie against the rolling face reference before submitting,
     // mirroring the attendance punch flow.
     if (AppConstants.enableAttendanceFaceMatching &&
@@ -350,7 +368,11 @@ class _BreakScreenState extends State<BreakScreen> {
         verify = await _authService.verifyFace(selfie);
       } catch (_) {
         if (!mounted) return;
-        setState(() => _isLoading = false);
+        // Ending aborted — release the timer freeze so it resumes ticking.
+        setState(() {
+          _isLoading = false;
+          _endClickTime = null;
+        });
         SnackBarUtils.showSnackBar(
           context,
           'Face verification failed. Please try again.',
@@ -360,7 +382,10 @@ class _BreakScreenState extends State<BreakScreen> {
       }
       if (!mounted) return;
       if (!verify['success'] || verify['match'] != true) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _endClickTime = null;
+        });
         SnackBarUtils.showSnackBar(
           context,
           ErrorMessageUtils.sanitizeForDisplay(
@@ -421,6 +446,8 @@ class _BreakScreenState extends State<BreakScreen> {
       return;
     }
 
+    // End request failed — release the timer freeze so it resumes ticking.
+    setState(() => _endClickTime = null);
     final serverBreak = result['data'];
     if (serverBreak is Map) {
       setState(() {
@@ -441,8 +468,12 @@ class _BreakScreenState extends State<BreakScreen> {
     if (summary == null) return const SizedBox.shrink();
 
     final unlimited = summary.isUnlimited;
-    final remainingSec = summary.remainingSeconds ?? 0;
     final allowedSec = summary.allowedSeconds ?? (summary.allowedMinutes * 60);
+    // Break time is tallied only once a break has been properly ended, so an
+    // ongoing break is excluded from used/remaining here (completed-only).
+    final usedSec = summary.completedBreakSeconds;
+    final remainingSec =
+        allowedSec - usedSec > 0 ? allowedSec - usedSec : 0;
     final exhausted = !unlimited && remainingSec <= 0;
     final accent = exhausted ? Colors.red.shade600 : AppColors.primary;
 
@@ -480,7 +511,7 @@ class _BreakScreenState extends State<BreakScreen> {
               children: [
                 _balanceMetric(
                   'Used',
-                  BreakSummary.formatDuration(summary.totalBreakSeconds),
+                  BreakSummary.formatDuration(usedSec),
                   Colors.black87,
                 ),
                 if (!unlimited) ...[
@@ -680,6 +711,7 @@ class _BreakScreenState extends State<BreakScreen> {
                         showSuccessBanner: _showStartedBanner,
                         completedBreakSecondsToday:
                             _breakSummary?.completedBreakSeconds ?? 0,
+                        freezeAt: _endClickTime,
                       ),
                       const SizedBox(height: 12),
                       if (!_showStartedBanner)

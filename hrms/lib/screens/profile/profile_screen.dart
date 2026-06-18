@@ -15,6 +15,7 @@ import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
+import '../../utils/avatar_orientation.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../notifications/notifications_screen.dart';
 
@@ -46,6 +47,10 @@ class _ProfileScreenState extends State<ProfileScreen>
   bool _isLoadingDocs = false;
   bool _profileImageError = false;
   String? _cachedAvatarUrl;
+  // Some devices stored the first-punch selfie upside-down; flip on display when
+  // the image's detected orientation says so (resolved once per URL).
+  bool _avatarNeedsFlip = false;
+  String? _flipResolvedForUrl;
   late TabController _tabController;
 
   /// Two font sizes for entire profile: heading and value
@@ -159,6 +164,19 @@ class _ProfileScreenState extends State<ProfileScreen>
     final staffData = _userData?['staffData'];
     if (staffData == null) return null;
     return Map<String, dynamic>.from(staffData as Map);
+  }
+
+  /// Detect whether the avatar at [url] is stored upside-down (cached per-URL)
+  /// and flip it on display if so. Guarded so it runs at most once per URL.
+  void _resolveAvatarFlip(String? url) {
+    final key = url?.trim();
+    if (key == null || key.isEmpty || !key.startsWith('http')) return;
+    if (key == _flipResolvedForUrl) return;
+    _flipResolvedForUrl = key;
+    AvatarOrientation.resolveNeedsFlip(key).then((resolved) {
+      if (!mounted || resolved == null || resolved == _avatarNeedsFlip) return;
+      setState(() => _avatarNeedsFlip = resolved);
+    });
   }
 
   Map<String, dynamic>? get _candidateData {
@@ -411,6 +429,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         (photoUrlStr.startsWith('http://') ||
             photoUrlStr.startsWith('https://')) &&
         !_profileImageError;
+    if (showPhoto) _resolveAvatarFlip(photoUrlStr);
 
     final statusUpper = status.toUpperCase();
     final statusLabel =
@@ -450,7 +469,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                   ),
                 ],
               ),
-              child: CircleAvatar(
+              child: RotatedBox(
+                quarterTurns: (showPhoto && _avatarNeedsFlip) ? 2 : 0,
+                child: CircleAvatar(
                 radius: 48,
                 backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                 backgroundImage:
@@ -469,6 +490,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                             fontSize: 34,
                             fontWeight: FontWeight.bold,
                             color: AppColors.primary)),
+                ),
               ),
             ),
           ),
@@ -2063,7 +2085,9 @@ class _ProfileScreenState extends State<ProfileScreen>
           child: InteractiveViewer(
             minScale: 0.5,
             maxScale: 4,
-            child: Image.network(
+            child: RotatedBox(
+              quarterTurns: _avatarNeedsFlip ? 2 : 0,
+              child: Image.network(
               photoUrl,
               fit: BoxFit.contain,
               loadingBuilder: (context, child, loadingProgress) {
@@ -2079,6 +2103,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                   color: Colors.white70,
                 ),
               ),
+            ),
             ),
           ),
         ),

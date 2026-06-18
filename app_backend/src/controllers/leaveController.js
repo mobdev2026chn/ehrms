@@ -548,18 +548,19 @@ const getAvailableLeavePool = async (employeeId, staff) => {
     }
     if (!(totalAllowed > 0)) return 0;
 
-    // Deduct approved leave days consumed in the current calendar year so the pool
-    // accurately reflects remaining balance (not just the raw template total).
+    // Deduct approved leave days consumed in the CURRENT MONTH so the pool
+    // accurately reflects the remaining monthly balance (the template allocation
+    // is a monthly quota that resets each month — see getLeaveBalance).
     const now = new Date();
-    const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
-    const yearEnd = new Date(Date.UTC(now.getUTCFullYear(), 11, 31, 23, 59, 59, 999));
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
     const approvedAgg = await Leave.aggregate([
         {
             $match: {
                 employeeId,
                 status: { $regex: /^approved$/i },
-                startDate: { $lte: yearEnd },
-                endDate: { $gte: yearStart }
+                startDate: { $lte: monthEnd },
+                endDate: { $gte: monthStart }
             }
         },
         { $group: { _id: null, total: { $sum: '$days' } } }
@@ -786,43 +787,48 @@ const getLeaveBalance = async (req, res) => {
         const staff = await Staff.findById(staffId).populate('leaveTemplateId');
         const totalAllowed = staff ? await getTotalAllowedFromTemplate(staff) : 0;
 
-        // Year-to-date approved leave days (current calendar year).
+        // Current-month leave usage. The template allocation is a MONTHLY quota,
+        // so used/pending reset each month and only consider leaves overlapping the
+        // current calendar month. This keeps the entitlement card consistent with
+        // the month-scoped per-type summary cards (see getLeaveSummary's range).
         const now = new Date();
-        const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
-        const yearEnd = new Date(Date.UTC(now.getUTCFullYear(), 11, 31, 23, 59, 59, 999));
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
 
         const approvedAgg = await Leave.aggregate([
             {
                 $match: {
                     employeeId: staffId,
                     status: { $regex: /^approved$/i },
-                    startDate: { $lte: yearEnd },
-                    endDate: { $gte: yearStart }
+                    startDate: { $lte: monthEnd },
+                    endDate: { $gte: monthStart }
                 }
             },
             { $group: { _id: null, total: { $sum: '$days' } } }
         ]);
         const usedDays = Math.max(0, Number(approvedAgg?.[0]?.total || 0));
 
-        // Pending leave days for this employee (any future/current pending requests).
+        // Pending leave days that overlap the current month (same monthly window).
         const pendingAgg = await Leave.aggregate([
             {
                 $match: {
                     employeeId: staffId,
-                    status: { $regex: /^pending$/i }
+                    status: { $regex: /^pending$/i },
+                    startDate: { $lte: monthEnd },
+                    endDate: { $gte: monthStart }
                 }
             },
             { $group: { _id: null, total: { $sum: '$days' } } }
         ]);
         const pendingLeaveDays = Math.max(0, Number(pendingAgg?.[0]?.total || 0));
 
-        // Available = total allowed minus already-approved days consumed this year.
+        // Available = total allowed minus already-approved days consumed this month.
         const availableCasualLeaves = Math.max(0, totalAllowed - usedDays);
 
         console.log('[LeaveBalance]', {
             staffId: staffId?.toString?.() || String(staffId || ''),
             leaveTemplateId: staff?.leaveTemplateId?._id?.toString?.() || null,
-            year: now.getUTCFullYear(),
+            month: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`,
             totalAllowed,
             usedDays,
             pendingLeaveDays,

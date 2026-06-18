@@ -5,6 +5,7 @@ import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/interaction_service.dart';
+import '../../services/auth_service.dart';
 import 'announcement_detail_screen.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -37,6 +38,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
       final result = await InteractionService.instance.getAnnouncements();
       final unseen = await InteractionService.instance
           .getAnnouncementsUnseenHrTotal();
+      final joiningDate = await _loadJoiningDate();
       if (!mounted) return;
       if (result['success'] == true) {
         final data = result['data'] is List
@@ -50,15 +52,19 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
           unseenTotal = (unseen['total'] as num).toInt();
         }
         final list = data is List ? List<dynamic>.from(data) : <dynamic>[];
-        // Keep expired announcements visible (marked "Expired" on the card) but
-        // sort them below the active ones so live announcements stay prominent.
-        list.sort((a, b) {
-          final ae = _isExpired(a) ? 1 : 0;
-          final be = _isExpired(b) ? 1 : 0;
-          return ae - be;
-        });
+        // Show only relevant announcements:
+        //  - expired ones are dropped entirely (they no longer add value), and
+        //  - ones created before the employee joined are hidden (they predate
+        //    this employee and aren't meant for them).
+        final filtered = list.where((item) {
+          if (_isExpired(item)) return false;
+          if (joiningDate != null && _isBeforeJoining(item, joiningDate)) {
+            return false;
+          }
+          return true;
+        }).toList();
         setState(() {
-          _announcements = list;
+          _announcements = filtered;
           _unseenEngagementTotal = unseenTotal;
           _isLoading = false;
         });
@@ -546,10 +552,43 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
 
   static DateTime? _parseDate(dynamic value) {
     if (value == null) return null;
+    if (value is DateTime) return value;
     if (value is String) return DateTime.tryParse(value);
     if (value is Map && value['\$date'] != null) {
       return DateTime.tryParse(value['\$date'].toString());
     }
     return null;
+  }
+
+  /// The employee's Date of Joining, read from the cached profile/staff record.
+  /// Returns null when unavailable so no DOJ-based filtering is applied.
+  Future<DateTime?> _loadJoiningDate() async {
+    try {
+      final result = await AuthService().getProfile();
+      if (result['success'] != true || result['data'] is! Map) return null;
+      final data = result['data'] as Map;
+      final staffData = data['staffData'];
+      final raw = (staffData is Map ? staffData['joiningDate'] : null) ??
+          data['joiningDate'];
+      return _parseDate(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Whether an announcement was created before the employee joined. Uses the
+  /// announcement's creation/publish date (createdAt → publishDate →
+  /// effectiveDate); when none is present the announcement is kept (not hidden).
+  static bool _isBeforeJoining(dynamic item, DateTime joiningDate) {
+    if (item is! Map) return false;
+    final created = _parseDate(item['createdAt']) ??
+        _parseDate(item['publishDate']) ??
+        _parseDate(item['effectiveDate']);
+    if (created == null) return false;
+    // Compare at day granularity so an announcement created on the joining day
+    // is still shown.
+    final joinDay =
+        DateTime(joiningDate.year, joiningDate.month, joiningDate.day);
+    return created.toLocal().isBefore(joinDay);
   }
 }

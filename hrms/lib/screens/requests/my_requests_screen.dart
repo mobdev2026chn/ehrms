@@ -8,6 +8,7 @@ import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/request_success_dialog.dart';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -29,6 +30,9 @@ import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../services/fcm_service.dart';
+
+/// Source for an expense proof attachment: camera capture or file storage.
+enum _ProofSource { camera, files }
 
 /// Returns true if [s] is half-day leave type (case and space insensitive).
 /// Backend may send "half day", "Half Day", "halfday", "half", "Half", etc.
@@ -1676,6 +1680,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   final _formKey = GlobalKey<FormState>();
   final RequestService _requestService = RequestService();
   final AuthService _authService = AuthService();
+  final AttendanceService _attendanceService = AttendanceService();
 
   String? _leaveType;
   String? _session; // For Half Day
@@ -1699,6 +1704,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   HolidayOffConfig _offConfig = HolidayOffConfig.empty;
   bool _showLimitWarning = false;
   String _limitWarningMsg = '';
+  // Today's shift end time ("HH:mm", 24h). Once this passes, the working day is
+  // over and same-day leave no longer makes sense — today gets blocked. Falls
+  // back to the codebase-wide default shift end when the template is unknown.
+  String _shiftEndTime = '18:30';
 
   @override
   void initState() {
@@ -1706,11 +1715,58 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     _fetchLeaveTypes();
     _fetchLeaveBalance();
     _loadOffConfig();
+    _loadShiftCutoff();
   }
 
   Future<void> _loadOffConfig() async {
     final config = await loadHolidayOffConfig();
     if (mounted) setState(() => _offConfig = config);
+  }
+
+  /// Loads today's shift end time so same-day leave can be blocked once the
+  /// working day is over. Best-effort: keeps the default end on any failure.
+  Future<void> _loadShiftCutoff() async {
+    try {
+      final now = DateTime.now();
+      final dateStr =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final att = await _attendanceService.getAttendanceByDate(dateStr);
+      final body = att['data'] as Map<String, dynamic>?;
+      final template = body?['template'] as Map?;
+      final end = template?['shiftEndTime']?.toString().trim();
+      if (end != null && end.isNotEmpty && mounted) {
+        setState(() => _shiftEndTime = end);
+      }
+    } catch (_) {
+      // Best-effort; keep the default shift end.
+    }
+  }
+
+  /// Today's same-day leave cutoff: today's date at the shift end time. After
+  /// this instant the working day is over, so today can no longer be chosen.
+  DateTime _todayCutoff() {
+    final now = DateTime.now();
+    var h = 18;
+    var m = 30;
+    final parts = _shiftEndTime.split(':');
+    if (parts.length >= 2) {
+      h = int.tryParse(parts[0].trim()) ?? h;
+      m = int.tryParse(parts[1].trim()) ?? m;
+    }
+    return DateTime(now.year, now.month, now.day, h, m);
+  }
+
+  /// True once today's working day has ended — same-day leave is no longer
+  /// allowed and the leave must start tomorrow or later.
+  bool get _isTodayClosed => DateTime.now().isAfter(_todayCutoff());
+
+  /// True when [day] is today and the working day has already ended.
+  bool _isClosedToday(DateTime day) {
+    final now = DateTime.now();
+    return day.year == now.year &&
+        day.month == now.month &&
+        day.day == now.day &&
+        _isTodayClosed;
   }
 
   @override
@@ -1784,12 +1840,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       : (_pendingByType[_leaveTypeKey(type)] ?? 0.0);
 
   /// Loads this employee's Approved (used) and Pending leave days for the
-  /// current calendar year from their own records, populating the per-type
-  /// maps and returning the overall (usedDays, pendingDays).
+  /// current MONTH from their own records, populating the per-type maps and
+  /// returning the overall (usedDays, pendingDays). The template allocation is a
+  /// monthly quota that resets each month, so usage is scoped to this month to
+  /// match the backend balance (see getLeaveBalance). Only a fallback — the
+  /// backend normally supplies these totals directly.
   Future<(double, double)> _computeLeaveUsageFromRecords() async {
     final now = DateTime.now();
-    final yearStart = DateTime(now.year, 1, 1);
-    final yearEnd = DateTime(now.year, 12, 31, 23, 59, 59);
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
 
     double daysOf(dynamic l) {
       final d = (l is Map) ? l['days'] : null;
@@ -1810,8 +1869,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     try {
       final approved = await _requestService.getLeaveRequests(
         status: 'Approved',
-        startDate: yearStart,
-        endDate: yearEnd,
+        startDate: monthStart,
+        endDate: monthEnd,
         page: 1,
         limit: 500,
       );
@@ -1824,10 +1883,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
         }
       }
 
-      // Pending requests are not date-bounded - a pending leave for any date
-      // still commits against the allocation.
+      // Pending requests overlapping the current month commit against this
+      // month's allocation (same monthly window as approved usage).
       final pend = await _requestService.getLeaveRequests(
         status: 'Pending',
+        startDate: monthStart,
+        endDate: monthEnd,
         page: 1,
         limit: 500,
       );
@@ -1927,16 +1988,19 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       DateTime.now().month,
       DateTime.now().day,
     );
-    final candidate = (isStart ? _startDate : _endDate) ?? today;
+    // Once today's working day is over, the earliest selectable day is tomorrow.
+    final earliest = _isTodayClosed ? today.add(const Duration(days: 1)) : today;
+    final candidate = (isStart ? _startDate : _endDate) ?? earliest;
     final initial = _offConfig.firstSelectableOnOrAfter(
-      candidate.isBefore(today) ? today : candidate,
+      candidate.isBefore(earliest) ? earliest : candidate,
     );
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
-      firstDate: today,
+      firstDate: earliest,
       lastDate: DateTime(2030, 12, 31),
-      selectableDayPredicate: (day) => !_offConfig.isDisabled(day),
+      selectableDayPredicate: (day) =>
+          !_offConfig.isDisabled(day) && !_isClosedToday(day),
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -1972,6 +2036,16 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       SnackBarUtils.showSnackBar(
         context,
         'Cannot select past dates. Please select today or future dates.',
+        isError: true,
+      );
+      return;
+    }
+    // Same-day cutoff: once today's working day has ended, a leave that starts
+    // today no longer makes sense — require it to start tomorrow or later.
+    if (_isClosedToday(_startDate!)) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'The working day has already ended. You can apply leave from tomorrow onwards.',
         isError: true,
       );
       return;
@@ -4871,7 +4945,91 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
   File? _selectedFile; // Add File variable
   bool _isSubmitting = false;
 
+  /// Presents a chooser so the user can either capture a receipt with the
+  /// device camera or pick an existing JPG/PNG/PDF from storage.
   Future<void> _pickFile() async {
+    final source = await showModalBottomSheet<_ProofSource>(
+      context: context,
+      backgroundColor: AppColors.background,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(
+                  Icons.camera_alt_rounded,
+                  color: AppColors.primary,
+                ),
+                title: const Text('Take Photo'),
+                onTap: () =>
+                    Navigator.pop(sheetContext, _ProofSource.camera),
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.photo_library_rounded,
+                  color: AppColors.primary,
+                ),
+                title: const Text('Choose from Files'),
+                subtitle: const Text('JPG, PNG, or PDF'),
+                onTap: () =>
+                    Navigator.pop(sheetContext, _ProofSource.files),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (source == null) return;
+    if (source == _ProofSource.camera) {
+      await _pickFromCamera();
+    } else {
+      await _pickFromFiles();
+    }
+  }
+
+  /// Captures a receipt photo with the device camera.
+  Future<void> _pickFromCamera() async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        imageQuality: 80,
+        maxWidth: 1600,
+      );
+      if (picked != null) {
+        setState(() {
+          _selectedFile = File(picked.path);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Unable to capture photo. Please check camera permissions.',
+          isError: true,
+        );
+      }
+    }
+  }
+
+  /// Picks an existing JPG/PNG/PDF receipt from device storage.
+  Future<void> _pickFromFiles() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
@@ -5141,7 +5299,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
               Text(
                 hasFile
                     ? 'Tap to replace'
-                    : 'Tap to select or drag and drop JPG, PNG, or PDF',
+                    : 'Take a photo or select a JPG, PNG, or PDF',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
               ),
@@ -5936,6 +6094,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   Map<String, dynamic>? _fineCalculation;
   double? _netPerDaySalary;
   double _shiftHours = 9.0; // Fallback: default 09:30–18:30 shift.
+  // Today's shift window as minutes-of-day. Used to reject a same-day permission
+  // request whose time period has already begun. Null until the template loads.
+  int? _shiftStartMinutes;
+  int? _shiftEndMinutes;
 
   @override
   void initState() {
@@ -5973,6 +6135,8 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     } catch (_) {}
 
     double shiftHours = _shiftHours;
+    int? shiftStartMinutes;
+    int? shiftEndMinutes;
     try {
       final now = DateTime.now();
       final dateStr =
@@ -5985,6 +6149,8 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       if (start != null && start.isNotEmpty && end != null && end.isNotEmpty) {
         final h = calculateShiftHours(start, end);
         if (h > 0) shiftHours = h;
+        shiftStartMinutes = _shiftTimeToMinutes(start);
+        shiftEndMinutes = _shiftTimeToMinutes(end);
       }
     } catch (_) {}
 
@@ -5993,7 +6159,59 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       _fineCalculation = fineConfig;
       _netPerDaySalary = net;
       _shiftHours = shiftHours;
+      _shiftStartMinutes = shiftStartMinutes;
+      _shiftEndMinutes = shiftEndMinutes;
     });
+  }
+
+  /// Parses an "HH:mm" shift-time string into minutes-of-day. Null if unparseable.
+  int? _shiftTimeToMinutes(String? raw) {
+    if (raw == null) return null;
+    final parts = raw.trim().split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    return h * 60 + m;
+  }
+
+  /// A permission must be requested *before* its time period begins — a member
+  /// cannot ask for late-arrival / early-exit cover after the fact. For a request
+  /// dated today, returns an error message once that window's start time has
+  /// passed; returns null when submission may proceed (future date, or the window
+  /// hasn't started, or the shift window is unknown so we fail open).
+  String? _periodAlreadyStartedError(int minutes) {
+    final now = DateTime.now();
+    final isToday =
+        _date.year == now.year && _date.month == now.month && _date.day == now.day;
+    if (!isToday) return null; // Future-dated requests: the period hasn't begun.
+    final nowMinutes = now.hour * 60 + now.minute;
+
+    int? windowStart;
+    switch (_type) {
+      case 'lateArrival':
+        // Late-arrival cover starts at shift start; submitting after that means
+        // the member has already arrived (late).
+        windowStart = _shiftStartMinutes;
+        break;
+      case 'earlyExit':
+        // Early-exit cover begins when the member would leave: shiftEnd − minutes.
+        final end = _shiftEndMinutes;
+        windowStart = end == null ? null : end - minutes;
+        break;
+      case 'both':
+        // Custom window — its planned From time is the period start.
+        final from = _fromTime;
+        windowStart = from == null ? null : from.hour * 60 + from.minute;
+        break;
+    }
+    if (windowStart == null) return null; // Unknown window — don't block.
+    if (nowMinutes >= windowStart) {
+      return 'A permission request must be submitted before its time period '
+          'begins. The requested time has already passed for today — please '
+          'request it for a future date.';
+    }
+    return null;
   }
 
   /// Maps the selected permission type to the fine-rule action key.
@@ -6053,51 +6271,6 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         _date = config.firstSelectableOnOrAfter(current);
       }
     });
-  }
-
-  DateTime? _permissionDateOnly(dynamic value) {
-    if (value == null) return null;
-    try {
-      final parsed = DateTime.parse(value.toString()).toLocal();
-      return DateTime(parsed.year, parsed.month, parsed.day);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  bool _isActivePermissionStatus(dynamic statusValue) {
-    final status = (statusValue ?? '').toString().trim().toLowerCase();
-    if (status.isEmpty) return true;
-    return status != 'rejected' &&
-        status != 'cancelled' &&
-        status != 'canceled';
-  }
-
-  Future<bool> _hasExistingPermissionForDate(DateTime date) async {
-    final target = DateTime(date.year, date.month, date.day);
-    final result = await _requestService.getPermissionRequests(
-      month: target.month,
-      year: target.year,
-    );
-    if (result['success'] != true) return false;
-
-    final data = result['data'];
-    final List<dynamic> permissions = data is Map
-        ? (data['permissions'] as List? ?? <dynamic>[])
-        : (data is List ? data : <dynamic>[]);
-
-    for (final raw in permissions) {
-      if (raw is! Map) continue;
-      final req = raw is Map<String, dynamic>
-          ? raw
-          : Map<String, dynamic>.from(raw);
-      if (!_isActivePermissionStatus(req['status'])) continue;
-      final reqDate = _permissionDateOnly(req['date']);
-      if (reqDate == null) continue;
-      if (reqDate == target) return true;
-    }
-
-    return false;
   }
 
   @override
@@ -6460,6 +6633,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       return;
     }
 
+    // A permission must be requested before its time period begins; reject a
+    // same-day request whose window has already started (e.g. already arrived late).
+    final periodError = _periodAlreadyStartedError(minutes);
+    if (periodError != null) {
+      SnackBarUtils.showSnackBar(context, periodError, isError: true);
+      return;
+    }
+
     // Disabled with quota > 0 → entire amount is fine (warn then allow, Scenario 3).
     if (!_enabled && _quotaMinutes > 0) {
       final fineText = () {
@@ -6542,17 +6723,6 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         ),
       );
       // Do not return — permission over-quota is submittable.
-    }
-
-    final alreadyExists = await _hasExistingPermissionForDate(_date);
-    if (!mounted) return;
-    if (alreadyExists) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Permission request already exists for this date',
-        isError: true,
-      );
-      return;
     }
 
     setState(() => _isSubmitting = true);

@@ -71,6 +71,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       return title.isNotEmpty || body.isNotEmpty;
     }).toList();
     debugPrint('[FCM] NotificationsScreen: _load() got ${list.length} stored, ${filtered.length} after filter (title/body not empty)');
+    // Viewing the list marks everything currently shown as read, so the
+    // dashboard bell badge clears automatically.
+    await FcmService.markNotificationsSeen();
     if (mounted) {
       setState(() {
         _notifications = filtered;

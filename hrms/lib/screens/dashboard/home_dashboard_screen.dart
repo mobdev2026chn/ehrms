@@ -47,6 +47,7 @@ import '../../utils/rotational_shift_util.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/attendance_selfie_compress.dart';
+import '../../utils/avatar_orientation.dart';
 import '../attendance/selfie_camera_screen.dart'
     show SelfieCameraScreen, useImagePickerFallback;
 import '../attendance/shift_screen.dart';
@@ -95,7 +96,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   String _userName = 'User';
   String _companyName = '';
   String? _avatarUrl;
-  // Legacy avatars seeded from a pre-fix (upside-down) punch need a 180° display flip.
+  // Whether the header avatar must be flipped 180° on display (some devices stored
+  // the first-punch selfie upside-down). Seeded from a fast timestamp guess, then
+  // corrected by detecting the image's actual orientation (see _resolveAvatarFlip).
   bool _avatarNeedsFlip = false;
 
   final RequestService _requestService = RequestService();
@@ -268,6 +271,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return true;
   }
 
+  /// Dashboard announcement visibility: hide expired ones and any created before
+  /// the employee joined. When the joining date isn't loaded yet, only the
+  /// expiry rule applies (the Announcements screen does the authoritative pass).
+  bool _isDashboardAnnouncementVisible(dynamic item) {
+    if (!_isDashboardAnnouncementNotExpired(item)) return false;
+    final joining = _profileJoiningDate;
+    if (joining == null || item is! Map) return true;
+    final raw = item['createdAt'] ?? item['publishDate'] ?? item['effectiveDate'];
+    final created = DateTime.tryParse(raw?.toString() ?? '')?.toLocal();
+    if (created == null) return true;
+    final joinDay = DateTime(joining.year, joining.month, joining.day);
+    return !created.isBefore(joinDay);
+  }
+
   /// Geo [getDashboardData] `todayAnnouncements` can be empty while web HRMS
   /// `/interaction/announcements` has items — same source as [AnnouncementsScreen].
   Future<List<dynamic>> _tryLoadAnnouncementsFromInteractionApi() async {
@@ -280,7 +297,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       for (final e in raw) {
         if (e is! Map) continue;
         final m = Map<String, dynamic>.from(e);
-        if (!_isDashboardAnnouncementNotExpired(m)) continue;
+        if (!_isDashboardAnnouncementVisible(m)) continue;
         out.add(m);
       }
       if (kDebugMode) {
@@ -750,6 +767,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               data['faceFirstImageAt'],
             );
           });
+          if (_avatarUrl != null) _resolveAvatarFlip(_avatarUrl!);
         }
       }
 
@@ -766,6 +784,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final permissionFuture = _fetchTodayPermission();
       final perfFuture = _fetchPerformanceSummary();
       final fcmFuture = FcmService.getStoredNotifications();
+      final fcmSeenFuture = FcmService.getNotificationsLastSeen();
       if (kDebugMode) {
         debugPrint(
           '[DashboardLoad] parallel requests started at ${sw.elapsedMilliseconds}ms',
@@ -790,6 +809,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final result = settled[0] as Map<String, dynamic>;
       final liveTodayResult = settled[1] as Map<String, dynamic>;
       final fcmList = settled[2] as List<dynamic>;
+      final fcmLastSeen = await fcmSeenFuture;
       if (kDebugMode) {
         debugPrint(
           '[DashboardLoad] core requests settled in ${sw.elapsedMilliseconds}ms | '
@@ -859,7 +879,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               : <dynamic>[];
           var announcementsList = data['todayAnnouncements'] is List
               ? (data['todayAnnouncements'] as List)
-                    .where(_isDashboardAnnouncementNotExpired)
+                    .where(_isDashboardAnnouncementVisible)
                     .toList()
               : <dynamic>[];
           if (announcementsList.isEmpty) {
@@ -899,9 +919,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 );
               }
             }
-            _fcmNotificationCount = fcmList
-                .where((e) => ((e['body']?.toString() ?? '').trim()).isNotEmpty)
-                .length;
+            _fcmNotificationCount = FcmService.unreadCountFor(
+              fcmList,
+              fcmLastSeen,
+            );
           });
           if (kDebugMode) {
             debugPrint(
@@ -932,9 +953,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             );
           }
           setState(
-            () => _fcmNotificationCount = fcmList
-                .where((e) => ((e['body']?.toString() ?? '').trim()).isNotEmpty)
-                .length,
+            () => _fcmNotificationCount = FcmService.unreadCountFor(
+              fcmList,
+              fcmLastSeen,
+            ),
           );
         }
       }
@@ -1048,13 +1070,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     if (av == null || !av.trim().startsWith('http')) return;
     final url = av.trim();
     final flip = _computeAvatarFlip(url, faceFirstImage, faceFirstImageAt);
-    if (url == _avatarUrl && flip == _avatarNeedsFlip) return;
-    if (mounted) {
-      setState(() {
-        _avatarUrl = url;
-        _avatarNeedsFlip = flip;
-      });
+    if (url != _avatarUrl || flip != _avatarNeedsFlip) {
+      if (mounted) {
+        setState(() {
+          _avatarUrl = url;
+          _avatarNeedsFlip = flip;
+        });
+      }
     }
+    // Correct the timestamp-based guess with the image's real orientation.
+    _resolveAvatarFlip(url);
     try {
       final prefs = await SharedPreferences.getInstance();
       final userStr = prefs.getString('user');
@@ -1071,11 +1096,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     } catch (_) {}
   }
 
-  /// The header avatar is seeded from the employee's first punch selfie. Legacy
-  /// seeds (captured before the EHRMS capture-time orientation fix) were stored
-  /// upside-down, so flip them 180° on display. Only flip when the avatar IS the
-  /// seeded first image (not a manual profile-photo upload, which is upright) and
-  /// that image predates the fix — a missing timestamp means a legacy seed.
+  /// Fast initial guess for whether the header avatar needs a 180° flip, used
+  /// only until [_resolveAvatarFlip] detects the image's real orientation. The
+  /// avatar is seeded from the first-punch selfie; legacy seeds (captured before
+  /// the capture-time orientation fix) were stored upside-down. Only guess "flip"
+  /// when the avatar IS the seeded first image (not a manual upload, which is
+  /// upright) and predates the fix — a missing timestamp means a legacy seed.
   bool _computeAvatarFlip(
     String? avatarUrl,
     String? faceFirstImage,
@@ -1088,6 +1114,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final dt = DateTime.tryParse(iso);
     if (dt == null) return true;
     return dt.toUtc().isBefore(AppConstants.selfieOrientationFixCutoffUtc);
+  }
+
+  /// Correct [_avatarNeedsFlip] using the avatar image's ACTUAL orientation.
+  /// The timestamp guess in [_computeAvatarFlip] can't know a stored image's
+  /// real orientation, so it both wrongly flips upright photos (showing them
+  /// upside-down) and misses inverted ones. This detects the face orientation
+  /// (cached per-URL) and updates the flag; it no-ops when detection can't
+  /// decide, leaving the guess in place.
+  Future<void> _resolveAvatarFlip(String url) async {
+    final resolved = await AvatarOrientation.resolveNeedsFlip(url);
+    if (resolved == null || !mounted) return;
+    if (url != _avatarUrl || resolved == _avatarNeedsFlip) return;
+    setState(() => _avatarNeedsFlip = resolved);
   }
 
   /// Company.shifts + staff.shiftName + joiningDate (web: full shifts from GET /settings/business).
@@ -2374,13 +2413,25 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             icon: Icons.notifications_none_rounded,
             tooltip: 'Notifications',
             badgeCount: _fcmNotificationCount,
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-            ),
+            onTap: _openNotifications,
           ),
         ],
       ),
     );
+  }
+
+  /// Opens the notifications list. Marks everything as read up front so the bell
+  /// badge clears the instant the user taps it, then reconciles on return in
+  /// case new notifications arrived while the list was open.
+  Future<void> _openNotifications() async {
+    final navigator = Navigator.of(context);
+    await FcmService.markNotificationsSeen();
+    if (mounted) setState(() => _fcmNotificationCount = 0);
+    await navigator.push(
+      MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+    );
+    final count = await FcmService.getUnreadNotificationCount();
+    if (mounted) setState(() => _fcmNotificationCount = count);
   }
 
   /// Frosted circular icon button used in the gradient welcome header.

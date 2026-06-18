@@ -98,8 +98,13 @@ Future<void> _load() async {
     );
   }
 
+  /// Only the entries that are genuine revisions — the initial salary
+  /// assignment created at joining is excluded (see [isActualSalaryRevision]).
+  List<Map<String, dynamic>> _actualRevisions(StaffSalaryBundle b) =>
+      b.revisionHistory.where(isActualSalaryRevision).toList();
+
   List<Map<String, dynamic>> _sortedHistoryDesc(StaffSalaryBundle b) {
-    final list = List<Map<String, dynamic>>.from(b.revisionHistory);
+    final list = _actualRevisions(b);
     int ts(Map<String, dynamic> e) {
       final d = parseMongoJsonDate(e['effectiveFrom']);
       return d?.millisecondsSinceEpoch ?? 0;
@@ -115,7 +120,7 @@ Future<void> _load() async {
   DateTime? _nextFutureEffective(StaffSalaryBundle b) {
     final today = _startOfDay(DateTime.now());
     DateTime? best;
-    for (final e in b.revisionHistory) {
+    for (final e in _actualRevisions(b)) {
       final d = parseMongoJsonDate(e['effectiveFrom']);
       if (d == null) continue;
       final sd = _startOfDay(d);
@@ -210,7 +215,7 @@ Future<void> _load() async {
             isInformationalOnly: false,
           ),
           const SizedBox(height: 12),
-        ] else if (b.revisionHistory.isNotEmpty) ...[
+        ] else if (historyDesc.isNotEmpty) ...[
           _RevisionNoticeCard(
             isInformationalOnly: true,
             onViewHistory: _openRevisionOverview,

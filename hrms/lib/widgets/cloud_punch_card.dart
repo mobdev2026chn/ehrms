@@ -317,6 +317,11 @@ class _CloudPunchCardState extends State<CloudPunchCard>
     // disabled breaks; legacy/unconfigured shifts keep showing it.
     if (summary.policyDisabled) return const [];
 
+    // Break time is only tallied once a break has been properly ended. While a
+    // break is still ongoing it must not inflate the day's total or the
+    // remaining bar, so use completed-only seconds (excludes the running break).
+    final completedSeconds = summary.completedBreakSeconds;
+
     return [
       const SizedBox(height: 16),
       Divider(color: Colors.white.withValues(alpha: 0.12), height: 1),
@@ -340,7 +345,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
           ),
           const Spacer(),
           Text(
-            'Total ${BreakSummary.formatDuration(summary.totalBreakSeconds)}',
+            'Total ${BreakSummary.formatDuration(completedSeconds)}',
             style: TextStyle(
               fontSize: 12,
               color: Colors.orangeAccent.shade200,
@@ -351,7 +356,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
       ),
       if (!summary.isUnlimited) ...[
         const SizedBox(height: 10),
-        _buildRemainingBar(summary),
+        _buildRemainingBar(summary, completedSeconds),
       ],
       const SizedBox(height: 10),
       if (summary.breaks.isEmpty)
@@ -373,15 +378,20 @@ class _CloudPunchCardState extends State<CloudPunchCard>
 
   /// Remaining break-limit indicator: "15m 30s of 45m 00s" + a thin progress
   /// bar. Turns red once the daily limit is used up. Second precision.
-  Widget _buildRemainingBar(BreakSummary summary) {
-    final remainingSec = summary.remainingSeconds ?? 0;
+  Widget _buildRemainingBar(BreakSummary summary, int usedSeconds) {
     final allowedSec = summary.allowedSeconds ?? (summary.allowedMinutes * 60);
+    // Base remaining/used on completed breaks only — an ongoing break isn't
+    // counted until it has been ended, so it neither drains the balance nor
+    // advances the progress bar.
+    final remainingSec = allowedSec - usedSeconds > 0
+        ? allowedSec - usedSeconds
+        : 0;
     final exhausted = remainingSec <= 0;
     final accent = exhausted
         ? Colors.redAccent.shade200
         : Colors.greenAccent.shade400;
     final fraction = allowedSec > 0
-        ? (summary.totalBreakSeconds / allowedSec).clamp(0.0, 1.0)
+        ? (usedSeconds / allowedSec).clamp(0.0, 1.0)
         : 0.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -459,7 +469,9 @@ class _CloudPunchCardState extends State<CloudPunchCard>
             ),
           ),
           Text(
-            BreakSummary.formatDuration(b.durationSeconds),
+            // An ongoing break's duration is not shown until it's ended; the
+            // row already reads "→ Ongoing". A dash keeps the row aligned.
+            b.ongoing ? '—' : BreakSummary.formatDuration(b.durationSeconds),
             style: TextStyle(
               fontSize: 12,
               color: durColor,

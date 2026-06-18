@@ -4486,15 +4486,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           bgColor = const Color(0xFFFEE2E2); // Absent - light red
         }
       }
-      // 9. Future dates
+      // 9. Future dates. A future date that reaches here is neither a holiday,
+      // week-off, leave nor an alternate work day — i.e. a regular upcoming
+      // working day. Paint it with the "Working Day" colour so it matches the
+      // legend swatch instead of an unlabeled grey that looks like a weekend.
       else {
         final today = DateTime(now.year, now.month, now.day);
         final candidate = DateTime(day.year, day.month, day.day);
         if (candidate.isAfter(today)) {
-          bgColor = const Color(0xFFE2E8F0); // Not Marked - Light grey
+          bgColor = const Color(0xFFE8D5C4); // Working Day - Light brown
           textColor = const Color(
-            0xFF475569,
-          ); // Darker grey text for visibility
+            0xFF5D4037,
+          ); // Brown text for contrast on the working-day background
         }
       }
 

@@ -16,7 +16,7 @@ class SalaryRevisionOverviewScreen extends StatelessWidget {
 
   List<_RevisionPoint> _points() {
     final pts = <_RevisionPoint>[];
-    for (final e in bundle.revisionHistory) {
+    for (final e in bundle.revisionHistory.where(isActualSalaryRevision)) {
       final d = parseMongoJsonDate(e['effectiveFrom']);
       final rev = e['revisedSalary'];
       if (d == null || rev is! Map) continue;
@@ -42,7 +42,8 @@ class SalaryRevisionOverviewScreen extends StatelessWidget {
   }
 
   List<Map<String, dynamic>> _historyDesc() {
-    final list = List<Map<String, dynamic>>.from(bundle.revisionHistory);
+    final list =
+        bundle.revisionHistory.where(isActualSalaryRevision).toList();
     int ts(Map<String, dynamic> e) {
       final d = parseMongoJsonDate(e['effectiveFrom']);
       return d?.millisecondsSinceEpoch ?? 0;
