@@ -9,7 +9,6 @@ import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import '../../config/app_colors.dart';
 import '../../utils/face_detection_helper.dart';
-import '../../utils/liveness_detector.dart';
 
 /// Sentinel returned when camera init fails; caller should use image_picker fallback.
 const Object useImagePickerFallback = Object();
@@ -122,23 +121,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   CameraState? _cameraState;
   String? _infoText;
 
-  // ── Liveness (anti-spoof) ─────────────────────────────────────────────────
-  // A printed photo / phone-screen image can't blink, so the capture button
-  // stays locked until a live blink is seen. Fail-open safety net: if the
-  // analysis pipeline never yields frames on this device, unlock after a
-  // timeout so attendance is never bricked (logged, not silent).
-  final LivenessDetector _liveness = LivenessDetector();
-  bool _liveOk = false;
-  bool _livenessBypass = false;
-  Timer? _livenessFallbackTimer;
-  static const Duration _livenessFallback = Duration(seconds: 8);
-
   @override
   void initState() {
     super.initState();
     _locationText = widget.locationText;
     _infoText = widget.infoText;
-    _startLivenessFallback();
     if (widget.loadLocationOnOpen && widget.onRefreshLocation != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _refreshLocation());
     }
@@ -165,37 +152,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     }
   }
 
-  void _startLivenessFallback() {
-    _livenessFallbackTimer?.cancel();
-    _livenessFallbackTimer = Timer(_livenessFallback, () {
-      if (!mounted || _liveOk || _liveness.blinkDetected) return;
-      // No blink yet after the window. If frames never flowed, the analysis
-      // pipeline isn't working on this device — degrade open so the user can
-      // still punch. If frames DID flow, keep waiting (real liveness in effect).
-      if (_liveness.framesProcessed == 0) {
-        debugPrint('[Liveness] No analysis frames in '
-            '${_livenessFallback.inSeconds}s — bypassing liveness (fail-open).');
-        setState(() => _livenessBypass = true);
-      }
-    });
-  }
-
-  /// Live preview frame → liveness state machine. Unlocks capture on a blink.
-  Future<void> _onAnalysisImage(AnalysisImage image) async {
-    if (_liveOk || _capturedFilePath != null) return;
-    await _liveness.processFrame(image);
-    if (_liveness.blinkDetected && mounted && !_liveOk) {
-      setState(() => _liveOk = true);
-    }
-  }
-
-  bool get _canCapture => _liveOk || _livenessBypass;
-
   @override
   void dispose() {
     _timeoutTimer?.cancel();
-    _livenessFallbackTimer?.cancel();
-    _liveness.dispose();
     super.dispose();
   }
 
@@ -204,11 +163,6 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   void _handleBackPressed() {
     if (_isHandlingBack || !mounted) return;
     if (_capturedFilePath != null) {
-      // Returning to the live camera ⇒ require a fresh blink again.
-      _liveness.reset();
-      _liveOk = false;
-      _livenessBypass = false;
-      _startLivenessFallback();
       setState(() => _capturedFilePath = null);
       return;
     }
@@ -279,11 +233,6 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     if (validationError != null) {
       _showCaptureError(validationError);
       // Discard this capture; stay on the live camera so the user can retake.
-      // Require a fresh blink for the retake.
-      _liveness.reset();
-      _liveOk = false;
-      _livenessBypass = false;
-      _startLivenessFallback();
       setState(() => _capturedFilePath = null);
       return;
     }
@@ -305,10 +254,6 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   }
 
   void _takePhoto() {
-    if (!_canCapture) {
-      _showCaptureError('Please blink once so we can confirm you\'re live.');
-      return;
-    }
     _cameraState?.when(
       onPhotoMode: (photoState) => photoState.takePhoto(),
       onPreparingCamera: (_) {},
@@ -413,18 +358,6 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                     previewFit: CameraPreviewFit.contain,
                     previewAlignment: Alignment.center,
                     availableFilters: const [],
-                    // Liveness: stream low-res frames to ML Kit to detect a blink
-                    // before the shutter unlocks (anti-spoof). Throttled to keep
-                    // the preview smooth; format is per-platform (NV21 / BGRA).
-                    imageAnalysisConfig: AnalysisConfig(
-                      androidOptions:
-                          const AndroidAnalysisOptions.nv21(width: 350),
-                      cupertinoOptions:
-                          const CupertinoAnalysisOptions.bgra8888(),
-                      maxFramesPerSecond: 5,
-                      autoStart: true,
-                    ),
-                    onImageForAnalysis: _onAnalysisImage,
                     onMediaCaptureEvent: (MediaCapture event) {
                       if (event.status == MediaCaptureStatus.success &&
                           event.isPicture &&
@@ -507,9 +440,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            _canCapture ? 'TAP TO CAPTURE' : 'BLINK TO VERIFY',
-            style: const TextStyle(
+          const Text(
+            'TAP TO CAPTURE',
+            style: TextStyle(
               color: Colors.white,
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -548,38 +481,29 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   }
 
   Widget _buildCaptureButton() {
-    final enabled = _canCapture;
     return GestureDetector(
       onTap: _takePhoto,
-      child: Opacity(
-        // Dim the shutter until liveness passes so it reads as locked.
-        opacity: enabled ? 1.0 : 0.45,
-        child: Container(
-          width: 72,
-          height: 72,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                blurRadius: 10,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: Center(
-            child: Container(
-              width: 54,
-              height: 54,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: enabled ? AppColors.primary : Colors.grey,
-              ),
-              child: enabled
-                  ? null
-                  : const Icon(Icons.remove_red_eye_outlined,
-                      color: Colors.white, size: 24),
+      child: Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 10,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Center(
+          child: Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.primary,
             ),
           ),
         ),
