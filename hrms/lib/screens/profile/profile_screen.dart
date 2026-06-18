@@ -525,12 +525,14 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget _buildStatCardsRow() {
     final joiningDate = _staffData?['joiningDate'];
     
-    final branchName =
+    final resolvedBranchName =
         _userData?['branchName']?.toString() ??
         (_staffData?['branchId'] is Map
             ? (_staffData!['branchId'] as Map)['branchName']?.toString()
-            : null) ??
-        'Main Office';
+            : null);
+    final branchName = (resolvedBranchName != null && resolvedBranchName.isNotEmpty)
+        ? resolvedBranchName
+        : 'Not assigned';
     final joined = joiningDate != null ? _formatDateShort(joiningDate) : '';
 
     return IntrinsicHeight(

@@ -53,7 +53,11 @@ class _AppDrawerState extends State<AppDrawer> {
       // Older cached sessions predate employeeId in the login response; backfill it.
       final needsEmployeeId = data['employeeId'] == null ||
           data['employeeId'].toString().trim().isEmpty;
-      if (needsLocationAccess || needsBranchName || needsEmployeeId) {
+      // staffType (Intern / Full Time / …) lives on the Staff record, not the
+      // login user payload, so backfill it from the profile for the header.
+      final needsStaffType = data['staffType'] == null ||
+          data['staffType'].toString().trim().isEmpty;
+      if (needsLocationAccess || needsBranchName || needsEmployeeId || needsStaffType) {
         try {
           final result = await AuthService().getProfile();
           if (result['success'] == true && mounted) {
@@ -62,6 +66,9 @@ class _AppDrawerState extends State<AppDrawer> {
             if (needsLocationAccess) data['locationAccess'] = staffData?['locationAccess'] == true;
             if (needsEmployeeId && staffData?['employeeId'] != null) {
               data['employeeId'] = staffData!['employeeId'];
+            }
+            if (needsStaffType && staffData?['staffType'] != null) {
+              data['staffType'] = staffData!['staffType'];
             }
             if (needsBranchName) {
               final bn = profileData?['branchName']?.toString() ??
@@ -218,8 +225,12 @@ class _AppDrawerState extends State<AppDrawer> {
   /// Amber rounded header card matching Figma exactly.
   Widget _buildHeaderCard() {
     final name     = _userData?['name']      ?? 'Employee';
-    final role     = _userData?['role']      ?? '';
+    // Show the staff type (Intern / Full Time / …); fall back to role when the
+    // staffType hasn't been backfilled yet (older cached sessions).
+    final staffType = _userData?['staffType']?.toString().trim() ?? '';
+    final role     = staffType.isNotEmpty ? staffType : (_userData?['role'] ?? '');
     final empId    = _userData?['employeeId']?.toString() ?? '';
+    final branch   = _userData?['branchName']?.toString() ?? '';
     final avatarUrl = _userData?['avatar']   ?? _userData?['photoUrl'];
     final showAvatar = avatarUrl != null &&
         avatarUrl.toString().trim().isNotEmpty &&
@@ -283,6 +294,27 @@ class _AppDrawerState extends State<AppDrawer> {
                 color: Colors.white.withValues(alpha: 0.75),
                 fontSize: 11,
               ),
+            ),
+          ],
+          if (branch.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.location_on_outlined,
+                    size: 13, color: Colors.white.withValues(alpha: 0.75)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    branch,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.75),
+                      fontSize: 11,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
           ],
         ],

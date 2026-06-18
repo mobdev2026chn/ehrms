@@ -286,6 +286,62 @@ const getLeaves = async (req, res) => {
     }
 };
 
+/**
+ * Resolve the leave types applicable to a staff member — the canonical "configured"
+ * set used by BOTH the Apply Leave dropdown and the My Requests balance cards.
+ * Returns [{ type, days }]: template leaveTypes + Half Day (only when the staff's
+ * effective shift enables it) + Unpaid Leave. `days` is the per-type limit
+ * (0.5 for Half Day, null for Unpaid Leave).
+ * @param {Object} staff - Staff document with populated leaveTemplateId
+ * @returns {Promise<Array<{type: string, days: number|null}>>}
+ */
+const resolveApplicableLeaveTypes = async (staff) => {
+    const list = [];
+
+    // Half Day is only offered when the staff's effective shift has half-day
+    // enabled (company.settings.attendance.shifts[].halfDaySettings.enabled).
+    // getShiftTimings returns a non-null halfDaySettings only when enabled, so
+    // a truthy value here means the shift permits half-day leave.
+    let halfDayEnabled = true; // default for legacy companies with no shifts config
+    try {
+        const company = staff?.businessId
+            ? await Company.findById(staff.businessId).select('settings.attendance.shifts').lean()
+            : null;
+        if (company?.settings?.attendance?.shifts?.length) {
+            const attendanceTemplate = await loadAttendanceTemplateForStaff(staff);
+            const timings = getShiftTimings(company, staff, new Date(), staff?.joiningDate, attendanceTemplate);
+            halfDayEnabled = !!timings?.halfDaySettings;
+        }
+    } catch (e) {
+        console.warn('[resolveApplicableLeaveTypes] half-day resolve failed, defaulting to enabled:', e?.message);
+    }
+
+    // Static option: Half Day (counts as 0.5 day) — only when enabled for the shift.
+    if (halfDayEnabled) {
+        list.push({ type: 'Half Day', days: 0.5 });
+    }
+
+    if (staff?.leaveTemplateId?.leaveTypes && Array.isArray(staff.leaveTemplateId.leaveTypes)) {
+        staff.leaveTemplateId.leaveTypes.forEach(t => {
+            if (t.type) {
+                const typeNorm = (t.type || '').toLowerCase().replace(/\s+/g, '');
+                if (typeNorm === 'halfday') return; // already added as static
+                const days = t.days != null ? t.days : (t.limit != null ? t.limit : null);
+                list.push({ type: t.type, days });
+            }
+        });
+    }
+
+    const hasUnpaid = list.some(
+        t => (t.type || '').toLowerCase().replace(/\s+/g, '') === 'unpaidleave'
+    );
+    if (!hasUnpaid) {
+        list.push({ type: 'Unpaid Leave', days: null });
+    }
+
+    return list;
+};
+
 const getLeaveTypes = async (req, res) => {
     try {
         const staffId = req.staff._id;
@@ -336,23 +392,17 @@ const getLeaveTypes = async (req, res) => {
             return withoutLeave.replace(/\s+/g, '');
         };
 
-        // Define default cards to show in UI
-        const defaultTypes = ['Casual Leave', 'Sick Leave', 'Half Day', 'Earned Leave', 'Unpaid Leave'];
-
-        // Add template types if they exist (avoid duplicate keys)
-        if (staff?.leaveTemplateId?.leaveTypes) {
-            staff.leaveTemplateId.leaveTypes.forEach(t => {
-                if (t.type && !defaultTypes.some(dt => normalizeToKey(dt) === normalizeToKey(t.type))) {
-                    defaultTypes.push(t.type);
-                }
-            });
-        }
-
-        // Initialize groups with original names (prefer default/template name for display)
-        defaultTypes.forEach(t => {
-            const key = normalizeToKey(t);
+        // Seed cards with the staff's CONFIGURED leave types only — the same set
+        // offered in the Apply Leave dropdown (template leaveTypes + Half Day when
+        // the shift enables it + Unpaid Leave). Types the company hasn't configured
+        // are no longer shown as empty 0 cards. Any type actually used in an
+        // approved/pending leave is still added below by accumulateDays, so
+        // historical counts are never hidden.
+        const configuredTypes = await resolveApplicableLeaveTypes(staff);
+        configuredTypes.forEach(({ type }) => {
+            const key = normalizeToKey(type);
             if (!typeGroups.has(key)) {
-                typeGroups.set(key, { originalName: t, takenCount: 0, pendingCount: 0 });
+                typeGroups.set(key, { originalName: type, takenCount: 0, pendingCount: 0 });
             }
         });
 
@@ -401,10 +451,6 @@ const getLeaveTypes = async (req, res) => {
     }
 };
 
-/**
- * Returns leave types for the Apply Leave dropdown: from staff's assigned leave template + Unpaid Leave.
- * Each item has { type, days } where days is the limit from template (null for Unpaid Leave).
- */
 /**
  * Get availableCasualLeaves from the latest attendance record in the current month for this staff.
  * If the latest monthly attendance row does not carry availableCasualLeaves, caller should
@@ -522,57 +568,16 @@ const getAvailableLeavePool = async (employeeId, staff) => {
     return Math.max(0, totalAllowed - usedDays);
 };
 
+/**
+ * Returns leave types for the Apply Leave dropdown: from staff's assigned leave
+ * template + Half Day (when the shift enables it) + Unpaid Leave. Each item has
+ * { type, days } where days is the limit (null for Unpaid Leave, 0.5 for Half Day).
+ */
 const getLeaveTypesForApply = async (req, res) => {
     try {
         const staffId = req.staff._id;
         const staff = await Staff.findById(staffId).populate('leaveTemplateId');
-
-        const list = [];
-
-        // Half Day is only offered when the staff's effective shift has half-day
-        // enabled (company.settings.attendance.shifts[].halfDaySettings.enabled).
-        // getShiftTimings returns a non-null halfDaySettings only when enabled, so
-        // a truthy value here means the shift permits half-day leave.
-        let halfDayEnabled = true; // default for legacy companies with no shifts config
-        try {
-            const company = staff?.businessId
-                ? await Company.findById(staff.businessId).select('settings.attendance.shifts').lean()
-                : null;
-            if (company?.settings?.attendance?.shifts?.length) {
-                const attendanceTemplate = await loadAttendanceTemplateForStaff(staff);
-                const timings = getShiftTimings(company, staff, new Date(), staff?.joiningDate, attendanceTemplate);
-                halfDayEnabled = !!timings?.halfDaySettings;
-            }
-        } catch (e) {
-            console.warn('[getLeaveTypesForApply] half-day resolve failed, defaulting to enabled:', e?.message);
-        }
-
-        // Static option: Half Day (counts as 0.5 day) — only when enabled for the shift.
-        if (halfDayEnabled) {
-            const hasHalfDay = list.some(t => (t.type || '').toLowerCase().replace(/\s+/g, '') === 'halfday');
-            if (!hasHalfDay) {
-                list.push({ type: 'Half Day', days: 0.5 });
-            }
-        }
-
-        if (staff?.leaveTemplateId?.leaveTypes && Array.isArray(staff.leaveTemplateId.leaveTypes)) {
-            staff.leaveTemplateId.leaveTypes.forEach(t => {
-                if (t.type) {
-                    const typeNorm = (t.type || '').toLowerCase().replace(/\s+/g, '');
-                    if (typeNorm === 'halfday') return; // already added as static
-                    const days = t.days != null ? t.days : (t.limit != null ? t.limit : null);
-                    list.push({ type: t.type, days });
-                }
-            });
-        }
-
-        const hasUnpaid = list.some(
-            t => (t.type || '').toLowerCase().replace(/\s+/g, '') === 'unpaidleave'
-        );
-        if (!hasUnpaid) {
-            list.push({ type: 'Unpaid Leave', days: null });
-        }
-
+        const list = await resolveApplicableLeaveTypes(staff);
         res.json({ success: true, data: list });
     } catch (error) {
         console.error(error);

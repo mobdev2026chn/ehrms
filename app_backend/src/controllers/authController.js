@@ -1351,6 +1351,117 @@ const updateProfilePhoto = async (req, res) => {
 // -------------------------------
 // Verify face (selfie vs profile photo)
 // -------------------------------
+// Persistent face-verify service (server.py). Loads ArcFace once and answers in
+// ~0.3s, so the punch keeps a hard face-match gate without spawning Python and
+// reloading the model every time. Falls back to the one-shot CLI when it's down.
+const FACE_VERIFY_URL = process.env.FACE_VERIFY_URL || 'http://127.0.0.1:5005';
+
+// POST selfie + reference URL to the persistent service. Resolves {match, error};
+// rejects on connection/timeout so the caller can fall back to the CLI.
+function callFaceVerifyService(selfie, referenceUrl) {
+    return new Promise((resolve, reject) => {
+        let body;
+        try {
+            body = JSON.stringify({ selfie, reference_url: referenceUrl });
+        } catch (e) {
+            return reject(e);
+        }
+        const u = new URL('/verify', FACE_VERIFY_URL);
+        const client = u.protocol === 'https:' ? https : http;
+        const r = client.request({
+            method: 'POST',
+            hostname: u.hostname,
+            port: u.port || (u.protocol === 'https:' ? 443 : 80),
+            path: u.pathname,
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+            },
+            timeout: 20000,
+        }, (resp) => {
+            let data = '';
+            resp.on('data', (c) => { data += c; });
+            resp.on('end', () => {
+                try {
+                    const out = JSON.parse(data || '{}');
+                    resolve({ match: !!out.match, error: out.error || null });
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+        r.on('error', reject);
+        r.on('timeout', () => { r.destroy(new Error('face-verify service timeout')); });
+        r.write(body);
+        r.end();
+    });
+}
+
+// Slow fallback: download the reference, write the selfie to temp, and run the
+// one-shot CLI (reloads the model each call). Used only when the service is down.
+async function verifyFaceViaCli(selfie, referenceUrl) {
+    let selfiePath = null;
+    let profilePath = null;
+    const tmpDir = os.tmpdir();
+    try {
+        const base64Match = selfie.match(/^data:image\/\w+;base64,(.+)$/);
+        const base64Data = base64Match ? base64Match[1] : selfie;
+        selfiePath = path.join(tmpDir, `selfie_${Date.now()}.jpg`);
+        await fs.writeFile(selfiePath, Buffer.from(base64Data, 'base64'));
+
+        profilePath = path.join(tmpDir, `profile_${Date.now()}.jpg`);
+        await new Promise((resolve, reject) => {
+            const url = new URL(referenceUrl);
+            const client = url.protocol === 'https:' ? https : http;
+            const dreq = client.get(referenceUrl, (resp) => {
+                if (resp.statusCode !== 200) {
+                    reject(new Error(`Reference fetch failed: ${resp.statusCode}`));
+                    return;
+                }
+                const chunks = [];
+                resp.on('data', (c) => chunks.push(c));
+                resp.on('end', () => {
+                    fs.writeFile(profilePath, Buffer.concat(chunks)).then(resolve).catch(reject);
+                });
+            });
+            dreq.on('error', reject);
+            dreq.setTimeout(15000, () => { dreq.destroy(); reject(new Error('Timeout')); });
+        });
+    } catch (e) {
+        if (selfiePath) await fs.unlink(selfiePath).catch(() => {});
+        if (profilePath) await fs.unlink(profilePath).catch(() => {});
+        return { match: false, error: 'Could not prepare images for verification.' };
+    }
+
+    const scriptDir = path.join(__dirname, '../../face_verify');
+    const scriptPath = path.join(scriptDir, 'face_verify.py');
+    const venvPythonWin = path.join(scriptDir, 'venv', 'Scripts', 'python.exe');
+    const venvPythonUnix = path.join(scriptDir, 'venv', 'bin', 'python');
+    const venvPython = process.platform === 'win32' ? venvPythonWin : venvPythonUnix;
+    const py = require('fs').existsSync(venvPython) ? venvPython : (process.platform === 'win32' ? 'python' : 'python3');
+
+    const result = await new Promise((resolve) => {
+        const child = spawn(py, [scriptPath, selfiePath, profilePath], { cwd: scriptDir, timeout: 90000 });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (d) => { stdout += d.toString(); });
+        child.stderr.on('data', (d) => { stderr += d.toString(); });
+        child.on('error', () => resolve({ match: false, error: 'Face verification not available' }));
+        child.on('close', () => {
+            try {
+                const out = JSON.parse(stdout.trim() || '{}');
+                resolve({ match: !!out.match, error: out.error || null });
+            } catch {
+                resolve({ match: false, error: stderr || 'Verification failed' });
+            }
+        });
+    });
+
+    if (selfiePath) await fs.unlink(selfiePath).catch(() => {});
+    if (profilePath) await fs.unlink(profilePath).catch(() => {});
+    return result;
+}
+
 const verifyFace = async (req, res) => {
     try {
         const { selfie } = req.body || {};
@@ -1364,18 +1475,15 @@ const verifyFace = async (req, res) => {
 
         const user = req.user;
         const staff = req.staff;
-        // Always fetch latest avatar from DB so face matching uses only the current profile photo
-        // (after user updates photo in profile, this returns the new URL; no cache)
         const fullUser = await User.findById(user._id).select('faceReferenceImage').lean();
         let fullStaff = null;
         if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('faceReferenceImage').lean();
-        // Validation reference = the most recent punch image (rolling self-reference),
-        // not the static profile avatar. On the very first punch no reference exists yet,
-        // so accept it — the punch flow stores this image as the reference (and seeds the
-        // profile photo), and the next punch validates against it.
-        const profilePhotoUrl = fullStaff?.faceReferenceImage || fullUser?.faceReferenceImage;
+        // Validation reference = the most recent punch image (rolling self-reference).
+        // On the very first punch no reference exists yet, so accept it — that image
+        // becomes the reference for the next punch.
+        const referenceUrl = fullStaff?.faceReferenceImage || fullUser?.faceReferenceImage;
 
-        if (!profilePhotoUrl || !profilePhotoUrl.startsWith('http')) {
+        if (!referenceUrl || !referenceUrl.startsWith('http')) {
             return res.status(200).json({
                 success: true,
                 match: true,
@@ -1383,84 +1491,16 @@ const verifyFace = async (req, res) => {
             });
         }
 
-        let selfiePath = null;
-        let profilePath = null;
-        const tmpDir = os.tmpdir();
-
+        // Fast path: persistent service. Fall back to the CLI only if it's unreachable.
+        let result;
         try {
-            const base64Match = selfie.match(/^data:image\/\w+;base64,(.+)$/);
-            const base64Data = base64Match ? base64Match[1] : selfie;
-            const buf = Buffer.from(base64Data, 'base64');
-            selfiePath = path.join(tmpDir, `selfie_${Date.now()}.jpg`);
-            await fs.writeFile(selfiePath, buf);
-
-            profilePath = path.join(tmpDir, `profile_${Date.now()}.jpg`);
-            await new Promise((resolve, reject) => {
-                const url = new URL(profilePhotoUrl);
-                const client = url.protocol === 'https:' ? https : http;
-                const req = client.get(profilePhotoUrl, (resp) => {
-                    if (resp.statusCode !== 200) {
-                        reject(new Error(`Profile photo fetch failed: ${resp.statusCode}`));
-                        return;
-                    }
-                    const chunks = [];
-                    resp.on('data', (c) => chunks.push(c));
-                    resp.on('end', () => {
-                        fs.writeFile(profilePath, Buffer.concat(chunks))
-                            .then(resolve)
-                            .catch(reject);
-                    });
-                });
-                req.on('error', reject);
-                req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
-            });
+            result = await callFaceVerifyService(selfie, referenceUrl);
         } catch (e) {
-            try {
-                if (selfiePath) await fs.unlink(selfiePath).catch(() => {});
-                if (profilePath) await fs.unlink(profilePath).catch(() => {});
-            } catch (_) {}
-            return res.status(200).json({
-                success: true,
-                match: false,
-                message: 'Could not prepare images for verification.'
-            });
+            console.warn('[verifyFace] service unavailable, falling back to CLI:', e?.message);
+            result = await verifyFaceViaCli(selfie, referenceUrl);
         }
 
-        const scriptDir = path.join(__dirname, '../../face_verify');
-        const scriptPath = path.join(scriptDir, 'face_verify.py');
-        const venvPythonWin = path.join(scriptDir, 'venv', 'Scripts', 'python.exe');
-        const venvPythonUnix = path.join(scriptDir, 'venv', 'bin', 'python');
-        const venvPython = process.platform === 'win32' ? venvPythonWin : venvPythonUnix;
-        const py = require('fs').existsSync(venvPython) ? venvPython : (process.platform === 'win32' ? 'python' : 'python3');
-
-        const result = await new Promise((resolve) => {
-            const child = spawn(py, [scriptPath, selfiePath, profilePath], {
-                cwd: scriptDir,
-                timeout: 90000
-            });
-            let stdout = '';
-            let stderr = '';
-            child.stdout.on('data', (d) => { stdout += d.toString(); });
-            child.stderr.on('data', (d) => { stderr += d.toString(); });
-            child.on('error', () => resolve({ match: false, error: 'Face verification not available' }));
-            child.on('close', (code) => {
-                try {
-                    const out = JSON.parse(stdout.trim() || '{}');
-                    resolve({ match: !!out.match, error: out.error || null });
-                } catch {
-                    resolve({ match: false, error: stderr || 'Verification failed' });
-                }
-            });
-        });
-
-        try {
-            if (selfiePath) await fs.unlink(selfiePath).catch(() => {});
-            if (profilePath) await fs.unlink(profilePath).catch(() => {});
-        } catch (_) {}
-
-        // Map backend/script errors to clear user-facing message (no raw exceptions in app)
         const userMessage = result.match ? 'Photo matched' : toUserFriendlyVerifyMessage(result.error);
-
         return res.status(200).json({
             success: true,
             match: !!result.match,

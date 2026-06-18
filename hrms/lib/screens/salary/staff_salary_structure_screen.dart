@@ -68,10 +68,13 @@ Future<void> _load() async {
   }
 
   void _showAccessDeniedDialog() {
+    // Capture the screen's navigator before the dialog pushes its own route, so
+    // OK can both dismiss the dialog and leave this (empty) screen for home.
+    final pageNavigator = Navigator.of(context);
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Row(
           children: [
             Icon(Icons.lock_outline, color: Colors.red),
@@ -84,7 +87,10 @@ Future<void> _load() async {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () {
+              Navigator.of(dialogContext).pop(); // close dialog
+              pageNavigator.pop(); // leave salary screen, back to home
+            },
             child: const Text('OK'),
           ),
         ],

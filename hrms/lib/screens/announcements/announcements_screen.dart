@@ -449,7 +449,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  dateStr,
+                                  'Published: $dateStr',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: colorScheme.onSurfaceVariant,

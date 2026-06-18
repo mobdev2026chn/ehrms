@@ -466,6 +466,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final id = _todayPermission?['_id']?.toString();
     if (id == null || id.isEmpty || _isPermissionStamping) return;
 
+    // Permission Out requires a completed Punch In for the day.
+    if (isOut) {
+      final punchInRaw = _todayAttendance?['punchIn']?.toString().trim();
+      final hasPunchedIn =
+          (punchInRaw != null && punchInRaw.isNotEmpty) ||
+          _todayAttendance?['hasPunchIn'] == true;
+      if (!hasPunchedIn) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Please Punch In before recording Permission Out.',
+          isError: true,
+        );
+        return;
+      }
+    }
+
     final selfie = await _capturePermissionSelfie();
     if (selfie == null || selfie.isEmpty || !mounted) return;
 
@@ -552,8 +568,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         : '${p['requestedMinutes'] ?? ''} min';
     final overrun = num.tryParse('${p['overrunMinutes'] ?? 0}') ?? 0;
 
+    // Permission Out may only be stamped after the employee has punched in for
+    // the day; Permission In (the return stamp) is unaffected.
+    final punchInRaw = _todayAttendance?['punchIn']?.toString().trim();
+    final bool hasPunchedIn =
+        (punchInRaw != null && punchInRaw.isNotEmpty) ||
+        _todayAttendance?['hasPunchIn'] == true;
+
     final bool actionable = !hasIn;
     final bool isOutAction = !hasOut;
+    final bool blockedForNoPunchIn = isOutAction && !hasPunchedIn;
     final String buttonLabel = isOutAction ? 'Permission Out' : 'Permission In';
     final IconData buttonIcon =
         isOutAction ? Icons.logout_rounded : Icons.login_rounded;
@@ -561,9 +585,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final pending = p['status']?.toString() == 'Pending';
     String statusLine;
     if (!hasOut) {
-      statusLine =
-          '${pending ? 'Permission (pending approval)' : 'Permission'} ($windowLabel). '
-          'Tap when you step out.';
+      statusLine = blockedForNoPunchIn
+          ? 'Punch In first — Permission Out is available once you have punched in.'
+          : '${pending ? 'Permission (pending approval)' : 'Permission'} ($windowLabel). '
+              'Tap when you step out.';
     } else if (!hasIn) {
       statusLine = 'Out since ${_fmtStamp(p['actualOutAt'])}. Tap when you return.';
     } else {
@@ -619,8 +644,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           const SizedBox(width: 12),
           if (actionable)
             ElevatedButton.icon(
-              onPressed:
-                  _isPermissionStamping ? null : () => _handlePermissionStamp(isOutAction),
+              onPressed: (_isPermissionStamping || blockedForNoPunchIn)
+                  ? null
+                  : () => _handlePermissionStamp(isOutAction),
               icon: _isPermissionStamping
                   ? const SizedBox(
                       width: 16,
@@ -2969,16 +2995,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   /// Figma quick actions: Request Permission | Request Leave | Expense Claim
   List<Widget> _buildRequestQuickActionButtons() {
-    // Wrapped in Expanded so all four actions share the row width evenly and
+    // Wrapped in Expanded so all actions share the row width evenly and
     // fit on a single screen — no horizontal scroll.
     return [
-      Expanded(
-        child: _buildQuickActionButton(
-          icon: Icons.access_time_rounded,
-          label: 'Shift\nTime',
-          onTap: _openShiftTimeSheet,
+      // Shift Time is only meaningful for staff on a rotational shift (their
+      // working window changes per cycle day). Fixed-shift employees always
+      // work the same window, so the quick action is hidden for them.
+      if (_profileShiftIsRotational)
+        Expanded(
+          child: _buildQuickActionButton(
+            icon: Icons.access_time_rounded,
+            label: 'Shift\nTime',
+            onTap: _openShiftTimeSheet,
+          ),
         ),
-      ),
       Expanded(
         child: _buildQuickActionButton(
           icon: Icons.badge_outlined,

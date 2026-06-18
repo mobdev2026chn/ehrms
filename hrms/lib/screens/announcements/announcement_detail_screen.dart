@@ -814,7 +814,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
-                                    dateStr,
+                                    'Published: $dateStr',
                                     style: TextStyle(
                                       color: widget.accent.withValues(alpha: 0.9),
                                       fontSize: 14,

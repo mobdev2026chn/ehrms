@@ -66,7 +66,11 @@ async function getWeekOffConfigForStaff(staff, company) {
   const businessFallback = () => getBusinessWeekOffConfig(company);
 
   if (!templateId) {
-    return businessFallback();
+    // No WeeklyHolidayTemplate assigned → follow the (empty) template exactly:
+    // the staff has NO weekly off. Previously this fell back to the business
+    // weeklyHolidays / Sunday default, which made unassigned staff show Sat/Sun
+    // as week-off. We no longer apply a default week-off when no template is set.
+    return { weeklyOffPattern: 'standard', weeklyHolidays: [] };
   }
 
   // Use populated template if already loaded

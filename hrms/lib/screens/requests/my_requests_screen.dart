@@ -1675,10 +1675,14 @@ class ApplyLeaveDialog extends StatefulWidget {
 class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   final _formKey = GlobalKey<FormState>();
   final RequestService _requestService = RequestService();
+  final AuthService _authService = AuthService();
 
   String? _leaveType;
   String? _session; // For Half Day
   List<dynamic> _allowedTypes = [];
+  // Employee gender (e.g. "Male"/"Female"), used to gate Maternity/Paternity
+  // leave. Empty when unknown — in that case no gender restriction is applied.
+  String _gender = '';
   DateTime? _startDate;
   DateTime? _endDate;
   bool _isOneDay = true;
@@ -1847,11 +1851,52 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     return (used, pending);
   }
 
+  /// Gender-restricted leave types: Maternity is female-only, Paternity is
+  /// male-only. Returns false only when the employee's gender is positively
+  /// known to be the wrong one; an unknown/empty gender is permissive so we
+  /// never wrongly block a legitimate applicant.
+  bool _isTypeAllowedForGender(String? type) {
+    final g = _gender.toLowerCase().trim();
+    final isFemale = g.startsWith('f');
+    final isMale = g.startsWith('m');
+    switch (_leaveTypeKey(type)) {
+      case 'maternity':
+        return !isMale; // female or unknown
+      case 'paternity':
+        return !isFemale; // male or unknown
+      default:
+        return true;
+    }
+  }
+
+  /// Loads the employee's gender from their profile so Maternity/Paternity
+  /// leave can be gated. Best-effort: leaves [_gender] empty on failure.
+  Future<void> _loadGender() async {
+    try {
+      final result = await _authService.getProfile();
+      if (result['success'] == true) {
+        final data = result['data'];
+        final staff = data is Map ? data['staffData'] : null;
+        final g = staff is Map ? staff['gender'] : null;
+        _gender = g?.toString() ?? '';
+      }
+    } catch (_) {
+      // Best-effort; leave _gender empty (no restriction) on failure.
+    }
+  }
+
   Future<void> _fetchLeaveTypes() async {
+    // Gender must be known before filtering the types so Maternity/Paternity
+    // are gated from the start (and the default selection is a valid type).
+    await _loadGender();
     final result = await _requestService.getLeaveTypesForApply();
     if (mounted) {
       if (result['success']) {
-        final raw = List<dynamic>.from(result['data'] as List? ?? []);
+        final raw = List<dynamic>.from(result['data'] as List? ?? [])
+            .where((e) => _isTypeAllowedForGender(
+                  e is Map ? e['type'] as String? : null,
+                ))
+            .toList();
         // Half Day is gated by the shift's halfDaySettings.enabled: the backend
         // omits it when the staff's shift disables half-day. Respect that — do
         // not force-insert it client-side, so disabled shifts can't apply.
@@ -1967,6 +2012,20 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       SnackBarUtils.showSnackBar(
         context,
         'Please select a session for Half Day leave',
+        isError: true,
+      );
+      return;
+    }
+    // Safety net: Maternity is female-only, Paternity is male-only. The
+    // dropdown already hides the mismatched type, but re-check on submit in
+    // case gender loaded late or the list was stale.
+    if (!_isTypeAllowedForGender(_leaveType)) {
+      final isMaternity = _leaveTypeKey(_leaveType) == 'maternity';
+      SnackBarUtils.showSnackBar(
+        context,
+        isMaternity
+            ? 'Maternity Leave is available only for female employees.'
+            : 'Paternity Leave is available only for male employees.',
         isError: true,
       );
       return;
