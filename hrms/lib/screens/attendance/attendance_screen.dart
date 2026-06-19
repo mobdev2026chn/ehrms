@@ -16,6 +16,7 @@ import '../../widgets/menu_icon_button.dart';
 import '../../services/attendance_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/break_service.dart';
+import '../../services/face_identity_guard.dart';
 import '../../services/attendance_template_store.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
@@ -6084,6 +6085,22 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             isError: true,
           );
         }
+        return;
+      }
+    }
+
+    // Cross-user identity guard (anti buddy-punch): confirm the face is THIS user.
+    if (requireSelfie && selfiePayload.isNotEmpty) {
+      final verdict = await FaceIdentityGuard.verify(selfiePayload);
+      if (!mounted) return;
+      if (!verdict.allow) {
+        _setPunchActionInProgress(false);
+        if (mounted) Navigator.of(context).pop();
+        SnackBarUtils.showSnackBar(
+          context,
+          verdict.message ?? 'Face identity check failed.',
+          isError: true,
+        );
         return;
       }
     }

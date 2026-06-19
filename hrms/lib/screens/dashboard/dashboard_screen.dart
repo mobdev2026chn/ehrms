@@ -22,6 +22,7 @@ import '../../widgets/notification_reaction_overlay.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/attendance_service.dart';
 import '../../services/break_service.dart';
+import '../../services/face_identity_guard.dart';
 import '../../services/break_reminder_service.dart';
 import '../../models/break_summary.dart';
 import '../../services/attendance_template_store.dart';
@@ -1400,6 +1401,17 @@ class _DashboardScreenState extends State<DashboardScreen>
       selfieBytes,
     );
     if (!mounted) return;
+    // Cross-user identity guard (anti buddy-punch) for breaks.
+    final breakVerdict = await FaceIdentityGuard.verify(selfie);
+    if (!mounted) return;
+    if (!breakVerdict.allow) {
+      SnackBarUtils.showSnackBar(
+        context,
+        breakVerdict.message ?? 'Face identity check failed.',
+        isError: true,
+      );
+      return;
+    }
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -3177,6 +3189,24 @@ class _DashboardScreenState extends State<DashboardScreen>
             isError: true,
           );
         }
+        return;
+      }
+    }
+
+    // Cross-user identity guard (anti buddy-punch): confirm the captured face is
+    // THIS logged-in user and not a different enrolled employee.
+    if (requireSelfie && selfiePayload.isNotEmpty) {
+      final verdict = await FaceIdentityGuard.verify(selfiePayload);
+      if (!mounted) return;
+      if (!verdict.allow) {
+        _isSubmittingFromFingerprint = false;
+        _setPunchActionInProgress(false);
+        _dismissSubmitAttendanceDialogIfVisible(context);
+        SnackBarUtils.showSnackBar(
+          context,
+          verdict.message ?? 'Face identity check failed.',
+          isError: true,
+        );
         return;
       }
     }

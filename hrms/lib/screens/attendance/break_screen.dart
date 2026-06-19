@@ -11,6 +11,7 @@ import '../../config/constants.dart';
 import '../../models/break_summary.dart';
 import '../../services/auth_service.dart';
 import '../../services/break_service.dart';
+import '../../services/face_identity_guard.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
 import '../../utils/attendance_selfie_compress.dart';
@@ -391,6 +392,24 @@ class _BreakScreenState extends State<BreakScreen> {
           ErrorMessageUtils.sanitizeForDisplay(
             verify['message']?.toString() ?? 'Face not matching. Please try again.',
           ),
+          isError: true,
+        );
+        return;
+      }
+    }
+
+    // Cross-user identity guard (anti buddy-punch) for breaks.
+    if (selfie.isNotEmpty) {
+      final verdict = await FaceIdentityGuard.verify(selfie);
+      if (!mounted) return;
+      if (!verdict.allow) {
+        setState(() {
+          _isLoading = false;
+          _endClickTime = null;
+        });
+        SnackBarUtils.showSnackBar(
+          context,
+          verdict.message ?? 'Face identity check failed.',
           isError: true,
         );
         return;

@@ -1,25 +1,13 @@
 // hrms/lib/config/constants.dart
 class AppConstants {
   /// General app API (attendance, geo, profile, …).
-// <<<<<<< HEAD
-//   //static const String baseUrl = 'http://192.168.1.33:9001/api';
-//  static const String baseUrl = 'https://app.ektahr.com/api';
-//  //static const String baseUrl = 'https://ehrms.askeva.net/api';
-//   /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
-//   //static const String webBaseUrl = 'https://hrms.askeva.net/api';
-//  static const String webBaseUrl = 'https://my.ektahr.com/api';
-// =======
-  // Dev via `adb reverse tcp:9001 tcp:9001` — device localhost tunnels to the PC's server.
- //static const String baseUrl = 'http://127.0.0.1:9001/api';
-  static const String baseUrl ='https://ehrms.askeva.net/api';
-  //static const String baseUrl ='https://app.ektahr.com/api';//
-  // 'http://19B2.168.1.33:9001/api';
-  //'https://ehrms.askeva.net/api';
-  //static const String baseUrl = 'https://ehrms.askeva.net/api';
-  /// Production / web HRMS API — same host the web app uses for `GET /api/interaction/chats`, etc.
+  /// DEV SERVER ONLY — both the HRMS app and the face kiosk punch against this
+  /// same dev host. Do NOT point at production (app.ektahr.com / my.ektahr.com).
+  // Local-dev alt: `adb reverse tcp:9001 tcp:9001`, then 'http://127.0.0.1:9001/api'.
+  static const String baseUrl = 'https://ehrms.askeva.net/api';
+
+  /// Web/Interaction HRMS API — dev web companion of [baseUrl] (chat, polls, LMS).
   static const String webBaseUrl = 'https://hrms.askeva.net/api';
- // static const String webBaseUrl = 'https://my.ektahr.com/api';
-//>>>>>>> development
 
   /// When **true** (default): Interaction REST + Socket use [webBaseUrl] like the web.
   /// With a different [baseUrl], [AuthService] performs a second `/auth/login` against [webBaseUrl]
@@ -103,6 +91,18 @@ class AppConstants {
   /// When true, attendance selfie is verified against profile photo (face matching).
   /// When false, only on-device face detection runs; no server-side face matching.
   static const bool enableAttendanceFaceMatching = true;
+
+  /// Cross-user face check (anti buddy-punch): before a punch/break the app asks
+  /// the Face backend whether the captured face is the logged-in user and NOT a
+  /// different enrolled employee. EHRMS's own verify-face is 1-to-1 (self only);
+  /// this adds 1-to-many identity confirmation. Requires the Face backend running
+  /// and reachable at [faceVerifyBaseUrl], and the employee enrolled there.
+  static const bool enableCrossUserFaceCheck = true;
+
+  /// Face backend base. LOCAL DEV (current): the machine's LAN IP (update on change).
+  /// AFTER server deploy, switch to the same-domain path:
+  /// 'https://ehrms.askeva.net/face/api'.
+  static const String faceVerifyBaseUrl = 'http://192.168.0.26:8000/api';
 
   /// Punch/break/permission selfies captured BEFORE this instant were stored
   /// upside-down: the front camera (camerawesome) wrote pixels rotated 180° with
