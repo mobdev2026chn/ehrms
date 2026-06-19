@@ -88,28 +88,32 @@ class AppConstants {
   /// TESTING now: 5 minutes. Set to 900 for 15 minutes in production.
   static const int presenceTrackingCaptureIntervalSeconds = 300;
 
-  /// When true, attendance selfie is verified against the rolling reference (1-to-1).
-  /// ENABLED: EHRMS now runs the FACE APP's recognition engine in-process (dlib 128-D
-  /// via [/auth/verify-face] → face_verify service), so the punch selfie is validated
-  /// by EHRMS itself — no cross-app call to the face backend. Each app stays on its
-  /// own domain. Requires the EHRMS face_verify service running (see face_verify/).
+  /// EHRMS's OWN face engine on the API host (9001), in-process via /auth/verify-face
+  /// (faceEngine.js spawns the dlib worker — no extra port). ENABLED: the EHRMS app
+  /// gets its own engine that validates the punch selfie 1-to-1 against the EHRMS
+  /// single-click enrollment. Runs alongside the same-domain face app engine
+  /// ([enableCrossUserFaceCheck]). Requires the dlib deps on the 9001 host
+  /// (face_verify/venv, or FACE_PYTHON_BIN) — see face_verify/setup_engine.sh.
   static const bool enableAttendanceFaceMatching = true;
 
   /// Cross-user face check (anti buddy-punch): before a punch/break the app asks
   /// the Face backend whether the captured face is the logged-in user and NOT a
   /// different enrolled employee. EHRMS's own verify-face is 1-to-1 (self only);
   /// this adds 1-to-many identity confirmation. Requires the Face backend running
-  /// Cross-user (1-to-many) buddy-punch check via the SEPARATE face backend.
-  /// DISABLED: per the self-contained design, EHRMS no longer reaches across to the
-  /// face app. The same dlib engine now runs inside EHRMS and validates 1-to-1 via
-  /// [enableAttendanceFaceMatching]. (1-to-many inside EHRMS would need a local
-  /// enrollment store — a separate follow-up; left off until then.)
-  static const bool enableCrossUserFaceCheck = false;
+  /// Face validation via the FACE APP's engine, reached on the SAME DOMAIN
+  /// ([faceVerifyBaseUrl] → https://ehrms.askeva.net/face/api). ENABLED so EHRMS uses
+  /// the already-working face engine instead of running Python on the EHRMS API host.
+  /// It does 1-to-1 + 1-to-many against the face app's enrolled faces. Requires: the
+  /// /face reverse-proxy live on the EHRMS domain, and the employee enrolled in the
+  /// face app. Fail-open (never bricks attendance if the engine is unreachable).
+  static const bool enableCrossUserFaceCheck = true;
 
-  /// Face backend base. LOCAL DEV (current): the machine's LAN IP (update on change).
-  /// AFTER server deploy, switch to the same-domain path:
-  /// 'https://ehrms.askeva.net/face/api'.
-  static const String faceVerifyBaseUrl = 'http://192.168.0.26:8000/api';
+  /// Face backend base — SAME DOMAIN as EHRMS. The face app's engine is reverse-
+  /// proxied under /face on the EHRMS domain, so EHRMS reaches the (already working)
+  /// face recognition engine without a separate IP/port and without installing the
+  /// Python engine on the EHRMS API host. (LAN-IP dev value kept below for reference.)
+  static const String faceVerifyBaseUrl = 'https://ehrms.askeva.net/face/api';
+  // Local dev (machine LAN IP): 'http://192.168.0.26:8000/api'
 
   /// Punch/break/permission selfies captured BEFORE this instant were stored
   /// upside-down: the front camera (camerawesome) wrote pixels rotated 180° with
