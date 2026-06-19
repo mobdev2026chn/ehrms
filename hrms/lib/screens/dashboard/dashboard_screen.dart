@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../config/app_colors.dart';
 import '../../widgets/walking_turtle_emoji.dart';
 import '../../config/constants.dart';
+import '../../utils/face_enrollment_gate.dart';
 import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/break_datetime_util.dart';
 import '../../utils/error_message_utils.dart';
@@ -1494,6 +1495,11 @@ class _DashboardScreenState extends State<DashboardScreen>
     String? infoText,
     Future<String?>? infoTextFuture,
   }) async {
+    // Require one-time face enrollment before the break face check.
+    if (!await FaceEnrollmentGate.ensureEnrolled(context, actionLabel: 'break')) {
+      return;
+    }
+    if (!mounted) return;
     _ResolvedLocation? latestLocation;
     final result = await SelfieCameraScreen.captureSelfie(
       context,
@@ -3724,6 +3730,13 @@ class _DashboardScreenState extends State<DashboardScreen>
 
                 File? file;
                 if (requireSelfie) {
+                  // Require one-time face enrollment before the punch face check.
+                  if (!await FaceEnrollmentGate.ensureEnrolled(context,
+                      actionLabel: 'punch')) {
+                    _setPunchActionInProgress(false);
+                    return;
+                  }
+                  if (!mounted) return;
                   final result = await SelfieCameraScreen.captureSelfie(
                     context,
                     location: locationStr,

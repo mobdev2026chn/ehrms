@@ -892,7 +892,12 @@ class AuthService {
           body?['message']?.toString() ??
           body?['error']?['message']?.toString();
       final message = _userFriendlyVerifyMessage(rawMessage, match);
-      return {'success': true, 'match': match, 'message': message};
+      return {
+        'success': true,
+        'match': match,
+        'enrolled': body?['enrolled'] == true,
+        'message': message,
+      };
     } on DioException catch (e) {
       final body = e.response?.data;
       final rawMessage = body is Map
@@ -909,6 +914,68 @@ class AuthService {
         'match': false,
         'message': _userFriendlyVerifyMessage(_handleException(e), false),
       };
+    }
+  }
+
+  /// One-time face enrollment from one or more selfie data URLs.
+  /// Returns { success, samples, message }.
+  Future<Map<String, dynamic>> enrollFace(List<String> selfieDataUrls) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString('token');
+      if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
+        token = token.replaceAll('"', '');
+      }
+      if (token == null) {
+        return {'success': false, 'message': 'Please sign in and try again.'};
+      }
+      _api.setAuthToken(token);
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/auth/enroll-face',
+        data: {'selfies': selfieDataUrls},
+        options: Options(receiveTimeout: const Duration(seconds: 90)),
+      );
+      final body = response.data ?? {};
+      return {
+        'success': body['success'] == true,
+        'samples': body['samples'] ?? 0,
+        'message': body['message']?.toString() ?? 'Face enrolled.',
+      };
+    } on DioException catch (e) {
+      final body = e.response?.data;
+      final msg = body is Map ? body['message']?.toString() : null;
+      return {
+        'success': false,
+        'message': msg ?? 'Enrollment failed. Please try again.',
+      };
+    } catch (e) {
+      return {'success': false, 'message': 'Enrollment failed. Please try again.'};
+    }
+  }
+
+  /// Whether the current user has registered their face. Returns { enrolled, samples }.
+  Future<Map<String, dynamic>> faceEnrollStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString('token');
+      if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
+        token = token.replaceAll('"', '');
+      }
+      if (token == null) return {'enrolled': false, 'samples': 0};
+      _api.setAuthToken(token);
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/auth/face-enroll-status',
+      );
+      final body = response.data ?? {};
+      return {
+        'ok': true,
+        'enrolled': body['enrolled'] == true,
+        'samples': body['samples'] ?? 0,
+      };
+    } catch (_) {
+      // ok:false → couldn't determine (network/error). Callers should fail OPEN
+      // (don't force enrollment) since the server still gates at verify time.
+      return {'ok': false, 'enrolled': false, 'samples': 0};
     }
   }
 

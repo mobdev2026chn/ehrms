@@ -49,6 +49,14 @@ const staffSchema = new mongoose.Schema({
     faceFirstImage: { type: String },
     faceFirstImageAt: { type: Date }, // when faceFirstImage/avatar was seeded (decides legacy 180° flip)
     faceReferenceImage: { type: String },
+    // Dedicated face ENROLLMENT (independent of the rolling reference above). The user
+    // registers their face once via /auth/enroll-face; we store one or more 128-D dlib
+    // descriptors (multiple samples improve robustness, like the face-attendance app).
+    // Every punch then matches against these FIXED embeddings — no drift. Stored as
+    // embeddings (not just an image) so matching is fast and uses the enrolled samples.
+    faceEnrollEmbeddings: { type: [[Number]], default: [] },
+    faceEnrollImage: { type: String }, // a reference enrollment photo (for audit/re-enroll)
+    faceEnrolledAt: { type: Date },
     gender: { type: String },
     maritalStatus: { type: String },
     dob: { type: Date },

@@ -56,3 +56,26 @@ def verify(req: VerifyRequest):
         return verify_core.verify_images(img1, img2)
     except Exception:
         return {"match": False, "error": "Face verification failed. Please try again."}
+
+
+class EmbedRequest(BaseModel):
+    # Image to embed: inline base64/data-url or a URL.
+    image: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+@app.post("/embed")
+def embed(req: EmbedRequest):
+    """Returns the 128-D dlib descriptor for the largest face in [image]. Used by the
+    EHRMS face-enrollment flow (store the embedding once) and by verify-against-
+    enrollment (embed the live selfie, compare to the stored samples)."""
+    try:
+        img = _load(req.image, req.image_url)
+        if img is None:
+            return {"embedding": None, "error": "Could not load image"}
+        e = verify_core.embedding(img)
+        if e is None:
+            return {"embedding": None, "error": "No face detected"}
+        return {"embedding": e.tolist(), "error": None}
+    except Exception:
+        return {"embedding": None, "error": "Face embedding failed. Please try again."}

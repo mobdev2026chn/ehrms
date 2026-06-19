@@ -8,6 +8,7 @@ import 'selfie_camera_screen.dart'
     show SelfieCameraScreen, useImagePickerFallback;
 import '../../config/app_colors.dart';
 import '../../config/constants.dart';
+import '../../utils/face_enrollment_gate.dart';
 import '../../models/break_summary.dart';
 import '../../services/auth_service.dart';
 import '../../services/break_service.dart';
@@ -207,6 +208,11 @@ class _BreakScreenState extends State<BreakScreen> {
         (_area != null
             ? '$_area, ${_city ?? ''}${_pincode != null ? ' $_pincode' : ''}'
             : null);
+    if (!mounted) return;
+    // Require one-time face enrollment before the break face check.
+    if (!await FaceEnrollmentGate.ensureEnrolled(context, actionLabel: 'break')) {
+      return;
+    }
     if (!mounted) return;
     final captureResult = await SelfieCameraScreen.captureSelfie(
       context,

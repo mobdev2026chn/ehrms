@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_colors.dart';
 import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
+import '../../utils/face_enrollment_gate.dart';
 import '../../services/auth_service.dart';
 import '../../services/attendance_template_store.dart';
 import '../../services/geo/address_resolution_service.dart';
@@ -505,6 +506,12 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           (_area != null
               ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
               : null);
+      // Require one-time face enrollment before the check-in face check.
+      if (!await FaceEnrollmentGate.ensureEnrolled(context,
+          actionLabel: 'punch in')) {
+        return;
+      }
+      if (!mounted) return;
       final captureResult = await SelfieCameraScreen.captureSelfie(
         context,
         location: locationStr,

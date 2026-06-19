@@ -11,6 +11,7 @@ import 'package:table_calendar/table_calendar.dart';
 import '../../config/app_colors.dart';
 import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
+import '../../utils/face_enrollment_gate.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../services/attendance_service.dart';
@@ -6884,6 +6885,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       );
       return;
     }
+
+    // Require one-time face enrollment before the punch's face check.
+    if (!await FaceEnrollmentGate.ensureEnrolled(context,
+        actionLabel: isCheckedIn ? 'punch out' : 'punch in')) {
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (!mounted) return;
 
     final result = await SelfieCameraScreen.captureSelfie(
       context,

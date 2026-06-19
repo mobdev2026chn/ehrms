@@ -18,6 +18,7 @@ import '../../utils/error_message_utils.dart';
 import '../../utils/avatar_orientation.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../notifications/notifications_screen.dart';
+import 'face_enroll_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final int? dashboardTabIndex;
@@ -3970,6 +3971,9 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
                     ),
                     _buildTextField(_upiController, 'UPI ID', Icons.payment),
                     const SizedBox(height: 24),
+                    _buildSectionTitle('Face Registration'),
+                    _buildFaceEnrollTile(),
+                    const SizedBox(height: 24),
                     _buildSectionTitle('Change Password'),
                     _buildPasswordField(
                       controller: _oldPasswordController,
@@ -4344,6 +4348,36 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
             vertical: 16,
           ),
         ),
+      ),
+    );
+  }
+
+  /// Tile that opens the one-time face-enrollment screen. Registering a face makes
+  /// every future punch match against those fixed samples (reliable), instead of the
+  /// rolling-selfie reference.
+  Widget _buildFaceEnrollTile() {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        color: AppColors.inputFill,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ListTile(
+        leading: Icon(Icons.face_retouching_natural, color: AppColors.primary),
+        title: const Text('Register your face'),
+        subtitle: const Text(
+          'Capture a few samples used to verify your punches.',
+          style: TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () async {
+          final done = await Navigator.of(context).push<bool>(
+            MaterialPageRoute(builder: (_) => const FaceEnrollScreen()),
+          );
+          if (done == true && mounted) {
+            SnackBarUtils.showSnackBar(context, 'Face registered successfully.');
+          }
+        },
       ),
     );
   }

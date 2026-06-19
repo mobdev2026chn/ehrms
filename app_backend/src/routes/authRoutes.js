@@ -17,6 +17,8 @@ const {
     changePassword,
     updateProfilePhoto,
     verifyFace,
+    enrollFace,
+    getFaceEnrollStatus,
     checkActive
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
@@ -82,7 +84,11 @@ router.post(
     updateProfilePhoto
 );
 
-// Verify face (selfie vs profile photo) – expect JSON { selfie: "data:image/...;base64,..." }
+// Verify face (selfie vs enrolled face / reference) – expect JSON { selfie: "data:image/...;base64,..." }
 router.post('/verify-face', protect, authLimiter, verifyFace);
+
+// One-time face enrollment + status. Body: { selfies: ["data:image/...;base64,...", ...] }.
+router.get('/face-enroll-status', protect, authLimiter, getFaceEnrollStatus);
+router.post('/enroll-face', protect, authLimiter, enrollFace);
 
 module.exports = router;

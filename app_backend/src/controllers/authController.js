@@ -1401,6 +1401,64 @@ function callFaceVerifyService(selfie, referenceUrl) {
     });
 }
 
+// POST an image to the face service /embed endpoint. Resolves {embedding, error};
+// rejects on connection/timeout so the caller can treat it as "service unavailable".
+function callEmbedService(image) {
+    return new Promise((resolve, reject) => {
+        let body;
+        try {
+            body = JSON.stringify({ image });
+        } catch (e) {
+            return reject(e);
+        }
+        const u = new URL('/embed', FACE_VERIFY_URL);
+        const client = u.protocol === 'https:' ? https : http;
+        const r = client.request({
+            method: 'POST',
+            hostname: u.hostname,
+            port: u.port || (u.protocol === 'https:' ? 443 : 80),
+            path: u.pathname,
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+            },
+            timeout: 20000,
+        }, (resp) => {
+            let data = '';
+            resp.on('data', (c) => { data += c; });
+            resp.on('end', () => {
+                try {
+                    const out = JSON.parse(data || '{}');
+                    resolve({
+                        embedding: Array.isArray(out.embedding) ? out.embedding : null,
+                        error: out.error || null,
+                    });
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+        r.on('error', reject);
+        r.on('timeout', () => { r.destroy(new Error('embed service timeout')); });
+        r.write(body);
+        r.end();
+    });
+}
+
+// Euclidean distance between two equal-length numeric vectors (dlib face descriptors).
+function euclideanDistance(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return Infinity;
+    let sum = 0;
+    for (let i = 0; i < a.length; i++) {
+        const d = a[i] - b[i];
+        sum += d * d;
+    }
+    return Math.sqrt(sum);
+}
+
+// dlib same-person boundary (matches the Python service default / face app).
+const FACE_MATCH_THRESHOLD = parseFloat(process.env.FACE_MATCH_THRESHOLD || '0.50');
+
 // Slow fallback: download the reference, write the selfie to temp, and run the
 // one-shot CLI (reloads the model each call). Used only when the service is down.
 async function verifyFaceViaCli(selfie, referenceUrl) {
@@ -1485,8 +1543,50 @@ const verifyFace = async (req, res) => {
         const staff = req.staff;
         const fullUser = await User.findById(user._id).select('faceReferenceImage faceFirstImage avatar').lean();
         let fullStaff = null;
-        if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('faceReferenceImage faceFirstImage avatar').lean();
+        if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('faceReferenceImage faceFirstImage avatar faceEnrollEmbeddings').lean();
 
+        // PRIMARY PATH — dedicated face ENROLLMENT. If the user registered their face,
+        // match the live selfie against those FIXED enrolled embeddings (no rolling
+        // drift). This is the reliable path: same approach as the face-attendance app
+        // (stored samples + min euclidean distance, threshold 0.50). Computed in EHRMS.
+        const enrollEmbeddings = Array.isArray(fullStaff?.faceEnrollEmbeddings)
+            ? fullStaff.faceEnrollEmbeddings : [];
+        if (enrollEmbeddings.length > 0) {
+            let liveEmbedding = null;
+            try {
+                const r = await callEmbedService(selfie);
+                liveEmbedding = r.embedding;
+                if (!liveEmbedding) {
+                    return res.status(200).json({
+                        success: true, match: false, enrolled: true,
+                        message: toUserFriendlyVerifyMessage(r.error || 'No face detected'),
+                    });
+                }
+            } catch (e) {
+                console.warn('[verifyFace] embed service unavailable:', e?.message);
+                return res.status(200).json({
+                    success: false, match: false, enrolled: true,
+                    message: 'Face verification failed. Please try again.',
+                });
+            }
+            let best = Infinity;
+            for (const emb of enrollEmbeddings) {
+                const d = euclideanDistance(liveEmbedding, emb);
+                if (d < best) best = d;
+            }
+            const matched = best <= FACE_MATCH_THRESHOLD;
+            console.log(`[verifyFace] staff=${staff?._id} ENROLLED samples=${enrollEmbeddings.length} matched=${matched} bestDistance=${best.toFixed(4)}`);
+            return res.status(200).json({
+                success: true,
+                match: matched,
+                enrolled: true,
+                message: matched ? 'Photo matched' : 'Face not matching. Please try again.',
+            });
+        }
+
+        // FALLBACK PATH — user has NOT enrolled yet. Validate against the user's OWN
+        // images (rolling reference / first / avatar) so existing users aren't blocked,
+        // and flag enrolled:false so the app can prompt a one-time enrollment.
         // Validate the selfie against ANY of the user's OWN enrolled images, in
         // priority order:
         //   1. faceReferenceImage — the rolling self-reference (most recent punch),
@@ -1510,6 +1610,7 @@ const verifyFace = async (req, res) => {
             return res.status(200).json({
                 success: true,
                 match: true,
+                enrolled: false,
                 message: 'First punch captured as your face reference.'
             });
         }
@@ -1541,6 +1642,7 @@ const verifyFace = async (req, res) => {
         return res.status(200).json({
             success: true,
             match: matched,
+            enrolled: false,
             message: userMessage
         });
     } catch (error) {
@@ -1582,6 +1684,109 @@ const checkActive = async (req, res) => {
     }
 };
 
+/**
+ * POST /auth/enroll-face (protected)
+ * One-time face enrollment. Body: { selfies: ["data:image/...;base64,...", ...] }
+ * (or a single { selfie }). Each image is embedded by the face service; the 128-D
+ * samples are stored on the Staff doc and used as the FIXED reference for every
+ * future punch (no rolling drift). Re-calling replaces the prior enrollment.
+ */
+const enrollFace = async (req, res) => {
+    try {
+        const staff = req.staff;
+        if (!staff || !staff._id) {
+            return res.status(400).json({ success: false, message: 'No staff profile to enroll.' });
+        }
+        const body = req.body || {};
+        const list = Array.isArray(body.selfies) ? body.selfies : (body.selfie ? [body.selfie] : []);
+        const images = list.filter((s) => typeof s === 'string' && s.length > 0);
+        if (images.length === 0) {
+            return res.status(400).json({ success: false, message: 'At least one selfie is required to enroll.' });
+        }
+
+        const embeddings = [];
+        let lastError = null;
+        for (const img of images) {
+            try {
+                const r = await callEmbedService(img);
+                if (Array.isArray(r.embedding)) embeddings.push(r.embedding);
+                else if (r.error) lastError = r.error;
+            } catch (e) {
+                console.warn('[enrollFace] embed service error:', e?.message);
+                return res.status(503).json({ success: false, message: 'Face service unavailable. Please try again.' });
+            }
+        }
+        if (embeddings.length === 0) {
+            return res.status(200).json({
+                success: false,
+                message: toUserFriendlyVerifyMessage(lastError || 'No face detected'),
+            });
+        }
+
+        // Use the first enrollment selfie as the user's PROFILE PHOTO (avatar). Upload
+        // it to storage and point both Staff.avatar and User.avatar at it, so the
+        // registered face is the profile photo everywhere.
+        let photoUrl = null;
+        try {
+            let b64 = String(images[0]);
+            if (b64.startsWith('data:image')) b64 = b64.replace(/^data:image\/\w+;base64,/, '');
+            const buffer = Buffer.from(b64, 'base64');
+            if (buffer && buffer.length > 0) {
+                const companyId = staff?.businessId ? String(staff.businessId) : undefined;
+                const employeeName = staff?.name || req.user?.name;
+                const up = await digitalOceanService.uploadImage(buffer, undefined, {
+                    req, companyId, employeeName,
+                    category: 'employees', subfolder: 'avatar', format: 'jpg',
+                });
+                if (up?.success) photoUrl = up.url;
+            }
+        } catch (e) {
+            console.warn('[enrollFace] avatar upload failed (keeping enrollment):', e?.message);
+        }
+
+        const staffUpdate = {
+            faceEnrollEmbeddings: embeddings,
+            faceEnrolledAt: new Date(),
+        };
+        if (photoUrl) {
+            staffUpdate.avatar = photoUrl;
+            staffUpdate.faceEnrollImage = photoUrl;
+        }
+        await Staff.findByIdAndUpdate(staff._id, staffUpdate);
+        if (photoUrl && req.user?._id) {
+            await User.findByIdAndUpdate(req.user._id, { avatar: photoUrl });
+        }
+        console.log(`[enrollFace] staff=${staff._id} enrolled samples=${embeddings.length} avatar=${photoUrl ? 'updated' : 'unchanged'}`);
+        return res.status(200).json({
+            success: true,
+            samples: embeddings.length,
+            avatar: photoUrl,
+            message: 'Face enrolled successfully.',
+        });
+    } catch (error) {
+        console.error('enrollFace Error:', error);
+        return res.status(500).json({ success: false, message: 'Enrollment failed. Please try again.' });
+    }
+};
+
+/**
+ * GET /auth/face-enroll-status (protected)
+ * Returns whether the current staff has registered their face, so the app can
+ * prompt enrollment before the first punch.
+ */
+const getFaceEnrollStatus = async (req, res) => {
+    try {
+        const staff = req.staff;
+        if (!staff || !staff._id) return res.json({ success: true, enrolled: false, samples: 0 });
+        const s = await Staff.findById(staff._id).select('faceEnrollEmbeddings faceEnrolledAt').lean();
+        const samples = Array.isArray(s?.faceEnrollEmbeddings) ? s.faceEnrollEmbeddings.length : 0;
+        return res.json({ success: true, enrolled: samples > 0, samples, enrolledAt: s?.faceEnrolledAt || null });
+    } catch (error) {
+        console.error('[authController] getFaceEnrollStatus:', error.message);
+        return res.status(500).json({ success: false, enrolled: false });
+    }
+};
+
 module.exports = {
     login,
     googleLogin,
@@ -1597,5 +1802,7 @@ module.exports = {
     changePassword,
     updateProfilePhoto,
     verifyFace,
+    enrollFace,
+    getFaceEnrollStatus,
     checkActive
 };
