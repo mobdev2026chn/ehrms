@@ -17,6 +17,8 @@ const { spawn } = require('child_process');
 const { sendOTPEmail } = require('../services/emailService');
 const cloudinary = require('cloudinary').v2;
 const digitalOceanService = require('../services/digitalOceanService');
+// In-process dlib face engine (spawned Python worker over stdin/stdout — no :5005 port).
+const faceEngine = require('../services/faceEngine');
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -1554,7 +1556,7 @@ const verifyFace = async (req, res) => {
         if (enrollEmbeddings.length > 0) {
             let liveEmbedding = null;
             try {
-                const r = await callEmbedService(selfie);
+                const r = await faceEngine.embed(selfie);
                 liveEmbedding = r.embedding;
                 if (!liveEmbedding) {
                     return res.status(200).json({
@@ -1563,7 +1565,7 @@ const verifyFace = async (req, res) => {
                     });
                 }
             } catch (e) {
-                console.warn('[verifyFace] embed service unavailable:', e?.message);
+                console.warn('[verifyFace] embed engine unavailable:', e?.message);
                 return res.status(200).json({
                     success: false, match: false, enrolled: true,
                     message: 'Face verification failed. Please try again.',
@@ -1622,12 +1624,12 @@ const verifyFace = async (req, res) => {
         let lastError = null;
         for (const referenceUrl of uniqueReferences) {
             let result;
-            // Fast path: persistent service. Fall back to the CLI only if it's unreachable.
+            // In-process dlib engine (spawned worker) — no external service/port.
             try {
-                result = await callFaceVerifyService(selfie, referenceUrl);
+                result = await faceEngine.verify({ selfie, referenceUrl });
             } catch (e) {
-                console.warn('[verifyFace] service unavailable, falling back to CLI:', e?.message);
-                result = await verifyFaceViaCli(selfie, referenceUrl);
+                console.warn('[verifyFace] face engine error:', e?.message);
+                result = { match: false, error: 'Face verification failed. Please try again.' };
             }
             if (typeof result.distance === 'number') {
                 bestDistance = bestDistance == null ? result.distance : Math.min(bestDistance, result.distance);
@@ -1708,11 +1710,11 @@ const enrollFace = async (req, res) => {
         let lastError = null;
         for (const img of images) {
             try {
-                const r = await callEmbedService(img);
+                const r = await faceEngine.embed(img);
                 if (Array.isArray(r.embedding)) embeddings.push(r.embedding);
                 else if (r.error) lastError = r.error;
             } catch (e) {
-                console.warn('[enrollFace] embed service error:', e?.message);
+                console.warn('[enrollFace] embed engine error:', e?.message);
                 return res.status(503).json({ success: false, message: 'Face service unavailable. Please try again.' });
             }
         }
