@@ -1384,7 +1384,11 @@ function callFaceVerifyService(selfie, referenceUrl) {
             resp.on('end', () => {
                 try {
                     const out = JSON.parse(data || '{}');
-                    resolve({ match: !!out.match, error: out.error || null });
+                    resolve({
+                        match: !!out.match,
+                        distance: typeof out.distance === 'number' ? out.distance : null,
+                        error: out.error || null,
+                    });
                 } catch (e) {
                     reject(e);
                 }
@@ -1450,9 +1454,13 @@ async function verifyFaceViaCli(selfie, referenceUrl) {
         child.on('close', () => {
             try {
                 const out = JSON.parse(stdout.trim() || '{}');
-                resolve({ match: !!out.match, error: out.error || null });
+                resolve({
+                    match: !!out.match,
+                    distance: typeof out.distance === 'number' ? out.distance : null,
+                    error: out.error || null,
+                });
             } catch {
-                resolve({ match: false, error: stderr || 'Verification failed' });
+                resolve({ match: false, distance: null, error: stderr || 'Verification failed' });
             }
         });
     });
@@ -1475,21 +1483,30 @@ const verifyFace = async (req, res) => {
 
         const user = req.user;
         const staff = req.staff;
-        const fullUser = await User.findById(user._id).select('faceReferenceImage avatar').lean();
+        const fullUser = await User.findById(user._id).select('faceReferenceImage faceFirstImage avatar').lean();
         let fullStaff = null;
-        if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('faceReferenceImage avatar').lean();
-        // Validation reference = the most recent punch image (rolling self-reference).
-        // On the FIRST punch there is no rolling reference yet — fall back to the
-        // user's onboarding/profile avatar so the first punch is still validated and
-        // can't be impersonated. Only when the user has NO image anywhere do we
-        // accept blindly (nothing exists to compare against).
-        const rollingRef = fullStaff?.faceReferenceImage || fullUser?.faceReferenceImage;
-        const onboardingRef = fullStaff?.avatar || fullUser?.avatar;
-        const referenceUrl = (rollingRef && rollingRef.startsWith('http'))
-            ? rollingRef
-            : ((onboardingRef && onboardingRef.startsWith('http')) ? onboardingRef : null);
+        if (staff && staff._id) fullStaff = await Staff.findById(staff._id).select('faceReferenceImage faceFirstImage avatar').lean();
 
-        if (!referenceUrl || !referenceUrl.startsWith('http')) {
+        // Validate the selfie against ANY of the user's OWN enrolled images, in
+        // priority order:
+        //   1. faceReferenceImage — the rolling self-reference (most recent punch),
+        //   2. faceFirstImage     — the permanent enrollment selfie (never overwritten),
+        //   3. avatar             — onboarding/profile photo.
+        // Accepting any one of these prevents a single POOR rolling reference (e.g. a
+        // bad-lighting / off-angle prior punch) from permanently locking out a
+        // legitimate user — the classic failure mode of a rolling self-reference. It
+        // does NOT weaken cross-user protection: every candidate is the same user's own
+        // face, and the 1-to-many buddy-punch guard (FaceIdentityGuard) runs separately.
+        // Only when the user has NO image anywhere do we accept blindly (nothing to
+        // compare against — the punch then seeds the first reference).
+        const references = [
+            fullStaff?.faceReferenceImage, fullUser?.faceReferenceImage,
+            fullStaff?.faceFirstImage, fullUser?.faceFirstImage,
+            fullStaff?.avatar, fullUser?.avatar,
+        ].filter((u) => typeof u === 'string' && u.startsWith('http'));
+        const uniqueReferences = [...new Set(references)];
+
+        if (uniqueReferences.length === 0) {
             return res.status(200).json({
                 success: true,
                 match: true,
@@ -1497,19 +1514,33 @@ const verifyFace = async (req, res) => {
             });
         }
 
-        // Fast path: persistent service. Fall back to the CLI only if it's unreachable.
-        let result;
-        try {
-            result = await callFaceVerifyService(selfie, referenceUrl);
-        } catch (e) {
-            console.warn('[verifyFace] service unavailable, falling back to CLI:', e?.message);
-            result = await verifyFaceViaCli(selfie, referenceUrl);
+        // Try each reference until one matches. Track the best (smallest) distance so
+        // a near-miss is visible in logs for threshold tuning.
+        let matched = false;
+        let bestDistance = null;
+        let lastError = null;
+        for (const referenceUrl of uniqueReferences) {
+            let result;
+            // Fast path: persistent service. Fall back to the CLI only if it's unreachable.
+            try {
+                result = await callFaceVerifyService(selfie, referenceUrl);
+            } catch (e) {
+                console.warn('[verifyFace] service unavailable, falling back to CLI:', e?.message);
+                result = await verifyFaceViaCli(selfie, referenceUrl);
+            }
+            if (typeof result.distance === 'number') {
+                bestDistance = bestDistance == null ? result.distance : Math.min(bestDistance, result.distance);
+            }
+            if (result.error) lastError = result.error;
+            if (result.match) { matched = true; break; }
         }
 
-        const userMessage = result.match ? 'Photo matched' : toUserFriendlyVerifyMessage(result.error);
+        console.log(`[verifyFace] staff=${staff?._id || user?._id} refs=${uniqueReferences.length} matched=${matched} bestDistance=${bestDistance}`);
+
+        const userMessage = matched ? 'Photo matched' : toUserFriendlyVerifyMessage(lastError);
         return res.status(200).json({
             success: true,
-            match: !!result.match,
+            match: matched,
             message: userMessage
         });
     } catch (error) {

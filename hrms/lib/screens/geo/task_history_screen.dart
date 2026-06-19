@@ -6,6 +6,7 @@ import 'package:hrms/models/task.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
+import 'package:hrms/widgets/oriented_image.dart';
 
 class TaskHistoryScreen extends StatefulWidget {
   final Task task;
@@ -907,7 +908,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
               child: InteractiveViewer(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(
+                  child: OrientedImage.network(
                     imageUrl,
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) => Container(
@@ -1161,7 +1162,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
                         onTap: () => _showFullImage(context, base64),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(10),
-                          child: Image.memory(
+                          child: OrientedImage.memory(
                             base64Decode(base64),
                             height: 150,
                             width: double.infinity,
@@ -1237,7 +1238,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
                 child: InteractiveViewer(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: Image.memory(
+                    child: OrientedImage.memory(
                       base64Decode(base64),
                       fit: BoxFit.contain,
                     ),

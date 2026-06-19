@@ -1,4 +1,9 @@
-deepface>=0.0.90
-tf-keras>=2.16.0
+# Face engine: dlib 128-D via face_recognition (same as the face-attendance app).
+# dlib is a native build — on Windows install a prebuilt wheel if `pip install dlib`
+# fails (e.g. `pip install dlib-bin`), then `pip install face_recognition`.
+face_recognition>=1.3.0
+dlib>=19.24.0
+opencv-python>=4.8.0
+numpy>=1.24.0
 fastapi>=0.110.0
 uvicorn>=0.29.0

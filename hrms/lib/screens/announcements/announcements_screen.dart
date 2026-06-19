@@ -38,7 +38,9 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
       final result = await InteractionService.instance.getAnnouncements();
       final unseen = await InteractionService.instance
           .getAnnouncementsUnseenHrTotal();
-      final joiningDate = await _loadJoiningDate();
+      final profileInfo = await _loadProfileInfo();
+      final joiningDate = profileInfo.joiningDate;
+      final myStaffId = profileInfo.staffId;
       if (!mounted) return;
       if (result['success'] == true) {
         final data = result['data'] is List
@@ -57,6 +59,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
         //  - ones created before the employee joined are hidden (they predate
         //    this employee and aren't meant for them).
         final filtered = list.where((item) {
+          if (!_isForThisEmployee(item, myStaffId)) return false;
           if (_isExpired(item)) return false;
           if (joiningDate != null && _isBeforeJoining(item, joiningDate)) {
             return false;
@@ -560,20 +563,74 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
     return null;
   }
 
-  /// The employee's Date of Joining, read from the cached profile/staff record.
-  /// Returns null when unavailable so no DOJ-based filtering is applied.
-  Future<DateTime?> _loadJoiningDate() async {
+  /// The employee's Date of Joining and Staff `_id`, read from the profile/staff
+  /// record. Both are null when unavailable so the related filters no-op.
+  Future<({DateTime? joiningDate, String? staffId})> _loadProfileInfo() async {
     try {
       final result = await AuthService().getProfile();
-      if (result['success'] != true || result['data'] is! Map) return null;
+      if (result['success'] != true || result['data'] is! Map) {
+        return (joiningDate: null, staffId: null);
+      }
       final data = result['data'] as Map;
       final staffData = data['staffData'];
-      final raw = (staffData is Map ? staffData['joiningDate'] : null) ??
+      final rawJoin = (staffData is Map ? staffData['joiningDate'] : null) ??
           data['joiningDate'];
-      return _parseDate(raw);
+      final staffId = _idString(
+            (staffData is Map ? staffData['_id'] : null) ??
+                data['_id'] ??
+                data['staffId'],
+          );
+      return (joiningDate: _parseDate(rawJoin), staffId: staffId);
     } catch (_) {
-      return null;
+      return (joiningDate: null, staffId: null);
     }
+  }
+
+  /// Normalize an id that may be a String, an ObjectId map (`{$oid: ...}`), or a
+  /// populated staff object (`{_id: ...}`) down to its hex string.
+  static String? _idString(dynamic value) {
+    if (value == null) return null;
+    if (value is String) return value.trim();
+    if (value is Map) {
+      return _idString(
+        value['_id'] ?? value['\$oid'] ?? value['id'] ?? value['staffId'],
+      );
+    }
+    return value.toString().trim();
+  }
+
+  /// Whether this announcement is meant for the current employee.
+  ///
+  /// Targeting is decided by the recipient list the payload carries
+  /// (`targetStaffIds`/`assignedTo`/`recipients`/`staffIds`). When no recipient
+  /// list is present the announcement is company-wide and shown to everyone.
+  /// When it explicitly targets specific staff, it is shown ONLY if the current
+  /// employee is in that list — this is the app-side guard against the backend
+  /// returning a personally-targeted announcement to the wrong staff member.
+  static bool _isForThisEmployee(dynamic item, String? myStaffId) {
+    if (item is! Map) return true;
+    final targets = <String>{};
+    for (final key in const [
+      'targetStaffIds',
+      'assignedTo',
+      'recipients',
+      'staffIds',
+      'targetStaff',
+    ]) {
+      final v = item[key];
+      if (v is List) {
+        for (final e in v) {
+          final id = _idString(e);
+          if (id != null && id.isNotEmpty) targets.add(id);
+        }
+      }
+    }
+    // No explicit recipient list → company-wide → visible to all.
+    if (targets.isEmpty) return true;
+    // Targeted: only the listed staff may see it. If we can't resolve the current
+    // staff id, hide rather than risk leaking a targeted announcement.
+    if (myStaffId == null || myStaffId.isEmpty) return false;
+    return targets.contains(myStaffId);
   }
 
   /// Whether an announcement was created before the employee joined. Uses the

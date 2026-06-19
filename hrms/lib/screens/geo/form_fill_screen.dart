@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:hrms/widgets/oriented_image.dart';
 
 class FormFillScreen extends StatefulWidget {
   final Map<String, dynamic> template;
@@ -472,7 +473,7 @@ class _FormFillScreenState extends State<FormFillScreen> {
                       const SizedBox(height: 8),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: Image.memory(
+                        child: OrientedImage.memory(
                           base64Decode(value.toString().split(',').last),
                           height: 120,
                           width: 120,

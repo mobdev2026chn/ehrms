@@ -88,16 +88,23 @@ class AppConstants {
   /// TESTING now: 5 minutes. Set to 900 for 15 minutes in production.
   static const int presenceTrackingCaptureIntervalSeconds = 300;
 
-  /// When true, attendance selfie is verified against profile photo (face matching).
-  /// When false, only on-device face detection runs; no server-side face matching.
+  /// When true, attendance selfie is verified against the rolling reference (1-to-1).
+  /// ENABLED: EHRMS now runs the FACE APP's recognition engine in-process (dlib 128-D
+  /// via [/auth/verify-face] → face_verify service), so the punch selfie is validated
+  /// by EHRMS itself — no cross-app call to the face backend. Each app stays on its
+  /// own domain. Requires the EHRMS face_verify service running (see face_verify/).
   static const bool enableAttendanceFaceMatching = true;
 
   /// Cross-user face check (anti buddy-punch): before a punch/break the app asks
   /// the Face backend whether the captured face is the logged-in user and NOT a
   /// different enrolled employee. EHRMS's own verify-face is 1-to-1 (self only);
   /// this adds 1-to-many identity confirmation. Requires the Face backend running
-  /// and reachable at [faceVerifyBaseUrl], and the employee enrolled there.
-  static const bool enableCrossUserFaceCheck = true;
+  /// Cross-user (1-to-many) buddy-punch check via the SEPARATE face backend.
+  /// DISABLED: per the self-contained design, EHRMS no longer reaches across to the
+  /// face app. The same dlib engine now runs inside EHRMS and validates 1-to-1 via
+  /// [enableAttendanceFaceMatching]. (1-to-many inside EHRMS would need a local
+  /// enrollment store — a separate follow-up; left off until then.)
+  static const bool enableCrossUserFaceCheck = false;
 
   /// Face backend base. LOCAL DEV (current): the machine's LAN IP (update on change).
   /// AFTER server deploy, switch to the same-domain path:

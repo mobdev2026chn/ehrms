@@ -6,6 +6,7 @@ import '../../models/asset_model.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../../widgets/oriented_image.dart';
 
 class AssetDetailsScreen extends StatefulWidget {
   final String? assetId;
@@ -198,7 +199,7 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
                                       ),
                                       child: ClipRRect(
                                         borderRadius: BorderRadius.circular(12),
-                                        child: Image.network(
+                                        child: OrientedImage.network(
                                           _asset!.assetPhoto!,
                                           fit: BoxFit.cover,
                                           errorBuilder: (context, error, stackTrace) {

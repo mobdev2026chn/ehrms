@@ -3,31 +3,37 @@ const Announcement = require('../models/Announcement');
 
 /**
  * Build audience filter for announcements (web announcement collection).
- * - audienceType "all" (or missing) → show to all staff in business.
- * - audienceType "specific" and targetStaffIds contains this staff → show only to those staff.
- * - audienceType "specific" with targetStaffIds null/empty → show to NO ONE.
- * Legacy: assignedTo empty/missing and not "specific" → all; assignedTo contains this staff (and not "specific") → those staff.
+ *
+ * Targeting is driven by the RECIPIENT LIST, not by the audienceType string — the
+ * web app has been observed to store targeted announcements with audienceType left
+ * at its default ("all") or cased differently ("Specific"), which previously leaked
+ * a personally-targeted announcement to every staff member. Rules:
+ *  - Has a non-empty recipient list (web targetStaffIds or legacy assignedTo) →
+ *    show ONLY to staff in that list, whatever audienceType says.
+ *  - No recipient list AND not flagged "specific" → company-wide, show to everyone.
+ *  - No recipient list but flagged "specific" (any casing) → show to NO ONE.
  */
 function audienceFilter(staffId) {
     const id = staffId && mongoose.Types.ObjectId.isValid(staffId)
         ? (typeof staffId === 'string' ? new mongoose.Types.ObjectId(staffId) : staffId)
         : null;
+    // A recipient field carries no specific targets when it is missing, null, or an empty array.
+    const noTargets = (field) => ({
+        $or: [
+            { [field]: { $exists: false } },
+            { [field]: null },
+            { [field]: { $size: 0 } },
+        ],
+    });
+    // True for missing/null/"all"/""/any non-"specific" value; false only when audienceType is "specific" (any casing/whitespace).
+    const notFlaggedSpecific = { audienceType: { $not: /^\s*specific\s*$/i } };
     return {
         $or: [
-            // Web: audienceType "all" or missing → show to everyone
-            { audienceType: { $exists: false } },
-            { audienceType: null },
-            { audienceType: '' },
-            { audienceType: 'all' },
-            // Web: audienceType "specific" and this staff is in targetStaffIds (array must contain id; null/empty = no one)
-            ...(id ? [{ audienceType: 'specific', targetStaffIds: id }] : []),
-            // Legacy: assignedTo empty or missing → show to all (only when NOT web "specific")
-            { $and: [{ assignedTo: { $exists: false } }, { audienceType: { $ne: 'specific' } }] },
-            { $and: [{ assignedTo: null }, { audienceType: { $ne: 'specific' } }] },
-            { $and: [{ assignedTo: [] }, { audienceType: { $ne: 'specific' } }] },
-            { $and: [{ assignedTo: { $size: 0 } }, { audienceType: { $ne: 'specific' } }] },
-            // Legacy: this staff in assignedTo (only when NOT web "specific", so "specific" docs only match via targetStaffIds)
-            ...(id ? [{ audienceType: { $ne: 'specific' }, assignedTo: id }] : []),
+            // Targeted: this staff is explicitly listed → always show to them (regardless of audienceType).
+            ...(id ? [{ targetStaffIds: id }] : []),
+            ...(id ? [{ assignedTo: id }] : []),
+            // Company-wide: no recipient list on EITHER field AND not flagged "specific" → show to everyone.
+            { $and: [noTargets('targetStaffIds'), noTargets('assignedTo'), notFlaggedSpecific] },
         ],
     };
 }

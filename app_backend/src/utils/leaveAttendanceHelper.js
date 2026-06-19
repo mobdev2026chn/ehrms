@@ -225,7 +225,7 @@ const isCurrentlyInLeaveSession = (leave, now, shiftStartTime, shiftEndTime, tim
  */
 const getLeaveMessageForUI = (leave, now, shiftStartTime, shiftEndTime, timeZone, halfDaySettings = null) => {
     if (!leave) return null;
-    if (leave.leaveType === 'Half Day') {
+    if (isHalfDayLeave(leave)) {
         const sessionMsg = getHalfDaySessionMessage(resolveHalfDaySession(leave), shiftStartTime, shiftEndTime, halfDaySettings);
         return sessionMsg;
     }
@@ -261,6 +261,22 @@ const resolveHalfDaySession = (leave) =>
     || (leave.session === '1' ? 'First Half Day' : leave.session === '2' ? 'Second Half Day' : null);
 
 const isHalfDayLeaveType = (leaveType) => (leaveType || '').trim().toLowerCase() === 'half day';
+
+/**
+ * Robustly detect a half-day leave from a Leave document, independent of leaveType.
+ * Half-day is a DURATION (First/Second Half) that can be applied to ANY leave type
+ * (Casual, Sick, Earned, …), represented by session ('1'/'2') / halfDaySession /
+ * halfDayType / days === 0.5. The legacy standalone 'Half Day' leaveType is still
+ * recognised for backward compatibility.
+ */
+const isHalfDayLeave = (leave) => {
+    if (!leave) return false;
+    if (isHalfDayLeaveType(leave.leaveType)) return true;
+    if (leave.session === '1' || leave.session === '2') return true;
+    const hs = (leave.halfDaySession || leave.halfDayType || '').toString().trim().toLowerCase();
+    if (hs === 'first half day' || hs === 'second half day') return true;
+    return Number(leave.days) === 0.5;
+};
 
 const canCheckInWithHalfDayLeave = (leave, now, shiftStartTime, shiftEndTime, timeZone, halfDaySettings = null, shiftGracePeriodMinutes = 0) => {
     if (!leave || !isHalfDayLeaveType(leave.leaveType)) return { allowed: true };
@@ -1124,6 +1140,8 @@ const getShiftTimings = (
     let effectiveShiftName = null;
     /** Mongo ObjectId string of the resolved embedded shift row (same calendar day as timings). */
     let effectiveShiftId = null;
+    /** True when the shift template marks this calendar day as a week-off (rotational byWeekCalendar). */
+    let weekOff = false;
 
     const dateForShift = attendanceDate ? new Date(attendanceDate) : new Date();
     // Match Flutter rotational_shift_util: anchor = joiningDate ?? attendance calendar day (not "server now").
@@ -1185,6 +1203,12 @@ const getShiftTimings = (
             // }
 
             shift = resolveEffectiveShiftRaw(shifts, wrapper, dateForShift, anchor);
+            // A rotational byWeekCalendar shift can designate a specific date as a week-off
+            // (weeklyDateAssignments[].isWeekOff); resolveEffectiveShiftRaw flags it as
+            // __rotationWeekOff on the resolved row. Capture it before enrich/return drop the
+            // marker so callers (e.g. the month calendar) render "Week Off" rather than the
+            // shift's default window.
+            weekOff = parseBoolLoose(shift && shift.__rotationWeekOff);
             shift = enrichStandardShiftTimesFromShiftsList(shifts, shift);
             }
             effectiveShiftName = (shift.name || '').toString().trim() || null;
@@ -1332,7 +1356,8 @@ const getShiftTimings = (
         breakPolicy,
         overtimePolicy,
         effectiveShiftName,
-        effectiveShiftId
+        effectiveShiftId,
+        weekOff
     };
 };
 
@@ -1492,25 +1517,28 @@ const markAttendanceForApprovedLeave = async (leave) => {
                 date: { $gte: startOfDay, $lte: endOfDay }
             });
 
-            const isHalfDayLeave = leave.leaveType === 'Half Day';
-            const halfDaySessionValue = isHalfDayLeave
-                ? (leave.halfDaySession || leave.halfDayType || (leave.session === '1' ? 'First Half Day' : leave.session === '2' ? 'Second Half Day' : null))
-                : null;
-            const sessionRemarks = isHalfDayLeave
+            const isHalfDayRow = isHalfDayLeave(leave);
+            const halfDaySessionValue = isHalfDayRow ? resolveHalfDaySession(leave) : null;
+            const sessionRemarks = isHalfDayRow
                 ? (halfDaySessionValue === 'First Half Day'
-                    ? 'Half day leave approved - First Half Day. Employee should punch in for verification.' 
+                    ? 'Half day leave approved - First Half Day. Employee should punch in for verification.'
                     : 'Half day leave approved - Second Half Day. Employee should punch in for verification.')
                 : 'On Leave (approved)';
+            // For a half-day of a real leave type (e.g. Casual/Sick), keep the
+            // Attendance.leaveType within its enum; map session ('1'/'2') -> session.
+            const attendanceSession = isHalfDayRow
+                ? (leave.session || (halfDaySessionValue === 'First Half Day' ? '1' : halfDaySessionValue === 'Second Half Day' ? '2' : null))
+                : null;
 
             if (attendance) {
                 // Update existing attendance record
-                attendance.status = isHalfDayLeave ? 'Half Day' : 'On Leave';
+                attendance.status = isHalfDayRow ? 'Half Day' : 'On Leave';
                 attendance.leaveType = leave.leaveType;
-                attendance.session = isHalfDayLeave ? (leave.session || null) : null;
+                attendance.session = attendanceSession;
                 attendance.halfDaySession = halfDaySessionValue;
                 attendance.remarks = (attendance.remarks || '').trim() ? (attendance.remarks + ' ' + sessionRemarks) : sessionRemarks;
                 // Full-day leave: no check-in/check-out
-                if (!isHalfDayLeave) {
+                if (!isHalfDayRow) {
                     attendance.punchIn = undefined;
                     attendance.punchOut = undefined;
                     attendance.workHours = 0;
@@ -1523,14 +1551,14 @@ const markAttendanceForApprovedLeave = async (leave) => {
                     employeeId: employeeId,
                     user: employeeId,
                     date: startOfDay,
-                    status: isHalfDayLeave ? 'Half Day' : 'On Leave',
+                    status: isHalfDayRow ? 'Half Day' : 'On Leave',
                     leaveType: leave.leaveType,
-                    session: isHalfDayLeave ? (leave.session || null) : null,
+                    session: attendanceSession,
                     halfDaySession: halfDaySessionValue,
                     approvedBy: leave.approvedBy,
                     approvedAt: leave.approvedAt || new Date(),
                     businessId: businessId,
-                    workHours: isHalfDayLeave ? undefined : 0,
+                    workHours: isHalfDayRow ? undefined : 0,
                     remarks: sessionRemarks
                 });
             }
@@ -1919,6 +1947,9 @@ module.exports = {
     markAttendanceForApprovedLeave,
     calculateAvailableLeaves,
     revertAttendanceForDeletedLeave,
+    isHalfDayLeave,
+    isHalfDayLeaveType,
+    resolveHalfDaySession,
     canCheckInWithHalfDayLeave,
     canCheckOutWithHalfDayLeave,
     isWithinSecondHalfEarlyLoginWindow,
@@ -1929,6 +1960,7 @@ module.exports = {
     calculateHalfDayLateFine,
     calculateHalfDayEarlyFine,
     getShiftTimings,
+    getHalfDaySessionBoundaries,
     staffShiftKeyFromStaff,
     calculateWorkHoursFromShift,
     getBusinessTimezone,

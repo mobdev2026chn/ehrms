@@ -10,6 +10,7 @@ import 'package:hrms/screens/dashboard/dashboard_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/geo/route_snapping_service.dart';
+import 'package:hrms/widgets/oriented_image.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
@@ -618,7 +619,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Image.network(
+              child: OrientedImage.network(
                 task.photoProofUrl!,
                 height: 120,
                 width: double.infinity,
@@ -739,7 +740,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                             padding: const EdgeInsets.only(top: 6, bottom: 12),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.memory(
+                              child: OrientedImage.memory(
                                 base64Decode(base64),
                                 height: 100,
                                 width: 100,

@@ -1,38 +1,37 @@
 #!/usr/bin/env python3
 """
-Shared face-verification core (ArcFace) used by BOTH the persistent HTTP service
-(server.py) and the one-shot CLI (face_verify.py).
+Shared face-verification core used by BOTH the persistent HTTP service (server.py)
+and the one-shot CLI (face_verify.py).
 
-ArcFace is far more discriminative than the old OpenFace setup, so different people
-no longer match. Detection retries rotations so legacy upside-down selfies resolve.
+ENGINE: `face_recognition` (dlib) 128-D descriptors with euclidean distance — the
+SAME engine the face-attendance app uses (face/face/backend-node/extract_face_worker.py).
+EHRMS runs it in-process so it does NOT have to reach across to the face app; each app
+stays self-contained on its own domain. Detection retries rotations so selfies stored
+upside-down/sideways still resolve.
+
+Previously this used ArcFace (DeepFace). It was swapped to dlib so EHRMS and the face
+app validate faces with one identical algorithm.
 """
 import os
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Keep model weights inside the project folder.
-os.environ.setdefault("DEEPFACE_HOME", SCRIPT_DIR)
-os.makedirs(os.path.join(SCRIPT_DIR, ".deepface", "weights"), exist_ok=True)
 
-MODEL_NAME = "ArcFace"
-DETECTOR = "opencv"  # bundled with opencv; no extra download
-# ArcFace+cosine calibrated threshold is 0.68 (distance below = same person). We use
-# a stricter value to cut false accepts. Raise toward 0.68 if same-person punches get
-# rejected; lower (e.g. 0.55) if different people still slip through.
-THRESHOLD = 0.60
+# dlib/face_recognition euclidean distance: SAME person is typically < 0.5, different
+# people > 0.6 (library default tolerance is 0.6). The face app uses 0.50; we match it
+# so the two apps behave identically. Overridable per deployment via FACE_MATCH_THRESHOLD
+# (raise toward 0.6 if same-person punches get rejected; lower to cut false accepts).
+try:
+    THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.50"))
+except (TypeError, ValueError):
+    THRESHOLD = 0.50
 
-ARCFACE_URL = "https://github.com/serengil/deepface_models/releases/download/v1.0/arcface_weights.h5"
-ARCFACE_PATH = os.path.join(SCRIPT_DIR, ".deepface", "weights", "arcface_weights.h5")
+# Model/weights ship inside the face_recognition package — nothing to download.
+MODEL_NAME = "dlib-face_recognition-128d"
 
 
 def ensure_weights():
-    if os.path.isfile(ARCFACE_PATH):
-        return True
-    try:
-        import urllib.request
-        urllib.request.urlretrieve(ARCFACE_URL, ARCFACE_PATH)
-        return os.path.isfile(ARCFACE_PATH)
-    except Exception:
-        return False
+    # dlib's models are bundled with face_recognition_models; no download step needed.
+    return True
 
 
 def _rotate(img, angle):
@@ -47,30 +46,35 @@ def _rotate(img, angle):
 
 
 def embedding(img):
-    """Largest detected face's ArcFace embedding, trying rotations so legacy
-    upside-down/sideways selfies still resolve. None if no face is found."""
+    """Largest detected face's 128-D dlib descriptor, trying rotations so selfies
+    stored upside-down/sideways still resolve. [img] is a BGR numpy array (as loaded
+    by cv2). None if no face is found."""
+    import cv2
     import numpy as np
-    from deepface import DeepFace
+    import face_recognition
+
+    # Downscale wide images so detection stays fast (matches the face app's worker).
+    h, w = img.shape[:2]
+    max_w = 640
+    if w > max_w:
+        scale = max_w / w
+        img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+
     for angle in (0, 180, 90, 270):
+        rimg = _rotate(img, angle)
+        # face_recognition expects RGB; cv2 gives BGR.
+        rgb = cv2.cvtColor(rimg, cv2.COLOR_BGR2RGB)
         try:
-            reps = DeepFace.represent(
-                _rotate(img, angle),
-                model_name=MODEL_NAME,
-                detector_backend=DETECTOR,
-                enforce_detection=True,
-                align=True,
-            )
+            locs = face_recognition.face_locations(rgb)
         except Exception:
             continue
-        if reps:
-            reps.sort(
-                key=lambda r: (r.get("facial_area", {}).get("w", 0)
-                               * r.get("facial_area", {}).get("h", 0)),
-                reverse=True,
-            )
-            emb = reps[0].get("embedding")
-            if emb:
-                return np.array(emb, dtype=float)
+        if not locs:
+            continue
+        # Largest detected face.
+        loc = max(locs, key=lambda l: (l[2] - l[0]) * (l[1] - l[3]))
+        encs = face_recognition.face_encodings(rgb, [loc], num_jitters=1)
+        if encs:
+            return np.array(encs[0], dtype=float)
     return None
 
 
@@ -83,26 +87,20 @@ def verify_images(img1, img2):
     e2 = embedding(img2)
     if e1 is None or e2 is None:
         return {"match": False, "error": "No face detected in one or both images"}
-    denom = float(np.linalg.norm(e1) * np.linalg.norm(e2))
-    if denom == 0:
-        return {"match": False, "error": "Face not matching"}
-    distance = 1.0 - float(np.dot(e1, e2) / denom)
+    # dlib face descriptors compare by euclidean distance (same as the face app).
+    distance = float(np.linalg.norm(e1 - e2))
     if distance <= THRESHOLD:
         return {"match": True, "distance": distance, "error": None}
     return {"match": False, "distance": distance, "error": "Face not matching"}
 
 
 def warmup():
-    """Build/load the model once so the first real request is fast."""
+    """Import the model once so the first real request is fast."""
     try:
         import numpy as np
-        ensure_weights()
+        import face_recognition  # noqa: F401  (triggers model load)
         dummy = (np.random.rand(160, 160, 3) * 255).astype("uint8")
-        from deepface import DeepFace
-        DeepFace.represent(
-            dummy, model_name=MODEL_NAME, detector_backend=DETECTOR,
-            enforce_detection=False, align=False,
-        )
+        face_recognition.face_locations(dummy)
     except Exception:
         pass
 

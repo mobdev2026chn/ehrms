@@ -3429,7 +3429,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         hasSalaryOverviewAccess: _hasSalaryOverviewAccess,
       ),
       MyRequestsScreen(
-        key: ValueKey('Requests_$_requestsSubTabIndex'),
+        // Stable key: an in-screen tab switch must NOT recreate the whole
+        // screen (that re-ran every tab's initState fetch, flashing loaders and
+        // popping duplicate error toasts on each switch). The screen now jumps
+        // to the requested sub-tab via didUpdateWidget when [initialTabIndex]
+        // changes (deep links / drawer) instead of being rebuilt from scratch.
+        key: const ValueKey('Requests'),
         initialTabIndex: _requestsSubTabIndex,
         dashboardTabIndex: _currentIndex,
         onNavigateToIndex: _onDrawerNavigateToIndex,

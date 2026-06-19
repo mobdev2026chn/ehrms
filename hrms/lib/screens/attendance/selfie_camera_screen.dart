@@ -136,6 +136,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   String? _capturedFilePath;
   CameraState? _cameraState;
   String? _infoText;
+  // Live face count from the camera stream (-1 = not yet analysed). Drives the
+  // on-frame "Multiple faces" warning and gates the shutter so the validation
+  // shows WHILE framing — before capture/submit.
+  int _liveFaceCount = -1;
+  bool _analyzingFrame = false;
   // Bumped after a manual rotate so the review Image rebuilds from disk (FileImage
   // caches by path, and the path is unchanged after we overwrite the bytes).
   int _reviewRev = 0;
@@ -212,32 +217,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     String? validationError;
     try {
       final file = File(path);
-      int faceCount = 1;
-      String? faceMessage;
-      bool inverted = false;
-      try {
-        final det = await FaceDetectionHelper.detectFromFile(file);
-        faceCount = det.faceCount;
-        faceMessage = det.message;
-        // ML Kit detects upside-down faces too, so face COUNT can't tell
-        // orientation. Use the face's roll angle: ~±180° ⇒ upside-down. If no
-        // face was found at all, assume inverted (this device captures flipped).
-        if (det.faceCount > 0) {
-          inverted = det.isUpsideDown;
-        } else {
-          inverted = true;
-        }
-        debugPrint('[Selfie][orient] faces=${det.faceCount} '
-            'rollZ=${det.rollZ?.toStringAsFixed(1)} inverted=$inverted');
-      } catch (_) {
-        // If detection fails, assume upright (crop only).
-      }
 
       // Downscale NATIVELY (fast) — avoids decoding the full-res JPEG in Dart
       // (~1-2s). Keep EXIF auto-correction (default) so the small image matches
-      // what ML Kit saw. The 180° flip (if needed) is then a DETERMINISTIC raw-
-      // pixel rotate in Dart on the small image — no reliance on native rotate
-      // semantics or EXIF interplay.
+      // what ML Kit saw. All orientation probing + the deterministic 180° flip
+      // run on this small image, so no reliance on native rotate semantics.
       final small = await FlutterImageCompress.compressWithFile(
         path,
         minWidth: 1280,
@@ -247,26 +231,59 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       final working = (small != null && small.isNotEmpty)
           ? small
           : await file.readAsBytes();
+
+      // Two-pass orientation resolution. A single ML Kit pass is unreliable: this
+      // device writes the front camera upside-down, and ML Kit may either fail to
+      // detect the inverted face OR detect it while normalizing the roll angle
+      // back toward 0° — both of which made the old roll-only test keep the photo
+      // upside-down (→ server face-match then fails). Instead, detect the image
+      // AS-IS and ROTATED 180°, and keep whichever orientation yields an actually
+      // upright face (eyes above mouth, via landmark geometry in the detector).
+      bool inverted = false;
+      // The detection taken on the orientation we actually SAVE — drives both the
+      // flip decision and the click-time quality gate below.
+      FaceDetectionResult? chosen;
+      try {
+        final asis = await FaceDetectionHelper.detectFromBytes(working);
+        if (asis.faceCount > 0 && !asis.isUpsideDown) {
+          // As-captured already shows an upright face → no flip needed.
+          inverted = false;
+          chosen = asis;
+        } else {
+          final rotated = await compute(flip180Only, working);
+          final flipped = await FaceDetectionHelper.detectFromBytes(rotated);
+          if (flipped.faceCount > 0 && !flipped.isUpsideDown) {
+            // Rotating 180° produced an upright face → the capture was flipped.
+            inverted = true;
+            chosen = flipped;
+          } else if (asis.faceCount > 0 && asis.isUpsideDown) {
+            // Geometry already said the as-is face is upside-down; trust it.
+            inverted = true;
+            chosen = asis;
+          } else {
+            // No clearly-upright face either way. This device captures flipped,
+            // so default to inverted; the manual "Flip" button is the safety net.
+            inverted = true;
+            chosen = flipped.faceCount > 0 ? flipped : asis;
+          }
+        }
+        debugPrint('[Selfie][orient] asisFaces=${asis.faceCount} '
+            'asisUpsideDown=${asis.isUpsideDown} inverted=$inverted '
+            'faceCount=${chosen.faceCount} eyesOpen=${chosen.eyesOpen} '
+            'yaw=${chosen.headYaw?.toStringAsFixed(1)}');
+      } catch (_) {
+        // If detection fails entirely, assume upright (crop only).
+      }
+
       final processed =
           await compute(inverted ? rotate180AndCrop : cropSelfieOnly, working);
       await file.writeAsBytes(processed, flush: true);
 
-      // Multi-face gate. For the upright case we already have the count from the
-      // first pass. For the inverted case the first pass saw 0 faces (upside-down),
-      // so re-check on the now-small upright file (fast — it's ~1280px, not full-res).
-      if (inverted) {
-        try {
-          final det = await FaceDetectionHelper.detectFromFile(file);
-          faceCount = det.faceCount;
-          faceMessage = det.message;
-        } catch (_) {
-          // Detection unavailable after rotation; skip the gate.
-        }
-      }
-      if (faceCount > 1) {
-        validationError = faceMessage ??
-            'Multiple faces detected. Please take a selfie with only your face in frame.';
-      }
+      // Click-time selfie-quality gate (image validation, NOT identity matching):
+      // exactly one face, eyes open, facing the camera. On failure we bounce back
+      // to the live camera so the user can retake. Skipped when detection failed
+      // entirely (chosen == null) so a detector hiccup never hard-blocks a punch.
+      validationError = chosen?.qualityIssue();
     } catch (_) {
       // Keep the original capture if processing fails.
     }
@@ -317,7 +334,33 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     );
   }
 
+  bool get _multipleFacesLive => _liveFaceCount > 1;
+
+  /// Analyses live camera frames with ML Kit (one in-flight at a time) so the
+  /// multiple-face validation appears WHILE the user frames the shot — not after
+  /// capture or after submitting the punch. Updates [_liveFaceCount] only when it
+  /// changes to avoid needless rebuilds.
+  Future<void> _analyzeLiveFrame(AnalysisImage image) async {
+    if (_analyzingFrame || !mounted || _capturedFilePath != null) return;
+    _analyzingFrame = true;
+    try {
+      final count = await FaceDetectionHelper.detectFaceCountFromCamera(image);
+      if (count >= 0 && mounted && count != _liveFaceCount) {
+        setState(() => _liveFaceCount = count);
+      }
+    } finally {
+      _analyzingFrame = false;
+    }
+  }
+
   void _takePhoto() {
+    // Block capture while more than one face is in frame — the live warning is
+    // already shown; reinforce it if the user taps anyway.
+    if (_multipleFacesLive) {
+      _showCaptureError(
+          'Multiple faces detected. Please take a selfie with only your face in frame.');
+      return;
+    }
     _cameraState?.when(
       onPhotoMode: (photoState) => photoState.takePhoto(),
       onPreparingCamera: (_) {},
@@ -422,6 +465,18 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                     previewFit: CameraPreviewFit.contain,
                     previewAlignment: Alignment.center,
                     availableFilters: const [],
+                    // Live face detection on the camera stream so the
+                    // "Multiple faces" validation shows while framing, before
+                    // capture. Throttled + downscaled to stay light.
+                    imageAnalysisConfig: AnalysisConfig(
+                      androidOptions:
+                          const AndroidAnalysisOptions.nv21(width: 350),
+                      cupertinoOptions:
+                          const CupertinoAnalysisOptions.bgra8888(),
+                      autoStart: true,
+                      maxFramesPerSecond: 4,
+                    ),
+                    onImageForAnalysis: _analyzeLiveFrame,
                     onMediaCaptureEvent: (MediaCapture event) {
                       if (event.status == MediaCaptureStatus.success &&
                           event.isPicture &&
@@ -486,31 +541,42 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   }
 
   Widget _buildStatusBadge() {
+    final warn = _multipleFacesLive;
     return Container(
+      constraints: const BoxConstraints(maxWidth: 320),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.60),
+        color: warn
+            ? Colors.red.shade700.withOpacity(0.92)
+            : Colors.black.withOpacity(0.60),
         borderRadius: BorderRadius.circular(24),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.primary,
-            ),
-          ),
+          warn
+              ? const Icon(Icons.error_outline, color: Colors.white, size: 16)
+              : Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.primary,
+                  ),
+                ),
           const SizedBox(width: 8),
-          const Text(
-            'TAP TO CAPTURE',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 1.0,
+          Flexible(
+            child: Text(
+              warn
+                  ? 'Multiple faces detected. Keep only your face in frame.'
+                  : 'TAP TO CAPTURE',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: warn ? 12 : 13,
+                fontWeight: FontWeight.w600,
+                letterSpacing: warn ? 0.2 : 1.0,
+              ),
             ),
           ),
         ],
@@ -567,7 +633,10 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
             height: 54,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: AppColors.primary,
+              // Dimmed while the shutter is blocked (multiple faces in frame).
+              color: _multipleFacesLive
+                  ? Colors.grey.shade400
+                  : AppColors.primary,
             ),
           ),
         ),
@@ -617,7 +686,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                         ),
                       ),
                     ),
-                    // FACE MATCHED badge (top-left) — per Figma.
+                    // Capture-confirmation badge (top-left). The selfie only reaches
+                    // this review screen AFTER passing the on-device quality gate
+                    // (one face, eyes open, facing camera), so an honest "captured"
+                    // status — not the old "FACE MATCHED", which implied an identity
+                    // match that no longer runs.
                     Positioned(
                       top: 12,
                       left: 12,
@@ -634,13 +707,13 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              Icons.verified_rounded,
+                              Icons.check_circle_rounded,
                               size: 14,
                               color: AppColors.primary,
                             ),
                             const SizedBox(width: 6),
                             const Text(
-                              'FACE MATCHED',
+                              'FACE CAPTURED',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 11,
@@ -778,7 +851,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                   child: FilledButton.icon(
                     onPressed: () => Navigator.of(context).pop(File(path)),
                     icon: const Icon(Icons.check),
-                    label: const Text('Submit Punch'),
+                    label: const Text('Confirm & Submit'),
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       padding: const EdgeInsets.symmetric(vertical: 14),

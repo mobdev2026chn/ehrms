@@ -39,7 +39,11 @@ def main():
         img1 = verify_core.load_from_path(path1)
         img2 = verify_core.load_from_path(path2)
         result = verify_core.verify_images(img1, img2)
-        _out({"match": bool(result.get("match")), "error": result.get("error")})
+        _out({
+            "match": bool(result.get("match")),
+            "distance": result.get("distance"),
+            "error": result.get("error"),
+        })
     except Exception:
         _out({"match": False, "error": "Face verification failed. Please try again."}, 1)
 

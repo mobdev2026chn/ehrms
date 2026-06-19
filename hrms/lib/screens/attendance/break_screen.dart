@@ -328,7 +328,16 @@ class _BreakScreenState extends State<BreakScreen> {
     // saved break start/end time forward.
     final DateTime clickInstant = DateTime.now();
     final String clickTime = clickInstant.toUtc().toIso8601String();
+    // Ending: pin the status card's live timer to the tap instant immediately,
+    // before the selfie/location/network work below, so it stops climbing while
+    // that work runs and the shown elapsed equals the recorded break duration
+    // (which is computed from this same clickInstant). Every abort path below
+    // restores _endClickTime to null so the timer resumes ticking.
+    if (_isOnBreak && mounted) {
+      setState(() => _endClickTime = clickInstant);
+    }
     if (_imageFile == null) {
+      if (mounted) setState(() => _endClickTime = null);
       SnackBarUtils.showSnackBar(
         context,
         'Please take a selfie first!',
@@ -340,6 +349,7 @@ class _BreakScreenState extends State<BreakScreen> {
       await _determinePosition();
       if (!mounted) return;
       if (_position == null) {
+        setState(() => _endClickTime = null);
         SnackBarUtils.showSnackBar(
           context,
           'Location is required for breaks.',
@@ -350,13 +360,9 @@ class _BreakScreenState extends State<BreakScreen> {
     }
 
     final selfie = await _encodeSelfie();
-    if (selfie == null) return;
-
-    // Ending: pin the status card's live timer to the tap instant now that the
-    // end is committed, so it stops climbing during face-verification/network
-    // and the shown elapsed equals the recorded break duration.
-    if (_isOnBreak && mounted) {
-      setState(() => _endClickTime = clickInstant);
+    if (selfie == null) {
+      if (mounted) setState(() => _endClickTime = null);
+      return;
     }
 
     // Validate the break selfie against the rolling face reference before submitting,

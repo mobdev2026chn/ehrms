@@ -271,11 +271,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return true;
   }
 
-  /// Dashboard announcement visibility: hide expired ones and any created before
-  /// the employee joined. When the joining date isn't loaded yet, only the
-  /// expiry rule applies (the Announcements screen does the authoritative pass).
+  /// Dashboard announcement visibility: hide expired ones, any created before
+  /// the employee joined, and any targeted to other staff. When the joining date
+  /// isn't loaded yet, only the expiry/recipient rules apply (the Announcements
+  /// screen does the authoritative pass).
   bool _isDashboardAnnouncementVisible(dynamic item) {
     if (!_isDashboardAnnouncementNotExpired(item)) return false;
+    if (!_isDashboardAnnouncementForMe(item)) return false;
     final joining = _profileJoiningDate;
     if (joining == null || item is! Map) return true;
     final raw = item['createdAt'] ?? item['publishDate'] ?? item['effectiveDate'];
@@ -283,6 +285,42 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     if (created == null) return true;
     final joinDay = DateTime(joining.year, joining.month, joining.day);
     return !created.isBefore(joinDay);
+  }
+
+  /// Whether an announcement targets the current employee. Company-wide
+  /// announcements (no recipient list) are visible to all; a personally-targeted
+  /// announcement (`targetStaffIds`/`assignedTo`/`recipients`) is shown only when
+  /// the current staff id is in that list. Guards against the web/interaction
+  /// backend returning a targeted announcement to the wrong staff member.
+  bool _isDashboardAnnouncementForMe(dynamic item) {
+    if (item is! Map) return true;
+    String? idStr(dynamic v) {
+      if (v == null) return null;
+      if (v is String) return v.trim();
+      if (v is Map) return idStr(v['_id'] ?? v['\$oid'] ?? v['id'] ?? v['staffId']);
+      return v.toString().trim();
+    }
+
+    final targets = <String>{};
+    for (final key in const [
+      'targetStaffIds',
+      'assignedTo',
+      'recipients',
+      'staffIds',
+      'targetStaff',
+    ]) {
+      final v = item[key];
+      if (v is List) {
+        for (final e in v) {
+          final id = idStr(e);
+          if (id != null && id.isNotEmpty) targets.add(id);
+        }
+      }
+    }
+    if (targets.isEmpty) return true; // company-wide
+    final myStaffId = idStr(_profileStaffDataSnapshot?['_id']);
+    if (myStaffId == null || myStaffId.isEmpty) return false;
+    return targets.contains(myStaffId);
   }
 
   /// Geo [getDashboardData] `todayAnnouncements` can be empty while web HRMS

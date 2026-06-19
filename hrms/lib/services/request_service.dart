@@ -118,8 +118,10 @@ class RequestService {
     }
   }
 
-  /// Fetches leave types for Apply Leave dropdown: from staff's leave template + Half Day (static) + Unpaid Leave.
-  /// Returns list of { type, days } where days is the limit (null for Unpaid Leave, 0.5 for Half Day).
+  /// Fetches leave types for the Apply Leave dropdown: staff's leave template +
+  /// Unpaid Leave. Returns list of { type, days } where days is the limit (null
+  /// for Unpaid Leave). `halfDayEnabled` reports whether the staff's shift permits
+  /// half-day, so the form can offer First/Second Half as a duration on any type.
   Future<Map<String, dynamic>> getLeaveTypesForApply() async {
     try {
       await _setToken();
@@ -127,7 +129,11 @@ class RequestService {
         '/requests/leave-types/for-apply',
       );
       final body = response.data;
-      return {'success': true, 'data': body?['data'] ?? body};
+      return {
+        'success': true,
+        'data': body?['data'] ?? body,
+        'halfDayEnabled': body?['halfDayEnabled'] == true,
+      };
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {

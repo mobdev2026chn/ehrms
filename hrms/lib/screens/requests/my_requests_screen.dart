@@ -29,17 +29,56 @@ import '../../widgets/animations.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
+import '../../widgets/oriented_image.dart';
+import '../../utils/image_orientation.dart';
 import '../../services/fcm_service.dart';
 
 /// Source for an expense proof attachment: camera capture or file storage.
 enum _ProofSource { camera, files }
 
-/// Returns true if [s] is half-day leave type (case and space insensitive).
-/// Backend may send "half day", "Half Day", "halfday", "half", "Half", etc.
+/// How much of the working day a leave covers. Half-day is a DURATION that can be
+/// applied to any leave type (Casual, Sick, …) — First Half or Second Half.
+enum _LeaveDuration { full, firstHalf, secondHalf }
+
+/// Returns true if [s] is the legacy standalone half-day leave *type* (case and
+/// space insensitive). Backend may send "half day", "Half Day", "halfday", etc.
+/// Half-day is now modelled as a duration, so this only matches legacy data.
 bool _isHalfDayLeave(String? s) {
   if (s == null || s.isEmpty) return false;
   final n = s.toLowerCase().replaceAll(RegExp(r'\s+'), '');
   return n == 'halfday' || n == 'half';
+}
+
+/// True when a leave *record* (map from the API) is a half-day, independent of its
+/// leaveType. Detects from session / halfDaySession / halfDayType / days == 0.5,
+/// with the legacy 'Half Day' leaveType still recognised.
+bool _isHalfDayLeaveRecord(Map leave) {
+  if (_isHalfDayLeave(leave['leaveType']?.toString())) return true;
+  final s = leave['session']?.toString();
+  if (s == '1' || s == '2') return true;
+  final hs = (leave['halfDaySession'] ?? leave['halfDayType'])
+      ?.toString()
+      .trim()
+      .toLowerCase();
+  if (hs == 'first half day' || hs == 'second half day') return true;
+  final d = leave['days'];
+  final days = d is num ? d.toDouble() : double.tryParse(d?.toString() ?? '');
+  return days == 0.5;
+}
+
+/// Short label for a half-day leave's session ("First Half" / "Second Half").
+/// Resolves from halfDaySession / halfDayType / session; empty when unknown.
+String _halfDaySessionLabel(Map leave) {
+  final hs = (leave['halfDaySession'] ?? leave['halfDayType'])
+      ?.toString()
+      .trim()
+      .toLowerCase();
+  if (hs == 'first half day') return 'First Half';
+  if (hs == 'second half day') return 'Second Half';
+  final s = leave['session']?.toString();
+  if (s == '1') return 'First Half';
+  if (s == '2') return 'Second Half';
+  return 'Half Day';
 }
 
 /// True when [a] and [b] fall on the same calendar day (ignores time).
@@ -189,7 +228,7 @@ void _showProofImageDialog(BuildContext context, List<int> bytes) {
               maxHeight: MediaQuery.of(context).size.height * 0.7,
             ),
             child: InteractiveViewer(
-              child: Image.memory(
+              child: OrientedImage.memory(
                 Uint8List.fromList(bytes),
                 errorBuilder: (ctx, error, stackTrace) => const Center(
                   child: Padding(
@@ -338,6 +377,18 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
   @override
   void didUpdateWidget(MyRequestsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // The screen is no longer recreated on a sub-tab change (stable key in the
+    // dashboard), so honor an externally-requested tab (deep link / drawer) by
+    // jumping the controller. When the change is just the echo of an in-screen
+    // tap, the controller is already on [target] and animateTo is a no-op.
+    if (widget.initialTabIndex != oldWidget.initialTabIndex) {
+      final target = widget.initialTabIndex
+          .clamp(0, _tabSpecs.length - 1)
+          .toInt();
+      if (_tabController.index != target) {
+        _tabController.animateTo(target);
+      }
+    }
     if (widget.isActiveTab == true && oldWidget.isActiveTab != true) {
       _refreshActiveTab();
     }
@@ -1156,7 +1207,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
         iconColor: AppColors.primary,
         children: [
           _detailRow('Leave Type', leave['leaveType'] ?? ''),
-          if (_isHalfDayLeave(leave['leaveType']))
+          if (_isHalfDayLeaveRecord(leave))
             _detailRow('Half day on', halfDayOnValue),
           _detailRow('Start Date', start),
           _detailRow('End Date', end),
@@ -1314,7 +1365,9 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                     _buildCardDetailRow(
                       Icons.event,
                       'Days',
-                      '${leave['days']}',
+                      _isHalfDayLeaveRecord(leave)
+                          ? '${leave['days']} (${_halfDaySessionLabel(leave)})'
+                          : '${leave['days']}',
                     ),
                     const SizedBox(height: 4),
                     _buildCardDetailRow(
@@ -1394,20 +1447,38 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
           ),
         ],
       ),
-      child: Column(
+      child: _buildBalanceCardBody(balance, colorScheme),
+    );
+  }
+
+  /// Card content. When the assigned leave template configures an allocation for
+  /// this type (`allocated` present), show the remaining balance prominently with
+  /// the entitlement and usage breakdown. Otherwise (uncapped, e.g. Unpaid Leave),
+  /// fall back to showing days taken.
+  Widget _buildBalanceCardBody(dynamic balance, ColorScheme colorScheme) {
+    final num? allocated = balance is Map && balance['allocated'] is num
+        ? balance['allocated'] as num
+        : null;
+    final pending = _balancePendingCount(balance);
+
+    final header = Text(
+      balance['type'] ?? 'Leave',
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.bold,
+        color: colorScheme.onSurfaceVariant,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+
+    if (allocated == null) {
+      // Uncapped type — no template allocation to show.
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            balance['type'] ?? 'Leave',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurfaceVariant,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          header,
           const SizedBox(height: 2),
           Text(
             _trimBalanceNum(balance['takenCount']),
@@ -1421,7 +1492,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
             'Leaves Taken',
             style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
           ),
-          if (_balancePendingCount(balance) > 0) ...[
+          if (pending > 0) ...[
             const SizedBox(height: 4),
             Text(
               '${_trimBalanceNum(balance['pendingCount'])} pending',
@@ -1433,7 +1504,66 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
             ),
           ],
         ],
-      ),
+      );
+    }
+
+    // Prefer the backend-computed remaining; fall back to allocated − taken − pending.
+    final num remaining = balance['remaining'] is num
+        ? balance['remaining'] as num
+        : (allocated -
+                  ((balance['takenCount'] is num)
+                      ? balance['takenCount'] as num
+                      : 0) -
+                  pending)
+              .clamp(0, allocated);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        header,
+        const SizedBox(height: 2),
+        RichText(
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          text: TextSpan(
+            children: [
+              TextSpan(
+                text: _trimBalanceNum(remaining),
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.primary,
+                ),
+              ),
+              TextSpan(
+                text: ' / ${_trimBalanceNum(allocated)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Text(
+          'Available',
+          style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${_trimBalanceNum(balance['takenCount'])} taken'
+          '${pending > 0 ? ' • ${_trimBalanceNum(balance['pendingCount'])} pending' : ''}',
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            color: pending > 0 ? AppColors.warning : colorScheme.onSurfaceVariant,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 
@@ -1683,7 +1813,11 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   final AttendanceService _attendanceService = AttendanceService();
 
   String? _leaveType;
-  String? _session; // For Half Day
+  // Leave duration: Full Day / First Half / Second Half. Half-day applies to ANY
+  // leave type and is only offered when the staff's shift enables it
+  // (_halfDayEnabled).
+  _LeaveDuration _duration = _LeaveDuration.full;
+  bool _halfDayEnabled = false;
   List<dynamic> _allowedTypes = [];
   // Employee gender (e.g. "Male"/"Female"), used to gate Maternity/Paternity
   // leave. Empty when unknown — in that case no gender restriction is applied.
@@ -1705,6 +1839,17 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   // over and same-day leave no longer makes sense — today gets blocked. Falls
   // back to the codebase-wide default shift end when the template is unknown.
   String _shiftEndTime = '18:30';
+
+  /// True when the selected duration is a half-day (First or Second Half).
+  bool get _isHalf => _duration != _LeaveDuration.full;
+
+  /// Backend session value for the selected half-day: '1' (first) / '2' (second),
+  /// or null for a full-day leave.
+  String? get _session => _duration == _LeaveDuration.firstHalf
+      ? '1'
+      : _duration == _LeaveDuration.secondHalf
+          ? '2'
+          : null;
 
   @override
   void initState() {
@@ -1925,16 +2070,21 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     final result = await _requestService.getLeaveTypesForApply();
     if (mounted) {
       if (result['success']) {
+        // Half-day is a duration now, not a type — drop any legacy 'Half Day'
+        // entry the backend might still send, and gate Maternity/Paternity by
+        // gender.
         final raw = List<dynamic>.from(result['data'] as List? ?? [])
-            .where((e) => _isTypeAllowedForGender(
-                  e is Map ? e['type'] as String? : null,
-                ))
+            .where((e) {
+              final type = e is Map ? e['type'] as String? : null;
+              if (_isHalfDayLeave(type)) return false;
+              return _isTypeAllowedForGender(type);
+            })
             .toList();
-        // Half Day is gated by the shift's halfDaySettings.enabled: the backend
-        // omits it when the staff's shift disables half-day. Respect that — do
-        // not force-insert it client-side, so disabled shifts can't apply.
         setState(() {
           _allowedTypes = raw;
+          // The shift gates half-day via halfDaySettings.enabled; the backend
+          // reports it so the form can offer First/Second Half on any type.
+          _halfDayEnabled = result['halfDayEnabled'] == true;
           if (_allowedTypes.isNotEmpty) {
             _leaveType = _allowedTypes.first['type'] as String?;
           }
@@ -1948,7 +2098,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
   int get _days {
     if (_startDate == null) return 0;
-    if (_isHalfDayLeave(_leaveType)) return 0; // 0.5 on backend
+    if (_isHalf) return 0; // 0.5 on backend
     if (_isOneDay) return 1;
     if (_endDate == null) return 1;
     return _endDate!.difference(_startDate!).inDays + 1;
@@ -1979,7 +2129,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       _showLimitWarning = false;
       if (isStart) {
         _startDate = picked;
-        if (_isOneDay || _isHalfDayLeave(_leaveType)) {
+        if (_isOneDay || _isHalf) {
           _endDate = picked;
         } else if (_endDate != null && _endDate!.isBefore(picked)) {
           _endDate = picked;
@@ -2022,11 +2172,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       );
       return;
     }
-    final effectiveEnd = _isOneDay || _isHalfDayLeave(_leaveType)
-        ? _startDate!
-        : _endDate;
+    final effectiveEnd = _isOneDay || _isHalf ? _startDate! : _endDate;
     if (!_isOneDay &&
-        !_isHalfDayLeave(_leaveType) &&
+        !_isHalf &&
         (effectiveEnd == null || effectiveEnd.isBefore(today))) {
       SnackBarUtils.showSnackBar(
         context,
@@ -2043,21 +2191,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       );
       return;
     }
-    if (_isHalfDayLeave(_leaveType) &&
-        !_isOneDay &&
-        _endDate != null &&
-        _endDate != _startDate) {
+    if (_isHalf && !_isOneDay && _endDate != null && _endDate != _startDate) {
       SnackBarUtils.showSnackBar(
         context,
-        'Half Day leave allows only one date.',
-        isError: true,
-      );
-      return;
-    }
-    if (_isHalfDayLeave(_leaveType) && _session == null) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Please select a session for Half Day leave',
+        'Half-day leave allows only one date.',
         isError: true,
       );
       return;
@@ -2077,8 +2214,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       return;
     }
 
-    final daysValue = _isHalfDayLeave(_leaveType) ? 0.5 : _days;
-    final requestedDays = _isHalfDayLeave(_leaveType) ? 0.5 : _days.toDouble();
+    final daysValue = _isHalf ? 0.5 : _days;
+    final requestedDays = _isHalf ? 0.5 : _days.toDouble();
     final rangeEnd = effectiveEnd ?? _startDate!;
 
     // Unpaid Leave: no balance validation
@@ -2119,7 +2256,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
         return;
       }
       if (effectiveAvailable == 0.5) {
-        if (!_isHalfDayLeave(_leaveType)) {
+        if (!_isHalf) {
           final msg =
               'Only 0.5 days remaining$pendingNote. Requesting '
               '${_trimNum(requestedDays)} day${requestedDays != 1 ? "s" : ""} '
@@ -2172,18 +2309,19 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       }
     }
 
-    // Backend checks "leave already applied" and returns a single error message
+    // Backend checks "leave already applied" and returns a single error message.
+    // leaveType stays the real type (Casual/Sick/…); the half-day is conveyed via
+    // session + halfDaySession so the backend records it as 0.5 of that type.
     final payload = {
       'leaveType': _leaveType,
       'startDate': _startDate!.toIso8601String(),
       'endDate': rangeEnd.toIso8601String(),
       'days': daysValue,
       'reason': _reasonController.text,
-      'session': _isHalfDayLeave(_leaveType) ? _session : null,
-      if (_isHalfDayLeave(_leaveType) && _session != null)
-        'halfDaySession': _session == '1'
-            ? 'First Half Day'
-            : 'Second Half Day',
+      'session': _isHalf ? _session : null,
+      if (_isHalf)
+        'halfDaySession':
+            _session == '1' ? 'First Half Day' : 'Second Half Day',
     };
 
     setState(() => _isSubmitting = true);
@@ -2474,11 +2612,6 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       onChanged: (val) {
         setState(() {
           _leaveType = val!;
-          if (_isHalfDayLeave(_leaveType)) {
-            _session = '1';
-            _isOneDay = true;
-            if (_startDate != null) _endDate = _startDate;
-          }
         });
       },
     );
@@ -2539,9 +2672,51 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     );
   }
 
+  /// Build a single duration choice chip (Full Day / First Half / Second Half).
+  Widget _durationChip(String label, _LeaveDuration value) {
+    return ChoiceChip(
+      label: Text(label),
+      selected: _duration == value,
+      onSelected: (_) {
+        setState(() {
+          _duration = value;
+          // Half-day is always a single date — collapse any range.
+          if (_isHalf) {
+            _isOneDay = true;
+            if (_startDate != null) _endDate = _startDate;
+          }
+        });
+      },
+      selectedColor: AppColors.primary.withValues(alpha: 0.3),
+    );
+  }
+
+  /// Leave duration selector — lets the employee take any leave type as a Full
+  /// Day, First Half, or Second Half. Only shown when the shift enables half-day.
+  Widget _buildDurationSelector() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionLabel('Duration'),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              _durationChip('Full Day', _LeaveDuration.full),
+              _durationChip('First Half', _LeaveDuration.firstHalf),
+              _durationChip('Second Half', _LeaveDuration.secondHalf),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isSingle = _isOneDay || _isHalfDayLeave(_leaveType);
+    final isSingle = _isOneDay || _isHalf;
     return Container(
       height: MediaQuery.of(context).size.height * 0.9,
       decoration: const BoxDecoration(
@@ -2605,8 +2780,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       _buildLeaveTypeDropdown(),
                     const SizedBox(height: 20),
 
-                    // Single-day toggle (hidden for Half Day, which is always single)
-                    if (!_isHalfDayLeave(_leaveType))
+                    // Leave duration (Full / First Half / Second Half) — applies
+                    // to every leave type when the shift enables half-day.
+                    if (_halfDayEnabled) _buildDurationSelector(),
+
+                    // Single-day toggle (hidden for half-day, which is always single)
+                    if (!_isHalf)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 16),
                         child: Row(
@@ -2662,8 +2841,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       Padding(
                         padding: const EdgeInsets.only(top: 10),
                         child: Text(
-                          _isHalfDayLeave(_leaveType)
-                              ? 'Total:  ${_trimNum(_selectedTypeRemaining)} days remaining'
+                          _isHalf
+                              ? 'Total: 0.5 day - ${_trimNum(_selectedTypeRemaining)} days remaining'
                               : 'Total: $_days day${_days == 1 ? '' : 's'} - ${_trimNum(_selectedTypeRemaining)} days remaining',
                           style: TextStyle(
                             color: AppColors.primary,
@@ -2672,33 +2851,6 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           ),
                         ),
                       ),
-
-                    // Half Day session chips
-                    if (_isHalfDayLeave(_leaveType) && _startDate != null) ...[
-                      const SizedBox(height: 18),
-                      _sectionLabel('Session for Half Day'),
-                      Row(
-                        children: [
-                          ChoiceChip(
-                            label: const Text('First Half Day'),
-                            selected: _session == '1',
-                            onSelected: (v) => setState(() => _session = '1'),
-                            selectedColor: AppColors.primary.withValues(
-                              alpha: 0.3,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          ChoiceChip(
-                            label: const Text('Second Half Day'),
-                            selected: _session == '2',
-                            onSelected: (v) => setState(() => _session = '2'),
-                            selectedColor: AppColors.primary.withValues(
-                              alpha: 0.3,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
 
                     const SizedBox(height: 22),
 
@@ -5048,15 +5200,25 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
     if (!isImage) {
       return await file.readAsBytes();
     }
-    final result = await FlutterImageCompress.compressWithFile(
-      file.absolute.path,
+    // Bake EXIF orientation into the pixels FIRST so the stored proof is upright
+    // everywhere (compression strips EXIF, and neither Flutter nor a stripped
+    // copy would otherwise render the rotation). bakeBytes returns the same
+    // instance when no rotation is needed, so PNGs keep their original encoding.
+    final original = await file.readAsBytes();
+    final upright = await ImageOrientation.bakeBytes(original);
+    final rotated = !identical(upright, original);
+    final result = await FlutterImageCompress.compressWithList(
+      upright,
       minWidth: _maxProofImageWidth,
       minHeight: _maxProofImageWidth,
       quality: _proofImageQuality,
-      format: path.endsWith('.png') ? CompressFormat.png : CompressFormat.jpeg,
+      // A rotated image was re-encoded to JPEG by the bake step.
+      format: (path.endsWith('.png') && !rotated)
+          ? CompressFormat.png
+          : CompressFormat.jpeg,
     );
-    if (result == null || result.isEmpty) {
-      return await file.readAsBytes();
+    if (result.isEmpty) {
+      return upright;
     }
     return result;
   }
@@ -5706,10 +5868,15 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     // Treat missing flags as configured/enabled so older backends are not blocked.
     final configured = _balance == null || _balance?['configured'] != false;
     final enabled = _balance == null || _balance?['enabled'] != false;
+    // Hours line is whole hours; minutes line is the leftover minutes (total % 60)
+    // so the two read as a single "Hh Mm" value (e.g. 90 -> "1 h / 30 min").
+    // Showing total minutes on the second line (e.g. "60 h / 3600 min") looked
+    // like the two figures disagreed.
     String hoursAndMinutes(double minutes) {
-      final normalized = minutes < 0 ? 0 : minutes;
-      final hrs = (normalized / 60).toStringAsFixed(2);
-      return '$hrs h\n${normalized.toInt()} min';
+      final total = minutes < 0 ? 0 : minutes.round();
+      final hrs = total ~/ 60;
+      final mins = total % 60;
+      return '$hrs h\n$mins min';
     }
 
     // Client-side paging: the backend returns the whole month at once.

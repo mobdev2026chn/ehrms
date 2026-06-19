@@ -479,15 +479,21 @@ async function resolveAnnouncementAudience(ann) {
     };
     if (ann.businessId) baseQuery.businessId = ann.businessId;
 
-    // "specific" audience → only the targeted staff. Anything else → everyone in the business.
-    const isSpecific = ann.audienceType === 'specific';
-    const legacyIds = Array.isArray(ann.assignedTo) ? ann.assignedTo : [];
-    if (isSpecific || (legacyIds.length > 0 && ann.audienceType !== 'all')) {
-        const ids = (isSpecific ? (ann.targetStaffIds || []) : legacyIds)
-            .filter((x) => x && mongoose.Types.ObjectId.isValid(x));
-        if (ids.length === 0) return [];
-        baseQuery._id = { $in: ids };
+    // Targeting is driven by the recipient list, NOT the audienceType string (the web app may store a
+    // targeted announcement with audienceType "all"/"Specific"). Mirrors audienceFilter in announcementController.
+    const targetIds = []
+        .concat(Array.isArray(ann.targetStaffIds) ? ann.targetStaffIds : [])
+        .concat(Array.isArray(ann.assignedTo) ? ann.assignedTo : [])
+        .filter((x) => x && mongoose.Types.ObjectId.isValid(x));
+    const flaggedSpecific = typeof ann.audienceType === 'string' && /^\s*specific\s*$/i.test(ann.audienceType);
+    if (targetIds.length > 0) {
+        // Has a recipient list → push only to those staff.
+        baseQuery._id = { $in: targetIds };
+    } else if (flaggedSpecific) {
+        // Flagged "specific" but no recipients → nobody.
+        return [];
     }
+    // Otherwise → company-wide, push to everyone in the business.
     return Staff.find(baseQuery).select('fcmToken _id').lean();
 }
 

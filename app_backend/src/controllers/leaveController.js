@@ -6,7 +6,7 @@ const HolidayTemplate = require('../models/HolidayTemplate');
 const Attendance = require('../models/Attendance');
 const Company = require('../models/Company');
 const mongoose = require('mongoose');
-const { markAttendanceForApprovedLeave, calculateAvailableLeaves, getShiftTimings } = require('../utils/leaveAttendanceHelper');
+const { markAttendanceForApprovedLeave, calculateAvailableLeaves, getShiftTimings, getHalfDaySessionBoundaries, getBusinessTimezone, getShiftBoundaryAsUTCDate, isHalfDayLeave, resolveHalfDaySession } = require('../utils/leaveAttendanceHelper');
 const { loadAttendanceTemplateForStaff } = require('../utils/resolveStaffAttendanceTemplate');
 const { getWeekOffConfigForStaff, isOddEvenSaturdayWeeklyOff } = require('../utils/weekOffHelper');
 const { isTemplateWeeklyOff } = require('../utils/salaryCalendarDays.util');
@@ -258,12 +258,14 @@ const getLeaves = async (req, res) => {
             if (rid) l.rejectedBy = resolvedMap[rid] || (l.rejectedBy && typeof l.rejectedBy === 'object' && l.rejectedBy.name ? l.rejectedBy : null);
         });
 
-        // For app display "Half day on": prefer halfDayType (DB), then halfDaySession, then session
+        // For app display "Half day on": prefer halfDayType (DB), then halfDaySession,
+        // then map session ('1'/'2'). Half-day is a duration on any leave type, so this
+        // is independent of leaveType.
         const leavesWithHalfDayType = leaves.map((l) => {
             const halfDayType = l.halfDayType || l.halfDaySession ||
-                (l.leaveType === 'Half Day' && (l.session === '1' ? 'First Half Day' : l.session === '2' ? 'Second Half Day' : null));
-            if (l.leaveType === 'Half Day') {
-                console.log('[getLeaves] Half Day leave', { id: l._id, rawHalfDayType: l.halfDayType, halfDaySession: l.halfDaySession, session: l.session, resolved: halfDayType });
+                (l.session === '1' ? 'First Half Day' : l.session === '2' ? 'Second Half Day' : null);
+            if (isHalfDayLeave(l)) {
+                console.log('[getLeaves] Half-day leave', { id: l._id, leaveType: l.leaveType, rawHalfDayType: l.halfDayType, halfDaySession: l.halfDaySession, session: l.session, resolved: halfDayType });
             }
             return { ...l, halfDayType: halfDayType || undefined };
         });
@@ -289,16 +291,19 @@ const getLeaves = async (req, res) => {
 /**
  * Resolve the leave types applicable to a staff member — the canonical "configured"
  * set used by BOTH the Apply Leave dropdown and the My Requests balance cards.
- * Returns [{ type, days }]: template leaveTypes + Half Day (only when the staff's
- * effective shift enables it) + Unpaid Leave. `days` is the per-type limit
- * (0.5 for Half Day, null for Unpaid Leave).
+ *
+ * Half-day is no longer a leave *type*; it is a DURATION (First/Second Half) that
+ * can be applied to ANY of these types. `halfDayEnabled` reports whether the
+ * staff's effective shift permits half-day so the UI can offer the duration
+ * toggle. The returned `list` contains [{ type, days }]: template leaveTypes +
+ * Unpaid Leave (`days` is the per-type limit, null for Unpaid Leave).
  * @param {Object} staff - Staff document with populated leaveTemplateId
- * @returns {Promise<Array<{type: string, days: number|null}>>}
+ * @returns {Promise<{ list: Array<{type: string, days: number|null}>, halfDayEnabled: boolean }>}
  */
 const resolveApplicableLeaveTypes = async (staff) => {
     const list = [];
 
-    // Half Day is only offered when the staff's effective shift has half-day
+    // Half-day is only offered when the staff's effective shift has half-day
     // enabled (company.settings.attendance.shifts[].halfDaySettings.enabled).
     // getShiftTimings returns a non-null halfDaySettings only when enabled, so
     // a truthy value here means the shift permits half-day leave.
@@ -316,16 +321,12 @@ const resolveApplicableLeaveTypes = async (staff) => {
         console.warn('[resolveApplicableLeaveTypes] half-day resolve failed, defaulting to enabled:', e?.message);
     }
 
-    // Static option: Half Day (counts as 0.5 day) — only when enabled for the shift.
-    if (halfDayEnabled) {
-        list.push({ type: 'Half Day', days: 0.5 });
-    }
-
     if (staff?.leaveTemplateId?.leaveTypes && Array.isArray(staff.leaveTemplateId.leaveTypes)) {
         staff.leaveTemplateId.leaveTypes.forEach(t => {
             if (t.type) {
                 const typeNorm = (t.type || '').toLowerCase().replace(/\s+/g, '');
-                if (typeNorm === 'halfday') return; // already added as static
+                // Half Day is a duration, not a selectable type — never list it.
+                if (typeNorm === 'halfday') return;
                 const days = t.days != null ? t.days : (t.limit != null ? t.limit : null);
                 list.push({ type: t.type, days });
             }
@@ -339,7 +340,7 @@ const resolveApplicableLeaveTypes = async (staff) => {
         list.push({ type: 'Unpaid Leave', days: null });
     }
 
-    return list;
+    return { list, halfDayEnabled };
 };
 
 const getLeaveTypes = async (req, res) => {
@@ -398,11 +399,16 @@ const getLeaveTypes = async (req, res) => {
         // are no longer shown as empty 0 cards. Any type actually used in an
         // approved/pending leave is still added below by accumulateDays, so
         // historical counts are never hidden.
-        const configuredTypes = await resolveApplicableLeaveTypes(staff);
-        configuredTypes.forEach(({ type }) => {
+        const { list: configuredTypes } = await resolveApplicableLeaveTypes(staff);
+        configuredTypes.forEach(({ type, days }) => {
             const key = normalizeToKey(type);
+            // allocated = days configured in the assigned leave template for this
+            // type. null means "no fixed allocation" (e.g. Unpaid Leave).
+            const allocated = (days != null && Number.isFinite(Number(days))) ? Number(days) : null;
             if (!typeGroups.has(key)) {
-                typeGroups.set(key, { originalName: type, takenCount: 0, pendingCount: 0 });
+                typeGroups.set(key, { originalName: type, allocated, takenCount: 0, pendingCount: 0 });
+            } else {
+                typeGroups.get(key).allocated = allocated;
             }
         });
 
@@ -411,9 +417,15 @@ const getLeaveTypes = async (req, res) => {
             leaves.forEach(l => {
                 const key = normalizeToKey(l.leaveType);
                 if (!typeGroups.has(key)) {
-                    typeGroups.set(key, { originalName: l.leaveType, takenCount: 0, pendingCount: 0 });
+                    // Used in a leave but not in the current template (e.g. taken
+                    // under an old policy) — no allocation to report.
+                    typeGroups.set(key, { originalName: l.leaveType, allocated: null, takenCount: 0, pendingCount: 0 });
                 }
                 const group = typeGroups.get(key);
+                // A half-day leave (any type) is stored as days=0.5 on a single day;
+                // count 0.5 for it, 1 for a full day. Detect from the leave record,
+                // not the type name, since half-day now applies to every type.
+                const perDay = isHalfDayLeave(l) ? 0.5 : 1;
                 const lStart = new Date(l.startDate);
                 const lEnd = new Date(l.endDate);
                 // Use UTC components to be timezone-independent during the loop
@@ -421,8 +433,7 @@ const getLeaveTypes = async (req, res) => {
                 const end = new Date(Date.UTC(lEnd.getFullYear(), lEnd.getMonth(), lEnd.getDate()));
                 while (current <= end) {
                     if (current >= rangeStart && current <= rangeEnd) {
-                        // Half Day stored as days=0.5; count 0.5 per day for display
-                        group[field] += key === 'halfday' ? 0.5 : 1;
+                        group[field] += perDay;
                     }
                     current.setUTCDate(current.getUTCDate() + 1);
                 }
@@ -436,8 +447,16 @@ const getLeaveTypes = async (req, res) => {
         // Convert Map to response format
         const leaveSummary = Array.from(typeGroups.values()).map(g => ({
             type: g.originalName,
+            // allocated = days granted by the assigned leave template for this type
+            // (null when uncapped, e.g. Unpaid Leave, or used under an old policy).
+            allocated: g.allocated,
             takenCount: g.takenCount,
-            pendingCount: g.pendingCount
+            pendingCount: g.pendingCount,
+            // remaining = allocation left after approved (taken) and pending leaves.
+            // null when there is no fixed allocation. Clamped at 0.
+            remaining: g.allocated != null
+                ? Math.max(0, g.allocated - g.takenCount - g.pendingCount)
+                : null
         }));
 
         res.json({
@@ -532,6 +551,36 @@ const getTotalLeavesFromBusinessTemplate = async (staff) => {
 };
 
 /**
+ * Sum the leave days that actually fall WITHIN [rangeStart, rangeEnd], iterating
+ * one calendar day at a time so a leave spanning the month boundary contributes
+ * only its in-range portion (Half Day counts 0.5/day). This mirrors
+ * getLeaveSummary's accumulateDays, so the entitlement card's "used/pending"
+ * stays consistent with the per-type summary cards and with the monthly-quota
+ * intent. A blind `$sum: '$days'` over overlapping leaves would instead dump an
+ * adjacent month's days into this month (e.g. an approved May 30–Jun 1 leave
+ * would wrongly show as 3 used days in June).
+ */
+const sumLeaveDaysInRange = (leaves, rangeStart, rangeEnd) => {
+    let total = 0;
+    for (const l of leaves) {
+        // Half-day (any leave type) consumes 0.5/day. Detect from the record
+        // (session/halfDaySession/days), not the type name.
+        const isHalfDay = isHalfDayLeave(l);
+        const lStart = new Date(l.startDate);
+        const lEnd = new Date(l.endDate);
+        let current = new Date(Date.UTC(lStart.getUTCFullYear(), lStart.getUTCMonth(), lStart.getUTCDate()));
+        const end = new Date(Date.UTC(lEnd.getUTCFullYear(), lEnd.getUTCMonth(), lEnd.getUTCDate()));
+        while (current <= end) {
+            if (current >= rangeStart && current <= rangeEnd) {
+                total += isHalfDay ? 0.5 : 1;
+            }
+            current.setUTCDate(current.getUTCDate() + 1);
+        }
+    }
+    return total;
+};
+
+/**
  * Get available leave pool for balance validation.
  * - If current-month attendances have availableCasualLeaves for this staff: use latest document's value.
  * - If not: get total from template assigned to staff (sum of all leaveTypes[].days).
@@ -554,18 +603,13 @@ const getAvailableLeavePool = async (employeeId, staff) => {
     const now = new Date();
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
     const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
-    const approvedAgg = await Leave.aggregate([
-        {
-            $match: {
-                employeeId,
-                status: { $regex: /^approved$/i },
-                startDate: { $lte: monthEnd },
-                endDate: { $gte: monthStart }
-            }
-        },
-        { $group: { _id: null, total: { $sum: '$days' } } }
-    ]);
-    const usedDays = Math.max(0, Number(approvedAgg?.[0]?.total || 0));
+    const approvedLeaves = await Leave.find({
+        employeeId,
+        status: { $regex: /^approved$/i },
+        startDate: { $lte: monthEnd },
+        endDate: { $gte: monthStart }
+    }).select('leaveType startDate endDate days session halfDaySession halfDayType').lean();
+    const usedDays = Math.max(0, sumLeaveDaysInRange(approvedLeaves, monthStart, monthEnd));
     return Math.max(0, totalAllowed - usedDays);
 };
 
@@ -578,8 +622,8 @@ const getLeaveTypesForApply = async (req, res) => {
     try {
         const staffId = req.staff._id;
         const staff = await Staff.findById(staffId).populate('leaveTemplateId');
-        const list = await resolveApplicableLeaveTypes(staff);
-        res.json({ success: true, data: list });
+        const { list, halfDayEnabled } = await resolveApplicableLeaveTypes(staff);
+        res.json({ success: true, data: list, halfDayEnabled });
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, error: { message: error.message } });
@@ -795,32 +839,27 @@ const getLeaveBalance = async (req, res) => {
         const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
         const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
 
-        const approvedAgg = await Leave.aggregate([
-            {
-                $match: {
-                    employeeId: staffId,
-                    status: { $regex: /^approved$/i },
-                    startDate: { $lte: monthEnd },
-                    endDate: { $gte: monthStart }
-                }
-            },
-            { $group: { _id: null, total: { $sum: '$days' } } }
-        ]);
-        const usedDays = Math.max(0, Number(approvedAgg?.[0]?.total || 0));
+        // Count only the days that fall WITHIN the current month (see
+        // sumLeaveDaysInRange) — a leave straddling the month boundary must not
+        // contribute the adjacent month's days, otherwise "used" reads high
+        // (e.g. an approved May 30–Jun 1 leave would show 3 used days in June
+        // instead of 1). Keeps this consistent with getLeaveSummary's per-type cards.
+        const approvedLeaves = await Leave.find({
+            employeeId: staffId,
+            status: { $regex: /^approved$/i },
+            startDate: { $lte: monthEnd },
+            endDate: { $gte: monthStart }
+        }).select('leaveType startDate endDate days session halfDaySession halfDayType').lean();
+        const usedDays = Math.max(0, sumLeaveDaysInRange(approvedLeaves, monthStart, monthEnd));
 
         // Pending leave days that overlap the current month (same monthly window).
-        const pendingAgg = await Leave.aggregate([
-            {
-                $match: {
-                    employeeId: staffId,
-                    status: { $regex: /^pending$/i },
-                    startDate: { $lte: monthEnd },
-                    endDate: { $gte: monthStart }
-                }
-            },
-            { $group: { _id: null, total: { $sum: '$days' } } }
-        ]);
-        const pendingLeaveDays = Math.max(0, Number(pendingAgg?.[0]?.total || 0));
+        const pendingLeaves = await Leave.find({
+            employeeId: staffId,
+            status: { $regex: /^pending$/i },
+            startDate: { $lte: monthEnd },
+            endDate: { $gte: monthStart }
+        }).select('leaveType startDate endDate days session halfDaySession halfDayType').lean();
+        const pendingLeaveDays = Math.max(0, sumLeaveDaysInRange(pendingLeaves, monthStart, monthEnd));
 
         // Available = total allowed minus already-approved days consumed this month.
         const availableCasualLeaves = Math.max(0, totalAllowed - usedDays);
@@ -884,7 +923,10 @@ const createLeave = async (req, res) => {
             return res.status(400).json({ success: false, error: { message: 'Leave type is required' } });
         }
 
-        // Normalize to canonical value (matches DB/template names to expected format)
+        // Normalize to canonical value (matches DB/template names to expected format).
+        // Legacy clients may send the half-day intent IN the leaveType itself
+        // ("Half Day" / "First Half" / "Second Half"); newer clients send a real
+        // leaveType (Casual/Sick/…) plus a session / halfDaySession.
         const normalized = normalizeLeaveType(leaveType);
         if (normalized && typeof normalized === 'object') {
             leaveType = normalized.canonical;
@@ -894,9 +936,17 @@ const createLeave = async (req, res) => {
             leaveType = normalized;
         }
 
-        // Half-day: accept halfDaySession from client ('First Half Day' | 'Second Half Day') and set session 1/2
-        if (leaveType === 'Half Day' && (halfDaySession === 'First Half Day' || halfDaySession === 'Second Half Day')) {
+        // Half-day is a DURATION (First/Second Half) applicable to ANY leave type.
+        // Detect it from session / halfDaySession (legacy standalone 'Half Day'
+        // leaveType still counts) and keep session <-> halfDaySession consistent.
+        if (!session && (halfDaySession === 'First Half Day' || halfDaySession === 'Second Half Day')) {
             session = halfDaySession === 'First Half Day' ? '1' : '2';
+        }
+        const isHalfDay = leaveType === 'Half Day' || session === '1' || session === '2'
+            || halfDaySession === 'First Half Day' || halfDaySession === 'Second Half Day';
+        if (isHalfDay) {
+            if (!session && halfDaySession) session = halfDaySession === 'First Half Day' ? '1' : '2';
+            if (!halfDaySession && session) halfDaySession = session === '1' ? 'First Half Day' : 'Second Half Day';
         }
 
         const staff = await Staff.findById(currentStaffId)
@@ -925,11 +975,11 @@ const createLeave = async (req, res) => {
                 return res.status(400).json({ success: false, error: { message: 'Invalid selected dates' } });
             }
             effectiveDates = await getEffectiveWorkDatesFromList(staff, normalizedStrings);
-            if (leaveType === 'Half Day') {
+            if (isHalfDay) {
                 if (effectiveDates.length !== 1) {
                     return res.status(400).json({
                         success: false,
-                        error: { message: 'Half Day leave requires exactly one working day. Selected date may be a holiday or week off.' }
+                        error: { message: 'Half day leave requires exactly one working day. Selected date may be a holiday or week off.' }
                     });
                 }
                 startDateNorm = normalizeToDateOnlyUTC(effectiveDates[0] + 'T00:00:00.000Z');
@@ -955,18 +1005,18 @@ const createLeave = async (req, res) => {
                 return res.status(400).json({ success: false, error: { message: 'Start date must be on or before end date.' } });
             }
             effectiveDates = getCalendarDatesInRange(startDate, endDate);
-            if (leaveType === 'Half Day' && effectiveDates.length !== 1) {
+            if (isHalfDay && effectiveDates.length !== 1) {
                 return res.status(400).json({
                     success: false,
-                    error: { message: 'Half Day leave requires exactly one date (start and end must be the same).' }
+                    error: { message: 'Half day leave requires exactly one date (start and end must be the same).' }
                 });
             }
             startDateNorm = startDate;
             endDateNorm = endDate;
         }
 
-        // Calculate days: Half Day = 0.5, else = count of effective work days
-        const days = leaveType === 'Half Day' ? 0.5 : effectiveDates.length;
+        // Calculate days: half-day = 0.5, else = count of effective work days
+        const days = isHalfDay ? 0.5 : effectiveDates.length;
 
         const isUnpaidLeave = /^\s*unpaid(\s+leave)?\s*$/i.test(leaveType);
 
@@ -981,13 +1031,13 @@ const createLeave = async (req, res) => {
                 });
             }
             if (availableCasualLeaves === 0.5) {
-                if (leaveType !== 'Half Day') {
+                if (!isHalfDay) {
                     return res.status(400).json({
                         success: false,
                         error: { message: "You don't have enough leave balance." }
                     });
                 }
-                // 0.5 balance: only 1 Half Day allowed (days is already 0.5)
+                // 0.5 balance: only a half-day leave is allowed (days is already 0.5)
             } else if (days > availableCasualLeaves) {
                 return res.status(400).json({
                     success: false,
@@ -996,31 +1046,36 @@ const createLeave = async (req, res) => {
             }
         }
 
-        // Validation for Half Day
-        if (leaveType === 'Half Day') {
-            // Enforce the shift policy: Half Day is only allowed when the staff's
-            // effective shift enables it (halfDaySettings.enabled). Mirrors the
-            // gating applied to the Apply-Leave type list.
-            try {
-                const company = staff?.businessId
-                    ? await Company.findById(staff.businessId).select('settings.attendance.shifts').lean()
-                    : null;
-                if (company?.settings?.attendance?.shifts?.length) {
-                    const attendanceTemplate = await loadAttendanceTemplateForStaff(staff);
-                    const timings = getShiftTimings(company, staff, startDateNorm || new Date(), staff?.joiningDate, attendanceTemplate);
-                    if (!timings?.halfDaySettings) {
-                        return res.status(400).json({
-                            success: false,
-                            error: { message: 'Half Day leave is not enabled for your shift. Please contact HR.' }
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn('[createLeave] half-day shift check failed, allowing:', e?.message);
-            }
+        // Validation for half-day (applies to ANY leave type)
+        if (isHalfDay) {
             if (!session || !['1', '2'].includes(session)) {
-                return res.status(400).json({ success: false, error: { message: 'Session (1 or 2) is mandatory for Half Day leave' } });
+                return res.status(400).json({ success: false, error: { message: 'Session (1 or 2) is mandatory for half-day leave' } });
             }
+
+            // Resolve the staff's effective shift timings for the leave date once; reused
+            // for the half-day-enabled gate and the second-half midpoint cutoff below.
+            let company = null;
+            let timings = null;
+            try {
+                company = staff?.businessId
+                    ? await Company.findById(staff.businessId).select('settings').lean()
+                    : null;
+                const attendanceTemplate = await loadAttendanceTemplateForStaff(staff);
+                timings = getShiftTimings(company, staff, startDateNorm || new Date(), staff?.joiningDate, attendanceTemplate);
+            } catch (e) {
+                console.warn('[createLeave] half-day shift resolve failed, allowing:', e?.message);
+            }
+
+            // Enforce the shift policy: half-day is only allowed when the staff's
+            // effective shift enables it (halfDaySettings). Mirrors the gating
+            // applied to the Apply-Leave half-day flag.
+            if (company?.settings?.attendance?.shifts?.length && timings && !timings.halfDaySettings) {
+                return res.status(400).json({
+                    success: false,
+                    error: { message: 'Half-day leave is not enabled for your shift. Please contact HR.' }
+                });
+            }
+
             // Session 1 only: block if user has already checked in for that date (attendance has punchIn)
             if (session === '1') {
                 const startOfDay = new Date(startDateNorm);
@@ -1035,6 +1090,34 @@ const createLeave = async (req, res) => {
                         success: false,
                         error: { message: 'You are already check in for session 1' }
                     });
+                }
+            }
+
+            // Session 2 (Second Half Day): the employee is off for the second half
+            // (midpoint → shift end). Block applying once that second half has already
+            // started, validated against the shift template's configured midpoint. Past
+            // dates are already rejected above; a future date passes because its midpoint
+            // is still ahead of "now".
+            if (session === '2') {
+                try {
+                    const boundaries = getHalfDaySessionBoundaries(timings?.startTime, timings?.endTime, timings?.halfDaySettings);
+                    const midPoint = boundaries.session2Start; // 'HH:mm' when the second half begins
+                    const tz = getBusinessTimezone(company);
+                    const secondHalfStart = getShiftBoundaryAsUTCDate(startDateNorm, midPoint, tz);
+                    if (new Date() >= secondHalfStart) {
+                        const fmt = (hhmm) => {
+                            const [h, m] = String(hhmm).split(':').map(Number);
+                            const hr = (h % 12) || 12;
+                            const ap = h < 12 ? 'AM' : 'PM';
+                            return `${hr}:${String(m || 0).padStart(2, '0')} ${ap}`;
+                        };
+                        return res.status(400).json({
+                            success: false,
+                            error: { message: `Second Half Day leave can no longer be applied — the second half started at ${fmt(midPoint)}. Please apply before the midpoint.` }
+                        });
+                    }
+                } catch (e) {
+                    console.warn('[createLeave] second-half midpoint check failed, allowing:', e?.message);
                 }
             }
         }
@@ -1085,9 +1168,9 @@ const createLeave = async (req, res) => {
             // (Balance validation already uses getAvailableLeavePool = attendance or template total − used.)
             if (!leaveTypeFound) {
                 const isUnpaid = /^\s*unpaid(\s+leave)?\s*$/i.test(leaveType);
-                const isHalfDay = /^\s*half\s*day\s*$/i.test(leaveType) ||
+                const isHalfDayTypeName = /^\s*half\s*day\s*$/i.test(leaveType) ||
                     /^\s*first\s*half\s*$/i.test(leaveType) || /^\s*second\s*half\s*$/i.test(leaveType);
-                if (isUnpaid || isHalfDay) {
+                if (isUnpaid || isHalfDayTypeName) {
                     limit = null;
                 } else {
                     limit = getTotalLeavesFromAssignedTemplate(staff);
@@ -1109,7 +1192,7 @@ const createLeave = async (req, res) => {
             });
         }
 
-        const halfDaySessionVal = leaveType === 'Half Day' ? (session === '1' ? 'First Half Day' : session === '2' ? 'Second Half Day' : null) : null;
+        const halfDaySessionVal = isHalfDay ? (session === '1' ? 'First Half Day' : session === '2' ? 'Second Half Day' : null) : null;
         const leaveDoc = {
             employeeId: staff._id,
             businessId: staff.businessId,
@@ -1118,7 +1201,7 @@ const createLeave = async (req, res) => {
             endDate: endDateNorm,
             days,
             reason,
-            session: leaveType === 'Half Day' ? session : null,
+            session: isHalfDay ? session : null,
             halfDaySession: halfDaySessionVal,
             halfDayType: halfDaySessionVal
         };

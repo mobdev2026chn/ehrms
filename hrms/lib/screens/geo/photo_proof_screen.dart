@@ -8,6 +8,7 @@ import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:hrms/widgets/oriented_image.dart';
 
 class PhotoProofScreen extends StatefulWidget {
   final Task task;
@@ -157,7 +158,7 @@ class _PhotoProofScreenState extends State<PhotoProofScreen> {
                         ? Stack(
                             fit: StackFit.expand,
                             children: [
-                              Image.file(_photo!, fit: BoxFit.cover),
+                              OrientedImage.file(_photo!, fit: BoxFit.cover),
                               Positioned(
                                 bottom: 8,
                                 right: 8,

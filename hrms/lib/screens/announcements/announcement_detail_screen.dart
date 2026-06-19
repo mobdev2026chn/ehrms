@@ -6,6 +6,7 @@ import '../../config/constants.dart';
 import '../../services/interaction_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/bottom_navigation_bar.dart';
+import '../../widgets/oriented_image.dart';
 
 class AnnouncementDetailScreen extends StatefulWidget {
   final Map<String, dynamic> announcement;
@@ -603,11 +604,45 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
     );
   }
 
-  /// Normalize the announcement's `subsections` array into a list of maps.
+  /// Normalize the announcement's sub-section array into a list of maps.
   /// The web backend stores each sub-section as an object (heading + body and
   /// optionally its own images/attachments); tolerate plain strings too.
+  ///
+  /// The interaction API has been seen to name this array differently
+  /// (`subSections`, `sections`, …) and to wrap the announcement doc under an
+  /// `announcement`/`data` key, so look across those names and descend into a
+  /// wrapper when the array isn't at the top level.
   static List<Map<String, dynamic>> _getSubsections(Map<String, dynamic> a) {
-    final raw = a['subsections'];
+    const arrayKeys = <String>[
+      'subsections',
+      'subSections',
+      'sub_sections',
+      'subsection',
+      'subSection',
+      'sections',
+      'contentSections',
+      'blocks',
+    ];
+    List? raw;
+    for (final k in arrayKeys) {
+      final v = a[k];
+      if (v is List && v.isNotEmpty) {
+        raw = v;
+        break;
+      }
+    }
+    // Not at the top level — the doc may be wrapped (e.g. {announcement: {...}}).
+    if (raw == null) {
+      for (final wrap in const ['announcement', 'data']) {
+        final inner = a[wrap];
+        if (inner is Map) {
+          final nested = _getSubsections(
+            inner.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          if (nested.isNotEmpty) return nested;
+        }
+      }
+    }
     final list = <Map<String, dynamic>>[];
     if (raw is! List) return list;
     for (final item in raw) {
@@ -861,7 +896,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                       padding: const EdgeInsets.only(bottom: 12),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
+                        child: OrientedImage.network(
                           url,
                           width: double.infinity,
                           height: 220,
@@ -974,7 +1009,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                   padding: const EdgeInsets.only(bottom: 12),
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(12),
-                                    child: Image.network(
+                                    child: OrientedImage.network(
                                       url,
                                       width: double.infinity,
                                       height: 220,
