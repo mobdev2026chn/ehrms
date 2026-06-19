@@ -1698,9 +1698,6 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   double _totalAllowed = 0.0;
   double _usedLeaveDays = 0.0;
   double _pendingLeaveDays = 0.0;
-  // Per-leave-type usage for this employee (key = normalized type name).
-  final Map<String, double> _usedByType = {};
-  final Map<String, double> _pendingByType = {};
   HolidayOffConfig _offConfig = HolidayOffConfig.empty;
   bool _showLimitWarning = false;
   String _limitWarningMsg = '';
@@ -1828,23 +1825,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     return null;
   }
 
-  // Half Day has no allocation of its own — it spends from the shared pool that
-  // every leave type draws down. So its used/pending must reflect the OVERALL
-  // pool usage (all types), not just half-day rows; otherwise the card would
-  // overstate the balance left to spend on a half day.
-  double _usedForType(String? type) => _isHalfDayLeave(type)
-      ? _usedLeaveDays
-      : (_usedByType[_leaveTypeKey(type)] ?? 0.0);
-  double _pendingForType(String? type) => _isHalfDayLeave(type)
-      ? _pendingLeaveDays
-      : (_pendingByType[_leaveTypeKey(type)] ?? 0.0);
-
   /// Loads this employee's Approved (used) and Pending leave days for the
-  /// current MONTH from their own records, populating the per-type maps and
-  /// returning the overall (usedDays, pendingDays). The template allocation is a
-  /// monthly quota that resets each month, so usage is scoped to this month to
-  /// match the backend balance (see getLeaveBalance). Only a fallback — the
-  /// backend normally supplies these totals directly.
+  /// current MONTH from their own records, returning the overall
+  /// (usedDays, pendingDays). The template allocation is a monthly quota that
+  /// resets each month, so usage is scoped to this month to match the backend
+  /// balance (see getLeaveBalance). Only a fallback — the backend normally
+  /// supplies these totals directly.
   Future<(double, double)> _computeLeaveUsageFromRecords() async {
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month, 1);
@@ -1864,8 +1850,6 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
     double used = 0;
     double pending = 0;
-    final usedByType = <String, double>{};
-    final pendingByType = <String, double>{};
     try {
       final approved = await _requestService.getLeaveRequests(
         status: 'Approved',
@@ -1876,10 +1860,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       );
       if (approved['success'] == true) {
         for (final l in listOf(approved)) {
-          final days = daysOf(l);
-          used += days;
-          final key = _leaveTypeKey(l is Map ? l['leaveType'] as String? : null);
-          usedByType[key] = (usedByType[key] ?? 0) + days;
+          used += daysOf(l);
         }
       }
 
@@ -1894,21 +1875,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       );
       if (pend['success'] == true) {
         for (final l in listOf(pend)) {
-          final days = daysOf(l);
-          pending += days;
-          final key = _leaveTypeKey(l is Map ? l['leaveType'] as String? : null);
-          pendingByType[key] = (pendingByType[key] ?? 0) + days;
+          pending += daysOf(l);
         }
       }
     } catch (_) {
       // Best-effort; leave totals at 0 on failure.
     }
-    _usedByType
-      ..clear()
-      ..addAll(usedByType);
-    _pendingByType
-      ..clear()
-      ..addAll(pendingByType);
     return (used, pending);
   }
 
@@ -2275,12 +2247,13 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     return sum;
   }
 
-  /// Remaining days for the selected leave type = its allocated days minus that
-  /// type's used and pending days. This is what the entitlement card shows.
+  /// Full entitlement for the selected leave type (its allocated days). The
+  /// "days remaining" labels show the entitlement; used/pending are
+  /// informational and surfaced separately, so they are NOT subtracted here
+  /// (mirrors the entitlement card headline).
   double get _selectedTypeRemaining {
     final allocated = _allocatedForType(_leaveType) ?? _totalAllowed;
-    return (allocated - _usedForType(_leaveType) - _pendingForType(_leaveType))
-        .clamp(0.0, allocated > 0 ? allocated : double.infinity);
+    return allocated > 0 ? allocated : 0.0;
   }
 
   Widget _buildLimitWarningBanner(String message) {
@@ -2355,8 +2328,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     );
   }
 
-  /// Amber "Leave Entitlement" hero - shows the selected leave type's allocated
-  /// days as the remaining figure (allocated - used - pending for that type).
+  /// Amber "Leave Entitlement" hero - the headline shows the FULL leave
+  /// entitlement (total allocated days). Approved (used) and pending days are
+  /// informational only and shown in the sub-line; they do NOT reduce the
+  /// headline figure.
   Widget _buildEntitlementCard() {
     // Show the COMBINED entitlement across all leave types (sum of the
     // template's per-type allocations), not just the selected type. Falls back
@@ -2366,8 +2341,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     final total = allocated;
     final usedType = _usedLeaveDays;
     final pendingType = _pendingLeaveDays;
-    final remaining = (total - usedType - pendingType)
-        .clamp(0.0, total > 0 ? total : double.infinity);
+    // Headline = full entitlement (allocated). Used/pending are not subtracted.
+    final entitlement = total;
     final usedClamped = usedType > allocated ? allocated : usedType;
     final progress = total > 0 ? (usedClamped / total).clamp(0.0, 1.0) : 0.0;
     return Container(
@@ -2416,7 +2391,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 Text(
                   _isUnpaidLeave
                       ? 'Unpaid Leave'
-                      : '${_trimNum(remaining)} Days Remaining',
+                      : '${_trimNum(entitlement)} Days Remaining',
                   style: TextStyle(
                     fontSize: 26,
                     fontWeight: FontWeight.bold,
