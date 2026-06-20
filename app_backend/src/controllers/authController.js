@@ -1716,6 +1716,23 @@ function toUserFriendlyVerifyMessage(raw) {
     return 'Face not matching. Please try again.';
 }
 
+// ENROLLMENT does NOT do identity matching — it only captures + saves the face
+// embedding. So its failures must NEVER say "verification failed" (that wording is
+// for the punch-time 1-to-1 check). Map the engine/embed error to an enrollment-
+// accurate, actionable message: retake (face not seen) vs. service-warming-up.
+function toUserFriendlyEnrollMessage(raw) {
+    if (!raw || typeof raw !== 'string') return 'Could not register your face. Please try again.';
+    const s = raw.toLowerCase();
+    if (s.includes('no face') || s.includes('could not be detected') || s.includes('detect')) {
+        return 'We could not see your face clearly. Move to brighter light, fit your face inside the oval, and try again.';
+    }
+    if (s.includes('not available') || s.includes('unavailable') || s.includes('engine')
+        || s.includes('timeout') || s.includes('timed out') || s.includes('crash') || s.includes('exception')) {
+        return 'The face service is starting up. Please wait a moment and try again.';
+    }
+    return 'Could not register your face. Please try again in good light.';
+}
+
 /**
  * GET /auth/check-active (protected)
  * Returns { active: boolean } for current staff. Used by app to poll every 5s; if active is false (deactivated), app logs out silently.
@@ -1764,13 +1781,15 @@ const enrollFace = async (req, res) => {
                 else if (r.error) lastError = r.error;
             } catch (e) {
                 console.warn('[enrollFace] embed engine error:', e?.message);
-                return res.status(503).json({ success: false, message: 'Face service unavailable. Please try again.' });
+                return res.status(503).json({ success: false, message: 'The face service is starting up. Please wait a moment and try again.' });
             }
         }
         if (embeddings.length === 0) {
+            // Enrollment only embeds + saves — never say "verification failed" here.
+            console.warn('[enrollFace] no embedding extracted; lastError=', lastError);
             return res.status(200).json({
                 success: false,
-                message: toUserFriendlyVerifyMessage(lastError || 'No face detected'),
+                message: toUserFriendlyEnrollMessage(lastError || 'No face detected'),
             });
         }
 

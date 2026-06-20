@@ -3,7 +3,8 @@ class AppConstants {
   /// General app API (attendance, geo, profile, …).
   /// DEV SERVER ONLY — both the HRMS app and the face kiosk punch against this
   /// same dev host. Do NOT point at production (app.ektahr.com / my.ektahr.com).
-  // Local-dev alt: `adb reverse tcp:9001 tcp:9001`, then 'http://127.0.0.1:9001/api'.
+  // Local-dev alt: `adb reverse tcp:2001 tcp:2001`, then 'http://127.0.0.1:2001/api'
+  // (EHRMS backend PORT=2001 in app_backend/.env).
   static const String baseUrl = 'https://ehrms.askeva.net/api';
 
   /// Web/Interaction HRMS API — dev web companion of [baseUrl] (chat, polls, LMS).
