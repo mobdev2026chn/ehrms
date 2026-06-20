@@ -46,6 +46,13 @@ def _env_int(name, default):
 
 
 LIVE_GUARDS = os.environ.get("FACE_LIVE_GUARDS", "1") == "1"
+# FRAMING (centering + proximity) is a KIOSK guard: it assumes a fixed camera with a
+# face-guide overlay. EHRMS is a HANDHELD selfie app — the face fills the frame and
+# is rarely centered — so framing is OFF by default here (it was rejecting valid
+# punches as "too close"/"off-center"). The valuable live checks (single-face +
+# anti-spoof liveness) stay ON. Turn framing on per-kiosk-deployment with
+# FACE_FRAMING_CHECK=1.
+FRAMING_CHECK = os.environ.get("FACE_FRAMING_CHECK", "0") == "1"
 FRONTAL_CHECK = os.environ.get("FACE_FRONTAL_CHECK", "0") == "1"
 LIVENESS_CHECK = os.environ.get("FACE_LIVENESS", "1") == "1"
 CENTER_TOL_X = _env_int("FACE_CENTER_TOL_X", 210)
@@ -188,22 +195,23 @@ def embed_live(img):
     if len(locs) > 1:
         return None, "Multiple faces detected! Only one person is allowed."
 
-    # 2. Centering + proximity.
+    # 2. Centering + proximity — KIOSK-only (off by default; see FRAMING_CHECK).
     top, right, bottom, left = locs[0]
     face_w = right - left
     face_h = bottom - top
     cx = left + face_w // 2
     cy = top + face_h // 2
-    tx = rgb.shape[1] // 2
-    ty = rgb.shape[0] // 2
-    if abs(cx - tx) > CENTER_TOL_X:
-        return None, "Face off-center horizontally. Align with guide."
-    if abs(cy - ty) > CENTER_TOL_Y:
-        return None, "Face off-center vertically. Align with guide."
-    if face_w < MIN_FACE_W:
-        return None, "You are too far. Please move closer."
-    if face_w > MAX_FACE_W:
-        return None, "You are too close. Step back slightly."
+    if FRAMING_CHECK:
+        tx = rgb.shape[1] // 2
+        ty = rgb.shape[0] // 2
+        if abs(cx - tx) > CENTER_TOL_X:
+            return None, "Face off-center horizontally. Align with guide."
+        if abs(cy - ty) > CENTER_TOL_Y:
+            return None, "Face off-center vertically. Align with guide."
+        if face_w < MIN_FACE_W:
+            return None, "You are too far. Please move closer."
+        if face_w > MAX_FACE_W:
+            return None, "You are too close. Step back slightly."
 
     # 3. Optional frontal-pose symmetry check.
     if FRONTAL_CHECK:

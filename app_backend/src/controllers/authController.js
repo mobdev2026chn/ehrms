@@ -1594,6 +1594,7 @@ const verifyFace = async (req, res) => {
         // fallback path too: even a not-yet-enrolled user's selfie must be a single,
         // centered, correctly-distanced, live face before we accept/seed it. A guard
         // or anti-spoof failure short-circuits here with an actionable message.
+        let liveEmbedding = null;
         try {
             const guard = await faceEngine.embedLive(selfie);
             if (!guard.embedding) {
@@ -1602,6 +1603,9 @@ const verifyFace = async (req, res) => {
                     message: toUserFriendlyVerifyMessage(guard.error || 'No face detected'),
                 });
             }
+            // Keep the strict live embedding — on a successful first punch it becomes
+            // the user's canonical enrollment (auto-enroll, below).
+            liveEmbedding = guard.embedding;
         } catch (e) {
             console.warn('[verifyFace] live-guard engine unavailable:', e?.message);
             return res.status(200).json({
@@ -1633,11 +1637,17 @@ const verifyFace = async (req, res) => {
         const uniqueReferences = [...new Set(references)];
 
         if (uniqueReferences.length === 0) {
+            // FIRST PUNCH with no prior photo to compare against → trust-on-first-use:
+            // store this live embedding as the canonical enrollment so EVERY later
+            // check (EHRMS 1-to-1, EHRMS 1-to-many, face kiosk) validates against it.
+            const enrolled = await persistFirstPunchEnrollment(staff?._id, liveEmbedding);
             return res.status(200).json({
                 success: true,
                 match: true,
-                enrolled: false,
-                message: 'First punch captured as your face reference.'
+                enrolled,
+                message: enrolled
+                    ? 'First punch enrolled. Future punches verify against this face.'
+                    : 'First punch captured as your face reference.',
             });
         }
 
@@ -1665,10 +1675,18 @@ const verifyFace = async (req, res) => {
         console.log(`[verifyFace] staff=${staff?._id || user?._id} refs=${uniqueReferences.length} matched=${matched} bestDistance=${bestDistance}`);
 
         const userMessage = matched ? 'Photo matched' : toUserFriendlyVerifyMessage(lastError);
+        // A returning user just validated against their OWN profile photo → promote
+        // that verified live embedding to the canonical enrollment (first-punch enroll),
+        // so subsequent punches use the fast 1-to-1 embedding path and the kiosk/1-to-many
+        // recognise them off the same embedding.
+        let nowEnrolled = false;
+        if (matched) {
+            nowEnrolled = await persistFirstPunchEnrollment(staff?._id, liveEmbedding);
+        }
         return res.status(200).json({
             success: true,
             match: matched,
-            enrolled: false,
+            enrolled: nowEnrolled,
             message: userMessage
         });
     } catch (error) {
@@ -1819,6 +1837,32 @@ const getFaceEnrollStatus = async (req, res) => {
         return res.status(500).json({ success: false, enrolled: false });
     }
 };
+
+/**
+ * Auto-enrollment on FIRST PUNCH. Persists the live (strict embedLive) embedding as
+ * the user's canonical Staff.faceEnrollEmbeddings — the SAME store the 1-to-1 path,
+ * the 1-to-many guard, and the face-app kiosk all validate against. So a user never
+ * needs a separate enroll step: their first successful punch registers the face, and
+ * every later punch/break (in either app) is checked against that one embedding.
+ *
+ * Trust-on-first-use: the punch is already authenticated as this staff. Returning
+ * users with a profile photo are validated against it BEFORE this runs (see caller),
+ * so a wrong face can't hijack an account that already has a reference image.
+ */
+async function persistFirstPunchEnrollment(staffId, embedding) {
+    if (!staffId || !Array.isArray(embedding) || embedding.length === 0) return false;
+    try {
+        await Staff.findByIdAndUpdate(staffId, {
+            faceEnrollEmbeddings: [embedding],
+            faceEnrolledAt: new Date(),
+        });
+        console.log(`[verifyFace] first-punch auto-enrolled staff=${staffId} (1 sample)`);
+        return true;
+    } catch (e) {
+        console.warn('[verifyFace] first-punch auto-enroll failed (punch still allowed):', e?.message);
+        return false;
+    }
+}
 
 /**
  * CANONICAL 1-to-many matcher — the single source of identity for BOTH apps.
