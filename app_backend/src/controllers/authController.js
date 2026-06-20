@@ -1723,14 +1723,19 @@ function toUserFriendlyVerifyMessage(raw) {
 function toUserFriendlyEnrollMessage(raw) {
     if (!raw || typeof raw !== 'string') return 'Could not register your face. Please try again.';
     const s = raw.toLowerCase();
+    // Backend engine not ready (missing python deps like cv2/numpy, worker crash,
+    // service unavailable). This is NOT user-fixable, so never blame lighting/framing.
+    if (s.includes('no module') || s.includes('cv2') || s.includes('numpy')
+        || s.includes('worker') || s.includes('not available') || s.includes('unavailable')
+        || s.includes('engine') || s.includes('timeout') || s.includes('timed out')
+        || s.includes('crash') || s.includes('exception')) {
+        return 'Face service isn\'t ready yet. Please try again in a moment.';
+    }
+    // Genuine capture problem — guide framing only (no lighting wording per request).
     if (s.includes('no face') || s.includes('could not be detected') || s.includes('detect')) {
-        return 'We could not see your face clearly. Move to brighter light, fit your face inside the oval, and try again.';
+        return 'We couldn\'t see your face clearly. Fit your face inside the oval and try again.';
     }
-    if (s.includes('not available') || s.includes('unavailable') || s.includes('engine')
-        || s.includes('timeout') || s.includes('timed out') || s.includes('crash') || s.includes('exception')) {
-        return 'The face service is starting up. Please wait a moment and try again.';
-    }
-    return 'Could not register your face. Please try again in good light.';
+    return 'Could not register your face. Please try again.';
 }
 
 /**
