@@ -2099,14 +2099,23 @@ const kioskEmployeeDetail = async (req, res) => {
             Attendance.find({ ...byStaff, date: { $gte: startOfMonth, $lte: endOfMonth } }).sort({ date: 1 }).lean(),
         ]);
 
+        const brkMin = (a) => a.break ? Math.round((a.break.totalBreakSeconds || 0) / 60) || (a.break.totalBreakMin || 0) : 0;
         const fmt = (a) => a ? {
             date: a.date,
             punch_in: a.punchIn || null,
             punch_out: a.punchOut || null,
             status: a.status || null,
             work_hours: typeof a.workHours === 'number' ? a.workHours : null,
-            break_min: a.break ? Math.round((a.break.totalBreakSeconds || 0) / 60) : 0,
+            // Daily breaks taken + fines.
+            break_min: brkMin(a),
+            break_count: a.break ? (a.break.totalBreakCount || 0) : 0,
+            break_fine: a.break ? (a.break.totalBreakFineAmount || 0) : 0,
+            late_min: typeof a.lateMinutes === 'number' ? a.lateMinutes : 0,
+            fine: typeof a.fineAmount === 'number' ? a.fineAmount : 0,
         } : null;
+
+        const sum = (f) => monthAtt.reduce((t, a) => t + (f(a) || 0), 0);
+        const round2 = (n) => Math.round(n * 100) / 100;
 
         return res.json({
             profile: {
@@ -2122,6 +2131,13 @@ const kioskEmployeeDetail = async (req, res) => {
             month: monthAtt.map(fmt),
             present_days: monthAtt.filter((a) => a.punchIn).length,
             month_label: now.toLocaleString('en-US', { month: 'long', year: 'numeric' }),
+            // Month-to-date totals for breaks taken + fines.
+            totals: {
+                break_min: sum((a) => brkMin(a)),
+                break_count: sum((a) => a.break && a.break.totalBreakCount),
+                break_fine: round2(sum((a) => a.break && a.break.totalBreakFineAmount)),
+                fine: round2(sum((a) => a.fineAmount)),
+            },
         });
     } catch (e) {
         console.error('[kioskEmployeeDetail]', e.message);
