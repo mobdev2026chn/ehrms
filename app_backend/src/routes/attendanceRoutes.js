@@ -15,7 +15,7 @@ const {
 } = require('../controllers/attendanceController');
 // Canonical face identity (1-to-many over Staff.faceEnrollEmbeddings) — shared by
 // the EHRMS app's anti buddy-punch guard and the face-app kiosk.
-const { verifyIdentity, identifyFace } = require('../controllers/authController');
+const { verifyIdentity, identifyFace, kioskEnrolledList, kioskEmployeeDetail } = require('../controllers/authController');
 
 // Shared-secret gate for the face-app KIOSK (not a logged-in staff). The kiosk
 // sends x-face-kiosk-secret; matched against FACE_KIOSK_SECRET. If the secret is
@@ -64,5 +64,8 @@ router.get('/fine-calculation', protect, attendanceLimiter, getFineCalculation);
 // 1-to-many face identity against the canonical Staff.faceEnrollEmbeddings store.
 router.post('/verify-identity', protect, attendanceLimiter, verifyIdentity); // EHRMS app guard (1-to-many self/buddy check)
 router.post('/identify-face', faceKioskAuth, identifyFace);                  // face-app kiosk identify (shared secret)
+// Face-app dashboard: list EHRMS-enrolled employees + per-employee detail (kiosk secret).
+router.get('/kiosk-enrolled', faceKioskAuth, kioskEnrolledList);
+router.get('/kiosk-employee/:employeeId', faceKioskAuth, kioskEmployeeDetail);
 
 module.exports = router;

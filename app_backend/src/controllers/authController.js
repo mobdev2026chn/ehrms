@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Staff = require('../models/Staff');
+const Attendance = require('../models/Attendance');
 const Company = require('../models/Company');
 const Branch = require('../models/Branch');
 const Candidate = require('../models/Candidate');
@@ -2042,6 +2043,92 @@ const identifyFace = async (req, res) => {
     }
 };
 
+/**
+ * GET /attendance/kiosk-enrolled (kiosk secret) — list of employees ENROLLED in EHRMS
+ * (Staff.faceEnrollEmbeddings non-empty), for the face-app dashboard. Profile summary
+ * only; full detail (attendance + month) comes from kioskEmployeeDetail on tap.
+ */
+const kioskEnrolledList = async (req, res) => {
+    try {
+        const filter = { faceEnrollEmbeddings: { $exists: true, $ne: [] } };
+        if (req.query.business_id) filter.businessId = req.query.business_id;
+        const staff = await Staff.find(filter)
+            .select('employeeId name email department designation avatar faceEnrolledAt status')
+            .sort({ name: 1 }).lean();
+        return res.json({
+            count: staff.length,
+            employees: staff.map((s) => ({
+                employee_id: s.employeeId,
+                name: s.name,
+                email: s.email || null,
+                department: s.department || null,
+                designation: s.designation || null,
+                avatar: s.avatar || null,
+                enrolled_at: s.faceEnrolledAt || null,
+                status: s.status || null,
+            })),
+        });
+    } catch (e) {
+        console.error('[kioskEnrolledList]', e.message);
+        return res.status(500).json({ employees: [], error: 'Failed to load enrolled employees.' });
+    }
+};
+
+/**
+ * GET /attendance/kiosk-employee/:employeeId (kiosk secret) — full detail for one
+ * enrolled employee: profile + today's attendance + this month's attendance rows.
+ */
+const kioskEmployeeDetail = async (req, res) => {
+    try {
+        const employeeId = req.params.employeeId || req.query.employee_id;
+        if (!employeeId) return res.status(400).json({ error: 'employee_id required' });
+        const s = await Staff.findOne({ employeeId })
+            .select('employeeId name email phone alternativePhone designation department staffType role shiftName status joiningDate avatar gender dob bloodGroup faceEnrolledAt')
+            .lean();
+        if (!s) return res.status(404).json({ error: 'Employee not found' });
+
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const tomorrow = new Date(todayStart); tomorrow.setDate(todayStart.getDate() + 1);
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        const byStaff = { $or: [{ employeeId: s._id }, { user: s._id }] };
+
+        const [todayAtt, monthAtt] = await Promise.all([
+            Attendance.findOne({ ...byStaff, date: { $gte: todayStart, $lt: tomorrow } }).lean(),
+            Attendance.find({ ...byStaff, date: { $gte: startOfMonth, $lte: endOfMonth } }).sort({ date: 1 }).lean(),
+        ]);
+
+        const fmt = (a) => a ? {
+            date: a.date,
+            punch_in: a.punchIn || null,
+            punch_out: a.punchOut || null,
+            status: a.status || null,
+            work_hours: typeof a.workHours === 'number' ? a.workHours : null,
+            break_min: a.break ? Math.round((a.break.totalBreakSeconds || 0) / 60) : 0,
+        } : null;
+
+        return res.json({
+            profile: {
+                employee_id: s.employeeId, name: s.name, email: s.email || null,
+                phone: s.phone || s.alternativePhone || null,
+                designation: s.designation || null, department: s.department || null,
+                staff_type: s.staffType || null, role: s.role || null, shift: s.shiftName || null,
+                status: s.status || null, joining_date: s.joiningDate || null, avatar: s.avatar || null,
+                gender: s.gender || null, dob: s.dob || null, blood_group: s.bloodGroup || null,
+                enrolled_at: s.faceEnrolledAt || null,
+            },
+            today: fmt(todayAtt),
+            month: monthAtt.map(fmt),
+            present_days: monthAtt.filter((a) => a.punchIn).length,
+            month_label: now.toLocaleString('en-US', { month: 'long', year: 'numeric' }),
+        });
+    } catch (e) {
+        console.error('[kioskEmployeeDetail]', e.message);
+        return res.status(500).json({ error: 'Failed to load employee detail.' });
+    }
+};
+
 module.exports = {
     login,
     googleLogin,
@@ -2061,5 +2148,7 @@ module.exports = {
     getFaceEnrollStatus,
     verifyIdentity,
     identifyFace,
+    kioskEnrolledList,
+    kioskEmployeeDetail,
     checkActive
 };
