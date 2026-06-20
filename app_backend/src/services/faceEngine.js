@@ -142,9 +142,21 @@ async function processQueue() {
     }
 }
 
-/** Embed the largest face → { embedding: number[]|null, error: string|null }. */
+/** Embed the largest face → { embedding: number[]|null, error: string|null }.
+ *  LENIENT (rotation retries, no positioning/liveness guards) — used for ENROLL
+ *  from stored/captured photos, the same as the face app's enroll_image path. */
 function embed(image) {
     return request({ cmd: 'embed', image });
+}
+
+/** STRICT live embed for a LIVE punch/break selfie. Runs the face-attendance app's
+ *  kiosk pipeline (single-face + centering + proximity guards, optional frontal +
+ *  anti-spoofing) before producing a descriptor, so a spoofed or off-spec frame is
+ *  rejected with an actionable message. → { embedding: number[]|null, error: string|null }.
+ *  Tunable via env: FACE_LIVE_GUARDS, FACE_LIVENESS, FACE_FRONTAL_CHECK,
+ *  FACE_CENTER_TOL_X/Y, FACE_MIN_WIDTH, FACE_MAX_WIDTH (see verify_core.py). */
+function embedLive(image) {
+    return request({ cmd: 'embed_live', image });
 }
 
 /** Verify selfie vs reference (image or URL) → { match, distance, error }. */
@@ -152,4 +164,4 @@ function verify({ selfie, reference, referenceUrl }) {
     return request({ cmd: 'verify', selfie, reference, reference_url: referenceUrl });
 }
 
-module.exports = { embed, verify };
+module.exports = { embed, embedLive, verify };

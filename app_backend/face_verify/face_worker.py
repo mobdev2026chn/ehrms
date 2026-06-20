@@ -8,8 +8,10 @@ face-attendance app's aiEngine. This removes the separate :5005 service: the fac
 engine runs as a child of the Node process, so there's only one thing to run.
 
 Commands (one JSON object per line):
-  {"cmd":"embed","image":"<base64|dataurl>"}
+  {"cmd":"embed","image":"<base64|dataurl>"}        # lenient enroll: rotations, no guards
       -> {"embedding":[...128 floats...], "error":null}  | {"embedding":null,"error":"..."}
+  {"cmd":"embed_live","image":"<base64|dataurl>"}   # STRICT live punch/break: kiosk guards + anti-spoof
+      -> {"embedding":[...128 floats...], "error":null}  | {"embedding":null,"error":"<guard msg>"}
   {"cmd":"verify","selfie":"<b64>","reference":"<b64>"}            (or "reference_url":"<url>")
       -> {"match":bool, "distance":float, "error":null|str}
 """
@@ -49,6 +51,17 @@ def _handle(cmd):
         e = verify_core.embedding(img)
         if e is None:
             return {"embedding": None, "error": "No face detected"}
+        return {"embedding": e.tolist(), "error": None}
+
+    if action == "embed_live":
+        # STRICT live punch/break path: kiosk guards (single-face/centering/
+        # proximity) + optional anti-spoofing, ported from the face-attendance app.
+        img = verify_core.load_from_base64(cmd.get("image", ""))
+        if img is None:
+            return {"embedding": None, "error": "Could not load image"}
+        e, err = verify_core.embed_live(img)
+        if e is None:
+            return {"embedding": None, "error": err or "No face detected"}
         return {"embedding": e.tolist(), "error": None}
 
     if action == "verify":

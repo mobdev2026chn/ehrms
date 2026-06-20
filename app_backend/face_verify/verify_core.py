@@ -13,6 +13,7 @@ Previously this used ArcFace (DeepFace). It was swapped to dlib so EHRMS and the
 app validate faces with one identical algorithm.
 """
 import os
+import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -27,6 +28,57 @@ except (TypeError, ValueError):
 
 # Model/weights ship inside the face_recognition package — nothing to download.
 MODEL_NAME = "dlib-face_recognition-128d"
+
+
+# ── Strict LIVE-scan config (ported from the face-attendance app's kiosk pipeline,
+# face/face/backend-node/extract_face_worker.py::process_image) ───────────────────
+# These guards gate a LIVE punch/break selfie before it can produce an embedding:
+# exactly one face, centered, correct proximity, optional frontal pose, optional
+# anti-spoofing liveness. Every threshold mirrors the face app's defaults and is
+# env-overridable so a mobile selfie (face fills more of the frame than a kiosk
+# feed) can be tuned without code changes. Set FACE_LIVE_GUARDS=0 to fall back to
+# the old lenient embedding() path entirely.
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+LIVE_GUARDS = os.environ.get("FACE_LIVE_GUARDS", "1") == "1"
+FRONTAL_CHECK = os.environ.get("FACE_FRONTAL_CHECK", "0") == "1"
+LIVENESS_CHECK = os.environ.get("FACE_LIVENESS", "1") == "1"
+CENTER_TOL_X = _env_int("FACE_CENTER_TOL_X", 210)
+CENTER_TOL_Y = _env_int("FACE_CENTER_TOL_Y", 210)
+MIN_FACE_W = _env_int("FACE_MIN_WIDTH", 90)
+MAX_FACE_W = _env_int("FACE_MAX_WIDTH", 260)
+SCAN_MAX_W = _env_int("FACE_SCAN_MAX_WIDTH", 480)
+
+# Anti-spoofing (Silent-Face / MiniFASNet) lives in the face-attendance app repo.
+# EHRMS reaches the sibling checkout by default; override with FACE_ANTISPOOF_DIR.
+# Loading is lazy + attempted-once, and ALWAYS fail-open: a missing model or a
+# missing torch logs one stderr line and lets the punch through (matches the face
+# app — better to pass one spoof than brick every punch on a broken model).
+_ANTISPOOF_DIR = os.environ.get("FACE_ANTISPOOF_DIR", os.path.abspath(os.path.join(
+    SCRIPT_DIR, "..", "..", "..", "face", "face", "integrated-face-attendance",
+    "face-attendance-system", "Silent-Face-Anti-Spoofing")))
+_anti_spoof_test = None
+_antispoof_attempted = False
+
+
+def _load_antispoof():
+    global _anti_spoof_test, _antispoof_attempted
+    if _antispoof_attempted:
+        return
+    _antispoof_attempted = True
+    try:
+        if os.path.isdir(_ANTISPOOF_DIR) and _ANTISPOOF_DIR not in sys.path:
+            sys.path.insert(0, _ANTISPOOF_DIR)
+        from test import test as _t  # Silent-Face entrypoint: test(img, model_dir, device_id)
+        _anti_spoof_test = _t
+    except Exception as e:
+        sys.stderr.write(f"[verify_core] anti-spoof unavailable (fail-open): {e}\n")
+        sys.stderr.flush()
 
 
 def ensure_weights():
@@ -92,6 +144,107 @@ def verify_images(img1, img2):
     if distance <= THRESHOLD:
         return {"match": True, "distance": distance, "error": None}
     return {"match": False, "distance": distance, "error": "Face not matching"}
+
+
+def embed_live(img):
+    """STRICT live-scan embedding for a punch/break selfie.
+
+    Ported faithfully from the face-attendance app's
+    extract_face_worker.process_image: rejects a frame unless it has exactly one
+    face that is centered, the right distance away, (optionally) frontal, and
+    (optionally) passes anti-spoofing. Only then does it return a descriptor — so
+    a spoofed or sloppy capture never yields a usable embedding.
+
+    [img] is a BGR numpy array (cv2). Returns (embedding|None, error|None).
+
+    NOTE: face_recognition is fed RGB here (cv2 gives BGR), unlike the face app
+    which feeds BGR internally. This keeps the live descriptor directly comparable
+    to the RGB enroll embeddings EHRMS already stored via embedding(); the face app
+    is internally self-consistent on BGR, but EHRMS enrolled on RGB.
+    """
+    import cv2
+    import numpy as np
+    import face_recognition
+
+    if img is None:
+        return None, "Could not load image"
+
+    # Escape hatch: skip the kiosk guards entirely and use the lenient embedding.
+    if not LIVE_GUARDS:
+        e = embedding(img)
+        return (e, None) if e is not None else (None, "No face detected")
+
+    # Resize for fast, predictable detection (guard thresholds are tuned to this).
+    h, w = img.shape[:2]
+    if w > SCAN_MAX_W:
+        scale = SCAN_MAX_W / w
+        img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    # 1. Exactly one face.
+    locs = face_recognition.face_locations(rgb)
+    if len(locs) == 0:
+        return None, "No face detected in feed. Please align your face inside the guide."
+    if len(locs) > 1:
+        return None, "Multiple faces detected! Only one person is allowed."
+
+    # 2. Centering + proximity.
+    top, right, bottom, left = locs[0]
+    face_w = right - left
+    face_h = bottom - top
+    cx = left + face_w // 2
+    cy = top + face_h // 2
+    tx = rgb.shape[1] // 2
+    ty = rgb.shape[0] // 2
+    if abs(cx - tx) > CENTER_TOL_X:
+        return None, "Face off-center horizontally. Align with guide."
+    if abs(cy - ty) > CENTER_TOL_Y:
+        return None, "Face off-center vertically. Align with guide."
+    if face_w < MIN_FACE_W:
+        return None, "You are too far. Please move closer."
+    if face_w > MAX_FACE_W:
+        return None, "You are too close. Step back slightly."
+
+    # 3. Optional frontal-pose symmetry check.
+    if FRONTAL_CHECK:
+        lm_list = face_recognition.face_landmarks(rgb, locs)
+        if lm_list:
+            lm = lm_list[0]
+            nb = lm.get('nose_bridge', [])
+            nose_x = (sum(p[0] for p in nb) / len(nb)) if nb else cx
+            le = lm.get('left_eye', [])
+            re = lm.get('right_eye', [])
+            if le and re:
+                left_eye_x = sum(p[0] for p in le) / len(le)
+                right_eye_x = sum(p[0] for p in re) / len(re)
+                dist_left = nose_x - left_eye_x
+                dist_right = right_eye_x - nose_x
+                total = dist_left + dist_right
+                if total > 0:
+                    ratio = dist_left / total
+                    if ratio < 0.36 or ratio > 0.64:
+                        return None, "Look straight at the camera. Side angles are not allowed."
+
+    # 3.5. Anti-spoofing (passive single-image liveness). Genuine spoof verdict
+    # (label != 1) blocks; any model/runtime failure fails OPEN.
+    if LIVENESS_CHECK:
+        _load_antispoof()
+        if _anti_spoof_test is not None:
+            try:
+                model_dir = os.path.join(_ANTISPOOF_DIR, 'resources', 'anti_spoof_models')
+                # Silent-Face expects a cv2 (BGR) frame — pass the un-converted img.
+                label = _anti_spoof_test(img, model_dir, 0)
+                if label != 1:
+                    return None, "Spoof Alert! Digital screens or printed photos are not allowed."
+            except Exception as ase:
+                sys.stderr.write(f"[verify_core] liveness skipped (fail-open): {ase}\n")
+                sys.stderr.flush()
+
+    # 4. Extract the 128-D descriptor (RGB, num_jitters=1 for speed).
+    encs = face_recognition.face_encodings(rgb, locs, num_jitters=1)
+    if not encs:
+        return None, "Could not extract face biometrics. Please try again."
+    return np.array(encs[0], dtype=float), None
 
 
 def warmup():

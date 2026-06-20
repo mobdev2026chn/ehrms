@@ -21,9 +21,13 @@ class FaceIdentityVerdict {
 ///
 /// EHRMS's own `/auth/verify-face` is 1-to-1 (the selfie vs the logged-in user's
 /// OWN reference). That can't catch a user with no reference, and doesn't say
-/// "this is actually a different employee". This guard asks the Face backend's
-/// `verify-identity` endpoint, which embeds the selfie and matches it against
-/// ALL enrolled faces, then confirms the best match is the logged-in user.
+/// "this is actually a different employee". This guard asks EHRMS's own
+/// `/attendance/verify-identity` endpoint, which embeds the selfie and matches it
+/// against ALL enrolled faces (the SAME canonical Staff.faceEnrollEmbeddings store
+/// the 1-to-1 path uses), then confirms the best match is the logged-in user.
+///
+/// NOTE: this now hits EHRMS ([AppConstants.baseUrl]) — NOT the separate face app
+/// ([faceVerifyBaseUrl]) — so 1-to-1 and 1-to-many validate against ONE enrollment.
 ///
 /// Fail-open by design: it only BLOCKS on a confident wrong-person result
 /// (a different enrolled employee, or a face that matches no enrolled profile).
@@ -46,13 +50,27 @@ class FaceIdentityGuard {
       final empId = (user['employeeId'] ?? '').toString();
       final uid = (user['id'] ?? user['_id'] ?? '').toString();
 
+      // EHRMS endpoint is protected — attach the stored access token (prefs 'token').
+      // Without it the request is rejected and the guard fail-opens (allow).
+      String? token = prefs.getString('token');
+      if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
+        token = token.replaceAll('"', '');
+      }
+
+      // OLD: face app's separate enrollment store —
+      // '${AppConstants.faceVerifyBaseUrl}/attendance/verify-identity'.
+      // NOW: EHRMS's canonical Staff.faceEnrollEmbeddings (same store as 1-to-1).
       final uri = Uri.parse(
-        '${AppConstants.faceVerifyBaseUrl}/attendance/verify-identity',
+        '${AppConstants.baseUrl}/attendance/verify-identity',
       );
       final res = await http
           .post(
             uri,
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              if (token != null && token.isNotEmpty)
+                'Authorization': 'Bearer $token',
+            },
             body: jsonEncode({
               'image_base64': selfieDataUrl,
               'claimed_email': email,

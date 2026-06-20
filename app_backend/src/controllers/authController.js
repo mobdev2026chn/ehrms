@@ -1556,7 +1556,11 @@ const verifyFace = async (req, res) => {
         if (enrollEmbeddings.length > 0) {
             let liveEmbedding = null;
             try {
-                const r = await faceEngine.embed(selfie);
+                // EXISTING (lenient embed, no liveness/position guards) — replaced
+                // by the face-attendance app's STRICT kiosk pipeline so a punch/break
+                // selfie must be a single, centered, correctly-distanced, live face.
+                // const r = await faceEngine.embed(selfie);
+                const r = await faceEngine.embedLive(selfie);
                 liveEmbedding = r.embedding;
                 if (!liveEmbedding) {
                     return res.status(200).json({
@@ -1583,6 +1587,26 @@ const verifyFace = async (req, res) => {
                 match: matched,
                 enrolled: true,
                 message: matched ? 'Photo matched' : 'Face not matching. Please try again.',
+            });
+        }
+
+        // STRICT LIVE GATE (face-attendance app's kiosk pipeline) — applied to the
+        // fallback path too: even a not-yet-enrolled user's selfie must be a single,
+        // centered, correctly-distanced, live face before we accept/seed it. A guard
+        // or anti-spoof failure short-circuits here with an actionable message.
+        try {
+            const guard = await faceEngine.embedLive(selfie);
+            if (!guard.embedding) {
+                return res.status(200).json({
+                    success: true, match: false, enrolled: false,
+                    message: toUserFriendlyVerifyMessage(guard.error || 'No face detected'),
+                });
+            }
+        } catch (e) {
+            console.warn('[verifyFace] live-guard engine unavailable:', e?.message);
+            return res.status(200).json({
+                success: false, match: false, enrolled: false,
+                message: 'Face verification failed. Please try again.',
             });
         }
 
@@ -1660,6 +1684,13 @@ const verifyFace = async (req, res) => {
 function toUserFriendlyVerifyMessage(raw) {
     if (!raw || typeof raw !== 'string') return 'Face not matching. Please try again.';
     const s = raw.toLowerCase();
+    // Pass through the face-attendance app's actionable kiosk-guard / liveness
+    // messages verbatim — they tell the user exactly how to fix the capture.
+    if (s.includes('too far') || s.includes('too close') || s.includes('off-center')
+        || s.includes('multiple faces') || s.includes('only one person')
+        || s.includes('spoof') || s.includes('look straight')) {
+        return raw;
+    }
     if (s.includes('no face') || s.includes('face could not be detected')) return 'No face detected. Please ensure your face is clearly visible.';
     if (s.includes('no profile') || s.includes('upload a profile')) return 'Please upload a profile photo first.';
     if (s.includes('not available') || s.includes('verification failed') || s.includes('exception') || s.includes('error')) return 'Face verification failed. Please try again.';
@@ -1789,6 +1820,145 @@ const getFaceEnrollStatus = async (req, res) => {
     }
 };
 
+/**
+ * CANONICAL 1-to-many matcher — the single source of identity for BOTH apps.
+ *
+ * Embeds the live selfie with the STRICT engine (faceEngine.embedLive: kiosk
+ * guards + anti-spoof) and finds the closest enrolled Staff across [scopeFilter],
+ * comparing against Staff.faceEnrollEmbeddings — the SAME enrollment used by the
+ * 1-to-1 verifyFace path. This is what makes one enrollment validate both 1-to-1
+ * and 1-to-many: the EHRMS app's cross-user guard (verifyIdentity) and the
+ * face-app kiosk (identifyFace) both call it.
+ *
+ * Returns { ok, error?, liveError?, best: {staff, distance}|null, candidates }.
+ */
+async function identifyFromEnrollments(selfie, scopeFilter = {}) {
+    let liveEmbedding = null;
+    let liveError = null;
+    try {
+        const r = await faceEngine.embedLive(selfie);
+        liveEmbedding = r.embedding;
+        liveError = r.error || null;
+    } catch (e) {
+        console.warn('[identifyFromEnrollments] engine unavailable:', e?.message);
+        return { ok: false, error: 'engine_unavailable', best: null, candidates: 0 };
+    }
+    if (!Array.isArray(liveEmbedding)) {
+        return { ok: true, liveError: liveError || 'No face detected', best: null, candidates: 0 };
+    }
+
+    const filter = { ...scopeFilter, faceEnrollEmbeddings: { $exists: true, $ne: [] } };
+    const staffList = await Staff.find(filter)
+        .select('_id employeeId name email businessId faceEnrollEmbeddings').lean();
+
+    let best = null;
+    for (const s of staffList) {
+        const samples = Array.isArray(s.faceEnrollEmbeddings) ? s.faceEnrollEmbeddings : [];
+        let bestForStaff = Infinity;
+        for (const emb of samples) {
+            const d = euclideanDistance(liveEmbedding, emb);
+            if (d < bestForStaff) bestForStaff = d;
+        }
+        if (best === null || bestForStaff < best.distance) best = { staff: s, distance: bestForStaff };
+    }
+    return { ok: true, best, candidates: staffList.length };
+}
+
+/**
+ * POST /attendance/verify-identity (protected) — EHRMS app's cross-user (anti
+ * buddy-punch) guard. 1-to-many over the canonical Staff.faceEnrollEmbeddings,
+ * scoped to the claimer's company. The claimer is the AUTHENTICATED staff (not a
+ * spoofable body field). Response shape matches what FaceIdentityGuard expects:
+ *   { verified, reason, matched_employee_id?, matched_name?, confidence }
+ *   reason: 'match' | 'identity_mismatch' | 'not_recognized' | 'no_face'
+ *           | 'claimer_not_enrolled' | 'error'
+ * Always 200 so the app's fail-open guard treats inconclusive reasons as allow.
+ */
+const verifyIdentity = async (req, res) => {
+    try {
+        const selfie = req.body?.image_base64 || req.body?.selfie;
+        if (!selfie || typeof selfie !== 'string') {
+            return res.status(400).json({ verified: false, reason: 'no_image' });
+        }
+        const staff = req.staff;
+        if (!staff || !staff._id) {
+            return res.status(200).json({ verified: false, reason: 'claimer_not_enrolled', confidence: 0 });
+        }
+        const claimer = await Staff.findById(staff._id)
+            .select('_id employeeId name businessId faceEnrollEmbeddings').lean();
+        const claimerEnrolled = Array.isArray(claimer?.faceEnrollEmbeddings) && claimer.faceEnrollEmbeddings.length > 0;
+        if (!claimerEnrolled) {
+            // Nothing canonical to match the logged-in user against → can't do a
+            // cross-user check. Inconclusive → app allows (1-to-1 verifyFace still gates).
+            return res.status(200).json({ verified: false, reason: 'claimer_not_enrolled', confidence: 0 });
+        }
+
+        const scope = claimer.businessId ? { businessId: claimer.businessId } : {};
+        const r = await identifyFromEnrollments(selfie, scope);
+        if (!r.ok) return res.status(200).json({ verified: false, reason: 'error' });
+        if (!r.best) {
+            return res.status(200).json({ verified: false, reason: 'no_face', detail: r.liveError });
+        }
+
+        const confidence = Math.round((1 - r.best.distance) * 1000) / 10;
+        if (r.best.distance > FACE_MATCH_THRESHOLD) {
+            return res.status(200).json({ verified: false, reason: 'not_recognized', confidence });
+        }
+        const isClaimer = String(r.best.staff._id) === String(claimer._id);
+        if (isClaimer) {
+            return res.status(200).json({
+                verified: true, reason: 'match',
+                matched_employee_id: r.best.staff.employeeId, matched_name: r.best.staff.name, confidence,
+            });
+        }
+        // Best match is a DIFFERENT enrolled employee → impersonation / buddy punch.
+        return res.status(200).json({
+            verified: false, reason: 'identity_mismatch',
+            matched_employee_id: r.best.staff.employeeId, matched_name: r.best.staff.name, confidence,
+        });
+    } catch (e) {
+        console.error('[verifyIdentity]', e.message);
+        return res.status(200).json({ verified: false, reason: 'error' });
+    }
+};
+
+/**
+ * POST /attendance/identify-face (kiosk secret) — pure 1-to-many identify for the
+ * face-app KIOSK, against the SAME canonical Staff.faceEnrollEmbeddings. Lets the
+ * face kiosk recognize a person off EHRMS's enrollment instead of its own store,
+ * so both apps validate one enrollment. Auth is a shared header (x-face-kiosk-secret)
+ * — the kiosk is not a logged-in staff. Returns:
+ *   { matched, employee_id?, employee_name?, email?, confidence, reason? }
+ */
+const identifyFace = async (req, res) => {
+    try {
+        const selfie = req.body?.image_base64 || req.body?.selfie;
+        if (!selfie || typeof selfie !== 'string') {
+            return res.status(400).json({ matched: false, reason: 'no_image' });
+        }
+        const scope = {};
+        if (req.body?.business_id) scope.businessId = req.body.business_id;
+        const r = await identifyFromEnrollments(selfie, scope);
+        if (!r.ok) return res.status(200).json({ matched: false, reason: 'engine_unavailable' });
+        if (!r.best) return res.status(200).json({ matched: false, reason: 'no_face', detail: r.liveError });
+
+        const confidence = Math.round((1 - r.best.distance) * 1000) / 10;
+        if (r.best.distance > FACE_MATCH_THRESHOLD) {
+            return res.status(200).json({ matched: false, reason: 'not_recognized', confidence });
+        }
+        return res.status(200).json({
+            matched: true,
+            employee_id: r.best.staff.employeeId,
+            employee_name: r.best.staff.name,
+            email: r.best.staff.email,
+            confidence,
+        });
+    } catch (e) {
+        console.error('[identifyFace]', e.message);
+        return res.status(500).json({ matched: false, reason: 'error', detail: e.message });
+    }
+};
+
 module.exports = {
     login,
     googleLogin,
@@ -1806,5 +1976,7 @@ module.exports = {
     verifyFace,
     enrollFace,
     getFaceEnrollStatus,
+    verifyIdentity,
+    identifyFace,
     checkActive
 };
