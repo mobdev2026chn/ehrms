@@ -1917,7 +1917,7 @@ async function identifyFromEnrollments(selfie, scopeFilter = {}) {
 
     const filter = { ...scopeFilter, faceEnrollEmbeddings: { $exists: true, $ne: [] } };
     const staffList = await Staff.find(filter)
-        .select('_id employeeId name email businessId faceEnrollEmbeddings').lean();
+        .select('_id userId employeeId name email businessId faceEnrollEmbeddings').lean();
 
     let best = null;
     for (const s of staffList) {
@@ -2014,12 +2014,27 @@ const identifyFace = async (req, res) => {
         if (r.best.distance > FACE_MATCH_THRESHOLD) {
             return res.status(200).json({ matched: false, reason: 'not_recognized', confidence });
         }
+
+        // Mint a SHORT-LIVED EHRMS token for the matched employee so the face kiosk can
+        // punch on their behalf WITHOUT any per-employee "linking" / stored credentials.
+        // A recognized face (against the canonical Staff.faceEnrollEmbeddings) IS the
+        // authorization; the kiosk shared-secret gates the endpoint. Short expiry keeps
+        // the exposure tiny vs. the old design that stored long-lived tokens in the face DB.
+        // protect() accepts a token whose `id` is the User._id (falls back to Staff._id).
+        const secret = process.env.JWT_SECRET || 'secret';
+        const tokenId = r.best.staff.userId || r.best.staff._id;
+        const accessToken = jwt.sign({ id: tokenId }, secret, { expiresIn: '30m' });
+        const refreshToken = jwt.sign({ id: tokenId }, secret, { expiresIn: '12h' });
+
         return res.status(200).json({
             matched: true,
             employee_id: r.best.staff.employeeId,
             employee_name: r.best.staff.name,
             email: r.best.staff.email,
             confidence,
+            // Token the kiosk uses to punch/break against EHRMS directly (no linking).
+            access_token: accessToken,
+            refresh_token: refreshToken,
         });
     } catch (e) {
         console.error('[identifyFace]', e.message);
