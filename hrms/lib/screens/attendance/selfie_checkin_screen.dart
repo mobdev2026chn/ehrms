@@ -523,6 +523,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                   ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
                   : null);
         },
+        // Face-match AT SCAN TIME (right after capture) — rejected on the camera,
+        // not after submitting.
+        onCaptured: _verifyCheckinFace,
       );
       File? file;
       if (captureResult is File) {
@@ -552,6 +555,27 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
         isError: true,
       );
     }
+  }
+
+  /// Scan-time face-match for check-in: returns a user-facing error to REJECT (shown
+  /// on the camera right after scanning), or null to accept. Wired via
+  /// SelfieCameraScreen.onCaptured, so the check no longer waits for submit.
+  Future<String?> _verifyCheckinFace(File file) async {
+    if (!AppConstants.enableAttendanceFaceMatching) return null;
+    final bytes = await file.readAsBytes();
+    final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
+    if (selfie.isEmpty) return null;
+    try {
+      final verify = await _authService.verifyFace(selfie);
+      if (verify['success'] != true || verify['match'] != true) {
+        return ErrorMessageUtils.sanitizeForDisplay(
+          verify['message']?.toString() ?? 'Face not matching. Please try again.',
+        );
+      }
+    } catch (_) {
+      return 'Face verification failed. Please try again.';
+    }
+    return null;
   }
 
   Future<void> _showWarningDialog(List<dynamic> warnings) async {
@@ -654,43 +678,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           await AttendanceSelfieCompress.compressRawBytesToDataUrl(imageBytes);
     }
 
-    // Verify selfie against profile photo when selfie is required (face matching disabled via constant)
-    if (AppConstants.enableAttendanceFaceMatching &&
-        requireSelfie &&
-        selfiePayload != null &&
-        selfiePayload.isNotEmpty) {
-      Map<String, dynamic> verify;
-      try {
-        verify = await _authService.verifyFace(selfiePayload);
-      } catch (_) {
-        if (!mounted) return;
-        setState(() => _isLoading = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          'Face verification failed. Please try again.',
-          isError: true,
-        );
-        return;
-      }
-      if (!mounted) return;
-      if (!verify['success'] || verify['match'] != true) {
-        setState(() => _isLoading = false);
-        final msg =
-            verify['message']?.toString() ??
-            'Face not matching. Please try again.';
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(msg),
-          isError: true,
-        );
-        return;
-      }
-      SnackBarUtils.showSnackBar(
-        context,
-        'Photo matched',
-        backgroundColor: AppColors.primary,
-      );
-    }
+    // NOTE: face-match (verifyFace) now runs AT SCAN TIME via
+    // SelfieCameraScreen.onCaptured (_verifyCheckinFace) — a non-matching face is
+    // rejected on the camera, before this submit runs. No re-check here.
 
     final movementType = _resolveAttendanceMovementType();
 

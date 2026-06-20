@@ -87,6 +87,12 @@ class SelfieCameraScreen extends StatefulWidget {
   /// and updates the pill when ready (e.g. a fresh break-balance fetch).
   final Future<String?>? infoTextFuture;
 
+  /// Optional post-capture validator. Runs on the captured file RIGHT AFTER the
+  /// scan (before the review screen) — used by punch/break to do the face-match +
+  /// buddy-punch identity check at scan time. Return an error message to REJECT
+  /// (it's shown on the camera and the live scan re-arms), or null to accept.
+  final Future<String?> Function(File capturedFile)? onCaptured;
+
   const SelfieCameraScreen({
     super.key,
     this.locationText,
@@ -95,6 +101,7 @@ class SelfieCameraScreen extends StatefulWidget {
     this.loadLocationOnOpen = false,
     this.infoText,
     this.infoTextFuture,
+    this.onCaptured,
   });
 
   static Future<Object?> captureSelfie(
@@ -105,6 +112,7 @@ class SelfieCameraScreen extends StatefulWidget {
     bool loadLocationOnOpen = false,
     String? infoText,
     Future<String?>? infoTextFuture,
+    Future<String?> Function(File capturedFile)? onCaptured,
   }) async {
     final result = await Navigator.of(context).push<Object?>(
       MaterialPageRoute(
@@ -115,6 +123,7 @@ class SelfieCameraScreen extends StatefulWidget {
           loadLocationOnOpen: loadLocationOnOpen,
           infoText: infoText,
           infoTextFuture: infoTextFuture,
+          onCaptured: onCaptured,
         ),
       ),
     );
@@ -156,6 +165,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   bool _faceReady = false;
   int _goodFrames = 0;
   bool _capturing = false;
+  // True while the post-capture validator (onCaptured: face-match + identity guard)
+  // is running, so we can show a "Verifying…" overlay between scan and review.
+  bool _validating = false;
 
   // Guidance thresholds (ratios of the rotation-corrected frame). Generous, since
   // a handheld selfie fills more of the frame than a fixed kiosk; the authoritative
@@ -321,6 +333,30 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
         _resetLiveScan();
       });
       return;
+    }
+
+    // Post-capture validator (punch/break face-match + buddy-punch identity guard).
+    // Runs RIGHT AFTER the scan, BEFORE the review screen — so a wrong/other face is
+    // rejected here (error shown on camera + scan re-armed), not after submitting.
+    final validator = widget.onCaptured;
+    if (validator != null) {
+      setState(() => _validating = true);
+      String? hookError;
+      try {
+        hookError = await validator(File(path));
+      } catch (_) {
+        hookError = 'Could not verify your face. Please try again.';
+      }
+      if (!mounted) return;
+      setState(() => _validating = false);
+      if (hookError != null) {
+        _showCaptureError(hookError);
+        setState(() {
+          _capturedFilePath = null;
+          _resetLiveScan();
+        });
+        return;
+      }
     }
     setState(() => _capturedFilePath = path);
   }
@@ -592,6 +628,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                   ),
                   _buildCameraOverlay(),
                   if (_showTimeoutOverlay) _buildTimeoutOverlay(),
+                  if (_validating) _buildValidatingOverlay(),
                 ],
               ),
       ),
@@ -635,6 +672,27 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
           child: _buildCaptureButton(),
         ),
       ],
+    );
+  }
+
+  // Shown between the auto-capture and the review screen while the onCaptured
+  // validator (face-match + identity guard) runs, so the user sees "Verifying…".
+  Widget _buildValidatingOverlay() {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.55),
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Colors.white),
+              SizedBox(height: 16),
+              Text('Verifying your face…',
+                  style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

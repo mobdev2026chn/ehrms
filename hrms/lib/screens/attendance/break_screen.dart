@@ -222,6 +222,9 @@ class _BreakScreenState extends State<BreakScreen> {
         await _determinePosition();
         return _address;
       },
+      // Face-match + buddy-punch identity check AT SCAN TIME (right after capture),
+      // so a wrong/other face is rejected on the camera — not after submitting.
+      onCaptured: _verifyBreakFace,
     );
 
     File? file;
@@ -251,6 +254,31 @@ class _BreakScreenState extends State<BreakScreen> {
     if (file == null) return null;
     final imageBytes = await file.readAsBytes();
     return AttendanceSelfieCompress.compressRawBytesToDataUrl(imageBytes);
+  }
+
+  /// Scan-time face validation for a break: face-match (1-to-1) + buddy-punch
+  /// identity guard (1-to-many). Returns a user-facing error to REJECT (shown on the
+  /// camera right after scanning, scan re-arms), or null to accept. Wired via
+  /// SelfieCameraScreen.onCaptured, so the check no longer waits for break submit.
+  Future<String?> _verifyBreakFace(File file) async {
+    final bytes = await file.readAsBytes();
+    final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
+    if (selfie.isEmpty) return null;
+    if (AppConstants.enableAttendanceFaceMatching) {
+      try {
+        final verify = await _authService.verifyFace(selfie);
+        if (verify['success'] != true || verify['match'] != true) {
+          return ErrorMessageUtils.sanitizeForDisplay(
+            verify['message']?.toString() ?? 'Face not matching. Please try again.',
+          );
+        }
+      } catch (_) {
+        return 'Face verification failed. Please try again.';
+      }
+    }
+    final verdict = await FaceIdentityGuard.verify(selfie);
+    if (!verdict.allow) return verdict.message ?? 'Face identity check failed.';
+    return null;
   }
 
   DateTime? _breakStartTime() {
@@ -371,62 +399,9 @@ class _BreakScreenState extends State<BreakScreen> {
       return;
     }
 
-    // Validate the break selfie against the rolling face reference before submitting,
-    // mirroring the attendance punch flow.
-    if (AppConstants.enableAttendanceFaceMatching &&
-        selfie.isNotEmpty) {
-      setState(() => _isLoading = true);
-      Map<String, dynamic> verify;
-      try {
-        verify = await _authService.verifyFace(selfie);
-      } catch (_) {
-        if (!mounted) return;
-        // Ending aborted — release the timer freeze so it resumes ticking.
-        setState(() {
-          _isLoading = false;
-          _endClickTime = null;
-        });
-        SnackBarUtils.showSnackBar(
-          context,
-          'Face verification failed. Please try again.',
-          isError: true,
-        );
-        return;
-      }
-      if (!mounted) return;
-      if (!verify['success'] || verify['match'] != true) {
-        setState(() {
-          _isLoading = false;
-          _endClickTime = null;
-        });
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            verify['message']?.toString() ?? 'Face not matching. Please try again.',
-          ),
-          isError: true,
-        );
-        return;
-      }
-    }
-
-    // Cross-user identity guard (anti buddy-punch) for breaks.
-    if (selfie.isNotEmpty) {
-      final verdict = await FaceIdentityGuard.verify(selfie);
-      if (!mounted) return;
-      if (!verdict.allow) {
-        setState(() {
-          _isLoading = false;
-          _endClickTime = null;
-        });
-        SnackBarUtils.showSnackBar(
-          context,
-          verdict.message ?? 'Face identity check failed.',
-          isError: true,
-        );
-        return;
-      }
-    }
+    // NOTE: face-match (verifyFace) + buddy-punch identity guard now run AT SCAN TIME
+    // via SelfieCameraScreen.onCaptured (_verifyBreakFace) — a wrong/other face is
+    // rejected on the camera, before this submit runs. No re-check here.
 
     setState(() => _isLoading = true);
     final result = _isOnBreak

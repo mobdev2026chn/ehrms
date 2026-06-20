@@ -6021,6 +6021,34 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   /// Submits attendance with captured selfie file (camera-direct flow).
+  /// Scan-time face validation for a punch: face-match (1-to-1) + buddy-punch
+  /// identity guard (1-to-many). Returns a user-facing error to REJECT (shown on the
+  /// camera so the user sees it RIGHT AFTER scanning, scan re-arms), or null to accept.
+  /// Wired into SelfieCameraScreen via onCaptured, so the check no longer waits for submit.
+  Future<String?> _verifyPunchFace(File file) async {
+    final requireSelfie = _attendanceTemplate?['requireSelfie'] ?? true;
+    if (!requireSelfie) return null;
+    final bytes = await file.readAsBytes();
+    final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
+    if (selfie.isEmpty) return null;
+    if (AppConstants.enableAttendanceFaceMatching) {
+      try {
+        final verify = await _authService.verifyFace(selfie);
+        if (verify['success'] != true || verify['match'] != true) {
+          return ErrorMessageUtils.sanitizeForDisplay(
+            verify['message']?.toString() ?? 'Face not matching.',
+          );
+        }
+      } catch (_) {
+        return 'Face verification failed. Please try again.';
+      }
+    }
+    // Cross-user identity guard (anti buddy-punch): confirm the face is THIS user.
+    final verdict = await FaceIdentityGuard.verify(selfie);
+    if (!verdict.allow) return verdict.message ?? 'Face identity check failed.';
+    return null;
+  }
+
   Future<void> _submitAttendanceFromCameraFile(
     File file, {
     required Position? position,
@@ -6058,53 +6086,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         await AttendanceSelfieCompress.compressRawBytesToDataUrl(imageBytes);
     if (!mounted) return;
 
-    if (AppConstants.enableAttendanceFaceMatching &&
-        requireSelfie &&
-        selfiePayload.isNotEmpty) {
-      try {
-        final verify = await _authService.verifyFace(selfiePayload);
-        if (!mounted) return;
-        if (verify['success'] != true || verify['match'] != true) {
-          _setPunchActionInProgress(false);
-          if (mounted) Navigator.of(context).pop();
-          SnackBarUtils.showSnackBar(
-            context,
-            ErrorMessageUtils.sanitizeForDisplay(
-              verify['message']?.toString() ?? 'Face not matching.',
-            ),
-            isError: true,
-          );
-          return;
-        }
-      } catch (_) {
-        if (mounted) {
-          _setPunchActionInProgress(false);
-          Navigator.of(context).pop();
-          SnackBarUtils.showSnackBar(
-            context,
-            'Face verification failed. Please try again.',
-            isError: true,
-          );
-        }
-        return;
-      }
-    }
-
-    // Cross-user identity guard (anti buddy-punch): confirm the face is THIS user.
-    if (requireSelfie && selfiePayload.isNotEmpty) {
-      final verdict = await FaceIdentityGuard.verify(selfiePayload);
-      if (!mounted) return;
-      if (!verdict.allow) {
-        _setPunchActionInProgress(false);
-        if (mounted) Navigator.of(context).pop();
-        SnackBarUtils.showSnackBar(
-          context,
-          verdict.message ?? 'Face identity check failed.',
-          isError: true,
-        );
-        return;
-      }
-    }
+    // NOTE: face-match (verifyFace) + buddy-punch identity guard now run AT SCAN
+    // TIME via SelfieCameraScreen.onCaptured (_verifyPunchFace) — so a wrong/other
+    // face is rejected on the camera, before this submit ever runs. No re-check here.
 
     if (!mounted) return;
     final lat = position?.latitude ?? 0.0;
@@ -6905,6 +6889,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
                   : null);
       },
+      // Run the face-match + buddy-punch identity check AT SCAN TIME (right after
+      // the auto-capture), so a wrong/other face is rejected on the camera — not
+      // after submitting. Returns an error message to reject, or null to accept.
+      onCaptured: _verifyPunchFace,
     );
     if (!mounted) return;
     File? file;
