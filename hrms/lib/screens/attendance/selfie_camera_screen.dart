@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:camerawesome/camerawesome_plugin.dart';
 import 'package:flutter/foundation.dart' show compute;
@@ -10,6 +9,7 @@ import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import '../../config/app_colors.dart';
 import '../../utils/face_detection_helper.dart';
+import '../../widgets/face_guide_overlay.dart';
 
 /// Sentinel returned when camera init fails; caller should use image_picker fallback.
 const Object useImagePickerFallback = Object();
@@ -146,6 +146,26 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   int _reviewRev = 0;
   bool _rotatingReview = false;
 
+  // ── Guided-scan state (new-app FaceGuideOverlay UX) ──────────────────────────
+  // The oval ring + guidance text are driven live by on-device ML Kit geometry
+  // (single-face + centering + proximity). When a good face holds for a couple of
+  // frames we auto-capture; the manual shutter remains as a fallback. The captured
+  // selfie still goes through the existing verify/submit flow unchanged.
+  Color _ovalColor = AppColors.primary;
+  String _guidanceText = 'Align Face Inside Guide';
+  bool _faceReady = false;
+  int _goodFrames = 0;
+  bool _capturing = false;
+
+  // Guidance thresholds (ratios of the rotation-corrected frame). Generous, since
+  // a handheld selfie fills more of the frame than a fixed kiosk; the authoritative
+  // guards + anti-spoof still run server-side in embedLive at verify/enroll time.
+  static const double _kFaceTooFar = 0.18;
+  static const double _kFaceTooClose = 0.66;
+  static const double _kCenterTolX = 0.22;
+  static const double _kCenterTolY = 0.24;
+  static const int _kGoodFramesToCapture = 2;
+
   @override
   void initState() {
     super.initState();
@@ -188,7 +208,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   void _handleBackPressed() {
     if (_isHandlingBack || !mounted) return;
     if (_capturedFilePath != null) {
-      setState(() => _capturedFilePath = null);
+      // Retake from the review screen — re-arm the guided live scan.
+      setState(() {
+        _capturedFilePath = null;
+        _resetLiveScan();
+      });
       return;
     }
     _isHandlingBack = true;
@@ -291,7 +315,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     if (validationError != null) {
       _showCaptureError(validationError);
       // Discard this capture; stay on the live camera so the user can retake.
-      setState(() => _capturedFilePath = null);
+      // Re-arm the guided scan so auto-capture can fire again on the next good face.
+      setState(() {
+        _capturedFilePath = null;
+        _resetLiveScan();
+      });
       return;
     }
     setState(() => _capturedFilePath = path);
@@ -336,17 +364,68 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
 
   bool get _multipleFacesLive => _liveFaceCount > 1;
 
-  /// Analyses live camera frames with ML Kit (one in-flight at a time) so the
-  /// multiple-face validation appears WHILE the user frames the shot — not after
-  /// capture or after submitting the punch. Updates [_liveFaceCount] only when it
-  /// changes to avoid needless rebuilds.
+  /// Analyses live camera frames with ML Kit (one in-flight at a time) to drive the
+  /// new-app guided UX: it updates the oval color + guidance text from the primary
+  /// face's centering/proximity/count WHILE the user frames the shot, and once a
+  /// well-framed single face holds for a couple of frames it AUTO-CAPTURES. The
+  /// multiple-face warning still appears here too. Guidance strings mirror the face
+  /// app's scanner (_applyErrorGuidance).
   Future<void> _analyzeLiveFrame(AnalysisImage image) async {
-    if (_analyzingFrame || !mounted || _capturedFilePath != null) return;
+    if (_analyzingFrame || !mounted || _capturedFilePath != null || _capturing) {
+      return;
+    }
     _analyzingFrame = true;
     try {
-      final count = await FaceDetectionHelper.detectFaceCountFromCamera(image);
-      if (count >= 0 && mounted && count != _liveFaceCount) {
-        setState(() => _liveFaceCount = count);
+      final face = await FaceDetectionHelper.detectPrimaryFaceFromCamera(image);
+      if (face == null || !mounted) return; // unanalysable frame — ignore it
+
+      String guidance;
+      Color color;
+      var ready = false;
+      if (face.count == 0) {
+        guidance = 'Align Face Inside Guide';
+        color = AppColors.primary;
+      } else if (face.count > 1) {
+        guidance = 'Ensure Only 1 Face Visible';
+        color = AppColors.error;
+      } else if (face.sizeRatio < _kFaceTooFar) {
+        guidance = 'Come Closer';
+        color = AppColors.error;
+      } else if (face.sizeRatio > _kFaceTooClose) {
+        guidance = 'Move Back a Little';
+        color = AppColors.error;
+      } else if ((face.centerX - 0.5).abs() > _kCenterTolX ||
+          (face.centerY - 0.5).abs() > _kCenterTolY) {
+        guidance = 'Center Your Face';
+        color = AppColors.error;
+      } else {
+        guidance = 'Hold Still…';
+        color = AppColors.success;
+        ready = true;
+      }
+
+      _goodFrames = ready ? _goodFrames + 1 : 0;
+
+      if (mounted &&
+          (guidance != _guidanceText ||
+              color != _ovalColor ||
+              ready != _faceReady ||
+              face.count != _liveFaceCount)) {
+        setState(() {
+          _guidanceText = guidance;
+          _ovalColor = color;
+          _faceReady = ready;
+          _liveFaceCount = face.count;
+        });
+      }
+
+      // Auto-capture once a well-framed single face has held for a couple frames.
+      if (ready &&
+          _goodFrames >= _kGoodFramesToCapture &&
+          !_capturing &&
+          _capturedFilePath == null &&
+          mounted) {
+        _takePhoto();
       }
     } finally {
       _analyzingFrame = false;
@@ -354,6 +433,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   }
 
   void _takePhoto() {
+    if (_capturing || _capturedFilePath != null) return;
     // Block capture while more than one face is in frame — the live warning is
     // already shown; reinforce it if the user taps anyway.
     if (_multipleFacesLive) {
@@ -361,14 +441,31 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
           'Multiple faces detected. Please take a selfie with only your face in frame.');
       return;
     }
-    _cameraState?.when(
-      onPhotoMode: (photoState) => photoState.takePhoto(),
+    final state = _cameraState;
+    if (state == null) return;
+    state.when(
+      // Latch _capturing only once the shutter actually fires, so a stuck flag
+      // can't permanently block the manual button / auto-capture.
+      onPhotoMode: (photoState) {
+        setState(() => _capturing = true);
+        photoState.takePhoto();
+      },
       onPreparingCamera: (_) {},
       onVideoMode: (_) {},
       onVideoRecordingMode: (_) {},
       onPreviewMode: (_) {},
       onAnalysisOnlyMode: (_) {},
     );
+  }
+
+  /// Reset the live-scan guidance so auto-capture can re-arm (after a bounce-back
+  /// from the quality gate, or when the user retakes from the review screen).
+  void _resetLiveScan() {
+    _capturing = false;
+    _goodFrames = 0;
+    _faceReady = false;
+    _ovalColor = AppColors.primary;
+    _guidanceText = 'Align Face Inside Guide';
   }
 
   @override
@@ -507,31 +604,32 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     return Column(
       children: [
         const SizedBox(height: 20),
-        Center(child: _buildStatusBadge()),
+        Center(child: _buildReadyPill()),
         if (_infoText != null && _infoText!.trim().isNotEmpty) ...[
           const SizedBox(height: 10),
           Center(child: _buildInfoPill(_infoText!)),
         ],
-        Expanded(
-          child: Center(
-            child: FractionallySizedBox(
-              widthFactor: 0.82,
-              heightFactor: 0.90,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  CustomPaint(painter: _ScanFramePainter()),
-                  Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: CustomPaint(painter: _FaceOutlinePainter()),
-                  ),
-                  // Capture mode: no scan-line animation — the user positions their
-                  // face and taps the shutter to capture.
-                ],
-              ),
+        const Spacer(),
+        // Live, color-coded guidance (mirrors the face app's scanner): green when
+        // the face is well-framed, red while it needs adjusting.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            _guidanceText,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _ovalColor,
+              fontWeight: FontWeight.w800,
+              fontSize: 15,
+              letterSpacing: 0.5,
             ),
           ),
         ),
+        const SizedBox(height: 14),
+        // The new-app guided oval: ring color tracks framing state; success badge
+        // flashes the moment the shot is taken.
+        FaceGuideOverlay(color: _ovalColor, showSuccessTick: _capturing),
+        const Spacer(),
         Padding(
           padding: const EdgeInsets.only(bottom: 40),
           child: _buildCaptureButton(),
@@ -540,16 +638,17 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     );
   }
 
-  Widget _buildStatusBadge() {
+  Widget _buildReadyPill() {
     final warn = _multipleFacesLive;
     return Container(
       constraints: const BoxConstraints(maxWidth: 320),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         color: warn
-            ? Colors.red.shade700.withOpacity(0.92)
-            : Colors.black.withOpacity(0.60),
+            ? Colors.red.shade700.withValues(alpha: 0.92)
+            : Colors.black.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -567,15 +666,13 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
           const SizedBox(width: 8),
           Flexible(
             child: Text(
-              warn
-                  ? 'Multiple faces detected. Keep only your face in frame.'
-                  : 'TAP TO CAPTURE',
+              warn ? 'Keep only your face in frame' : 'READY TO SCAN',
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
-                fontSize: warn ? 12 : 13,
-                fontWeight: FontWeight.w600,
-                letterSpacing: warn ? 0.2 : 1.0,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1,
               ),
             ),
           ),
@@ -621,7 +718,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
           color: Colors.white,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.25),
+              color: Colors.black.withValues(alpha: 0.25),
               blurRadius: 10,
               spreadRadius: 2,
             ),
@@ -921,135 +1018,4 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       ),
     );
   }
-}
-
-// ─── Custom painters ──────────────────────────────────────────────────────────
-
-/// Draws corner-bracket markers and a dashed border for the face scan frame.
-class _ScanFramePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    const double cl = 28; // corner arm length
-    const double sw = 2.5;
-
-    final cornerPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = sw
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.square;
-
-    final w = size.width;
-    final h = size.height;
-
-    // Top-left
-    canvas.drawLine(const Offset(0, cl), Offset.zero, cornerPaint);
-    canvas.drawLine(Offset.zero, const Offset(cl, 0), cornerPaint);
-    // Top-right
-    canvas.drawLine(Offset(w - cl, 0), Offset(w, 0), cornerPaint);
-    canvas.drawLine(Offset(w, 0), Offset(w, cl), cornerPaint);
-    // Bottom-left
-    canvas.drawLine(Offset(0, h - cl), Offset(0, h), cornerPaint);
-    canvas.drawLine(Offset(0, h), Offset(cl, h), cornerPaint);
-    // Bottom-right
-    canvas.drawLine(Offset(w - cl, h), Offset(w, h), cornerPaint);
-    canvas.drawLine(Offset(w, h), Offset(w, h - cl), cornerPaint);
-
-    // Dashed border
-    final dashPaint = Paint()
-      ..color = Colors.white.withOpacity(0.35)
-      ..strokeWidth = 1.0
-      ..style = PaintingStyle.stroke;
-
-    _dashedLine(canvas, Offset.zero, Offset(w, 0), dashPaint);
-    _dashedLine(canvas, Offset(w, 0), Offset(w, h), dashPaint);
-    _dashedLine(canvas, Offset(w, h), Offset(0, h), dashPaint);
-    _dashedLine(canvas, Offset(0, h), Offset.zero, dashPaint);
-  }
-
-  void _dashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
-    const double dash = 8;
-    const double gap = 7;
-    final bool horiz = (end.dy - start.dy).abs() < 1.0;
-    final double total = horiz
-        ? (end.dx - start.dx).abs()
-        : (end.dy - start.dy).abs();
-    final double sign = horiz
-        ? (end.dx >= start.dx ? 1.0 : -1.0)
-        : (end.dy >= start.dy ? 1.0 : -1.0);
-    var drawn = 0.0;
-    while (drawn < total) {
-      final segEnd = (drawn + dash).clamp(0.0, total);
-      if (horiz) {
-        canvas.drawLine(
-          Offset(start.dx + sign * drawn, start.dy),
-          Offset(start.dx + sign * segEnd, start.dy),
-          paint,
-        );
-      } else {
-        canvas.drawLine(
-          Offset(start.dx, start.dy + sign * drawn),
-          Offset(start.dx, start.dy + sign * segEnd),
-          paint,
-        );
-      }
-      drawn += dash + gap;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-/// Clean face-capture guide: a minimal head-and-shoulders silhouette outline
-/// (no facial features) used to align the subject — the professional look used
-/// in KYC / ID photo apps.
-class _FaceOutlinePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final cx = w / 2;
-
-    // Soft halo behind the guide for contrast against any background.
-    final glowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.18)
-      ..strokeWidth = 4.5
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
-
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.92)
-      ..strokeWidth = 2.4
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    // === HEAD (clean portrait oval) ===
-    final headCY = h * 0.32;
-    final headRX = w * 0.265;
-    final headRY = h * 0.235;
-    final headRect = Rect.fromCenter(
-      center: Offset(cx, headCY),
-      width: headRX * 2,
-      height: headRY * 2,
-    );
-
-    // === SHOULDERS / bust (top half of a wide ellipse near the bottom) ===
-    final bustRect = Rect.fromCenter(
-      center: Offset(cx, h * 0.98),
-      width: w * 0.92,
-      height: h * 0.66,
-    );
-
-    for (final p in [glowPaint, paint]) {
-      canvas.drawOval(headRect, p);
-      // Top half dome → shoulders rising toward the neck.
-      canvas.drawArc(bustRect, -math.pi, math.pi, false, p);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

@@ -103,8 +103,9 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'One quick selfie in good light. It becomes your profile photo '
-                  'and is used to verify your punches.',
+                  'Line your face up inside the oval guide in good light — it '
+                  'captures automatically. This becomes your profile photo and the '
+                  'face every future punch is verified against.',
                   textAlign: TextAlign.center,
                   style:
                       TextStyle(fontSize: 13, color: AppColors.textSecondary),

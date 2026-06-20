@@ -71,6 +71,28 @@ class FaceDetectionResult {
   }
 }
 
+/// Live primary-face geometry from a camera frame, for the guided-capture overlay.
+/// All values are ratios of the rotation-corrected frame (0..1).
+class LivePrimaryFace {
+  /// Total faces detected in the frame.
+  final int count;
+
+  /// Largest face's size as sqrt(area ratio) — ~linear scale of how big the face
+  /// is in frame. 0 when no face / unknown.
+  final double sizeRatio;
+
+  /// Largest face's bounding-box center, as a fraction of the frame (0.5 = centered).
+  final double centerX;
+  final double centerY;
+
+  const LivePrimaryFace({
+    required this.count,
+    this.sizeRatio = 0,
+    this.centerX = 0.5,
+    this.centerY = 0.5,
+  });
+}
+
 /// Helper for on-device face detection using ML Kit.
 /// Use [detectFromFile] to validate that an image contains exactly one face.
 class FaceDetectionHelper {
@@ -247,6 +269,47 @@ class FaceDetectionHelper {
       return faces.length;
     } catch (_) {
       return -1;
+    }
+  }
+
+  /// Live primary-face geometry for the guided-capture overlay: the largest
+  /// face's size and centering, as ratios of the (rotation-corrected) frame, plus
+  /// the total face count. Drives the new-app-style guidance ("Come Closer",
+  /// "Center Your Face", "Only 1 Face") and the auto-capture trigger. Returns null
+  /// when the frame can't be analysed so the caller ignores it. Ratios are
+  /// rotation-invariant: a centered face reads cx≈cy≈0.5 regardless of sensor
+  /// orientation or front-camera mirroring.
+  static Future<LivePrimaryFace?> detectPrimaryFaceFromCamera(AnalysisImage image) async {
+    final inputImage = _toInputImage(image);
+    if (inputImage == null) return null;
+    try {
+      final faces = await _getLiveDetector.processImage(inputImage);
+      if (faces.isEmpty) return const LivePrimaryFace(count: 0);
+      faces.sort((a, b) => (b.boundingBox.width * b.boundingBox.height)
+          .compareTo(a.boundingBox.width * a.boundingBox.height));
+      final bb = faces.first.boundingBox;
+      final meta = inputImage.metadata;
+      double iw = meta?.size.width ?? 0;
+      double ih = meta?.size.height ?? 0;
+      // ML Kit reports the box in the ROTATED image space; swap dims for 90/270.
+      if (meta?.rotation == InputImageRotation.rotation90deg ||
+          meta?.rotation == InputImageRotation.rotation270deg) {
+        final t = iw;
+        iw = ih;
+        ih = t;
+      }
+      if (iw <= 0 || ih <= 0) return LivePrimaryFace(count: faces.length);
+      final cx = (bb.center.dx / iw).clamp(0.0, 1.0);
+      final cy = (bb.center.dy / ih).clamp(0.0, 1.0);
+      final sizeRatio = math.sqrt((bb.width * bb.height) / (iw * ih)).clamp(0.0, 1.0);
+      return LivePrimaryFace(
+        count: faces.length,
+        sizeRatio: sizeRatio.toDouble(),
+        centerX: cx.toDouble(),
+        centerY: cy.toDouble(),
+      );
+    } catch (_) {
+      return null;
     }
   }
 
