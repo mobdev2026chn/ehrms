@@ -2171,8 +2171,7 @@ const kioskClearFace = async (req, res) => {
             faceEnrolledAt: null,
             faceEnrollImage: null,
         });
-        const actor = req.user?.email || req.user?._id || 'unknown';
-        console.log(`[kioskClearFace] admin=${actor} (${req.user?.role}) cleared staff=${staff._id} (${staff.employeeId}) samples=${had}`);
+        console.log(`[kioskClearFace] cleared staff=${staff._id} (${staff.employeeId}) samples=${had}`);
         return res.json({
             success: true,
             employee_id: staff.employeeId,

@@ -3,11 +3,7 @@ const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const { createRateLimitHandler } = require('../utils/rateLimitHandler');
 const router = express.Router();
-const { protect, authorizeRoles } = require('../middleware/authMiddleware');
-
-// Roles allowed to perform admin actions from the face-app kiosk (e.g. clearing an
-// enrolled face). Mirrors the app's other admin-only routes.
-const ADMIN_ROLES = ['Admin', 'Developer', 'HR', 'SuperAdmin', 'Super Admin'];
+const { protect } = require('../middleware/authMiddleware');
 const {
     checkIn,
     checkOut,
@@ -71,9 +67,8 @@ router.post('/identify-face', faceKioskAuth, identifyFace);                  // 
 // Face-app dashboard: list EHRMS-enrolled employees + per-employee detail (kiosk secret).
 router.get('/kiosk-enrolled', faceKioskAuth, kioskEnrolledList);
 router.get('/kiosk-employee/:employeeId', faceKioskAuth, kioskEmployeeDetail);
-// Face-app admin: clear a staff's enrolled face (so they can re-enroll). Gated by the
-// kiosk secret AND an admin Bearer token — the DB role on that token must be admin-like,
-// so only a real admin user (not just any kiosk client) can wipe an enrollment.
-router.post('/kiosk-clear-face', faceKioskAuth, protect, authorizeRoles(...ADMIN_ROLES), kioskClearFace);
+// Face-app admin: clear a staff's enrolled face (so they can re-enroll). Kiosk-secret
+// gated like the other kiosk endpoints.
+router.post('/kiosk-clear-face', faceKioskAuth, kioskClearFace);
 
 module.exports = router;
