@@ -2145,6 +2145,46 @@ const kioskEmployeeDetail = async (req, res) => {
     }
 };
 
+/**
+ * POST /attendance/kiosk-clear-face (kiosk secret) — wipe a staff member's canonical
+ * face enrollment so they can (re-)enroll a fresh face. Lets the face-app ADMIN clear
+ * an enrolled face from the kiosk without a per-staff login. Looked up by employee_id
+ * (external HR id) or email. Clearing faceEnrollEmbeddings drops them out of BOTH the
+ * 1-to-1 verify and the 1-to-many identify until they enroll again.
+ * Body: { employee_id? , email? }. Returns { success, employee_id, name, cleared }.
+ */
+const kioskClearFace = async (req, res) => {
+    try {
+        const employeeId = req.body?.employee_id || req.body?.employeeId;
+        const email = req.body?.email;
+        if (!employeeId && !email) {
+            return res.status(400).json({ success: false, message: 'employee_id or email is required.' });
+        }
+        const query = employeeId ? { employeeId } : { email: new RegExp(`^${String(email).trim()}$`, 'i') };
+        const staff = await Staff.findOne(query).select('_id userId employeeId name faceEnrollEmbeddings');
+        if (!staff) {
+            return res.status(404).json({ success: false, message: 'No enrolled employee found for that id/email.' });
+        }
+        const had = Array.isArray(staff.faceEnrollEmbeddings) ? staff.faceEnrollEmbeddings.length : 0;
+        await Staff.findByIdAndUpdate(staff._id, {
+            faceEnrollEmbeddings: [],
+            faceEnrolledAt: null,
+            faceEnrollImage: null,
+        });
+        const actor = req.user?.email || req.user?._id || 'unknown';
+        console.log(`[kioskClearFace] admin=${actor} (${req.user?.role}) cleared staff=${staff._id} (${staff.employeeId}) samples=${had}`);
+        return res.json({
+            success: true,
+            employee_id: staff.employeeId,
+            name: staff.name,
+            cleared: had,
+        });
+    } catch (e) {
+        console.error('[kioskClearFace]', e.message);
+        return res.status(500).json({ success: false, message: 'Could not clear enrolled face.' });
+    }
+};
+
 module.exports = {
     login,
     googleLogin,
@@ -2166,5 +2206,6 @@ module.exports = {
     identifyFace,
     kioskEnrolledList,
     kioskEmployeeDetail,
+    kioskClearFace,
     checkActive
 };
