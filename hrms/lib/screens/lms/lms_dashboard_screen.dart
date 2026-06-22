@@ -9,6 +9,7 @@ import '../../widgets/bottom_navigation_bar.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../../config/constants.dart';
 import '../../utils/error_message_utils.dart';
+import '../../utils/snackbar_utils.dart';
 import '../../services/lms_service.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
@@ -566,22 +567,14 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
     if (res['success'] == true) {
       await _loadCourses();
       if (mounted) _tabController.animateTo(0);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Enrolled successfully'),
-          backgroundColor: AppColors.primary,
-        ),
-      );
+      SnackBarUtils.showSnackBar(context, 'Enrolled successfully');
     } else {
       final msg = res['message']?.toString() ?? 'Enroll failed';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            ErrorMessageUtils.isTechnicalMessage(msg)
-                ? 'Something went wrong. Please try again.'
-                : msg,
-          ),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.isTechnicalMessage(msg)
+            ? 'Something went wrong. Please try again.'
+            : msg,
       );
     }
   }

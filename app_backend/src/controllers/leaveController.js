@@ -831,13 +831,19 @@ const getLeaveBalance = async (req, res) => {
         const staff = await Staff.findById(staffId).populate('leaveTemplateId');
         const totalAllowed = staff ? await getTotalAllowedFromTemplate(staff) : 0;
 
-        // Current-month leave usage. The template allocation is a MONTHLY quota,
-        // so used/pending reset each month and only consider leaves overlapping the
-        // current calendar month. This keeps the entitlement card consistent with
-        // the month-scoped per-type summary cards (see getLeaveSummary's range).
+        // Leave usage for the TARGET month. The template allocation is a MONTHLY
+        // quota that resets each month, so used/pending only consider leaves
+        // overlapping the requested calendar month. The client passes the month of
+        // the leave being applied for (?month=&year=) so a future-month application
+        // draws against that month's fresh quota rather than this month's already
+        // consumed/pending days; absent params it defaults to the current month.
+        // Keeps this consistent with the month-scoped per-type cards (getLeaveTypes).
+        const { month, year } = req.query;
         const now = new Date();
-        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+        const targetMonth = month ? parseInt(month, 10) - 1 : now.getUTCMonth();
+        const targetYear = year ? parseInt(year, 10) : now.getUTCFullYear();
+        const monthStart = new Date(Date.UTC(targetYear, targetMonth, 1, 0, 0, 0, 0));
+        const monthEnd = new Date(Date.UTC(targetYear, targetMonth + 1, 0, 23, 59, 59, 999));
 
         // Count only the days that fall WITHIN the current month (see
         // sumLeaveDaysInRange) — a leave straddling the month boundary must not
@@ -867,7 +873,7 @@ const getLeaveBalance = async (req, res) => {
         console.log('[LeaveBalance]', {
             staffId: staffId?.toString?.() || String(staffId || ''),
             leaveTemplateId: staff?.leaveTemplateId?._id?.toString?.() || null,
-            month: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`,
+            month: `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}`,
             totalAllowed,
             usedDays,
             pendingLeaveDays,

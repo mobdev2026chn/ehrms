@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../utils/snackbar_utils.dart';
 import '../../services/lms_admin_service.dart';
 import '../../widgets/app_tab_loader.dart';
 import 'lms_admin_utils.dart';
@@ -86,11 +87,9 @@ class _LmsAdminLiveSessionsScreenState
                   ),
                 ),
                 ElevatedButton.icon(
-                  onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                          'Scheduling sessions is managed from the web admin console.'),
-                    ),
+                  onPressed: () => SnackBarUtils.showSnackBar(
+                    context,
+                    'Scheduling sessions is managed from the web admin console.',
                   ),
                   icon: const Icon(Icons.add, size: 18),
                   label: const Text('Schedule'),

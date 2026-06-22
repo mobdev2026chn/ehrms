@@ -9,6 +9,7 @@ import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../notifications/notifications_screen.dart';
+import '../profile/profile_screen.dart';
 
 class HolidaysScreen extends StatefulWidget {
   final int? dashboardTabIndex;
@@ -31,6 +32,8 @@ class _HolidaysScreenState extends State<HolidaysScreen>
   bool _isLoading = true;
   String? _errorMessage;
   int _selectedYear = DateTime.now().year;
+  // Monthly tab defaults to the current month and shows only that month.
+  int _selectedMonth = DateTime.now().month;
   late TabController _tabController;
   final String _searchQuery = '';
 
@@ -39,6 +42,21 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     DateTime.now().year,
     DateTime.now().year + 1,
     DateTime.now().year + 2,
+  ];
+
+  static const List<String> _monthNames = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
 
   String get _cacheKey => 'holidays_$_selectedYear';
@@ -113,7 +131,17 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     }
   }
 
-  void _goToToday() => _onYearChanged(DateTime.now().year);
+  void _onMonthChanged(int? month) {
+    if (month != null && _selectedMonth != month) {
+      setState(() => _selectedMonth = month);
+    }
+  }
+
+  void _goToToday() {
+    final now = DateTime.now();
+    _onMonthChanged(now.month);
+    _onYearChanged(now.year);
+  }
 
   List<Holiday> _getHolidaysForMonth(int month) {
     return _holidays
@@ -121,9 +149,17 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         .toList();
   }
 
+  /// Holidays in the month selected on the Monthly tab.
+  List<Holiday> get _selectedMonthHolidays =>
+      _getHolidaysForMonth(_selectedMonth);
+
   /// Upcoming (not-yet-passed) holidays in the selected year.
   List<Holiday> get _upcomingHolidays =>
       _holidays.where((h) => !h.isPast).toList();
+
+  /// Upcoming (not-yet-passed) holidays within the selected month.
+  List<Holiday> get _upcomingMonthHolidays =>
+      _selectedMonthHolidays.where((h) => !h.isPast).toList();
 
   /// Next upcoming holiday (falls back to the first holiday of the year).
   Holiday? get _nextHoliday {
@@ -233,6 +269,113 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     if (picked != null) _onYearChanged(picked);
   }
 
+  Future<void> _showMonthPickerSheet(BuildContext context) async {
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 24,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Select month',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: List.generate(12, (i) {
+                      final month = i + 1;
+                      final selected = month == _selectedMonth;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 2),
+                        child: Material(
+                          color: selected
+                              ? AppColors.primary.withValues(alpha: 0.12)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () => Navigator.pop(ctx, month),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    selected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.circle_outlined,
+                                    color: selected
+                                        ? AppColors.primary
+                                        : AppColors.textSecondary,
+                                    size: 22,
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Text(
+                                    _monthNames[i],
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: selected
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked != null) _onMonthChanged(picked);
+  }
+
   // ───────────────────────────────────────────────────────────────────────
   // Scaffold
   // ───────────────────────────────────────────────────────────────────────
@@ -257,17 +400,20 @@ class _HolidaysScreenState extends State<HolidaysScreen>
               MaterialPageRoute(builder: (_) => const NotificationsScreen()),
             ),
           ),
-          Builder(
-            builder: (ctx) => Padding(
-              padding: const EdgeInsets.only(right: 14, left: 4),
-              child: GestureDetector(
-                onTap: () => Scaffold.maybeOf(ctx)?.openDrawer(),
-                child: CircleAvatar(
-                  radius: 18,
-                  backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-                  child: Icon(Icons.person_rounded,
-                      color: AppColors.primary, size: 22),
+          Padding(
+            padding: const EdgeInsets.only(right: 14, left: 4),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const ProfileScreen(dashboardTabIndex: 3),
                 ),
+              ),
+              child: CircleAvatar(
+                radius: 18,
+                backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+                child: Icon(Icons.person_rounded,
+                    color: AppColors.primary, size: 22),
               ),
             ),
           ),
@@ -368,7 +514,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                     _buildBalanceCard(),
                     const SizedBox(height: 24),
                     Text(
-                      'Upcoming Holidays',
+                      '${_monthNames[_selectedMonth - 1]} Holidays',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
@@ -376,13 +522,13 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                       ),
                     ),
                     const SizedBox(height: 12),
-                    if (_holidays.isEmpty)
+                    if (_selectedMonthHolidays.isEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 40),
                         child: _buildEmptyWidget(),
                       )
                     else
-                      ..._holidays.map(
+                      ..._selectedMonthHolidays.map(
                         (h) => Padding(
                           padding: const EdgeInsets.only(bottom: 12),
                           child: _buildHolidayCard(h),
@@ -396,6 +542,27 @@ class _HolidaysScreenState extends State<HolidaysScreen>
   Widget _buildYearRow() {
     return Row(
       children: [
+        // Month selector "June ⌄"
+        GestureDetector(
+          onTap: () => _showMonthPickerSheet(context),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _monthNames[_selectedMonth - 1],
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.keyboard_arrow_down_rounded,
+                  color: AppColors.textPrimary, size: 24),
+            ],
+          ),
+        ),
+        const SizedBox(width: 16),
         // Year selector "2026 ⌄"
         GestureDetector(
           onTap: () => _showYearPickerSheet(context),
@@ -435,7 +602,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
   }
 
   Widget _buildBalanceCard() {
-    final remaining = _upcomingHolidays.length;
+    final remaining = _upcomingMonthHolidays.length;
     return Container(
       height: 120,
       decoration: BoxDecoration(

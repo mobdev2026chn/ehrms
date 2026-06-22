@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 
 class PinDestinationResult {
   final double lat;
@@ -131,12 +132,9 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
 
   void _onConfirm() {
     if (_pinnedLocation == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Please tap or long-press on the map to set destination',
-          ),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Please tap or long-press on the map to set destination',
       );
       return;
     }

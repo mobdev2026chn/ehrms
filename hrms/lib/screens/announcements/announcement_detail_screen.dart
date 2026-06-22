@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config/constants.dart';
 import '../../services/interaction_service.dart';
 import '../../utils/error_message_utils.dart';
+import '../../utils/snackbar_utils.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/oriented_image.dart';
 
@@ -461,12 +462,9 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
       final ok = res['success'] != false;
       if (!ok) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              res['message']?.toString() ?? 'Failed to send message',
-            ),
-          ),
+        SnackBarUtils.showSnackBar(
+          context,
+          res['message']?.toString() ?? 'Failed to send message',
         );
         return;
       }
@@ -474,10 +472,9 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
       await _syncReadAndSeen();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(ErrorMessageUtils.toUserFriendlyMessage(e)),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.toUserFriendlyMessage(e),
       );
     } finally {
       if (mounted) setState(() => _sendingMessage = false);
@@ -495,13 +492,36 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
 
   static List<String> _getImageUrls(Map<String, dynamic> a) {
     final list = <String>[];
-    final cover = a['coverImage']?.toString();
-    if (cover != null && cover.trim().isNotEmpty) {
-      if (cover.startsWith('http://') || cover.startsWith('https://')) {
-        list.add(cover);
-      } else {
-        final path = cover.startsWith('/') ? cover : '/$cover';
-        list.add('${AppConstants.fileBaseUrl}$path');
+    void addImage(String? raw) {
+      if (raw == null) return;
+      final v = raw.trim();
+      if (v.isEmpty) return;
+      final url = (v.startsWith('http://') || v.startsWith('https://'))
+          ? v
+          : '${AppConstants.fileBaseUrl}${v.startsWith('/') ? v : '/$v'}';
+      if (!list.contains(url)) list.add(url);
+    }
+
+    // Top-level cover image and the per-subsection image(s). Each subsection is
+    // stored by the web as `{title, image, content}` (single string under
+    // `image`), so also look across the singular/plural/url variants and accept
+    // either a String or a List of Strings.
+    for (final key in const [
+      'coverImage',
+      'image',
+      'imageUrl',
+      'photo',
+      'images',
+      'imageUrls',
+      'photos',
+    ]) {
+      final v = a[key];
+      if (v is String) {
+        addImage(v);
+      } else if (v is List) {
+        for (final e in v) {
+          if (e is String) addImage(e);
+        }
       }
     }
     final attachments = a['attachments'];

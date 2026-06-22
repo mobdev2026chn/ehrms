@@ -54,13 +54,19 @@ class FaceDetectionResult {
   /// a user-facing reason the shot is NOT acceptable, or null when it passes. This
   /// is image validation only — NOT identity matching — so it never depends on a
   /// stored reference and can't lock anyone out.
-  String? qualityIssue() {
+  ///
+  /// [relaxed] is used by face ENROLLMENT only: it keeps the single-face guard but
+  /// drops the eyes-open (liveness-lite) and frontal-yaw checks so a clear, well-lit
+  /// enrollment photo is accepted even if the person blinked or sits slightly off
+  /// straight. Punch/break leave [relaxed] false, so their strict gate is unchanged.
+  String? qualityIssue({bool relaxed = false}) {
     if (faceCount == 0) {
       return 'No face detected. Center your face in the circle and try again.';
     }
     if (faceCount > 1) {
       return 'Multiple faces detected. Keep only your face in frame.';
     }
+    if (relaxed) return null;
     if (eyesOpen == false) {
       return 'Keep your eyes open and look at the camera.';
     }

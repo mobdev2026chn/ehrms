@@ -771,7 +771,20 @@ const resolveEffectiveShiftRaw = (shifts, wrapper, attendanceDate, rotationAncho
         const d = att.getUTCDate();
         const jsDow = new Date(Date.UTC(y, mo, d)).getUTCDay();
         const row = entries.find((e) => e && Number(e.day) === jsDow);
-        if (!row || row.shiftId == null) return wrapper;
+        if (!row) return wrapper;
+        // Day-wise week-off: a weekday entry can be marked isWeekOff (the "Week Off" slots in the
+        // rotation grid) instead of carrying a shift. Flag it the same way byWeekCalendar does so
+        // getShiftTimings surfaces weekOff and the calendar renders "Week Off" rather than the
+        // wrapper's default window for that weekday.
+        if (parseBoolLoose(row.isWeekOff)) {
+            return {
+                ...wrapper,
+                __rotationWeekOff: true,
+                __rotationDate: formatDateUtcYmd(att),
+                __rotationType: rotationType
+            };
+        }
+        if (row.shiftId == null) return wrapper;
         const needle = normalizeShiftObjectIdStr(row.shiftId);
         const effective = shifts.find((s) => {
             if (!isLeafShiftRow(s) || s._id == null) return false;

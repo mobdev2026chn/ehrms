@@ -302,61 +302,46 @@ class _BreakScreenState extends State<BreakScreen> {
     return 'Break left: ${BreakSummary.formatDuration(remainingSec)}';
   }
 
-  /// Reason a NEW break may not be started because of the shift's break policy,
-  /// or null when starting is allowed. Ending an already-running break is always
-  /// allowed. Two scenarios are blocked:
-  ///  - disabled + quota = 0 → "not configured"
-  ///  - enabled + not configured → "not configured"
-  /// disabled + quota > 0 is NOT blocked here — break is allowed (all time → fine).
-  String? get _breakPolicyBlockMessage {
-    if (_isOnBreak) return null;
+  /// Informational policy notice for the current break state, or null when breaks
+  /// are normally configured (enabled + allowance). Break actions are ALWAYS
+  /// allowed — this is purely informational and tells the employee the break time
+  /// will be processed with Fine. Prefers the server-authored canonical wording
+  /// (summary.breakNotice); falls back to the exact policy strings for older
+  /// backends that don't send it. The four scenarios:
+  ///  - disabled + quota > 0  (S3): "Break is disabled..."
+  ///  - disabled + quota = 0  (S4): "Break is not configured..."
+  ///  - enabled  + quota = 0  (S2): "Break is not configured..."
+  String? get _breakInfoNotice {
     final summary = _breakSummary;
     if (summary == null) return null;
+    final serverNotice = summary.breakNotice;
+    if (serverNotice != null && serverNotice.trim().isNotEmpty) {
+      return serverNotice;
+    }
+    // Client fallback (exact policy wording) when the backend omits breakNotice.
     if (summary.policyDisabled) {
-      // disabled + quota > 0: allow (informational notice shown separately)
-      if (summary.configuredAllowedMinutes > 0) return null;
-      return 'Break is not configured for your shift. Contact HR.';
+      return summary.configuredAllowedMinutes > 0
+          ? 'Break is disabled for your shift.\n'
+              'Contact HR to enable.\n'
+              'Break duration will be processed with Fine.' // S3
+          : 'Break is not configured for your shift. Contact HR.\n'
+              'Break duration will be processed with Fine.'; // S4
     }
     if (summary.policyEnabled && !summary.policyConfigured) {
-      return 'Break is not configured for your shift. Contact HR.';
+      return 'Break is not configured for your shift. Contact HR.\n'
+          'Break duration will be processed with Fine.'; // S2
     }
-    return null;
+    return null; // S1 normal
   }
 
-  /// Informational notice when break is disabled but a quota was configured
-  /// (Scenario 3). Break is still allowed in this state; all time goes to Fine.
-  /// Shown both before starting a break and while a break is active.
-  /// Returns null when not in this state.
-  String? get _breakDisabledWithQuotaNotice {
-    final summary = _breakSummary;
-    if (summary == null) return null;
-    if (!summary.policyIsDisabledWithQuota) return null;
-    final allowed = summary.configuredAllowedMinutes;
-    final takenMin = summary.totalBreakMin;
-    final fineDetail = takenMin > 0
-        ? '$takenMin min taken today will be added to Fine.'
-        : '${allowed > 0 ? "Up to $allowed min" : "All break time"} will be added to Fine.';
-    return 'Break is disabled for your shift.\n'
-        'Contact HR to enable.\n'
-        '$fineDetail';
-  }
-
-  /// Whether starting a NEW break is blocked by the shift's break policy.
-  bool get _startBreakBlockedByPolicy => _breakPolicyBlockMessage != null;
+  /// Breaks are ALWAYS allowed by policy — the Start Break action is never blocked.
+  bool get _startBreakBlockedByPolicy => false;
 
   Future<void> _submit() async {
     if (_isLoading) return;
-    // The shift may have breaks turned off — block starting a new one up front
-    // (the backend enforces this too), but never block ending an active break.
-    final policyBlock = _breakPolicyBlockMessage;
-    if (policyBlock != null) {
-      SnackBarUtils.showSnackBar(
-        context,
-        policyBlock,
-        isError: true,
-      );
-      return;
-    }
+    // Break actions are ALWAYS allowed (policy). We never block starting a break;
+    // the informational notice (_breakInfoNotice) already tells the employee the
+    // time will be processed with Fine when the shift is disabled / has no allowance.
     // Capture the break instant at the moment the button is tapped, before the
     // location/selfie/network work below, so loading latency does not push the
     // saved break start/end time forward.
@@ -432,9 +417,15 @@ class _BreakScreenState extends State<BreakScreen> {
 
     if (result['success'] == true) {
       if (_isOnBreak) {
-        final endMsg = (_breakSummary?.policyIsDisabledWithQuota == true)
-            ? 'Break ended. Your break time will be added to Fine.'
-            : 'Break ended successfully';
+        // Prefer the exact server policy notice (entire-duration fine, or
+        // "Allocated break time exceeded by N minutes."). Fall back to the
+        // disabled-with-quota wording, then the plain success message.
+        final serverNotice = result['notice'];
+        final endMsg = (serverNotice is String && serverNotice.trim().isNotEmpty)
+            ? serverNotice
+            : (_breakSummary?.policyIsDisabledWithQuota == true)
+                ? 'Break ended. Your break time will be added to Fine.'
+                : 'Break ended successfully';
         SnackBarUtils.showSnackBar(context, endMsg);
         Navigator.of(context).pop(true);
         return;
@@ -735,34 +726,10 @@ class _BreakScreenState extends State<BreakScreen> {
                         ),
                       const SizedBox(height: 16),
                     ],
-                    if (_breakPolicyBlockMessage != null) ...[
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.red.shade200),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(Icons.block, size: 16, color: Colors.red.shade700),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _breakPolicyBlockMessage!,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.red.shade800,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    if (_breakDisabledWithQuotaNotice != null) ...[
+                    // Informational policy notice (exact tooltip wording) when the
+                    // break time will be processed with Fine. Break is still allowed —
+                    // shown as an info notice, never a block.
+                    if (_breakInfoNotice != null) ...[
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -777,7 +744,7 @@ class _BreakScreenState extends State<BreakScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                _breakDisabledWithQuotaNotice!,
+                                _breakInfoNotice!,
                                 style: TextStyle(
                                   fontWeight: FontWeight.w500,
                                   color: Colors.orange.shade800,

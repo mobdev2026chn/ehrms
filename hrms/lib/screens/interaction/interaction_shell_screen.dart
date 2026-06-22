@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
+import '../../utils/snackbar_utils.dart';
 import '../../services/interaction_service.dart';
 import '../../services/interaction_socket_service.dart';
 import '../../widgets/app_drawer.dart';
@@ -78,8 +79,9 @@ class _InteractionShellScreenState extends State<InteractionShellScreen>
       unawaited(InteractionService.instance.getLmsMyAccess());
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not start chat connection. Pull to refresh.')),
+        SnackBarUtils.showSnackBar(
+          context,
+          'Could not start chat connection. Pull to refresh.',
         );
       }
     }

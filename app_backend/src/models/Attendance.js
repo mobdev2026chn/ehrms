@@ -47,6 +47,13 @@ const attendanceSchema = new mongoose.Schema(
     bufferTime: { type: Number, default: 0 },
     /** Overtime pay in base currency when OT minutes >= shift otBufferMinutes and payroll fine/OT formula applies. */
     overtimeAmount: { type: Number, default: 0 },
+    /**
+     * Canonical overtime policy notice for the day (exact tooltip wording):
+     *  - "Overtime is disabled for you."        → buffer configured but staff not allowed
+     *  - "Overtime is not configured. Contact HR." → shift has no overtime buffer
+     *  - "" (empty)                              → overtime is eligible (no notice)
+     */
+    overtimeNotice: { type: String, default: '' },
     /** Total fine duration in MINUTES (late + early). Display as hours by dividing by 60. */
     fineHours: Number,
     lateMinutes: Number,

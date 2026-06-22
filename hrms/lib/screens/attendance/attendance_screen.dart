@@ -153,6 +153,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   bool _checkInAllowed = true;
   bool _checkOutAllowed = true;
   bool _shiftAssigned = true;
+  bool _weeklyOffAssigned = true;
   bool _isHoliday = false;
   bool _isWeeklyOff = false;
   bool _isAlternateWorkDate = false;
@@ -399,6 +400,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               _checkInAllowed = responseBody['checkInAllowed'] ?? true;
               _checkOutAllowed = responseBody['checkOutAllowed'] ?? true;
               _shiftAssigned = responseBody['shiftAssigned'] as bool? ?? true;
+              _weeklyOffAssigned =
+                  responseBody['weeklyOffAssigned'] as bool? ?? true;
               _isHoliday = responseBody['isHoliday'] ?? false;
               _isWeeklyOff = responseBody['isWeeklyOff'] ?? false;
               _isAlternateWorkDate =
@@ -1084,6 +1087,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               _checkInAllowed = responseBody['checkInAllowed'] ?? true;
               _checkOutAllowed = responseBody['checkOutAllowed'] ?? true;
               _shiftAssigned = responseBody['shiftAssigned'] as bool? ?? true;
+              _weeklyOffAssigned =
+                  responseBody['weeklyOffAssigned'] as bool? ?? true;
               _isHoliday = responseBody['isHoliday'] ?? false;
               _isWeeklyOff = responseBody['isWeeklyOff'] ?? false;
               _isAlternateWorkDate =
@@ -1573,14 +1578,23 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         record['break'] is Map ? Map<String, dynamic>.from(record['break'] as Map) : null;
     final breakFineMins = breakMapForFine?['totalBreakFineMins'] as num?;
     final breakFineAmount = breakMapForFine?['totalBreakFineAmount'] as num?;
-    final permissionFineMins = record['permissionFineMinutes'] as num?;
-    final permissionFineAmount = record['permissionFineAmount'] as num?;
+    // Permission fine = daily-allowance EXCEED (regular) + custom-window OVERRUN.
+    // Both participate in the day's Total Fine per the attendance policy, so the
+    // "Permission Fine" row and Total Fine Min sum BOTH. The overrun amount is
+    // already folded into record.fineAmount (settles at punch-out), so only the
+    // regular permission amount is added separately below — never the overrun twice.
+    final permissionRegularFineMins = record['permissionFineMinutes'] as num?;
+    final permissionRegularFineAmount = record['permissionFineAmount'] as num?;
+    final permissionOverrunMins = record['permissionOverrunMinutes'] as num?;
+    final permissionOverrunFineAmount = record['permissionOverrunFineAmount'] as num?;
+    final permissionFineMins = (permissionRegularFineMins?.toDouble() ?? 0) +
+        (permissionOverrunMins?.toDouble() ?? 0);
     final totalFineMinsDisplay = (fineHours?.toDouble() ?? 0) +
         (breakFineMins?.toDouble() ?? 0) +
-        (permissionFineMins?.toDouble() ?? 0);
+        permissionFineMins;
     final totalFineAmountDisplay = (fineAmount?.toDouble() ?? 0) +
         (breakFineAmount?.toDouble() ?? 0) +
-        (permissionFineAmount?.toDouble() ?? 0);
+        (permissionRegularFineAmount?.toDouble() ?? 0);
     final hasFineInfo =
         (lateMinutes != null && lateMinutes > 0) ||
         (earlyMinutes != null && earlyMinutes > 0) ||
@@ -1588,8 +1602,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         (fineAmount != null && fineAmount > 0) ||
         (breakFineMins != null && breakFineMins > 0) ||
         (breakFineAmount != null && breakFineAmount > 0) ||
-        (permissionFineMins != null && permissionFineMins > 0) ||
-        (permissionFineAmount != null && permissionFineAmount > 0);
+        (permissionFineMins > 0) ||
+        (permissionOverrunFineAmount != null && permissionOverrunFineAmount > 0) ||
+        (permissionRegularFineAmount != null && permissionRegularFineAmount > 0);
 
     // Permission usage details (stored in attendance collection for this date)
     final permissionLateMinutes = _parseLogNumericValue(
@@ -1789,8 +1804,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                               '${breakFineMins.toInt()} mins',
                               valueColor: Colors.orange.shade700,
                             ),
-                          if (permissionFineMins != null &&
-                              permissionFineMins.toInt() > 0)
+                          if (permissionFineMins > 0)
                             _buildDayDetailRow(
                               'Permission Fine',
                               '${permissionFineMins.toInt()} mins',
@@ -5399,25 +5413,25 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       ),
                     ),
                     // Figma Attendance-1: amber "View All" link → existing "All" filter.
-                    InkWell(
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: () {
-                        setState(() { _activeFilter = 'All'; _page = 1; });
-                        final now = DateTime.now();
-                        _fetchMonthData(now.year, now.month);
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                        child: Text(
-                          'View All',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    ),
+                    // InkWell(
+                    //   borderRadius: BorderRadius.circular(8),
+                    //   onTap: () {
+                    //     setState(() { _activeFilter = 'All'; _page = 1; });
+                    //     final now = DateTime.now();
+                    //     _fetchMonthData(now.year, now.month);
+                    //   },
+                    //   child: Padding(
+                    //     padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                    //     child: Text(
+                    //       'View All',
+                    //       style: TextStyle(
+                    //         fontSize: 13,
+                    //         fontWeight: FontWeight.w600,
+                    //         color: AppColors.primary,
+                    //       ),
+                    //     ),
+                    //   ),
+                    // ),
                   ],
                 );
               },
@@ -5871,7 +5885,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               actions: [
                 if (_showHistoryView)
                   PopupMenuButton<String>(
-                    icon: Icon(Icons.filter_list, color: AppColors.textPrimary),
+                    icon: Icon(Icons.filter_alt, color: AppColors.primary),
                     onSelected: (value) {
                       setState(() { _activeFilter = value; _page = 1; });
                       if (value == 'All' || value == 'Late' || value == 'Low Hours') {
@@ -6264,6 +6278,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     if (!isValidAttendanceTemplateMap(_attendanceTemplate)) {
       await _showValidationAlert('Template not mapped. Contact HR.');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_weeklyOffAssigned != true) {
+      await _showValidationAlert(
+        'Weekly Off template is not assigned. Contact HR.',
+      );
       _setPunchActionInProgress(false);
       return;
     }

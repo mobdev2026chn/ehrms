@@ -8,6 +8,10 @@ const digitalOceanService = require('../services/digitalOceanService');
 const { getEffectiveFineConfig, calculateFineAmount } = require('../utils/fineCalculationHelper');
 const { getShiftTimings, calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
 const { setFaceReferenceUrl } = require('../utils/faceReference');
+const {
+    breakExceeded,
+    resolveBreakNotice
+} = require('../constants/attendancePolicyMessages');
 
 function buildBreakLocation(payload = {}) {
     const latitude = payload.latitude ?? payload.lat ?? null;
@@ -277,26 +281,42 @@ async function getBreakFineContext(staff, dayDate) {
     const policyEnabledExplicit = parseBreakPolicyEnabled(shiftBreakPolicy);
     const policyEnabled = shiftBreakPolicy?.enabled === true;
     const configuredAllowedBreakMin = Math.max(0, Number(shiftBreakPolicy?.allowedMinutes || 0));
-    // Scenario 3: disabled + quota > 0 → breaks are allowed but ALL minutes go to fine.
+    // Break policy scenarios (breaks are ALWAYS allowed — never blocked):
+    //   S1 enabled  + quota > 0 : allowance = quota; only the EXCEEDED minutes are fined.
+    //   S2 enabled  + quota = 0 : allowance = 0; ENTIRE break duration is fined.
+    //   S3 disabled + quota > 0 : allowance = 0; ENTIRE break duration is fined.
+    //   S4 disabled + quota = 0 : allowance = 0; ENTIRE break duration is fined.
+    //   Legacy (no policy configured, enabledExplicit === null): default 60-min display
+    //   allowance, no fine — preserves behaviour for shifts that never set a break policy.
     const isDisabledWithQuota = policyEnabledExplicit === false && configuredAllowedBreakMin > 0;
     const hasConfiguredAllowance = policyEnabled && configuredAllowedBreakMin > 0;
-    // Business rules:
-    // - Enabled + quota > 0: allowance = configured value.
-    // - Disabled + quota > 0: allowance = 0 so every minute is "exceeded" and fined.
-    // - Enabled/disabled + quota = 0: use default 60-min display allowance (no fines).
-    const effectiveAllowedBreakMin = hasConfiguredAllowance
-        ? configuredAllowedBreakMin
-        : (isDisabledWithQuota ? 0 : DEFAULT_BREAK_ALLOWED_MINUTES);
+    let effectiveAllowedBreakMin;
+    if (policyEnabledExplicit === false) {
+        effectiveAllowedBreakMin = 0;                                  // S3, S4
+    } else if (policyEnabled) {
+        effectiveAllowedBreakMin = configuredAllowedBreakMin;          // S1 (quota) or S2 (0)
+    } else {
+        effectiveAllowedBreakMin = DEFAULT_BREAK_ALLOWED_MINUTES;      // legacy null
+    }
     const isUnlimitedBreak = false;
-    // Fines apply when:
-    //   (a) enabled + quota > 0 + fineEnabled, OR
-    //   (b) disabled + quota > 0 (all break is fine, open shifts excluded).
+    // Fines apply (open shifts always excluded — break time is captured by the
+    // early-exit shortfall there) when:
+    //   - disabled (S3/S4): entire break duration is fine, OR
+    //   - enabled + quota = 0 (S2): entire break duration is fine, OR
+    //   - enabled + quota > 0 (S1): exceeded minutes are fine when the shift opts in
+    //     to break fines (fineEnabled).
     const breakFineEnabled =
         !isOpenShift && (
-            isDisabledWithQuota ||
+            policyEnabledExplicit === false ||
+            (policyEnabled && configuredAllowedBreakMin === 0) ||
             (policyEnabled && hasConfiguredAllowance && shiftBreakPolicy?.fineEnabled === true)
         );
     const allowedBreakMin = effectiveAllowedBreakMin;
+    // Canonical policy notice for this break state (null for the normal S1 case).
+    const breakNotice = resolveBreakNotice({
+        enabledExplicit: policyEnabledExplicit,
+        allocatedMinutes: configuredAllowedBreakMin
+    });
 
     let fineConfig = payrollFineConfig;
     if (breakFineEnabled) {
@@ -351,7 +371,10 @@ async function getBreakFineContext(staff, dayDate) {
             allowedMinutes: effectiveAllowedBreakMin,
             fineEnabled: breakFineEnabled,
             fineType: String(shiftBreakPolicy?.fineType || '1xSalary'),
-            customFinePerHour: Math.max(0, Number(shiftBreakPolicy?.customFinePerHour || 0))
+            customFinePerHour: Math.max(0, Number(shiftBreakPolicy?.customFinePerHour || 0)),
+            // Canonical policy notice (exact tooltip wording) for the current state;
+            // null when breaks are normally configured (S1) and not exceeded.
+            notice: breakNotice
         },
         dailyNet,
         dailyGross,
@@ -606,6 +629,10 @@ exports.getTodayBreakSummary = async (req, res) => {
                 configuredAllowedMinutes: fineCtx.breakPolicy.configuredAllowedMinutes ?? 0,
                 // True when disabled + quota > 0: breaks allowed, all minutes → fine.
                 policyIsDisabledWithQuota: fineCtx.breakPolicy.isDisabledWithQuota ?? false,
+                // Canonical policy notice (exact tooltip wording) for misconfigured
+                // states (disabled, or enabled-with-no-allowance). null when breaks are
+                // normally configured. Breaks are ALWAYS allowed; this is informational.
+                breakNotice: fineCtx.breakPolicy.notice ?? null,
                 isUnlimited,
                 allowedMinutes,
                 allowedSeconds,
@@ -653,25 +680,13 @@ exports.startBreak = async (req, res) => {
         // and is back-filled once the upload finishes.
         const resolvedStartTime = resolveServerBreakStartTime(startTime);
 
-        // Authoritative break-policy gate: the shift's breakPolicy decides whether
-        // breaks are allowed at all. The app already hides the break button when the
-        // policy is disabled, but enforce it server-side too so a break can never be
-        // started for a shift that explicitly turned breaks off.
+        // Break actions are ALWAYS allowed regardless of the shift's break policy.
+        // The policy only decides how the break time is fined (entire duration vs the
+        // exceeded portion). When the shift is disabled / has no allowance configured,
+        // we still allow the break and surface the canonical policy notice so the user
+        // knows the time will be processed with Fine. (No 403 block here anymore.)
         const startFineCtx = await getBreakFineContext(staff, resolvedStartTime);
-        // Block only when no quota is configured (quota = 0), regardless of enabled/disabled.
-        // disabled + quota > 0 (isDisabledWithQuota): break is ALLOWED, all minutes go to fine.
-        if (startFineCtx.breakPolicy.enabledExplicit === false && !startFineCtx.breakPolicy.isDisabledWithQuota) {
-            return res.status(403).json({
-                success: false,
-                message: 'Break is not configured for your shift. Contact HR.'
-            });
-        }
-        if (startFineCtx.breakPolicy.enabled === true && startFineCtx.breakPolicy.configured === false) {
-            return res.status(403).json({
-                success: false,
-                message: 'Break is not configured for your shift. Contact HR.'
-            });
-        }
+        const startBreakNotice = startFineCtx.breakPolicy.notice || null;
 
         // Breaks are only valid while the employee is actively punched in for that day:
         // a break cannot start before punch-in, nor after punch-out has happened.
@@ -760,6 +775,9 @@ exports.startBreak = async (req, res) => {
         return res.status(201).json({
             success: true,
             message: 'Break started successfully',
+            // Exact policy tooltip when the break time will be fined (disabled / no
+            // allowance). null when breaks are normally configured.
+            notice: startBreakNotice,
             data: serializeBreak(doc)
         });
     } catch (error) {
@@ -1011,9 +1029,24 @@ exports.endBreak = async (req, res) => {
             staff._id
         );
 
+        // Exact policy notice for the break that just ended:
+        //   S2/S3/S4 (misconfigured): the entire-duration "...processed with Fine" notice.
+        //   S1 (normal, exceeded the allowance): "Allocated break time exceeded by N minutes."
+        // null when within the allowance and normally configured.
+        const exceededMinutes = Math.max(0, totalFineMinsAfterCurrent);
+        let breakEndNotice = fineCtx.breakPolicy.notice || null;
+        if (!breakEndNotice && exceededMinutes > 0) {
+            breakEndNotice = breakExceeded(exceededMinutes);
+        }
+
         return res.status(200).json({
             success: true,
             message: 'Break ended successfully',
+            notice: breakEndNotice,
+            // Cumulative break minutes over the day's allowance (drives the
+            // "exceeded by {N} minutes" tooltip on the client).
+            exceededMinutes,
+            breakFineMins: currentBreakFineMins,
             data: serializeBreak(doc)
         });
     } catch (error) {

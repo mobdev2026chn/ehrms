@@ -210,9 +210,11 @@ class _SplashScreenState extends State<SplashScreen>
       // Theme load failure must not block startup; default colour is already set.
     }
 
-    // Short branding window so the entrance animation is visible. The auth/redirect
-    // work below also runs network calls, so real cold-start time is gated on those.
-    await Future.delayed(const Duration(milliseconds: 600));
+    // Hold until the entrance animation has fully played out. The intro starts
+    // after a 250ms delay and runs for 1600ms (finishing at ~1850ms), so we wait
+    // ~2000ms for it to settle. The auth/redirect work below also runs network
+    // calls, so real cold-start time is gated on those.
+    await Future.delayed(const Duration(milliseconds: 2000));
 
     // If the API server (baseUrl) changed since last run, the stored token was
     // signed by a different backend and will 401 on every protected call. Clear

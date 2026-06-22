@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
 import '../../services/alarm_service.dart';
 import '../../services/fcm_service.dart';
+import '../../utils/snackbar_utils.dart';
 
 /// Bottom sheet to set an alarm. Alarm will ring and show a notification even when app is closed.
 class AlarmSetSheet extends StatefulWidget {
@@ -69,11 +70,9 @@ class _AlarmSetSheetState extends State<AlarmSetSheet> {
     if (!mounted) return;
     if (ok) {
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Alarm set for ${DateFormat.jm().format(scheduled)}'),
-          backgroundColor: AppColors.primary,
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Alarm set for ${DateFormat.jm().format(scheduled)}',
       );
     } else {
       _showAlarmFailedDialog();
@@ -110,9 +109,7 @@ class _AlarmSetSheetState extends State<AlarmSetSheet> {
     await AlarmService.cancelAllAlarms(FcmService.localNotifications);
     if (mounted) {
       setState(() => _nextAlarm = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Alarm canceled')),
-      );
+      SnackBarUtils.showSnackBar(context, 'Alarm canceled');
     }
   }
 

@@ -10,6 +10,7 @@ import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/services/geo/places_service.dart';
 import 'package:hrms/screens/geo/start_ride_screen.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
@@ -614,12 +615,9 @@ class _DestinationSearchSheetState extends State<_DestinationSearchSheet> {
           details = await PlacesService.getPlaceDetails(p.placeId);
         } catch (_) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Could not get coordinates. Try another result or set destination on the map in the next step.',
-                ),
-              ),
+            SnackBarUtils.showSnackBar(
+              context,
+              'Could not get coordinates. Try another result or set destination on the map in the next step.',
             );
           }
         }

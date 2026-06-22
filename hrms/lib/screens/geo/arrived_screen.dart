@@ -19,6 +19,7 @@ import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/task_movement_summary_util.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ArrivedScreen extends StatefulWidget {
@@ -899,10 +900,10 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                               } else {
                                                 msg = '$msg: ${e.toString()}';
                                               }
-                                              ScaffoldMessenger.of(
+                                              SnackBarUtils.showSnackBar(
                                                 context,
-                                              ).showSnackBar(
-                                                SnackBar(content: Text(msg)),
+                                                msg,
+                                                isError: true,
                                               );
                                             }
                                             return;

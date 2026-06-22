@@ -2100,6 +2100,33 @@ const kioskEmployeeDetail = async (req, res) => {
         ]);
 
         const brkMin = (a) => a.break ? Math.round((a.break.totalBreakSeconds || 0) / 60) || (a.break.totalBreakMin || 0) : 0;
+        const brkFine = (a) => a.break ? (a.break.totalBreakFineAmount || 0) : 0;
+        // attendance.fineAmount is now the GRAND total (late + early + permission + break).
+        // Report `fine` as the NON-break portion so break_fine + fine stay disjoint and
+        // their sum equals the grand total — no double counting on the kiosk.
+        const nonBreakFine = (a) => Math.max(0, (typeof a.fineAmount === 'number' ? a.fineAmount : 0) - brkFine(a));
+        const round2 = (n) => Math.round(n * 100) / 100;
+        // Per-break sessions for the expandable day card (start/end/duration/fine).
+        const breakSessions = (a) => (a.break && Array.isArray(a.break.breaks) ? a.break.breaks : [])
+            .filter((b) => b && (b.startTime || b.endTime || b.duration))
+            .map((b) => ({
+                start: b.startTime || null,
+                end: b.endTime || null,
+                duration_min: Math.round(b.duration || 0),
+                fine_min: b.breakFineMins || 0,
+                fine: round2(b.breakFineAmount || 0),
+            }));
+        // Permission usage + fine for the day (custom-time step-outs / late-in / early-out).
+        const permission = (a) => ({
+            consumed_min: a.permissionConsumedMinutes || 0,
+            approved_min: a.permissionApprovedMinutes || 0,
+            remaining_min: a.permissionRemainingMinutes || 0,
+            late_min: a.permissionLateMinutes || 0,
+            early_min: a.permissionEarlyMinutes || 0,
+            // Fined permission minutes (over-allowance exceed + custom-window overrun).
+            fine_min: (a.permissionFineMinutes || 0) + (a.permissionOverrunMinutes || 0),
+            fine_amount: round2((a.permissionFineAmount || 0) + (a.permissionOverrunFineAmount || 0)),
+        });
         const fmt = (a) => a ? {
             date: a.date,
             punch_in: a.punchIn || null,
@@ -2109,13 +2136,20 @@ const kioskEmployeeDetail = async (req, res) => {
             // Daily breaks taken + fines.
             break_min: brkMin(a),
             break_count: a.break ? (a.break.totalBreakCount || 0) : 0,
-            break_fine: a.break ? (a.break.totalBreakFineAmount || 0) : 0,
+            break_fine: brkFine(a),
+            break_fine_min: a.break ? (a.break.totalBreakFineMins || 0) : 0,
             late_min: typeof a.lateMinutes === 'number' ? a.lateMinutes : 0,
-            fine: typeof a.fineAmount === 'number' ? a.fineAmount : 0,
+            early_min: typeof a.earlyMinutes === 'number' ? a.earlyMinutes : 0,
+            // Non-break fine (late + early + permission). Grand total = break_fine + fine.
+            fine: nonBreakFine(a),
+            // Grand total fine for the day (matches attendance.fineAmount).
+            total_fine: typeof a.fineAmount === 'number' ? a.fineAmount : 0,
+            // Detail rows surfaced when the day card is expanded on the kiosk.
+            breaks: breakSessions(a),
+            permission: permission(a),
         } : null;
 
         const sum = (f) => monthAtt.reduce((t, a) => t + (f(a) || 0), 0);
-        const round2 = (n) => Math.round(n * 100) / 100;
 
         return res.json({
             profile: {
@@ -2136,7 +2170,9 @@ const kioskEmployeeDetail = async (req, res) => {
                 break_min: sum((a) => brkMin(a)),
                 break_count: sum((a) => a.break && a.break.totalBreakCount),
                 break_fine: round2(sum((a) => a.break && a.break.totalBreakFineAmount)),
-                fine: round2(sum((a) => a.fineAmount)),
+                // Non-break fine so break_fine + fine = total_fine (no double count).
+                fine: round2(sum((a) => nonBreakFine(a))),
+                total_fine: round2(sum((a) => a.fineAmount)),
             },
         });
     } catch (e) {

@@ -118,7 +118,7 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedCategoryId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select a category')));
+      SnackBarUtils.showSnackBar(context, 'Please select a category');
       return;
     }
     setState(() => _isLoading = true);
@@ -154,18 +154,19 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
           }
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(ErrorMessageUtils.sanitizeForDisplay(result['message']?.toString(), fallback: 'Failed to submit')),
-            backgroundColor: AppColors.error,
-          ),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.sanitizeForDisplay(result['message']?.toString(), fallback: 'Failed to submit'),
+          isError: true,
         );
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Something went wrong'), backgroundColor: AppColors.error),
+        SnackBarUtils.showSnackBar(
+          context,
+          'Something went wrong',
+          isError: true,
         );
       }
     }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
 import '../../services/auth_service.dart';
 import '../../utils/attendance_selfie_compress.dart';
+import '../../utils/snackbar_utils.dart';
 import '../attendance/selfie_camera_screen.dart';
 
 /// Single-click face enrollment (like the face app's older flow): open the camera,
@@ -34,6 +35,9 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
     final result = await SelfieCameraScreen.captureSelfie(
       context,
       title: 'Register Face',
+      // Enrollment only: accept a clear photo without the strict eyes-open /
+      // frontal-yaw gate and with wider framing tolerance. Punch/break stay strict.
+      enrollMode: true,
     );
     if (!mounted) return;
     if (result is! File) {
@@ -52,13 +56,11 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
       final res = await _authService.enrollFace([dataUrl]);
       if (!mounted) return;
       final ok = res['success'] == true;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(res['message']?.toString() ??
-              (ok ? 'Face registered.' : 'Registration failed.')),
-          backgroundColor: ok ? Colors.green.shade700 : Colors.red.shade700,
-          behavior: SnackBarBehavior.floating,
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        res['message']?.toString() ??
+            (ok ? 'Face registered.' : 'Registration failed.'),
+        isError: !ok,
       );
       if (ok) {
         Navigator.of(context).pop(true);

@@ -2210,8 +2210,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _actionLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.toUserFriendlyMessage(e),
+          isError: true,
         );
       }
     }
@@ -2229,8 +2231,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _actionLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.toUserFriendlyMessage(e),
+          isError: true,
         );
       }
     }
@@ -2319,8 +2323,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _actionLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.toUserFriendlyMessage(e),
+          isError: true,
         );
       }
     }
@@ -2360,8 +2366,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _actionLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.toUserFriendlyMessage(e),
+          isError: true,
         );
       }
     }

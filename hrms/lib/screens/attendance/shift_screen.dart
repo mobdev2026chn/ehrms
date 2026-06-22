@@ -391,6 +391,19 @@ class _ShiftScreenState extends State<ShiftScreen> {
   /// leave → week-off → rotational fallback for days without a record.
   _ShiftDayInfo _dayInfoFor(DateTime day) {
     final d = DateTime(day.year, day.month, day.day);
+
+    // Before the employee existed here, no shift, week-off, holiday or leave
+    // applies. The backend already excludes pre-joining days from the month
+    // stats (firstCountableDay); the calendar must match by rendering those
+    // days blank rather than projecting the current shift backwards.
+    final joining = widget.joiningDate;
+    if (joining != null) {
+      final joinDay = DateTime(joining.year, joining.month, joining.day);
+      if (d.isBefore(joinDay)) {
+        return const _ShiftDayInfo(kind: _DayKind.none);
+      }
+    }
+
     final dateStr = HolidayOffConfig.keyFor(d);
     final md = _monthFor(d);
 
@@ -1578,6 +1591,11 @@ class _ShiftScreenState extends State<ShiftScreen> {
 
     final otBuffer = _otBufferFromRow(row);
     final earnedOt = _intOf(record?['overtime']) ?? 0;
+    // Canonical overtime policy notice (exact tooltip wording) from the backend:
+    // "Overtime is disabled for you." / "Overtime is not configured. Contact HR."
+    final otNotice = (record?['overtimeNotice'] is String)
+        ? (record!['overtimeNotice'] as String).trim()
+        : '';
 
     final hasRecord = record != null;
 
@@ -1705,7 +1723,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
                     ],
                   );
                 }),
-                if ((otBuffer != null && otBuffer > 0) || earnedOt > 0) ...[
+                if ((otBuffer != null && otBuffer > 0) ||
+                    earnedOt > 0 ||
+                    otNotice.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _dayDetailSection(
                       'Overtime Details', Icons.more_time_rounded, [
@@ -1714,6 +1734,29 @@ class _ShiftScreenState extends State<ShiftScreen> {
                     if (earnedOt > 0)
                       _dayDetailRow('Earned Overtime', _fmtMins(earnedOt),
                           valueColor: Colors.green.shade700),
+                    // Exact policy notice when overtime is disabled / not configured.
+                    if (otNotice.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.info_outline,
+                                size: 15, color: Colors.orange.shade700),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                otNotice,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.orange.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                   ]),
                 ],
               ] else if (!hasRecord) ...[

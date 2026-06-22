@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../config/app_colors.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../widgets/face_guide_overlay.dart';
+import '../../utils/snackbar_utils.dart';
 
 /// Sentinel returned when camera init fails; caller should use image_picker fallback.
 const Object useImagePickerFallback = Object();
@@ -93,6 +94,13 @@ class SelfieCameraScreen extends StatefulWidget {
   /// (it's shown on the camera and the live scan re-arms), or null to accept.
   final Future<String?> Function(File capturedFile)? onCaptured;
 
+  /// Relaxed capture mode for face ENROLLMENT. When true the click-time quality
+  /// gate keeps only the single-face guard (drops eyes-open + frontal-yaw) and the
+  /// live-scan proximity/centering thresholds widen so a clear, well-lit photo
+  /// auto-captures easily. Punch/break leave this false, so their strict scan and
+  /// gate are completely unaffected.
+  final bool enrollMode;
+
   const SelfieCameraScreen({
     super.key,
     this.locationText,
@@ -102,6 +110,7 @@ class SelfieCameraScreen extends StatefulWidget {
     this.infoText,
     this.infoTextFuture,
     this.onCaptured,
+    this.enrollMode = false,
   });
 
   static Future<Object?> captureSelfie(
@@ -113,6 +122,7 @@ class SelfieCameraScreen extends StatefulWidget {
     String? infoText,
     Future<String?>? infoTextFuture,
     Future<String?> Function(File capturedFile)? onCaptured,
+    bool enrollMode = false,
   }) async {
     final result = await Navigator.of(context).push<Object?>(
       MaterialPageRoute(
@@ -124,6 +134,7 @@ class SelfieCameraScreen extends StatefulWidget {
           infoText: infoText,
           infoTextFuture: infoTextFuture,
           onCaptured: onCaptured,
+          enrollMode: enrollMode,
         ),
       ),
     );
@@ -172,11 +183,14 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   // Guidance thresholds (ratios of the rotation-corrected frame). Generous, since
   // a handheld selfie fills more of the frame than a fixed kiosk; the authoritative
   // guards + anti-spoof still run server-side in embedLive at verify/enroll time.
-  static const double _kFaceTooFar = 0.18;
-  static const double _kFaceTooClose = 0.66;
-  static const double _kCenterTolX = 0.22;
-  static const double _kCenterTolY = 0.24;
-  static const int _kGoodFramesToCapture = 2;
+  // Enrollment widens them further (and auto-captures after a single good frame) so
+  // a clear photo is accepted without fussy alignment — punch/break keep the tighter
+  // base values via [widget.enrollMode] == false.
+  double get _kFaceTooFar => widget.enrollMode ? 0.12 : 0.18;
+  double get _kFaceTooClose => widget.enrollMode ? 0.85 : 0.66;
+  double get _kCenterTolX => widget.enrollMode ? 0.34 : 0.22;
+  double get _kCenterTolY => widget.enrollMode ? 0.36 : 0.24;
+  int get _kGoodFramesToCapture => widget.enrollMode ? 1 : 2;
 
   @override
   void initState() {
@@ -319,7 +333,8 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       // exactly one face, eyes open, facing the camera. On failure we bounce back
       // to the live camera so the user can retake. Skipped when detection failed
       // entirely (chosen == null) so a detector hiccup never hard-blocks a punch.
-      validationError = chosen?.qualityIssue();
+      // Enrollment relaxes the gate to single-face-only so a clear photo is accepted.
+      validationError = chosen?.qualityIssue(relaxed: widget.enrollMode);
     } catch (_) {
       // Keep the original capture if processing fails.
     }
@@ -388,13 +403,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   /// faces) without leaving the capture screen.
   void _showCaptureError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-      ),
+    SnackBarUtils.showSnackBar(
+      context,
+      message,
+      isError: true,
+      duration: const Duration(seconds: 3),
     );
   }
 
@@ -987,7 +1000,13 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => setState(() => _capturedFilePath = null),
+                    // Retake: re-arm the guided live scan from scratch so it
+                    // doesn't resume stuck on the previous scan's frozen state
+                    // (green oval / "Hold Still…" / _capturing latched true).
+                    onPressed: () => setState(() {
+                      _capturedFilePath = null;
+                      _resetLiveScan();
+                    }),
                     icon: const Icon(Icons.camera_alt_outlined),
                     label: const Text('Retake'),
                     style: OutlinedButton.styleFrom(

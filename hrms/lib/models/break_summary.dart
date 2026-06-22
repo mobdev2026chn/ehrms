@@ -86,6 +86,12 @@ class BreakSummary {
   /// In this state breaks are ALLOWED and all break time is added to Fine.
   final bool policyIsDisabledWithQuota;
 
+  /// Canonical, server-authored policy notice (exact tooltip wording) for the
+  /// current break state — set for the disabled / no-allowance scenarios where the
+  /// break time is processed with Fine. Empty/null when breaks are normally
+  /// configured. Breaks are ALWAYS allowed; this is informational only.
+  final String? breakNotice;
+
   const BreakSummary({
     this.breaks = const [],
     this.totalBreakSeconds = 0,
@@ -102,6 +108,7 @@ class BreakSummary {
     this.hasActiveBreak = false,
     this.configuredAllowedMinutes = 0,
     this.policyIsDisabledWithQuota = false,
+    this.breakNotice,
   });
 
   bool get isEmpty => breaks.isEmpty && totalBreakSeconds == 0;
@@ -162,6 +169,10 @@ class BreakSummary {
       hasActiveBreak: json['hasActiveBreak'] == true,
       configuredAllowedMinutes: _asInt(json['configuredAllowedMinutes']),
       policyIsDisabledWithQuota: json['policyIsDisabledWithQuota'] == true,
+      breakNotice: (json['breakNotice'] is String &&
+              (json['breakNotice'] as String).trim().isNotEmpty)
+          ? json['breakNotice'] as String
+          : null,
     );
   }
 

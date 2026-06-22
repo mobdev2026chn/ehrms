@@ -2570,7 +2570,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
               if (!_searchOpen && _maySend)
                 Material(
                   elevation: 6,
-                  color: Colors.grey.shade100,
+                  color: Colors.white,
                   child: SafeArea(
                     top: false,
                     child: Padding(
@@ -2624,25 +2624,17 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(28),
-                                border: Border.all(color: Colors.grey.shade300),
+                                border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
                               ),
                               child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.end,
+                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 6, bottom: 6),
-                                    child: Material(
-                                      color: Colors.grey.shade100,
-                                      shape: const CircleBorder(),
-                                      child: InkWell(
-                                        customBorder: const CircleBorder(),
-                                        onTap: _showWebAttachSheet,
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(10),
-                                          child: Icon(Icons.attach_file, color: Colors.grey.shade600, size: 22),
-                                        ),
-                                      ),
-                                    ),
+                                  IconButton(
+                                    icon: Icon(Icons.attach_file, color: AppColors.primary, size: 22),
+                                    onPressed: _showWebAttachSheet,
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    constraints: const BoxConstraints(),
                                   ),
                                   Expanded(
                                     child: _pendingVoicePath != null
@@ -2687,7 +2679,11 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                             decoration: const InputDecoration(
                                               hintText: 'Type a message...',
                                               hintStyle: TextStyle(color: Color(0xFF94A3B8)),
+                                              filled: true,
+                                              fillColor: Colors.white,
                                               border: InputBorder.none,
+                                              enabledBorder: InputBorder.none,
+                                              focusedBorder: InputBorder.none,
                                               isDense: true,
                                               contentPadding: EdgeInsets.fromLTRB(4, 12, 12, 12),
                                             ),
@@ -2697,20 +2693,12 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                             },
                                           ),
                                   ),
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 6, bottom: 6),
-                                    child: Material(
-                                      color: Colors.grey.shade100,
-                                      shape: const CircleBorder(),
-                                      child: InkWell(
-                                        customBorder: const CircleBorder(),
-                                        onTap: () => _pickImage(ImageSource.camera),
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(10),
-                                          child: Icon(Icons.photo_camera_outlined, color: Colors.grey.shade600, size: 22),
-                                        ),
-                                      ),
-                                    ),
+                                  IconButton(
+                                    icon: Icon(Icons.photo_camera_outlined, color: AppColors.primary, size: 22),
+                                    onPressed: () => _pickImage(ImageSource.camera),
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    constraints: const BoxConstraints(),
                                   ),
                                 ],
                               ),
@@ -2733,39 +2721,36 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                           else if (_pendingVoicePath != null)
                             Container(
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: AppColors.primary,
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.grey.shade300),
                               ),
                               child: IconButton(
                                 icon: const Icon(Icons.send_rounded),
-                                color: AppColors.primary,
+                                color: Colors.white,
                                 onPressed: _sendPendingVoice,
                               ),
                             )
                           else if (_text.text.trim().isNotEmpty)
                             Container(
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: AppColors.primary,
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.grey.shade300),
                               ),
                               child: IconButton(
                                 icon: const Icon(Icons.send_rounded),
-                                color: AppColors.primary,
+                                color: Colors.white,
                                 onPressed: _sendText,
                               ),
                             )
                           else
                             Container(
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: AppColors.primary,
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.grey.shade300),
                               ),
                               child: IconButton(
                                 icon: const Icon(Icons.mic_none_rounded),
-                                color: Colors.grey.shade800,
+                                color: Colors.white,
                                 onPressed: _toggleRecording,
                               ),
                             ),

@@ -27,6 +27,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/utils/error_message_utils.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:floating/floating.dart';
 
 class LiveTrackingScreen extends StatefulWidget {
@@ -673,12 +674,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     } catch (e) {
       await _cachePendingDestination(payload);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Destination updated locally. Will sync when online.',
-            ),
-          ),
+        SnackBarUtils.showSnackBar(
+          context,
+          'Destination updated locally. Will sync when online.',
         );
         setState(() => _updatingDestination = false);
       }
@@ -988,10 +986,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         exitType.isEmpty ||
         reason == null ||
         reason.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select exit type and provide a reason'),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Please select exit type and provide a reason',
       );
       return;
     }
@@ -1022,8 +1019,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         await PresenceTrackingService().resumePresenceTracking();
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+          SnackBarUtils.showSnackBar(
+            context,
+            ErrorMessageUtils.toUserFriendlyMessage(e),
+            isError: true,
           );
         }
         return;
@@ -1361,9 +1360,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                       if (await canLaunchUrl(uri)) {
                         await launchUrl(uri);
                       } else if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Cannot make call')),
-                        );
+                        SnackBarUtils.showSnackBar(context, 'Cannot make call');
                       }
                     },
                     icon: Icon(
@@ -1654,9 +1651,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                   if (await canLaunchUrl(uri)) {
                     await launchUrl(uri);
                   } else if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Cannot make call')),
-                    );
+                    SnackBarUtils.showSnackBar(context, 'Cannot make call');
                   }
                 },
               ),

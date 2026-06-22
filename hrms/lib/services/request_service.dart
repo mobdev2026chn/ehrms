@@ -207,11 +207,18 @@ class RequestService {
   }
 
   /// Fetches leave balance: availableCasualLeaves from attendances, totalAllowed from leave template.
-  Future<Map<String, dynamic>> getLeaveBalance() async {
+  ///
+  /// [forMonth] scopes used/pending days to that month's quota. The template
+  /// allocation resets monthly, so applying for a future month must draw against
+  /// that month — pass the leave's start date here. Omitted = current month.
+  Future<Map<String, dynamic>> getLeaveBalance({DateTime? forMonth}) async {
     try {
       await _setToken();
       final response = await _api.dio.get<Map<String, dynamic>>(
         '/requests/leave-balance',
+        queryParameters: forMonth == null
+            ? null
+            : {'month': forMonth.month, 'year': forMonth.year},
       );
       final body = response.data;
       if (body == null || body['success'] != true) {
@@ -673,7 +680,13 @@ class RequestService {
         'raw=$body',
       );
       if (body != null && body['success'] == true) {
-        return {'success': true, 'data': body['data'] ?? body};
+        return {
+          'success': true,
+          'data': body['data'] ?? body,
+          // Exact policy notice when the permission time will be fined (disabled /
+          // no-allowance / will-be-processed-with-fine). null when normally allowed.
+          'notice': body['notice'],
+        };
       }
       return {
         'success': false,

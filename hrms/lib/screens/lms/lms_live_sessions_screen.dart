@@ -706,9 +706,7 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedDate == null || _selectedTime == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select date and time')),
-      );
+      SnackBarUtils.showSnackBar(context, 'Please select date and time');
       return;
     }
 

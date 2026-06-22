@@ -44,6 +44,11 @@ const normalizePermissionPolicy = (raw) => {
         value: {
             enabled: toBool(raw.enabled),
             monthlyQuotaMinutes: nonNegNum(raw.monthlyQuotaMinutes),
+            // Daily permission allowance (the "Allocated Permission Minutes" the daily
+            // attendance fine deducts against). Previously omitted here, so the fine
+            // path always saw 0 and fined the entire used duration. Now persisted so
+            // admins can configure a real per-day allowance.
+            dailyAllowedMinutes: nonNegNum(raw.dailyAllowedMinutes),
             applyTo
         }
     };

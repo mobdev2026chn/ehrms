@@ -1857,6 +1857,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
       return {
         'staffHasTemplate': staffHasTemplate,
+        'weeklyOffAssigned': body['weeklyOffAssigned'] as bool? ?? true,
         'template': template,
         'companyDocForShift': companyDocForShift,
         'staffData': staffData != null
@@ -2367,6 +2368,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     Map<String, dynamic> data,
   ) async {
     final staffHasTemplate = data['staffHasTemplate'] as bool? ?? false;
+    final weeklyOffAssigned = data['weeklyOffAssigned'] as bool? ?? true;
     final template = data['template'] as Map<String, dynamic>?;
     final branchData = data['branchData'] as Map<String, dynamic>?;
     final shiftAssigned = data['shiftAssigned'] as bool? ?? true;
@@ -2434,6 +2436,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (staffHasTemplate != true) {
       await _showValidationAlertDialog(
         'Attendance template is not assigned. Contact HR.',
+      );
+      return false;
+    }
+    if (weeklyOffAssigned != true) {
+      await _showValidationAlertDialog(
+        'Weekly Off template is not assigned. Contact HR.',
       );
       return false;
     }

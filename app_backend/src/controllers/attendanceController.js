@@ -20,6 +20,12 @@ const {
     isLatLngInsideBranchGeofence,
 } = require('../utils/branchGeofence');
 const { closeStaleOpenBreaksForStaff } = require('./breakController');
+const {
+    permissionExceeded,
+    resolvePermissionNotice,
+    OVERTIME_DISABLED,
+    OVERTIME_NOT_CONFIGURED,
+} = require('../constants/attendancePolicyMessages');
 
 /** Build a single address string from address, area, city, pincode. */
 function buildAddressString(address, area, city, pincode) {
@@ -228,6 +234,18 @@ function isShiftAssignedForStaff(company, staff, attendanceTemplateDoc) {
         if (s._id != null && String(s._id) === key) return true;
         return (s.name || '').toString().trim().toLowerCase() === key.toLowerCase();
     });
+}
+
+// True when staff has a Weekly Off (WeeklyHolidayTemplate) assigned and active.
+// `staff.weeklyHolidayTemplateId` may be a populated subdocument or a bare ObjectId.
+// Punch-in requires this template to be configured (same as shift + attendance template).
+function isWeeklyOffTemplateAssigned(staff) {
+    const w = staff?.weeklyHolidayTemplateId;
+    if (w == null) return false;
+    // Populated subdocument: respect isActive (inactive template = not configured)
+    if (typeof w === 'object' && w._id != null) return w.isActive !== false;
+    // Bare ObjectId / id string present
+    return true;
 }
 
 // Coerce a value that semantically means "true" into a real boolean.
@@ -514,8 +532,11 @@ async function getApprovedPermissionForDate(employeeId, businessId, attendanceDa
         status: 'Approved'
     };
     if (businessId) query.businessId = businessId;
+    // NOTE: overrunMinutes MUST be selected — it carries the custom-permission
+    // ("both") overrun that is fined separately. Omitting it silently zeroed the
+    // custom-permission fine.
     let rows = await PermissionRequest.find(query)
-        .select('date type requestedMinutes')
+        .select('date type requestedMinutes overrunMinutes')
         .lean();
     // Backward compatibility: some old rows may have inconsistent business linkage.
     if ((!rows || rows.length === 0) && businessId) {
@@ -525,7 +546,7 @@ async function getApprovedPermissionForDate(employeeId, businessId, attendanceDa
             status: 'Approved'
         };
         rows = await PermissionRequest.find(relaxedQuery)
-            .select('date type requestedMinutes businessId')
+            .select('date type requestedMinutes overrunMinutes businessId')
             .lean();
     }
     const attendanceKey = toDateKeyInTimezone(attendanceDate, businessTimezone);
@@ -1066,10 +1087,23 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         // the permissionIn endpoint). Fined with the same per-day formula as late/early.
         let permissionOverrunMinutes = 0;
         let permissionOverrunFineAmount = 0;
+        // Exact policy tooltip for the permission state (disabled / no-allowance /
+        // exceeded). null when normally configured and within the allowance.
+        let permissionNotice = null;
         try {
             const permPolicy = dbShiftTimings?.permissionPolicy || null;
+            // A policy object present on the shift means Permission is configured for
+            // one of the 4 scenarios. Absent policy = legacy/unconfigured → no fine.
+            const permConfigured = !!(permPolicy && typeof permPolicy === 'object');
             const permEnabled = permPolicy?.enabled === true;
+            const permDisabled = permConfigured && permPolicy?.enabled === false;
             const dailyAllowed = Math.max(0, Number(permPolicy?.dailyAllowedMinutes || 0));
+            // Permission scenarios (requests are ALWAYS allowed):
+            //   S1 enabled  + alloc > 0 : only the EXCEEDED minutes are fined.
+            //   S2 enabled  + alloc = 0 : ENTIRE used duration is fined.
+            //   S3 disabled + alloc > 0 : ENTIRE used duration is fined (allowance → 0).
+            //   S4 disabled + alloc = 0 : ENTIRE used duration is fined.
+            const effectiveAllowedPermMin = permDisabled ? 0 : dailyAllowed;
             // "Used" for the day = approved permission minutes for that date.
             const approvedPermissions = await getApprovedPermissionForDate(
                 staff?._id,
@@ -1099,10 +1133,11 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             permissionApprovedMinutes = usedToday;
             permissionConsumedMinutes = usedToday;
             permissionRemainingMinutes = Math.max(0, dailyAllowed - usedToday);
-            // Exceed is fined only when the shift's Permission policy is enabled.
+            // Exceed is fined whenever a Permission policy is configured (any of the 4
+            // scenarios) — disabled shifts fine the ENTIRE duration via allowance = 0.
             // Open shifts are fined for early exit only — no permission fine there.
-            const exceed = (permEnabled && !isOpenShiftDay)
-                ? Math.max(0, usedToday - dailyAllowed)
+            const exceed = (permConfigured && !isOpenShiftDay)
+                ? Math.max(0, usedToday - effectiveAllowedPermMin)
                 : 0;
             permissionFineMinutes = exceed;
             if (exceed > 0 && fineConfig && fineConfig.enabled && effectiveDailyNet > 0) {
@@ -1115,10 +1150,25 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                     effectiveDailyGross
                 );
             }
+            // Canonical policy tooltip: disabled / no-allowance scenarios get the
+            // entire-duration notice; an enabled+allowance shift that was exceeded gets
+            // the "exceeded by N minutes" notice.
+            if (permConfigured && !isOpenShiftDay) {
+                permissionNotice = resolvePermissionNotice({
+                    enabledExplicit: permEnabled ? true : false,
+                    allocatedMinutes: dailyAllowed
+                });
+                if (!permissionNotice && exceed > 0) {
+                    permissionNotice = permissionExceeded(exceed);
+                }
+            }
             console.log('[Permission][Daily Fine]', {
+                permConfigured,
                 permEnabled,
+                permDisabled,
                 isOpenShiftDay,
                 dailyAllowed,
+                effectiveAllowedPermMin,
                 usedToday,
                 exceed,
                 permissionFineMinutes,
@@ -1133,7 +1183,11 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         const earlyFineAmount = (fineConfig && fineConfig.enabled) ? (earlyFine.fineAmount || 0) : 0;
 
         const fineHours = lateFine.lateMinutes + earlyFine.earlyMinutes;
-        const fineAmount = lateFineAmount + earlyFineAmount + permissionOverrunFineAmount;
+        // Total Fine = Late + Early Exit + Permission (regular over-allowance + custom
+        // overrun). Break fine is added on top at checkout (it lives on attendance.break
+        // and accrues after this function runs). permissionFineAmount was previously
+        // computed but dropped from the total — now included so it deducts from salary.
+        const fineAmount = lateFineAmount + earlyFineAmount + permissionFineAmount + permissionOverrunFineAmount;
 
         // Reference shiftBased breakdown for manual testing (actual lines may use fineRules; see [Fine][formula][test] per leg)
         const testTag = '[Fine][formula][test]';
@@ -1199,7 +1253,8 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             permissionFineMinutes,
             permissionFineAmount,
             permissionOverrunMinutes,
-            permissionOverrunFineAmount
+            permissionOverrunFineAmount,
+            permissionNotice
         };
         console.log('[Fine] Result:', JSON.stringify(out));
         // Formula summary with check-in/check-out times for debugging why lateMinutes might be 0
@@ -1595,6 +1650,20 @@ const checkIn = async (req, res) => {
         if (!isShiftAssignedForStaff(company, staff, templateDoc)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
+        // Attendance + Weekly Off templates must also be configured (not just the shift).
+        // Without these, punch-in cannot resolve attendance rules or week-off days, so block it.
+        if (!templateDoc) {
+            return res.status(403).json({ message: 'Attendance template is not assigned. Contact HR.' });
+        }
+        // Enable/disable: a deactivated attendance template means attendance is turned
+        // off for this employee. Block new check-ins. (Check-out is intentionally left
+        // permissive so an already-open day is never stranded with an open punch.)
+        if (templateDoc.isActive === false) {
+            return res.status(403).json({ message: 'Attendance is disabled for your template. Contact HR.' });
+        }
+        if (!isWeeklyOffTemplateAssigned(staff)) {
+            return res.status(403).json({ message: 'Weekly Off template is not assigned. Contact HR.' });
+        }
         // PRIORITY 1: Check if On Approved Leave (highest priority - blocks all other rules)
         // `company`, `activeLeave` already fetched in the concurrent batch above.
         const { canCheckInWithHalfDayLeave, getShiftTimings, getBusinessTimezone, isHalfDayLeave } = require('../utils/leaveAttendanceHelper');
@@ -1646,7 +1715,8 @@ const checkIn = async (req, res) => {
 
         const warnings = [];
 
-        // 4. Check Late Entry - Always allow, but add warning if not allowed in settings
+        // 4. Check Late Entry - blocked when the template disables late entry (except
+        //    half-day leave days, which keep a warning); otherwise allowed.
         const shiftTiming = company ? shiftForCheckIn : null;
         const appliedShiftId = getAppliedShiftIdFromShiftTiming(shiftTiming);
         let shiftStartStr = null;
@@ -1671,6 +1741,21 @@ const checkIn = async (req, res) => {
             if (now > graceTimeEnd) {
                 lateMinutes = Math.floor((now.getTime() - shiftStart.getTime()) / (1000 * 60));
                 if (template.allowLateEntry === false) {
+                    // Configuration: late entry disabled => block the punch-in server-side
+                    // (previously this only warned and relied on the client to honor it).
+                    // Half-day leave arrivals are excluded — their valid arrival window is
+                    // governed by the half-day session gate above (a first-half leave means
+                    // the employee legitimately arrives for the second half and would look
+                    // "late" against the full-shift start), so keep the warning for them.
+                    const isHalfDayLeaveDay = activeLeave && isHalfDayLeave(activeLeave);
+                    if (!isHalfDayLeaveDay) {
+                        return res.status(403).json({
+                            message: `Late entry is not allowed. You are ${lateMinutes} minute(s) late. Shift start time: ${shiftStartStr}`,
+                            type: 'late_entry',
+                            minutes: lateMinutes,
+                            notAllowed: true
+                        });
+                    }
                     warnings.push({
                         type: 'late_entry',
                         message: `Late entry not allowed. You are ${lateMinutes} minute(s) late. Shift start time: ${shiftStartStr}`,
@@ -2481,17 +2566,37 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         const workedMin = Math.max(0, Math.floor((now.getTime() - effectivePunchIn.getTime()) / (1000 * 60)));
         earlyMinutes = Math.max(0, requiredMin - workedMin);
         if (earlyMinutes > 0) {
-            const notAllowed = template.allowEarlyExit === false;
+            if (template.allowEarlyExit === false) {
+                // Configuration: early exit disabled => block check-out until the required
+                // hours are met (server-side enforcement, previously only a warning).
+                return res.status(403).json({
+                    message: `Early check-out is not allowed. Complete your required ${requiredHours} hour(s) before checking out (${earlyMinutes} minute(s) remaining).`,
+                    type: 'early_checkout',
+                    minutes: earlyMinutes,
+                    notAllowed: true
+                });
+            }
             warnings.push({
                 type: 'early_checkout',
                 message: `You are checking out ${earlyMinutes} minute(s) before completing your required ${requiredHours} hour(s) for today.`,
                 minutes: earlyMinutes,
-                notAllowed
+                notAllowed: false
             });
         }
     } else if (now < shiftEnd) {
         earlyMinutes = Math.floor((shiftEnd.getTime() - now.getTime()) / (1000 * 60));
         if (template.allowEarlyExit === false) {
+            // Configuration: early exit disabled => block the punch-out server-side.
+            // Half-day check-outs are excluded — their leave window is governed by
+            // canCheckOutWithHalfDayLeave above, so keep the warning for them only.
+            if (!isHalfDayCheckout) {
+                return res.status(403).json({
+                    message: `Early check-out is not allowed. Your shift ends at ${shiftEndStr} (${earlyMinutes} minute(s) early).`,
+                    type: 'early_checkout',
+                    minutes: earlyMinutes,
+                    notAllowed: true
+                });
+            }
             warnings.push({
                 type: 'early_checkout',
                 message: `You are punching out ${earlyMinutes} minute(s) early. Shift end time for your working half: ${shiftEndStr}`,
@@ -2579,15 +2684,31 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         const minutes = Math.round(durationMs / (1000 * 60));
         attendance.workHours = minutes; // store in minutes
 
-        // Overtime (minutes): only for overtimeEligible staff when template allows OT.
-        // Standard/rotational: gross past shift end minus otBufferMinutes. Open shift: full extra vs required daily minutes; bufferTime tracks threshold only.
-        const otEligible = staff.overtimeEligible === true;
+        // Overtime eligibility requires BOTH (per policy):
+        //   (a) "Overtime Allowed" for the staff (Staff.overtimeEligible) AND the shift/
+        //       template does not turn OT off, AND
+        //   (b) an Overtime Buffer configured on the shift (otBufferMinutes > 0).
+        // Scenarios:
+        //   buffer set + allowed off  → "Overtime is disabled for you."        (no calc)
+        //   buffer not set (any)      → "Overtime is not configured. Contact HR." (no calc)
+        const otAllowedForStaff = staff.overtimeEligible === true;
         // Per-shift overtimePolicy.enabled (tri-state) overrides the template flag when configured.
         const shiftOtEnabled = shiftTiming?.overtimePolicy?.enabled;
         const otAllowedByPolicy = shiftOtEnabled == null
             ? template.allowOvertime !== false
             : shiftOtEnabled === true;
-        if (otEligible && otAllowedByPolicy) {
+        const otAllowed = otAllowedForStaff && otAllowedByPolicy;
+        const otBufferConfigured = Math.max(0, Math.round(Number(shiftTiming?.otBufferMinutes) || 0)) > 0;
+        // Resolve the canonical overtime notice (empty when eligible).
+        if (!otBufferConfigured) {
+            attendance.overtimeNotice = OVERTIME_NOT_CONFIGURED;     // buffer not set (S3/S4)
+        } else if (!otAllowed) {
+            attendance.overtimeNotice = OVERTIME_DISABLED;          // buffer set + not allowed (S2)
+        } else {
+            attendance.overtimeNotice = '';                        // eligible (S1)
+        }
+        const otEligible = otAllowed && otBufferConfigured;
+        if (otEligible) {
             const stType = (shiftTiming?.shiftType || 'standard').toString().toLowerCase();
             const hasEndTime = shiftTiming?.endTime && String(shiftTiming.endTime).trim().length > 0;
             if (stType === 'open' && isOpenShiftCheckout) {
@@ -2618,8 +2739,12 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         } else {
             attendance.overtime = 0;
             attendance.bufferTime = 0;
-            console.log('[OT Minutes] overtime=0 | reason=%s',
-                !otEligible ? 'staff_not_overtimeEligible' : 'shift_or_template_disallows_overtime');
+            const reason = !otBufferConfigured
+                ? 'overtime_not_configured (no otBufferMinutes)'
+                : (!otAllowedForStaff
+                    ? 'staff_not_overtimeEligible'
+                    : 'shift_or_template_disallows_overtime');
+            console.log('[OT Minutes] overtime=0 | reason=%s | notice="%s"', reason, attendance.overtimeNotice);
         }
 
         let leaveForOt = activeLeave;
@@ -2735,7 +2860,19 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
     const lateFineAmount = Number(fineResult.lateFineAmount) || 0;
     const earlyFineAmount = Number(fineResult.earlyFineAmount) || 0;
     const permissionOverrunFineAmount = Number(fineResult.permissionOverrunFineAmount) || 0;
-    const totalFineAmount = lateFineAmount + earlyFineAmount + permissionOverrunFineAmount;
+    // Regular permission fine (used beyond the day's allowance) was previously computed
+    // but dropped from the day's total — now folded in per the Total Fine policy.
+    const permissionRegularFineAmount = Number(fineResult.permissionFineAmount) || 0;
+    // Break fine accrues at each break-end onto attendance.break.totalBreakFineAmount.
+    // Policy: Total Fine = Late + Early + Break + Permission. Break fine was tracked but
+    // never deducted from salary; fold it into fineAmount (the field payroll deducts).
+    const breakFineAmount = Number(attendance.break?.totalBreakFineAmount) || 0;
+    const totalFineAmount =
+        lateFineAmount
+        + earlyFineAmount
+        + permissionRegularFineAmount
+        + permissionOverrunFineAmount
+        + breakFineAmount;
 
     attendance.lateMinutes = fineResult.lateMinutes ?? attendance.lateMinutes ?? 0;
     attendance.earlyMinutes = fineResult.earlyMinutes ?? 0;
@@ -3235,6 +3372,10 @@ const getTodayAttendance = async (req, res) => {
 
         const resolvedAttendanceTemplateDoc = attendanceTemplateLeanEarly;
         const shiftAssigned = isShiftAssignedForStaff(company, staff, resolvedAttendanceTemplateDoc);
+        // Punch-in requires shift + attendance template + weekly-off template all configured.
+        // Surface the latter two so the app can pre-block with a clear reason (backend also enforces in checkIn).
+        const staffHasAttendanceTemplate = !!resolvedAttendanceTemplateDoc;
+        const weeklyOffAssigned = isWeeklyOffTemplateAssigned(staff);
         const finalTemplate = resolvedAttendanceTemplateDoc
             ? normalizeTemplate(resolvedAttendanceTemplateDoc)
             : {};
@@ -3363,6 +3504,20 @@ const getTodayAttendance = async (req, res) => {
             isWeeklyOff = isTemplateWeeklyOff(queryDate, weekOffConfig.weeklyHolidays);
         }
 
+        // Rotational shift-template week-off (byWeekday / byWeekCalendar): the rotation schedule
+        // can mark this calendar day as off (weekday isWeekOff or weeklyDateAssignments[].isWeekOff),
+        // independent of the weekly-holiday weekday pattern above. Combine with OR so the day-view
+        // reflects "Week Off" whether it comes from the holiday config or the assigned rotation.
+        // Build a UTC-midnight day to match how getShiftTimings (formatDateUtcYmd) compares the
+        // stored assignment date strings.
+        if (!isWeeklyOff && company && staff) {
+            try {
+                const utcDay = new Date(Date.UTC(queryDate.getFullYear(), queryDate.getMonth(), queryDate.getDate()));
+                const stForDay = getShiftTimings(company, staff, utcDay, staff?.joiningDate, null, null);
+                if (stForDay && stForDay.weekOff) isWeeklyOff = true;
+            } catch (_) { /* leave isWeeklyOff as-is on shift-resolution error */ }
+        }
+
         // If this date is a week-off (or we're checking), see if it's an alternate work date for this employee
         // (compensation: employee took week-off or comp-off on another day and will work on this date instead)
         let isAlternateWorkDate = false;
@@ -3436,6 +3591,8 @@ const getTodayAttendance = async (req, res) => {
             template: finalTemplate,
             businessShifts,
             shiftAssigned,
+            staffHasAttendanceTemplate,
+            weeklyOffAssigned,
             isOnLeave: isOnLeave,
             leaveMessage: finalLeaveMessage,
             leaveInfo: activeLeave,
@@ -3874,6 +4031,24 @@ const getMonthAttendance = async (req, res) => {
                 isWeekOff = isTemplateWeeklyOff(date, weeklyHolidays);
             }
 
+            // Rotational shift-template week-off (byWeekday / byWeekCalendar): keep the stats
+            // counters in sync with the weekOffDates loop below — otherwise a day the calendar
+            // paints as "Week Off" would still be counted as a working/absent day here.
+            if (!isWeekOff && companyForFine && staffWithSalary) {
+                try {
+                    const utcDay = new Date(Date.UTC(year, month - 1, d));
+                    const stForDay = getShiftTimings(companyForFine, staffWithSalary, utcDay, staffWithSalary?.joiningDate, null, null);
+                    if (stForDay && stForDay.weekOff) isWeekOff = true;
+                } catch (_) { /* leave isWeekOff as-is on shift-resolution error */ }
+            }
+
+            // Sundays (day 0) are ALWAYS week off — keep this stats counter in sync with the
+            // weekOffDates/absent loops so workingDays excludes Sundays even when no Weekly
+            // Holiday template is set (weeklyHolidays === []).
+            if (dayOfWeek === 0) {
+                isWeekOff = true;
+            }
+
             if (isWeekOff) {
                 weekOffs++;
             } else {
@@ -3916,6 +4091,14 @@ const getMonthAttendance = async (req, res) => {
                     const stForDay = getShiftTimings(companyForFine, staffWithSalary, utcDay, staffWithSalary?.joiningDate, null, null);
                     if (stForDay && stForDay.weekOff) isWeekOff = true;
                 } catch (_) { /* leave isWeekOff as-is on shift-resolution error */ }
+            }
+
+            // IMPORTANT: Sundays (day 0) are ALWAYS week off, regardless of configuration.
+            // Mirrors the absent-date loop below — without this, a Sunday with no Weekly
+            // Holiday template (weeklyHolidays === []) is neither added here (Weekend/grey)
+            // nor marked absent, so it renders with no color at all.
+            if (dayOfWeek === 0) {
+                isWeekOff = true;
             }
 
             if (isWeekOff) {

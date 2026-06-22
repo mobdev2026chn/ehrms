@@ -535,7 +535,14 @@ class InteractionService {
       } on DioException catch (e) {
         lastError = e;
         final code = e.response?.statusCode ?? 0;
-        if (code == 400 || code == 422) {
+        // A wrong message-type value or a rejected MIME shows up across server
+        // versions as 400/422 (validation), 415 (unsupported media type), or
+        // 500 (a multer `fileFilter` error surfaces as a generic 500). Advance
+        // to the next known field-name/value shape for all of these so the
+        // `file`→`document` and audio fallbacks are actually exercised instead
+        // of bailing on the first attempt. The final lastError is still thrown
+        // on exhaustion, so a genuine failure is never swallowed.
+        if (code == 400 || code == 415 || code == 422 || code == 500) {
           continue;
         }
         rethrow;
@@ -552,8 +559,17 @@ class InteractionService {
     // Gallery-picked videos sometimes arrive with an extension-less name/path,
     // so the lookup returns null and Dio falls back to octet-stream — which the
     // server rejects. Use a sensible default per message type in that case.
-    final mime =
+    var mime =
         lookupMimeType(filename) ?? lookupMimeType(filePath) ?? _fallbackMimeForType(type);
+    // The `mime` package maps `.m4a` → `audio/mp4`, but the interaction server's
+    // upload filter rejects anything it reads as MP4 ("OGG, MP4, and WEBM file
+    // formats are not supported"). A browser uploads the same `.m4a` as
+    // `audio/x-m4a`, which is on the server allowlist — so voice works from web
+    // but not the app. Mirror the browser's Content-Type for voice/audio so the
+    // recorded AAC/m4a clip (and picked `.m4a` files) pass the filter.
+    if (type == 'voice' && mime == 'audio/mp4') {
+      mime = 'audio/x-m4a';
+    }
     if (mime == null) return null;
     try {
       return DioMediaType.parse(mime);
@@ -569,6 +585,10 @@ class InteractionService {
         return 'video/mp4';
       case 'image':
         return 'image/jpeg';
+      case 'voice':
+        // Browser-compatible audio type the server allowlist accepts; never
+        // `audio/mp4`, which the upload filter rejects as an MP4 format.
+        return 'audio/x-m4a';
       default:
         return null;
     }

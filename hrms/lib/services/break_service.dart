@@ -322,6 +322,9 @@ class BreakService {
         'success': true,
         'data': response.data?['data'],
         'message': response.data?['message'],
+        // Exact policy notice + exceeded minutes for the break that just ended.
+        'notice': response.data?['notice'],
+        'exceededMinutes': response.data?['exceededMinutes'],
       };
     } on DioException catch (e) {
       breakFlowLog(

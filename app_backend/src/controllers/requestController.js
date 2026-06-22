@@ -13,6 +13,7 @@ const { calculateAttendanceStats } = require('./payrollController');
 const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays } = require('../utils/payableDaysRule');
 const { getShiftTimings } = require('../utils/leaveAttendanceHelper');
 const { rollFaceReferenceFromSelfie } = require('../utils/faceReference');
+const { resolvePermissionNotice } = require('../constants/attendancePolicyMessages');
 
 const _idLog = (v) => {
     if (v == null) return 'n/a';
@@ -38,7 +39,7 @@ const toMonthRange = (year, monthOneBased) => {
 // When the staff-shift can't be resolved (legacy data), fall back to any business shift that
 // defines a policy so employees with valid configuration are not wrongly treated as unconfigured.
 const resolvePermissionConfig = async (businessId, staff, year, month) => {
-    const result = { configured: false, enabled: false, monthlyQuotaMinutes: 0 };
+    const result = { configured: false, enabled: false, monthlyQuotaMinutes: 0, dailyAllowedMinutes: 0 };
     if (!businessId) return result;
     try {
         // .lean() so the fallback loop below can read shift.permissionPolicy directly
@@ -51,6 +52,7 @@ const resolvePermissionConfig = async (businessId, staff, year, month) => {
             result.configured = true;
             result.enabled = policy.enabled === true;
             result.monthlyQuotaMinutes = Math.max(0, Number(policy.monthlyQuotaMinutes || 0));
+            result.dailyAllowedMinutes = Math.max(0, Number(policy.dailyAllowedMinutes || 0));
         }
         // Fallback ONLY when the staff's own shift could not be resolved at all
         // (legacy data with no usable shift). When the shift resolves but simply
@@ -65,6 +67,8 @@ const resolvePermissionConfig = async (businessId, staff, year, month) => {
                     if (shift.permissionPolicy.enabled === true) result.enabled = true;
                     const value = Math.max(0, Number(shift.permissionPolicy.monthlyQuotaMinutes || 0));
                     if (value > result.monthlyQuotaMinutes) result.monthlyQuotaMinutes = value;
+                    const daily = Math.max(0, Number(shift.permissionPolicy.dailyAllowedMinutes || 0));
+                    if (daily > result.dailyAllowedMinutes) result.dailyAllowedMinutes = daily;
                 }
             }
         }
@@ -1198,9 +1202,11 @@ const createPermissionRequest = async (req, res) => {
         const attendanceDate = new Date(date);
         attendanceDate.setHours(0, 0, 0, 0);
 
-        // Block submission unless Permission is configured AND enabled for the
-        // employee's shift. When enabled, the request is allowed up to the
-        // allocated monthly quota and any over-quota minutes are fined later.
+        // Permission requests are ALWAYS allowed (all 4 policy scenarios). The policy
+        // only governs how the time is fined later (entire duration vs the exceeded
+        // portion). We no longer block submission for disabled / no-allowance shifts —
+        // instead we surface the canonical policy notice so the user knows the time
+        // will be processed with Fine.
         const staff = await Staff.findById(employeeId).select('shiftId shiftName joiningDate');
         const permissionConfig = await resolvePermissionConfig(
             businessId,
@@ -1208,21 +1214,12 @@ const createPermissionRequest = async (req, res) => {
             attendanceDate.getFullYear(),
             attendanceDate.getMonth() + 1
         );
-        if (!permissionConfig.configured) {
-            return res.status(400).json({
-                success: false,
-                error: { message: 'Permission is not configured for your shift. Contact HR.' }
-            });
-        }
-        // disabled + quota = 0: block (Scenario 4).
-        // disabled + quota > 0: fall through — allow request, all minutes treated as fine (Scenario 3).
-        if (!permissionConfig.enabled && !(permissionConfig.monthlyQuotaMinutes > 0)) {
-            return res.status(400).json({
-                success: false,
-                error: { message: 'Permission is not configured for your shift. Contact HR.' }
-            });
-        }
-        // When enabled with quota = 0: allow the request; the full amount is treated as a fine.
+        const permissionNotice = permissionConfig.configured
+            ? resolvePermissionNotice({
+                enabledExplicit: permissionConfig.enabled ? true : false,
+                allocatedMinutes: permissionConfig.dailyAllowedMinutes
+            })
+            : null;
 
         const created = await PermissionRequest.create({
             employeeId,
@@ -1236,7 +1233,7 @@ const createPermissionRequest = async (req, res) => {
             status: 'Pending'
         });
 
-        return res.status(201).json({ success: true, data: { permission: created } });
+        return res.status(201).json({ success: true, notice: permissionNotice, data: { permission: created } });
     } catch (error) {
         console.error('Create Permission Request Error:', error);
         return res.status(500).json({ success: false, error: { message: error.message || 'Failed to create permission request' } });
@@ -1378,6 +1375,41 @@ const appendPermissionPunchToAttendance = async (employeeId, kind, at, selfie, m
     }
 };
 
+// Stamp TODAY's cumulative permission-overrun MINUTES onto the attendance row so the
+// day's Fine Details / Total Fine Min reflect the overrun the moment it's computed
+// (at Permission In) instead of only after punch-out. The rupee AMOUNT still settles
+// at checkout via calculateCombinedFine — fine-amount math stays in one place. Sums
+// the SAME set checkout fines (Approved permissions for the day) so the minutes shown
+// match the eventual charge. Best-effort; never blocks the permission flow.
+const stampPermissionOverrunMinutesToAttendance = async (employeeId) => {
+    try {
+        const now = new Date();
+        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+        const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+        const attendance = await Attendance.findOne({ employeeId, date: { $gte: startOfDay, $lte: endOfDay } });
+        if (!attendance) {
+            console.log('[Permission][Overrun] No attendance row for today; overrun stamp skipped', { employeeId: String(employeeId) });
+            return;
+        }
+        const perms = await PermissionRequest.find({
+            employeeId,
+            date: { $gte: startOfDay, $lte: endOfDay },
+            status: { $regex: /^approved$/i }
+        }).lean();
+        const totalOverrun = perms.reduce(
+            (sum, p) => sum + Math.max(0, Math.floor(Number(p?.overrunMinutes) || 0)),
+            0
+        );
+        if ((Number(attendance.permissionOverrunMinutes) || 0) !== totalOverrun) {
+            attendance.permissionOverrunMinutes = totalOverrun;
+            await attendance.save();
+        }
+        console.log('[Permission][Overrun] stamped attendance.permissionOverrunMinutes', { employeeId: String(employeeId), totalOverrun });
+    } catch (e) {
+        console.error('[Permission][Overrun] stamp failed:', e?.message);
+    }
+};
+
 // @desc    Record Permission Out (employee stepped out) for an approved custom-time permission
 // @route   POST /api/requests/permission/:id/out
 // @access  Private
@@ -1441,6 +1473,9 @@ const permissionIn = async (req, res) => {
         await appendPermissionPunchToAttendance(
             permission.employeeId, 'in', permission.actualInAt, selfie, permission.requestedMinutes
         );
+        // Reflect the overrun minutes on today's attendance immediately (amount settles
+        // at checkout). Only meaningful once this request is Approved.
+        await stampPermissionOverrunMinutesToAttendance(permission.employeeId);
         // Roll the face-validation reference forward to this permission-in selfie. Fire-and-forget.
         void rollFaceReferenceFromSelfie(
             permission.employeeId, selfie, req,

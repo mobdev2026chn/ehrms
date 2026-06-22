@@ -297,28 +297,20 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedCustomer == null || _selectedCustomer!.id == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please select a customer')));
+      SnackBarUtils.showSnackBar(context, 'Please select a customer');
       return;
     }
     if (_earliestCompletionDate == null || _latestCompletionDate == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Please select earliest and latest completion dates',
-          ),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Please select earliest and latest completion dates',
       );
       return;
     }
     if (_latestCompletionDate!.isBefore(_earliestCompletionDate!)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Latest completion date must be on or after the earliest date',
-          ),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Latest completion date must be on or after the earliest date',
       );
       return;
     }
@@ -327,27 +319,22 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     if (_useCustomerAddressForDest) {
       destAddr = _customerDestinationAddress(_selectedCustomer!);
       if (destAddr.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Selected customer has no address on file'),
-          ),
+        SnackBarUtils.showSnackBar(
+          context,
+          'Selected customer has no address on file',
         );
         return;
       }
     } else {
       destAddr = _destinationController.text.trim();
       if (destAddr.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enter a destination address')),
-        );
+        SnackBarUtils.showSnackBar(context, 'Please enter a destination address');
         return;
       }
     }
     // Manual source must have an address typed in before we try to geocode it.
     if (!_useCurrentLocationForSource && _sourceController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a source address')),
-      );
+      SnackBarUtils.showSnackBar(context, 'Please enter a source address');
       return;
     }
     setState(() => _submitting = true);
@@ -366,9 +353,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             permission == LocationPermission.deniedForever) {
           if (mounted) {
             setState(() => _submitting = false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Location permission denied')),
-            );
+            SnackBarUtils.showSnackBar(context, 'Location permission denied');
           }
           return;
         }
@@ -393,12 +378,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           if (srcLocs.isEmpty) {
             if (mounted) {
               setState(() => _submitting = false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Could not locate the source address on the map',
-                  ),
-                ),
+              SnackBarUtils.showSnackBar(
+                context,
+                'Could not locate the source address on the map',
               );
             }
             return;
@@ -427,12 +409,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         if (destLocs.isEmpty) {
           if (mounted) {
             setState(() => _submitting = false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Could not locate the destination address on the map',
-                ),
-              ),
+            SnackBarUtils.showSnackBar(
+              context,
+              'Could not locate the destination address on the map',
             );
           }
           return;
@@ -501,18 +480,20 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             msg != null && !ErrorMessageUtils.isTechnicalMessage(msg)
             ? msg
             : ErrorMessageUtils.toUserFriendlyMessage(e);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(displayMsg),
-            duration: const Duration(seconds: 5),
-          ),
+        SnackBarUtils.showSnackBar(
+          context,
+          displayMsg,
+          isError: true,
+          duration: const Duration(seconds: 5),
         );
       }
     } catch (e) {
       if (mounted) {
         setState(() => _submitting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.toUserFriendlyMessage(e),
+          isError: true,
         );
       }
     }
@@ -1066,17 +1047,14 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   void _fillDestinationFromCustomer() {
     final c = _selectedCustomer;
     if (c == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select a customer first')),
-      );
+      SnackBarUtils.showSnackBar(context, 'Select a customer first');
       return;
     }
     final addr = _customerDestinationAddress(c);
     if (addr.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Selected customer has no address on file'),
-        ),
+      SnackBarUtils.showSnackBar(
+        context,
+        'Selected customer has no address on file',
       );
       return;
     }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/task_service.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/oriented_image.dart';
@@ -393,9 +394,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
     Task task,
   ) async {
     if (task.id == null || task.id!.isEmpty || task.assignedTo.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to load form details')),
-      );
+      SnackBarUtils.showSnackBar(context, 'Unable to load form details');
       return;
     }
     showModalBottomSheet<void>(

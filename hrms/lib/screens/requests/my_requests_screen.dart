@@ -618,12 +618,9 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
                                 DateTimeRange(start: start, end: end),
                               );
                             } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Select start and end date in the calendar',
-                                  ),
-                                ),
+                              SnackBarUtils.showSnackBar(
+                                context,
+                                'Select start and end date in the calendar',
                               );
                             }
                           },
@@ -1918,15 +1915,22 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     super.dispose();
   }
 
+  /// The month the leave balance is scoped to: the selected leave's start month,
+  /// or the current month before a date is picked. The template allocation is a
+  /// monthly quota that resets each month, so a next-month application must be
+  /// validated against next month's fresh quota — not this month's usage.
+  DateTime get _balanceMonth => _startDate ?? DateTime.now();
+
   Future<void> _fetchLeaveBalance() async {
-    final result = await _requestService.getLeaveBalance();
+    final month = _balanceMonth;
+    final result = await _requestService.getLeaveBalance(forMonth: month);
     if (!mounted || result['success'] != true) return;
 
     final total = (result['totalAllowed'] as num?)?.toDouble() ?? 0.0;
 
     // Always load the employee's own leave records so we can show per-type
     // allocated/used/pending (the records endpoint works on every backend).
-    final usage = await _computeLeaveUsageFromRecords();
+    final usage = await _computeLeaveUsageFromRecords(forMonth: month);
 
     // Prefer backend-computed overall totals when present; otherwise use the
     // totals derived from the records.
@@ -1970,16 +1974,18 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     return null;
   }
 
-  /// Loads this employee's Approved (used) and Pending leave days for the
-  /// current MONTH from their own records, returning the overall
-  /// (usedDays, pendingDays). The template allocation is a monthly quota that
-  /// resets each month, so usage is scoped to this month to match the backend
-  /// balance (see getLeaveBalance). Only a fallback — the backend normally
-  /// supplies these totals directly.
-  Future<(double, double)> _computeLeaveUsageFromRecords() async {
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month, 1);
-    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+  /// Loads this employee's Approved (used) and Pending leave days for the target
+  /// month ([forMonth], defaulting to the current month) from their own records,
+  /// returning the overall (usedDays, pendingDays). The template allocation is a
+  /// monthly quota that resets each month, so usage is scoped to that month to
+  /// match the backend balance (see getLeaveBalance). Only a fallback — the
+  /// backend normally supplies these totals directly.
+  Future<(double, double)> _computeLeaveUsageFromRecords({
+    DateTime? forMonth,
+  }) async {
+    final base = forMonth ?? DateTime.now();
+    final monthStart = DateTime(base.year, base.month, 1);
+    final monthEnd = DateTime(base.year, base.month + 1, 0, 23, 59, 59);
 
     double daysOf(dynamic l) {
       final d = (l is Map) ? l['days'] : null;
@@ -2141,6 +2147,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
         }
       }
     });
+    // The chosen start date may fall in a different month than was last loaded;
+    // refresh the balance so the entitlement card and limit warning reflect that
+    // month's quota (usage resets monthly — see _balanceMonth).
+    if (isStart) unawaited(_fetchLeaveBalance());
   }
 
   Future<void> _submit() async {
@@ -2841,7 +2851,11 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       Padding(
                         padding: const EdgeInsets.only(top: 10),
                         child: Text(
-                          _isHalf
+                          _isUnpaidLeave
+                              ? (_isHalf
+                                    ? 'Total: 0.5 day · No balance limit'
+                                    : 'Total: $_days day${_days == 1 ? '' : 's'} · No balance limit')
+                              : _isHalf
                               ? 'Total: 0.5 day - ${_trimNum(_selectedTypeRemaining)} days remaining'
                               : 'Total: $_days day${_days == 1 ? '' : 's'} - ${_trimNum(_selectedTypeRemaining)} days remaining',
                           style: TextStyle(
@@ -4334,14 +4348,16 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
             : (data is List ? data : []);
         for (final e in list) {
           if (e is! Map) continue;
-          final status = (e['status'] ?? '').toString();
+          // Normalize so case/whitespace variants (e.g. 'pending'/'PENDING')
+          // are still counted correctly.
+          final status = (e['status'] ?? '').toString().trim().toLowerCase();
           final amt = e['amount'];
           final amount = amt is num
               ? amt.toDouble()
               : double.tryParse(amt?.toString() ?? '') ?? 0;
-          if (status == 'Approved' || status == 'Paid') {
+          if (status == 'approved' || status == 'paid') {
             reimbursed += amount;
-          } else if (status == 'Pending') {
+          } else if (status == 'pending') {
             pending += amount;
             pendingCount++;
           }
@@ -6889,6 +6905,12 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       final overlay = Navigator.of(context, rootNavigator: true).overlay;
       if (overlay != null && overlay.mounted) {
         showRequestSubmittedSuccessDialog(overlay.context);
+      }
+      // Surface the exact policy notice when the permission time will be fined
+      // (disabled / no-allowance shift). Request was still accepted — informational.
+      final notice = result['notice'];
+      if (notice is String && notice.trim().isNotEmpty) {
+        SnackBarUtils.showSnackBar(context, notice);
       }
     } else {
       SnackBarUtils.showSnackBar(

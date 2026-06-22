@@ -308,6 +308,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       'recipients',
       'staffIds',
       'targetStaff',
+      'employees',
+      'staff',
+      'specificStaff',
+      'selectedStaff',
+      'selectedEmployees',
+      'audienceIds',
+      'to',
     ]) {
       final v = item[key];
       if (v is List) {
@@ -317,10 +324,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         }
       }
     }
-    if (targets.isEmpty) return true; // company-wide
-    final myStaffId = idStr(_profileStaffDataSnapshot?['_id']);
-    if (myStaffId == null || myStaffId.isEmpty) return false;
-    return targets.contains(myStaffId);
+    if (targets.isNotEmpty) {
+      final myStaffId = idStr(_profileStaffDataSnapshot?['_id']);
+      if (myStaffId == null || myStaffId.isEmpty) return false;
+      return targets.contains(myStaffId);
+    }
+    // No resolvable recipient list. Mirror the backend audienceFilter: an
+    // announcement explicitly flagged "specific" must not fall back to
+    // company-wide — fail closed (hide) rather than leak it to everyone.
+    for (final key in const ['audienceType', 'audience', 'visibility', 'type']) {
+      final v = item[key];
+      if (v is String &&
+          RegExp(r'^\s*specific\s*$', caseSensitive: false).hasMatch(v)) {
+        return false;
+      }
+    }
+    return true; // company-wide
   }
 
   /// Geo [getDashboardData] `todayAnnouncements` can be empty while web HRMS

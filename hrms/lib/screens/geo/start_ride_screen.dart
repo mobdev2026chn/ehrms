@@ -18,6 +18,7 @@ import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/screens/geo/live_tracking_screen.dart';
 import 'package:hrms/screens/geo/task_detail_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 
@@ -412,8 +413,10 @@ class _StartRideScreenState extends State<StartRideScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ErrorMessageUtils.toUserFriendlyMessage(e))),
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.toUserFriendlyMessage(e),
+          isError: true,
         );
         setState(() => _startingRide = false);
       }
@@ -466,10 +469,9 @@ class _StartRideScreenState extends State<StartRideScreen> {
                 final number = _customer?.customerNumber?.trim();
                 if (number == null || number.isEmpty) {
                   if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Customer number not available'),
-                      ),
+                    SnackBarUtils.showSnackBar(
+                      context,
+                      'Customer number not available',
                     );
                   }
                   return;
@@ -478,9 +480,7 @@ class _StartRideScreenState extends State<StartRideScreen> {
                 if (await canLaunchUrl(uri)) {
                   await launchUrl(uri);
                 } else if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Cannot make call')),
-                  );
+                  SnackBarUtils.showSnackBar(context, 'Cannot make call');
                 }
               },
             ),

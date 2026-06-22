@@ -4,6 +4,7 @@ import '../../config/constants.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
+import '../../utils/snackbar_utils.dart';
 
 Future<void> _openPrivacyPolicy(BuildContext context) async {
   final uri = Uri.parse(AppConstants.privacyPolicyUrl);
@@ -11,9 +12,7 @@ Future<void> _openPrivacyPolicy(BuildContext context) async {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   } else {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open Privacy Policy')),
-      );
+      SnackBarUtils.showSnackBar(context, 'Could not open Privacy Policy');
     }
   }
 }

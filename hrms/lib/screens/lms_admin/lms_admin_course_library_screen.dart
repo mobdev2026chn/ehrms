@@ -7,6 +7,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
 import '../../config/constants.dart';
+import '../../utils/snackbar_utils.dart';
 import '../../services/lms_admin_service.dart';
 import '../../widgets/app_tab_loader.dart';
 import 'lms_admin_utils.dart';
@@ -93,10 +94,9 @@ class _LmsAdminCourseLibraryScreenState
       .toSet();
 
   void _comingFromWeb() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Course authoring is managed from the web admin console.'),
-      ),
+    SnackBarUtils.showSnackBar(
+      context,
+      'Course authoring is managed from the web admin console.',
     );
   }
 

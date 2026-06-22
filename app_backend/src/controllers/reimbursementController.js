@@ -96,9 +96,13 @@ const getReimbursementSummary = async (req, res) => {
         let totalPending = 0;
         let pendingCount = 0;
         for (const r of results) {
-            if (r._id === 'Approved' || r._id === 'Paid') {
+            // Normalize status so case/whitespace variants (e.g. legacy or
+            // externally-created records stored as 'pending'/'PENDING') are
+            // still counted correctly.
+            const st = (r._id || '').toString().trim().toLowerCase();
+            if (st === 'approved' || st === 'paid') {
                 totalReimbursed += r.total;
-            } else if (r._id === 'Pending') {
+            } else if (st === 'pending') {
                 totalPending += r.total;
                 pendingCount += r.count;
             }

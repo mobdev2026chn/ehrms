@@ -7,6 +7,7 @@ import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../../utils/snackbar_utils.dart';
 
 /// Lists FCM notifications received in foreground, background, or when app was closed.
 /// All received notifications appear here (no need to tap them). Stored for 24 hours.
@@ -164,7 +165,6 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           // for the target on the shared root navigator. Do NOT pop here — the
           // screen is already gone on success, and popping would remove the
           // target instead (push-then-pop race on a single navigator).
-          final messenger = ScaffoldMessenger.of(context);
           final navigated = await FcmService.handleNotificationTap(
             data,
             title: title,
@@ -175,11 +175,10 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           // No module/type matched (e.g. a generic or test notification):
           // give feedback instead of a silent dead tap.
           if (!mounted) return;
-          messenger.showSnackBar(
-            const SnackBar(
-              content: Text('No related page for this notification.'),
-              duration: Duration(seconds: 2),
-            ),
+          SnackBarUtils.showSnackBar(
+            context,
+            'No related page for this notification.',
+            duration: const Duration(seconds: 2),
           );
         },
         borderRadius: BorderRadius.circular(12),

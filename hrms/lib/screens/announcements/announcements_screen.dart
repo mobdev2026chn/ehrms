@@ -616,6 +616,16 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
       'recipients',
       'staffIds',
       'targetStaff',
+      // Other names the external interaction API has been seen to use for the
+      // recipient list — kept broad so a targeted announcement is recognised
+      // regardless of the field the web host serializes it under.
+      'employees',
+      'staff',
+      'specificStaff',
+      'selectedStaff',
+      'selectedEmployees',
+      'audienceIds',
+      'to',
     ]) {
       final v = item[key];
       if (v is List) {
@@ -625,12 +635,31 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
         }
       }
     }
-    // No explicit recipient list → company-wide → visible to all.
-    if (targets.isEmpty) return true;
     // Targeted: only the listed staff may see it. If we can't resolve the current
     // staff id, hide rather than risk leaking a targeted announcement.
-    if (myStaffId == null || myStaffId.isEmpty) return false;
-    return targets.contains(myStaffId);
+    if (targets.isNotEmpty) {
+      if (myStaffId == null || myStaffId.isEmpty) return false;
+      return targets.contains(myStaffId);
+    }
+    // No resolvable recipient list. Mirror the backend audienceFilter: an
+    // announcement explicitly flagged "specific" must NOT fall back to
+    // company-wide — if its recipients aren't present in this payload we cannot
+    // confirm membership, so fail closed (hide) rather than leak it to everyone.
+    if (_isFlaggedSpecific(item)) return false;
+    // Otherwise → company-wide → visible to all.
+    return true;
+  }
+
+  /// Whether the announcement is explicitly addressed to specific staff (as
+  /// opposed to all employees), across the audience-flag keys the web may use.
+  static bool _isFlaggedSpecific(Map item) {
+    for (final key in const ['audienceType', 'audience', 'visibility', 'type']) {
+      final v = item[key];
+      if (v is String && RegExp(r'^\s*specific\s*$', caseSensitive: false).hasMatch(v)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Whether an announcement was created before the employee joined. Uses the

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../utils/snackbar_utils.dart';
 import '../../services/interaction_service.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
@@ -96,7 +97,7 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
 
   Future<void> _submit() async {
     if (_selected.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Choose at least one option')));
+      SnackBarUtils.showSnackBar(context, 'Choose at least one option');
       return;
     }
     setState(() => _submitting = true);
@@ -107,8 +108,9 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
       );
       if (r['success'] == false) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(r['message']?.toString() ?? 'Could not submit vote')),
+          SnackBarUtils.showSnackBar(
+            context,
+            r['message']?.toString() ?? 'Could not submit vote',
           );
         }
         return;

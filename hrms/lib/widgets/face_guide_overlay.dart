@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -37,9 +38,17 @@ class _FaceGuideOverlayState extends State<FaceGuideOverlay> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
+    // Sized relative to the screen so the scan oval is large and easy to fill —
+    // noticeably bigger than the old fixed 250×320 box. Capped so it stays a
+    // portrait oval on wide screens/tablets. Used for both punch/break scanning
+    // and enrollment.
+    final screenW = MediaQuery.of(context).size.width;
+    final w = math.min(screenW * 0.86, 360.0);
+    final h = w * 1.3;
+    final guideSize = Size(w, h);
     return SizedBox(
-      width: 250,
-      height: 320,
+      width: w,
+      height: h,
       child: AnimatedBuilder(
         animation: _controller,
         builder: (context, _) {
@@ -48,7 +57,7 @@ class _FaceGuideOverlayState extends State<FaceGuideOverlay> with SingleTickerPr
             alignment: Alignment.center,
             children: [
               CustomPaint(
-                size: const Size(250, 320),
+                size: guideSize,
                 painter: _FaceGuidePainter(
                   color: widget.color,
                   sweep: t,
