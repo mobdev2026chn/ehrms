@@ -2316,31 +2316,43 @@ const kioskClearFace = async (req, res) => {
         if (!employeeId && !email) {
             return res.status(400).json({ success: false, message: 'employee_id or email is required.' });
         }
-        const query = employeeId ? { employeeId } : { email: new RegExp(`^${String(email).trim()}$`, 'i') };
-        const staff = await Staff.findOne(query).select('_id userId employeeId name faceEnrollEmbeddings');
-        if (!staff) {
+        // Match by employeeId AND/OR email. employeeId is NOT guaranteed unique in the
+        // data, so a findOne() could clear a DIFFERENT same-id record and leave the one
+        // shown on the kiosk still enrolled (the reported "cleared but still showing"
+        // bug). Match ALL candidates and clear every one, so the displayed record is
+        // always among them. Email (when provided) disambiguates duplicate ids.
+        const esc = (s) => String(s).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const or = [];
+        if (employeeId) or.push({ employeeId });
+        if (email) or.push({ email: new RegExp(`^${esc(email)}$`, 'i') });
+        const matches = await Staff.find({ $or: or }).select('_id userId employeeId name faceEnrollEmbeddings');
+        if (!matches.length) {
             return res.status(404).json({ success: false, message: 'No enrolled employee found for that id/email.' });
         }
-        const had = Array.isArray(staff.faceEnrollEmbeddings) ? staff.faceEnrollEmbeddings.length : 0;
         // Clearing enrollment also removes the PROFILE IMAGE: enroll-face set the avatar
         // FROM the enrollment selfie (Staff.avatar + Staff.faceEnrollImage + User.avatar),
         // so a clear must wipe all three — otherwise the cleared person still shows their
         // enrolled face as their profile photo on the kiosk roster/detail.
-        await Staff.findByIdAndUpdate(staff._id, {
-            faceEnrollEmbeddings: [],
-            faceEnrolledAt: null,
-            faceEnrollImage: null,
-            avatar: null,
-        });
-        if (staff.userId) {
-            await User.findByIdAndUpdate(staff.userId, { avatar: null }).catch(() => {});
+        let cleared = 0;
+        for (const staff of matches) {
+            cleared += Array.isArray(staff.faceEnrollEmbeddings) ? staff.faceEnrollEmbeddings.length : 0;
+            await Staff.findByIdAndUpdate(staff._id, {
+                faceEnrollEmbeddings: [],
+                faceEnrolledAt: null,
+                faceEnrollImage: null,
+                avatar: null,
+            });
+            if (staff.userId) {
+                await User.findByIdAndUpdate(staff.userId, { avatar: null }).catch(() => {});
+            }
         }
-        console.log(`[kioskClearFace] cleared staff=${staff._id} (${staff.employeeId}) samples=${had} + profile image`);
+        console.log(`[kioskClearFace] cleared ${matches.length} record(s) for id=${employeeId || '-'} email=${email || '-'} samples=${cleared} + profile image`);
         return res.json({
             success: true,
-            employee_id: staff.employeeId,
-            name: staff.name,
-            cleared: had,
+            employee_id: matches[0].employeeId,
+            name: matches[0].name,
+            cleared,
+            records: matches.length,
         });
     } catch (e) {
         console.error('[kioskClearFace]', e.message);
