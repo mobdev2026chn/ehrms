@@ -6076,21 +6076,9 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
       );
       return;
     }
-    // disabled + quota = 0: block (Scenario 4).
-    // disabled + quota > 0: open the dialog — all amount goes to fine (Scenario 3).
-    if (_balance != null && _balance?['enabled'] == false) {
-      final quota = ((_balance?['monthlyQuotaMinutes'] as num?) ?? 0);
-      if (quota <= 0) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'Permission is not configured for your shift. Contact HR.',
-          isError: true,
-        );
-        return;
-      }
-      // disabled + quota > 0: fall through and open dialog
-    }
-    // Enabled with quota = 0: allow the dialog (entire amount treated as fine).
+    // Every other scenario opens the dialog — the request is always allowed and the
+    // entire duration is processed as Fine when the shift is disabled and/or has no
+    // quota: S2 (enabled, no quota), S3 (disabled, has quota), S4 (disabled, no quota).
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -6181,7 +6169,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                 if (configured && enabled && quota > 0) ...[
                   Row(
                     children: [
-                      _balanceTile('Monthly', hoursAndMinutes(quota)),
+                      _balanceTile('Monthly Allocated', hoursAndMinutes(quota)),
                       const SizedBox(width: 8),
                       _balanceTile('Used', hoursAndMinutes(consumed)),
                       const SizedBox(width: 8),
@@ -6204,8 +6192,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     icon: Icons.info_outline,
                     color: Colors.orange,
                     message: quota > 0
-                        ? 'Permission is disabled for your shift. Contact HR to enable.'
-                        : 'Permission is not configured for your shift. Contact HR.',
+                        ? 'Permission is disabled for your shift. Contact HR to enable.\n'
+                              'Any permission request will be processed as Fine.'
+                        : 'Permission is not configured for your shift. Contact HR.\n'
+                              'Any permission request will be processed as Fine.',
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -6825,11 +6815,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     final requested = int.tryParse(_minutesController.text.trim()) ?? 0;
     if (requested <= 0) return (minutes: 0, basis: '');
 
-    // Enabled but no quota, OR disabled with quota — entire request is fine.
-    if ((_enabled && _quotaMinutes <= 0) || (!_enabled && _quotaMinutes > 0)) {
+    // Any non-normal scenario — entire request is fine: S2 (enabled, no quota),
+    // S3 (disabled, has quota), S4 (disabled, no quota).
+    if (!(_enabled && _quotaMinutes > 0)) {
       return (
         minutes: requested,
-        basis: _enabled ? 'not configured — all as fine' : 'disabled — all as fine',
+        basis: (!_enabled && _quotaMinutes > 0)
+            ? 'disabled — all as fine'
+            : 'not configured — all as fine',
       );
     }
 
@@ -6991,15 +6984,6 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       );
       return;
     }
-    // disabled + quota = 0: block (Scenario 4).
-    if (!_enabled && _quotaMinutes <= 0) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Permission is not configured for your shift. Contact HR.',
-        isError: true,
-      );
-      return;
-    }
     if (!_formKey.currentState!.validate()) return;
 
     final minutes = int.tryParse(_minutesController.text.trim());
@@ -7056,8 +7040,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       // User acknowledged the banner — fall through to submit.
     }
 
-    // Enabled with no quota configured → entire amount is fine (warn then allow).
-    if (_enabled && _quotaMinutes <= 0) {
+    // No quota configured → entire amount is fine (warn then allow). Covers S2
+    // (enabled, no quota) and S4 (disabled, no quota); S3 (disabled + quota) is
+    // handled by the disabled branch above.
+    if (_quotaMinutes <= 0) {
       final fineText = () {
         final f = _estimateFine(minutes);
         return f > 0
@@ -7339,7 +7325,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed:
-                            (_isSubmitting || !_configured || (!_enabled && _quotaMinutes <= 0))
+                            (_isSubmitting || !_configured)
                             ? null
                             : _submit,
                         style: ElevatedButton.styleFrom(

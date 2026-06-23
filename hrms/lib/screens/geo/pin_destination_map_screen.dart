@@ -1,6 +1,8 @@
 // Reusable Pin Destination Map – used by Change Destination, Add Task, etc.
 // Full-screen map: tap or long-press to drop pin, reverse-geocode, confirm.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -52,6 +54,15 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
   bool _loadingAddress = false;
   bool _loadingCurrentLocation = true;
 
+  // Location search.
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  Timer? _searchDebounce;
+  List<PlaceSuggestion> _suggestions = const [];
+  bool _searching = false;
+  bool _resolvingPlace = false;
+  String? _searchSessionToken;
+
   @override
   void initState() {
     super.initState();
@@ -63,6 +74,99 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
         widget.initialPin!.longitude,
       );
     }
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    final query = value.trim();
+    if (query.isEmpty) {
+      setState(() {
+        _suggestions = const [];
+        _searching = false;
+      });
+      return;
+    }
+    // Start a billing session on the first keystroke of a search.
+    _searchSessionToken ??=
+        'pin-${DateTime.now().microsecondsSinceEpoch}';
+    setState(() => _searching = true);
+    _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+      _runSearch(query);
+    });
+  }
+
+  Future<void> _runSearch(String query) async {
+    final center = _currentPosition != null
+        ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+        : (_pinnedLocation ?? widget.initialCenter);
+    final results = await AddressResolutionService.searchPlaces(
+      query,
+      sessionToken: _searchSessionToken,
+      lat: center?.latitude,
+      lng: center?.longitude,
+    );
+    if (!mounted) return;
+    // Ignore stale results if the query changed while we were waiting.
+    if (_searchController.text.trim() != query) return;
+    setState(() {
+      _suggestions = results;
+      _searching = false;
+    });
+  }
+
+  Future<void> _onSuggestionTap(PlaceSuggestion suggestion) async {
+    FocusScope.of(context).unfocus();
+    _searchDebounce?.cancel();
+    setState(() {
+      _resolvingPlace = true;
+      _suggestions = const [];
+      _searchController.text = suggestion.description;
+    });
+
+    final place = await AddressResolutionService.placeDetails(
+      suggestion.placeId,
+      sessionToken: _searchSessionToken,
+    );
+    // The session ends when details are fetched; start fresh next search.
+    _searchSessionToken = null;
+
+    if (!mounted) return;
+    if (place == null) {
+      setState(() => _resolvingPlace = false);
+      SnackBarUtils.showSnackBar(context, 'Could not load that location');
+      return;
+    }
+
+    final target = LatLng(place.lat, place.lng);
+    setState(() {
+      _resolvingPlace = false;
+      _pinnedLocation = target;
+      _pinnedAddress = place.address.formattedAddress;
+      _pinnedPincode = place.address.pincode;
+      _pinnedCity = place.address.city;
+      _loadingAddress = false;
+    });
+    _mapController?.animateCamera(
+      CameraUpdate.newLatLngZoom(target, 16),
+    );
+  }
+
+  void _clearSearch() {
+    _searchDebounce?.cancel();
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _searchController.clear();
+      _suggestions = const [];
+      _searching = false;
+    });
   }
 
   Future<void> _fetchCurrentLocation() async {
@@ -124,6 +228,10 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
   }
 
   void _onMapTap(LatLng position) {
+    if (_searchFocus.hasFocus || _suggestions.isNotEmpty) {
+      FocusScope.of(context).unfocus();
+      setState(() => _suggestions = const []);
+    }
     setState(() {
       _pinnedLocation = position;
     });
@@ -146,6 +254,115 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
         pincode: _pinnedPincode,
         city: _pinnedCity,
       ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          elevation: 4,
+          borderRadius: BorderRadius.circular(12),
+          child: TextField(
+            controller: _searchController,
+            focusNode: _searchFocus,
+            textInputAction: TextInputAction.search,
+            onChanged: _onSearchChanged,
+            decoration: InputDecoration(
+              hintText: 'Search location',
+              prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: _resolvingPlace || _searching
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : (_searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: _clearSearch,
+                        )
+                      : null),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+              ),
+            ),
+          ),
+        ),
+        if (_suggestions.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 6),
+            constraints: const BoxConstraints(maxHeight: 260),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ListView.separated(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              itemCount: _suggestions.length,
+              separatorBuilder: (_, __) => Divider(
+                height: 1,
+                color: Colors.grey.shade200,
+              ),
+              itemBuilder: (context, i) {
+                final s = _suggestions[i];
+                return ListTile(
+                  dense: true,
+                  leading: const Icon(
+                    Icons.location_on_outlined,
+                    color: Colors.grey,
+                  ),
+                  title: Text(
+                    s.primaryText ?? s.description,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: s.secondaryText != null
+                      ? Text(
+                          s.secondaryText!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        )
+                      : null,
+                  onTap: () => _onSuggestionTap(s),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 
@@ -225,6 +442,12 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
                   },
                 ),
             },
+          ),
+          Positioned(
+            left: 12,
+            right: 12,
+            top: 12,
+            child: _buildSearchBar(),
           ),
           Positioned(
             left: 16,

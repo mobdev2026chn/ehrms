@@ -2121,9 +2121,44 @@ const kioskEnrolledList = async (req, res) => {
         const staff = await Staff.find(filter)
             .select('employeeId name email department designation avatar faceEnrolledAt status')
             .sort({ name: 1 }).lean();
-        return res.json({
-            count: staff.length,
-            employees: staff.map((s) => ({
+
+        // Today's attendance for every enrolled employee in ONE query — drives the
+        // dashboard's per-day, user-wise Present/Late/On-Break/Permission summary.
+        const staffIds = staff.map((s) => s._id);
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const tomorrow = new Date(todayStart); tomorrow.setDate(todayStart.getDate() + 1);
+        let todayAtt = [];
+        try {
+            todayAtt = await Attendance.find({
+                $or: [{ employeeId: { $in: staffIds } }, { user: { $in: staffIds } }],
+                date: { $gte: todayStart, $lt: tomorrow },
+            }).select('employeeId user punchIn punchOut status lateMinutes permissionConsumedMinutes permissionApprovedMinutes break.breaks').lean();
+        } catch (e) {
+            console.error('[kioskEnrolledList] today attendance lookup failed:', e.message);
+        }
+        // Map staff _id -> today's attendance doc.
+        const attByStaff = new Map();
+        for (const a of todayAtt) {
+            const key = String(a.employeeId || a.user || '');
+            if (key) attByStaff.set(key, a);
+        }
+        // A break is ongoing when it has started but not yet ended.
+        const isOnBreak = (a) => Array.isArray(a?.break?.breaks)
+            && a.break.breaks.some((b) => b && b.startTime && !b.endTime);
+
+        let presentToday = 0, lateToday = 0, onBreakToday = 0, permissionToday = 0;
+        const employees = staff.map((s) => {
+            const a = attByStaff.get(String(s._id));
+            const present = !!(a && a.punchIn);
+            const late = !!(a && Number(a.lateMinutes) > 0);
+            const onBreak = isOnBreak(a);
+            const permission = !!(a && (Number(a.permissionConsumedMinutes) > 0 || Number(a.permissionApprovedMinutes) > 0));
+            if (present) presentToday++;
+            if (late) lateToday++;
+            if (onBreak) onBreakToday++;
+            if (permission) permissionToday++;
+            return {
                 employee_id: s.employeeId,
                 name: s.name,
                 email: s.email || null,
@@ -2132,7 +2167,23 @@ const kioskEnrolledList = async (req, res) => {
                 avatar: s.avatar || null,
                 enrolled_at: s.faceEnrolledAt || null,
                 status: s.status || null,
-            })),
+                // Today's live attendance snapshot (per-user).
+                present_today: present,
+                late_today: late,
+                on_break: onBreak,
+                permission_today: permission,
+                today_status: a ? (a.status || null) : null,
+            };
+        });
+
+        return res.json({
+            count: staff.length,
+            // Per-day, user-wise tallies for the dashboard summary card.
+            present_today: presentToday,
+            late_today: lateToday,
+            on_break_today: onBreakToday,
+            permission_today: permissionToday,
+            employees,
         });
     } catch (e) {
         console.error('[kioskEnrolledList]', e.message);

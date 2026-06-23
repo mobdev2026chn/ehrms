@@ -13,12 +13,36 @@ import '../core/network/dio_client.dart';
 import '../utils/error_message_utils.dart';
 import 'api_client.dart';
 
+/// Thrown when every multipart upload shape was tried and none succeeded.
+/// [message] is a short user-facing line; [diagnostics] lists each shape that
+/// was attempted with the server's status/reason, so a failing upload (notably
+/// voice, which behaves differently from images/files on some servers) can be
+/// diagnosed from the device without server log access.
+class InteractionUploadException implements Exception {
+  final String message;
+  final String diagnostics;
+  InteractionUploadException(this.message, this.diagnostics);
+  @override
+  String toString() => message;
+}
+
 class InteractionService {
   InteractionService._();
   static final InteractionService instance = InteractionService._();
 
   Dio? _dio;
   String? _dioBaseUsed;
+
+  /// Once an upload succeeds, the exact multipart shape the server accepted is
+  /// cached per media type (`image` | `video` | `file` | `voice`). Subsequent
+  /// uploads of that type go straight to the accepted shape instead of
+  /// re-uploading the whole file through every fallback candidate. Without this,
+  /// a large document would be uploaded several times in series ("lot of
+  /// loadings") and a slow voice clip could time out on an early candidate
+  /// before ever reaching the shape the server accepts ("audio not sent").
+  /// In-memory only: re-discovered on the first upload after an app restart.
+  static final Map<String, ({String typeKey, String typeValue, String fileField})>
+      _uploadShapeCache = {};
 
   /// Raw stored token → value safe for `Authorization: Bearer …` (no duplicate "Bearer").
   /// Geo/LAN `app_backend` has no `/api/interaction`. The TypeScript `backend` does (`server.ts`).
@@ -488,6 +512,13 @@ class InteractionService {
       ));
     }
 
+    // 0) If a previous upload of this type already discovered the shape the
+    //    server accepts, try it first. This avoids re-uploading the whole file
+    //    through every candidate below on every send.
+    final cached = _uploadShapeCache[type];
+    if (cached != null) {
+      add(cached.typeKey, cached.typeValue, cached.fileField);
+    }
     // 1) The intended type, both field-name conventions.
     add('messageType', type, 'file');
     add('type', type, 'file');
@@ -516,8 +547,21 @@ class InteractionService {
     // type" even though the Content-Type header is a correct `video/mp4`.
     final uploadFilename = _filenameForUpload(filename, contentType, type);
 
-    DioException? lastError;
-    for (final candidate in payloads) {
+    // Media uploads need a far more generous timeout than the 45s the client
+    // applies to ordinary JSON calls: a multi-MB document or voice clip over a
+    // mobile network can legitimately take minutes. Without this override a slow
+    // upload is cut mid-transfer and surfaces as "audio not sent" / an endless
+    // attach spinner that ultimately fails.
+    final uploadOptions = Options(
+      sendTimeout: const Duration(minutes: 3),
+      receiveTimeout: const Duration(minutes: 3),
+    );
+
+    final attemptLog = <String>[];
+    for (var i = 0; i < payloads.length; i++) {
+      final candidate = payloads[i];
+      final shapeLabel =
+          '${candidate.fields.entries.where((e) => e.key != 'receiverId').map((e) => '${e.key}=${e.value}').join(',')} file=${candidate.fileField}';
       try {
         final form = FormData.fromMap({
           ...candidate.fields,
@@ -530,26 +574,57 @@ class InteractionService {
         final res = await _client().post<Map<String, dynamic>>(
           endpoint,
           data: form,
+          options: uploadOptions,
         );
+        // Remember the shape that worked so the next upload of this type skips
+        // the fallback walk and uploads the file exactly once.
+        final field = candidate.fields.keys.firstWhere(
+          (k) => k == 'messageType' || k == 'type',
+          orElse: () => '',
+        );
+        if (field.isNotEmpty) {
+          _uploadShapeCache[type] = (
+            typeKey: field,
+            typeValue: candidate.fields[field].toString(),
+            fileField: candidate.fileField,
+          );
+        }
         return res.data ?? {};
       } on DioException catch (e) {
-        lastError = e;
         final code = e.response?.statusCode ?? 0;
+        final isTimeout = e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.sendTimeout ||
+            e.type == DioExceptionType.receiveTimeout;
+        final serverMsg = isTimeout
+            ? 'timed out (${e.type.name})'
+            : (ErrorMessageUtils.messageFromResponseData(e.response?.data) ??
+                e.message ??
+                e.type.name);
+        attemptLog.add('• $shapeLabel → ${code == 0 ? '—' : code} $serverMsg');
         // A wrong message-type value or a rejected MIME shows up across server
         // versions as 400/422 (validation), 415 (unsupported media type), or
         // 500 (a multer `fileFilter` error surfaces as a generic 500). Advance
-        // to the next known field-name/value shape for all of these so the
-        // `file`→`document` and audio fallbacks are actually exercised instead
-        // of bailing on the first attempt. The final lastError is still thrown
-        // on exhaustion, so a genuine failure is never swallowed.
+        // to the next known field-name/value shape for these so the
+        // `file`→`document` and audio fallbacks are actually exercised.
         if (code == 400 || code == 415 || code == 422 || code == 500) {
           continue;
         }
-        rethrow;
+        // A timeout means the request never got a response (the file part is
+        // small for voice, so this is the server stalling, not a slow upload).
+        // Re-uploading the same clip through the remaining shapes would just
+        // stall again for minutes each — the "endless loading" symptom. Stop
+        // here and report instead of spinning.
+        break;
       }
     }
-    if (lastError != null) throw lastError;
-    return {'success': false, 'message': 'Unable to upload media'};
+    final diagnostics = attemptLog.isEmpty
+        ? 'No upload attempts were made.'
+        : 'Upload of "$uploadFilename" (${contentType?.mimeType ?? 'unknown type'}) '
+            'failed. Tried ${attemptLog.length} shape(s):\n${attemptLog.join('\n')}';
+    final friendly = (type == 'voice')
+        ? 'Voice message could not be sent.'
+        : 'Attachment could not be sent.';
+    throw InteractionUploadException(friendly, diagnostics);
   }
 
   /// Resolve the HTTP `Content-Type` for an outgoing multipart file from its

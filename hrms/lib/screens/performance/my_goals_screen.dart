@@ -673,14 +673,10 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
     final status = (goal['status'] ?? '').toString();
     final title = goal['title'] ?? 'Goal';
     final type = (goal['type'] ?? '').toString();
-    final kpi = goal['kpi'] ?? '';
-    final target = goal['target'] ?? '';
-    final weightage = (goal['weightage'] ?? 0) as num;
     final progress = ((goal['progress'] ?? 0) as num).toDouble().clamp(
       0.0,
       100.0,
     );
-    final cycle = goal['cycle'] ?? '';
     final startDate = goal['startDate']?.toString();
     final endDate = goal['endDate']?.toString();
     final createdBy = goal['createdBy'];
@@ -736,34 +732,6 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                   ),
               ],
             ),
-            if (kpi.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                'KPI: $kpi',
-                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-              ),
-            ],
-            if (target.isNotEmpty) ...[
-              const SizedBox(height: 2),
-              Text(
-                'Target: $target',
-                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-              ),
-            ],
-            if (weightage > 0) ...[
-              const SizedBox(height: 2),
-              Text(
-                'Weight: ${weightage.toStringAsFixed(0)}%',
-                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-              ),
-            ],
-            if (cycle.isNotEmpty) ...[
-              const SizedBox(height: 2),
-              Text(
-                'Cycle: $cycle',
-                style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
-              ),
-            ],
             if (dateRangeStr.isNotEmpty) ...[
               const SizedBox(height: 4),
               Row(

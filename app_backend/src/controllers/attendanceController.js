@@ -1111,13 +1111,14 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             }
         }
 
-        // Permission = a per-day allowance (mirrors break). Permission used beyond
-        // the day's allowance is FINED (exceed = used − dailyAllowed); it no longer
-        // waives late/early fines. Late/early keep their full fine above.
-        let permissionApprovedMinutes = 0;   // permission used for the day
-        let permissionConsumedMinutes = 0;   // same (today's usage)
-        let permissionRemainingMinutes = 0;  // day's allowance left
-        let permissionFineMinutes = 0;       // used beyond the day's allowance
+        // Permission allowance is a MONTHLY quota (parity with the Request module /
+        // getPermissionBalance). An approved permission excuses late/early up to the
+        // remaining monthly quota; only minutes consumed BEYOND the monthly quota are
+        // FINED. The legacy per-day allowance is no longer used to gate fines.
+        let permissionApprovedMinutes = 0;   // approved permission minutes for the day
+        let permissionConsumedMinutes = 0;   // actually-used minutes drawn from the monthly quota
+        let permissionRemainingMinutes = 0;  // monthly quota left after this day
+        let permissionFineMinutes = 0;       // used beyond the monthly quota
         let permissionFineAmount = 0;
         // Late/early fine minutes WAIVED by an approved permission (within the day's
         // free allowance). These reduce fineHours/fineAmount below — the ACTUAL
@@ -1140,14 +1141,20 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             const permConfigured = !!(permPolicy && typeof permPolicy === 'object');
             const permEnabled = permPolicy?.enabled === true;
             const permDisabled = permConfigured && permPolicy?.enabled === false;
-            const dailyAllowed = Math.max(0, Number(permPolicy?.dailyAllowedMinutes || 0));
+            // Allowance is a MONTHLY quota. Fall back to any business shift's quota when
+            // this shift stores 0 (parity with getPermissionBalance / the Request module),
+            // so a monthly-configured shift is never treated as "not configured".
+            let monthlyQuota = Math.max(0, Number(permPolicy?.monthlyQuotaMinutes || 0));
+            if (monthlyQuota <= 0) {
+                monthlyQuota = await resolveMonthlyPermissionQuotaMinutes(staff?.businessId);
+            }
             // Permission scenarios (requests are ALWAYS allowed):
-            //   S1 enabled  + alloc > 0 : only the EXCEEDED minutes are fined.
-            //   S2 enabled  + alloc = 0 : ENTIRE used duration is fined.
-            //   S3 disabled + alloc > 0 : ENTIRE used duration is fined (allowance → 0).
-            //   S4 disabled + alloc = 0 : ENTIRE used duration is fined.
-            const effectiveAllowedPermMin = permDisabled ? 0 : dailyAllowed;
-            // "Used" for the day = approved permission minutes for that date.
+            //   S1 enabled  + quota > 0 : only minutes beyond the MONTHLY quota are fined.
+            //   S2 enabled  + quota = 0 : ENTIRE used duration is fined (not configured).
+            //   S3 disabled + quota > 0 : ENTIRE used duration is fined (quota → 0).
+            //   S4 disabled + quota = 0 : ENTIRE used duration is fined.
+            const effectiveMonthlyQuota = permDisabled ? 0 : monthlyQuota;
+            // Approved permission minutes for the day (visibility / "Approved").
             const approvedPermissions = await getApprovedPermissionForDate(
                 staff?._id,
                 staff?.businessId,
@@ -1162,7 +1169,7 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 }
             }
             // Overrun is fined whenever fines are enabled (it is the employee exceeding
-            // their OWN approved window), independent of the shift's daily-allowance policy.
+            // their OWN approved window), independent of the shift's allowance policy.
             if (permissionOverrunMinutes > 0 && fineConfig && fineConfig.enabled && effectiveDailyNet > 0) {
                 permissionOverrunFineAmount = calculateFineAmount(
                     permissionOverrunMinutes,
@@ -1174,10 +1181,10 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 );
             }
             permissionApprovedMinutes = usedToday;
-            permissionConsumedMinutes = usedToday;
-            permissionRemainingMinutes = Math.max(0, dailyAllowed - usedToday);
             // Waiver: an approved permission excuses late/early FINE minutes up to the
-            // approved minutes. Shared with the read-time enrichment so both paths agree.
+            // approved minutes. The minutes actually excused are the day's REAL
+            // permission consumption — approved-but-unused permission is never consumed
+            // (and so never fined), which is what the Request module's quota assumes.
             const waiver = computePermissionWaiverMinutes(
                 lateFine?.lateMinutes,
                 earlyFine?.earlyMinutes,
@@ -1187,14 +1194,27 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             );
             permissionWaivedLateMinutes = waiver.waiveLate;
             permissionWaivedEarlyMinutes = waiver.waiveEarly;
-            // Exceed (only when a Permission policy is configured): permission minutes
-            // beyond the day's allowance that were NOT already consumed by the late/early
-            // waiver above. Subtracting the waived minutes prevents double-charging the
-            // same permission as both a waiver and an exceed fine.
-            const waivedTotal = permissionWaivedLateMinutes + permissionWaivedEarlyMinutes;
-            const exceed = (permConfigured && !isOpenShiftDay)
-                ? Math.max(0, usedToday - waivedTotal - effectiveAllowedPermMin)
+            const usedActual = permissionWaivedLateMinutes + permissionWaivedEarlyMinutes;
+            // Draw this day's actual permission against the MONTH-TO-DATE remaining quota
+            // (prior days' validated usage), so the quota is shared across the month, not
+            // reset per day. Only the portion beyond the monthly quota is fined (S1 exceed);
+            // when the quota is 0 (S2/S3/S4) the entire used duration becomes the exceed.
+            const consumedBefore = (permConfigured && !isOpenShiftDay)
+                ? await getConsumedPermissionMinutesForMonth({
+                    employeeId: staff?._id,
+                    attendanceDate,
+                    excludeAttendanceId: context?.attendanceId || null
+                })
                 : 0;
+            const remainingMonthlyBefore = Math.max(0, effectiveMonthlyQuota - consumedBefore);
+            const consumedThisDay = (permConfigured && !isOpenShiftDay)
+                ? Math.min(usedActual, remainingMonthlyBefore)
+                : usedActual;
+            const exceed = (permConfigured && !isOpenShiftDay)
+                ? Math.max(0, usedActual - consumedThisDay)
+                : 0;
+            permissionConsumedMinutes = consumedThisDay;
+            permissionRemainingMinutes = Math.max(0, effectiveMonthlyQuota - consumedBefore - consumedThisDay);
             permissionFineMinutes = exceed;
             if (exceed > 0 && fineConfig && fineConfig.enabled && effectiveDailyNet > 0) {
                 permissionFineAmount = calculateFineAmount(
@@ -1206,32 +1226,35 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                     effectiveDailyGross
                 );
             }
-            // Canonical policy tooltip: disabled / no-allowance scenarios get the
-            // entire-duration notice; an enabled+allowance shift that was exceeded gets
-            // the "exceeded by N minutes" notice.
+            // Canonical policy tooltip: disabled / no-quota scenarios get the
+            // entire-duration notice; an enabled+quota shift that exceeded the MONTHLY
+            // quota gets the "exceeded by N minutes" notice.
             if (permConfigured && !isOpenShiftDay) {
                 permissionNotice = resolvePermissionNotice({
                     enabledExplicit: permEnabled ? true : false,
-                    allocatedMinutes: dailyAllowed
+                    allocatedMinutes: effectiveMonthlyQuota
                 });
                 if (!permissionNotice && exceed > 0) {
                     permissionNotice = permissionExceeded(exceed);
                 }
             }
-            console.log('[Permission][Daily Fine]', {
+            console.log('[Permission][Monthly Fine]', {
                 permConfigured,
                 permEnabled,
                 permDisabled,
                 isOpenShiftDay,
-                dailyAllowed,
-                effectiveAllowedPermMin,
+                monthlyQuota,
+                effectiveMonthlyQuota,
                 usedToday,
+                usedActual,
+                consumedBefore,
+                consumedThisDay,
                 exceed,
                 permissionFineMinutes,
                 permissionFineAmount
             });
         } catch (permissionErr) {
-            console.error('[Permission][Daily Fine] Failed:', permissionErr?.message);
+            console.error('[Permission][Monthly Fine] Failed:', permissionErr?.message);
         }
 
         // Approved-permission waiver: subtract the waived minutes from the FINED

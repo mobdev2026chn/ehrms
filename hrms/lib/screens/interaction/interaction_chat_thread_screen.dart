@@ -10,6 +10,7 @@ import 'package:dio/dio.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
@@ -175,6 +176,10 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   bool _loadingMore = false;
   bool _hasMore = true;
   bool _recording = false;
+  /// True while a media/document/voice upload is in flight, so the composer can
+  /// show a sending spinner and block a second tap from starting a duplicate
+  /// upload of the same (often large) file.
+  bool _uploading = false;
   DateTime? _recordingStartedAt;
   Timer? _recordingTimer;
   Duration _recordingElapsed = Duration.zero;
@@ -1424,6 +1429,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   }
 
   Future<void> _upload(String path, String filename, String type) async {
+    if (_uploading) return;
     if (!widget.isGroup && _personalPeerId == null) {
       _showTopSnackBar(
         'Unable to identify recipient for this personal chat. Please reopen this chat and try again.',
@@ -1431,6 +1437,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       );
       return;
     }
+    if (mounted) setState(() => _uploading = true);
     try {
       final res = await InteractionService.instance.uploadChatMedia(
         chatId: widget.isGroup ? widget.chatId : 'personal',
@@ -1457,9 +1464,46 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     } catch (e) {
       _applySendPermissionFromError(e);
       if (mounted) {
-        _showTopSnackBar(_friendlyErrorMessage(e), isError: true);
+        if (e is InteractionUploadException) {
+          _showTopSnackBar(e.message, isError: true);
+          _showUploadErrorDetails(e);
+        } else {
+          _showTopSnackBar(_friendlyErrorMessage(e), isError: true);
+        }
       }
+    } finally {
+      if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  /// Surface the per-shape upload diagnostics so a failing media send (notably
+  /// voice) can be reported with the exact server reason, no log access needed.
+  void _showUploadErrorDetails(InteractionUploadException e) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(e.message),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            e.diagnostics,
+            style: const TextStyle(fontSize: 12, height: 1.4),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: e.diagnostics));
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Copy'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _refreshMessageById(String id) async {
@@ -2631,7 +2675,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                 children: [
                                   IconButton(
                                     icon: Icon(Icons.attach_file, color: AppColors.primary, size: 22),
-                                    onPressed: _showWebAttachSheet,
+                                    onPressed: _uploading ? null : _showWebAttachSheet,
                                     visualDensity: VisualDensity.compact,
                                     padding: const EdgeInsets.symmetric(horizontal: 10),
                                     constraints: const BoxConstraints(),
@@ -2695,7 +2739,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                   ),
                                   IconButton(
                                     icon: Icon(Icons.photo_camera_outlined, color: AppColors.primary, size: 22),
-                                    onPressed: () => _pickImage(ImageSource.camera),
+                                    onPressed: _uploading ? null : () => _pickImage(ImageSource.camera),
                                     visualDensity: VisualDensity.compact,
                                     padding: const EdgeInsets.symmetric(horizontal: 10),
                                     constraints: const BoxConstraints(),
@@ -2705,7 +2749,26 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                             ),
                           ),
                           const SizedBox(width: 8),
-                          if (_recording)
+                          if (_uploading)
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                shape: BoxShape.circle,
+                              ),
+                              alignment: Alignment.center,
+                              child: const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor:
+                                      AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              ),
+                            )
+                          else if (_recording)
                             Container(
                               decoration: BoxDecoration(
                                 color: Colors.white,

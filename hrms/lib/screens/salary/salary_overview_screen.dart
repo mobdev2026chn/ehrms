@@ -18,7 +18,6 @@ import '../../services/salary_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/attendance_service.dart';
 import '../../services/holiday_service.dart';
-import '../../services/settings_service.dart';
 import '../../models/holiday_model.dart';
 import '../../services/request_service.dart';
 import '../../utils/salary_structure_calculator.dart';
@@ -178,7 +177,6 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   final AuthService _authService = AuthService();
   final AttendanceService _attendanceService = AttendanceService();
   final HolidayService _holidayService = HolidayService();
-  final SettingsService _settingsService = SettingsService();
   final RequestService _requestService = RequestService();
   late final StreamSubscription<AppEvent> _attendanceEventSub;
   void _perfLog(String message) {
@@ -1122,50 +1120,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           _weeklyHolidays = [];
         }
       } else {
-        // Web: `useGetBusinessQuery` — prefer live `GET /settings/business`, else nested staff company doc.
-        Map<String, dynamic>? companyDoc = businessSettings;
-        try {
-          final gb = await _settingsService
-              .getBusiness(useWebHrmsApi: true)
-              .timeout(_networkTimeout);
-          if (gb['success'] == true && gb['data'] is Map<String, dynamic>) {
-            final data = gb['data'] as Map<String, dynamic>;
-            final b = data['business'];
-            if (b is Map) {
-              companyDoc = Map<String, dynamic>.from(b);
-            }
-          }
-        } catch (_) {}
-        if (companyDoc != null &&
-            companyDoc['settings'] != null &&
-            companyDoc['settings']['business'] != null) {
-          final business =
-              companyDoc['settings']['business'] as Map<String, dynamic>;
-          final weeklyOffPatternValue = business['weeklyOffPattern'];
-          _weeklyOffPattern =
-              (weeklyOffPatternValue != null && weeklyOffPatternValue is String)
-              ? weeklyOffPatternValue
-              : 'standard';
-
-          if (business['weeklyHolidays'] != null &&
-              business['weeklyHolidays'] is List) {
-            final weeklyHolidaysList = business['weeklyHolidays'] as List;
-            _weeklyHolidays = weeklyHolidaysList
-                .map((h) {
-                  if (h is Map) {
-                    return _parseWeeklyHolidayDay(h['day']) ?? -1;
-                  }
-                  return _parseWeeklyHolidayDay(h) ?? -1;
-                })
-                .where((day) => day >= 0 && day <= 6)
-                .toList();
-          } else {
-            _weeklyHolidays = [];
-          }
-        } else {
-          _weeklyOffPattern = 'standard';
-          _weeklyHolidays = [];
-        }
+        // No WeeklyHolidayTemplate assigned → zero week-offs, matching the backend
+        // (weekOffHelper.getWeekOffConfigForStaff, used by /payrolls/stats and the
+        // attendance calendar weekOffDates). We intentionally no longer fall back to
+        // Company.settings.business weeklyHolidays: that subtracted week-offs (e.g.
+        // Sundays) the calendar never marks, leaving the Salary tab and calendar
+        // inconsistent. Week-off is now driven solely by the assigned template.
+        _weeklyOffPattern = 'standard';
+        _weeklyHolidays = [];
       }
 
       // 2. Kick off network calls in parallel (reduces Salary tab load time).

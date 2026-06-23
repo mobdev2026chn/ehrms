@@ -1552,21 +1552,33 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  /// Returns the shift-break-policy block reason from the last loaded summary, or
-  /// null when the policy permits starting a break. Mirrors the backend gate so
-  /// the camera never opens for a shift that will reject the break:
-  ///  - breaks explicitly disabled         -> "not enabled"
-  ///  - breaks enabled but no allowance set -> "not configured / contact HR"
-  String? _breakPolicyBlockReason() {
+  /// Informational break-policy notice for the dashboard quick-action, or null when
+  /// breaks are normally configured (enabled + allowance). Breaks are ALWAYS allowed —
+  /// this only tells the employee the break time will be processed with Fine. Prefers
+  /// the server-authored canonical wording (summary.breakNotice) and falls back to the
+  /// exact policy strings, following the same rule as the Break screen:
+  ///  - allowance = 0            -> "Break is not configured..." (S2 enabled / S4 disabled)
+  ///  - disabled + allowance > 0 -> "Break is disabled..."        (S3)
+  String? _breakPolicyInfoNotice() {
     final summary = _breakSummary;
     if (summary == null) return null;
+    final serverNotice = summary.breakNotice;
+    if (serverNotice != null && serverNotice.trim().isNotEmpty) {
+      return serverNotice;
+    }
     if (summary.policyDisabled) {
-      return 'Breaks are not enabled for your shift.';
+      return summary.configuredAllowedMinutes > 0
+          ? 'Break is disabled for your shift.\n'
+              'Contact HR to enable.\n'
+              'Break duration will be processed with Fine.' // S3
+          : 'Break is not configured for your shift. Contact HR.\n'
+              'Break duration will be processed with Fine.'; // S4
     }
     if (summary.policyEnabled && !summary.policyConfigured) {
-      return 'Breaks are not configured for your shift. Please contact HR.';
+      return 'Break is not configured for your shift. Contact HR.\n'
+          'Break duration will be processed with Fine.'; // S2
     }
-    return null;
+    return null; // S1 normal
   }
 
   /// Returns a reason string when a break may NOT be started given the current
@@ -1631,12 +1643,12 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
       return;
     }
-    // Block up front (no selfie) when the shift policy disables or hasn't configured
-    // breaks. The backend enforces this too, but gating here avoids a wasted selfie.
-    final policyBlock = _breakPolicyBlockReason();
-    if (policyBlock != null) {
-      SnackBarUtils.showSnackBar(context, policyBlock, isError: true);
-      return;
+    // Breaks are ALWAYS allowed (parity with the Break screen + backend). When the
+    // shift disables or hasn't configured breaks, the break time is processed with
+    // Fine — surface the canonical notice but do NOT block the action.
+    final policyNotice = _breakPolicyInfoNotice();
+    if (policyNotice != null) {
+      SnackBarUtils.showSnackBar(context, policyNotice);
     }
     setState(() => _isBreakActionInProgress = true);
     try {

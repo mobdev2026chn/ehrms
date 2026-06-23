@@ -1532,19 +1532,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         }
       } catch (_) {}
 
-      // Business settings (weekly off, holidays) - same as Salary Overview
-      // When staff has a weekly holiday template assigned, use it; else use business (Company.settings.business)
-      Map<String, dynamic>? businessSettings;
-      if (staffData['branchId'] != null &&
-          staffData['branchId'] is Map &&
-          staffData['branchId']['businessId'] != null &&
-          staffData['branchId']['businessId'] is Map) {
-        businessSettings = staffData['branchId']['businessId'];
-      } else if (staffData['businessId'] != null &&
-          staffData['businessId'] is Map) {
-        businessSettings = staffData['businessId'];
-      }
-
+      // Week-off config (for working-days / salary): resolved ONLY from the staff's
+      // WeeklyHolidayTemplate, mirroring the backend (weekOffHelper.getWeekOffConfigForStaff,
+      // used by /payrolls/stats and the attendance calendar weekOffDates). When no template
+      // is assigned the staff has NO weekly off — we intentionally do NOT fall back to
+      // Company.settings.business weeklyHolidays here, otherwise the Salary tab would subtract
+      // week-offs (e.g. Sundays) that the calendar never marks as week-off, leaving the two
+      // views inconsistent. So: template assigned → its days; no template → zero week-offs.
       String weeklyOffPattern = 'standard';
       List<int> weeklyHolidays = [];
       final weeklyHolidayTemplate = staffData['weeklyHolidayTemplateId'];
@@ -1560,27 +1554,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             : 'standard';
         if (s['weeklyHolidays'] != null && s['weeklyHolidays'] is List) {
           weeklyHolidays = (s['weeklyHolidays'] as List)
-              .map((h) {
-                if (h is Map) {
-                  final day = h['day'];
-                  return (day is int) ? day : (day is num ? day.toInt() : -1);
-                }
-                return -1;
-              })
-              .where((day) => day >= 0 && day <= 6)
-              .toList();
-        }
-      } else if (businessSettings != null &&
-          businessSettings['settings'] != null &&
-          businessSettings['settings']['business'] != null) {
-        final business =
-            businessSettings['settings']['business'] as Map<String, dynamic>;
-        weeklyOffPattern = (business['weeklyOffPattern'] is String)
-            ? business['weeklyOffPattern'] as String
-            : 'standard';
-        if (business['weeklyHolidays'] != null &&
-            business['weeklyHolidays'] is List) {
-          weeklyHolidays = (business['weeklyHolidays'] as List)
               .map((h) {
                 if (h is Map) {
                   final day = h['day'];
@@ -2169,69 +2142,115 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Performance',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-              color: AppColors.indigo,
-            ),
+          // Header: indigo-tinted icon badge + title (mirrors Celebrations card)
+          Row(
+            children: [
+              Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  color: AppColors.indigoBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.bar_chart_rounded,
+                  size: 16,
+                  color: AppColors.indigo,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Performance',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           if (hasRating) ...[
             Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
               children: [
                 Text(
                   rating.toStringAsFixed(1),
                   style: TextStyle(
-                    fontSize: 24,
+                    fontSize: 26,
                     fontWeight: FontWeight.bold,
                     color: AppColors.textPrimary,
+                    height: 1.0,
                   ),
                 ),
                 Text(
-                  '/5.0',
+                  ' /5.0',
                   style: TextStyle(
                     fontSize: 13,
                     color: AppColors.textSecondary,
                   ),
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 Icon(
                   Icons.trending_up_rounded,
                   color: AppColors.success,
-                  size: 16,
+                  size: 18,
                 ),
               ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
               'Keep Rocking',
               style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
             ),
           ] else ...[
+            // Empty state: subtle star row + friendly copy instead of flat grey text
+            Row(
+              children: [
+                for (int i = 0; i < 5; i++) ...[
+                  Icon(
+                    Icons.star_rounded,
+                    size: 16,
+                    color: AppColors.indigo.withValues(alpha: 0.22),
+                  ),
+                  if (i < 4) const SizedBox(width: 2),
+                ],
+              ],
+            ),
+            const SizedBox(height: 8),
             Text(
-              'Not rated',
+              'Not rated yet',
               style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textSecondary,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             Text(
-              'Not evaluated yet',
+              'Your review is on the way',
               style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
             ),
           ],
           const Spacer(),
-          Text(
-            'VIEW DETAILS →',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              color: AppColors.primary,
-            ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text(
+                'View details',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.indigo,
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                size: 14,
+                color: AppColors.indigo,
+              ),
+            ],
           ),
         ],
       ),
