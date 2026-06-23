@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
-import 'snackbar_utils.dart';
 
 /// Shows the request-submitted confirmation: a transient full-screen hero
 /// (Figma "…confirmation" screens) with an amber check circle, a success
-/// heading and a message, plus the existing snackbar. It auto-dismisses, so
-/// the post-submit navigation flow is unchanged.
+/// heading and a message. It auto-dismisses after a short delay, so the
+/// post-submit navigation flow is unchanged.
+///
+/// Earlier this also fired a top snackbar alongside the hero. That snackbar was
+/// redundant (the hero already confirms the submission) and lingered on screen,
+/// so it was removed — the hero is now the single, self-dismissing confirmation.
 ///
 /// The Figma confirmation screens also show per-request detail cards (Claim ID,
 /// status, reimbursement time) and a "View My …" button + bottom nav. Those
@@ -16,11 +19,6 @@ Future<void> showRequestSubmittedSuccessDialog(
   BuildContext context, {
   String message = 'Your request has been received and is being processed.',
 }) async {
-  SnackBarUtils.showSnackBar(
-    context,
-    'Your request has been submitted successfully.',
-  );
-
   final overlay = Navigator.of(context, rootNavigator: true).overlay;
   if (overlay == null) return;
 

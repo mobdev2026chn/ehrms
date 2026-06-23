@@ -5767,15 +5767,147 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
 
   Future<void> _pickMonth() async {
     final now = DateTime.now();
-    final initial = _selectedMonth;
-    final picked = await showDatePicker(
+    final firstYear = now.year - 2;
+    final lastYear = now.year + 2;
+
+    final picked = await showModalBottomSheet<DateTime>(
       context: context,
-      initialDate: initial,
-      firstDate: DateTime(now.year - 2, 1, 1),
-      lastDate: DateTime(now.year + 2, 12, 31),
-      helpText: 'Select Month',
-      initialDatePickerMode: DatePickerMode.year,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        int viewYear = _selectedMonth.year;
+        int selMonth = _selectedMonth.month;
+        int selYear = _selectedMonth.year;
+        const monthNames = [
+          'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+        ];
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(20)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 24,
+                    offset: const Offset(0, -4),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 10),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.divider,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Select Month',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Year navigator
+                    Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.chevron_left_rounded),
+                            color: AppColors.textPrimary,
+                            onPressed: viewYear > firstYear
+                                ? () => setSheetState(() => viewYear--)
+                                : null,
+                          ),
+                          Text(
+                            '$viewYear',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.chevron_right_rounded),
+                            color: AppColors.textPrimary,
+                            onPressed: viewYear < lastYear
+                                ? () => setSheetState(() => viewYear++)
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Month grid
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: GridView.count(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        crossAxisCount: 3,
+                        mainAxisSpacing: 10,
+                        crossAxisSpacing: 10,
+                        childAspectRatio: 2.4,
+                        children: List.generate(12, (i) {
+                          final month = i + 1;
+                          final selected =
+                              month == selMonth && viewYear == selYear;
+                          return Material(
+                            color: selected
+                                ? AppColors.primary
+                                : AppColors.primary.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(12),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () =>
+                                  Navigator.pop(ctx, DateTime(viewYear, month)),
+                              child: Center(
+                                child: Text(
+                                  monthNames[i],
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: selected
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    color: selected
+                                        ? Colors.white
+                                        : AppColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
+
     if (picked == null) return;
     setState(() {
       _selectedMonth = DateTime(picked.year, picked.month);
@@ -5833,6 +5965,105 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
       default:
         return Colors.orange;
     }
+  }
+
+  // Resolve a populated approvedBy/rejectedBy ref ({ name, email }) to a name.
+  String _resolveActor(dynamic actor) {
+    if (actor == null) return '-';
+    if (actor is Map && actor['name'] != null) {
+      final name = actor['name'].toString().trim();
+      return name.isEmpty ? '-' : name;
+    }
+    return 'System';
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              '$label:',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
+          ),
+          Expanded(child: Text(value)),
+        ],
+      ),
+    );
+  }
+
+  void _showPermissionDetails(Map<String, dynamic> req) {
+    final status = (req['status'] ?? '').toString();
+    final isApproved = status == 'Approved';
+    final isRejected = status == 'Rejected';
+
+    final fromTime = (req['fromTime'] ?? '').toString().trim();
+    final toTime = (req['toTime'] ?? '').toString().trim();
+    final reason = (req['reason'] ?? '').toString().trim();
+    final approvalReason = (req['approvalReason'] ?? '').toString().trim();
+    final rejectionReason = (req['rejectionReason'] ?? '').toString().trim();
+    final actualMinutes = req['actualMinutes'];
+    final overrunMinutes = req['overrunMinutes'];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _RequestDetailBottomSheet(
+        title: 'Permission Details',
+        icon: Icons.timelapse,
+        iconColor: AppColors.primary,
+        children: [
+          _detailRow('Date', _fmtDate(req['date'])),
+          _detailRow('Type', _fmtType(req['type']?.toString())),
+          _detailRow(
+            'Requested Minutes',
+            '${req['requestedMinutes'] ?? 0}',
+          ),
+          if (fromTime.isNotEmpty) _detailRow('From Time', fromTime),
+          if (toTime.isNotEmpty) _detailRow('To Time', toTime),
+          if (req['actualOutAt'] != null)
+            _detailRow('Permission Out', _fmtDateTime(req['actualOutAt'])),
+          if (req['actualInAt'] != null)
+            _detailRow('Permission In', _fmtDateTime(req['actualInAt'])),
+          if (actualMinutes != null)
+            _detailRow('Actual Minutes', '$actualMinutes'),
+          if (overrunMinutes != null &&
+              (overrunMinutes is num ? overrunMinutes > 0 : true))
+            _detailRow('Overrun Minutes', '$overrunMinutes'),
+          _detailRow('Status', status.isEmpty ? '-' : status),
+          if (isApproved) ...[
+            _detailRow('Approved By', _resolveActor(req['approvedBy'])),
+            if (approvalReason.isNotEmpty)
+              _detailRow('Approval Reason', approvalReason),
+          ],
+          if (isRejected) ...[
+            _detailRow(
+              'Rejected By',
+              _resolveActor(req['rejectedBy'] ?? req['approvedBy']),
+            ),
+            if (rejectionReason.isNotEmpty)
+              _detailRow('Rejection Reason', rejectionReason),
+          ],
+          if (reason.isNotEmpty) _detailRow('Reason', reason),
+          _detailRow('Applied', _fmtDate(req['createdAt'])),
+        ],
+      ),
+    );
+  }
+
+  String _fmtDateTime(dynamic value) {
+    if (value == null) return '-';
+    final d = DateTime.tryParse(value.toString());
+    if (d == null) return '-';
+    return DateFormat('dd MMM yyyy, hh:mm a').format(d.toLocal());
   }
 
   void showRequestPermissionDialog() {
@@ -6040,7 +6271,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Padding(
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => _showPermissionDetails(req),
+                        child: Padding(
                         padding: const EdgeInsets.all(12),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -6104,6 +6338,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                             ],
                           ],
                         ),
+                      ),
                       ),
                     );
                   }),

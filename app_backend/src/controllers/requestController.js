@@ -1214,10 +1214,19 @@ const createPermissionRequest = async (req, res) => {
             attendanceDate.getFullYear(),
             attendanceDate.getMonth() + 1
         );
+        // The policy may be configured by a MONTHLY quota (the canonical allocation
+        // used by getPermissionBalance + the app's balance card) and/or a per-day
+        // allowance. Resolve the notice against whichever is set, otherwise a shift
+        // with only a monthly quota (dailyAllowedMinutes = 0) is wrongly reported as
+        // "not configured" on submit.
+        const allocatedMinutes = Math.max(
+            permissionConfig.monthlyQuotaMinutes,
+            permissionConfig.dailyAllowedMinutes
+        );
         const permissionNotice = permissionConfig.configured
             ? resolvePermissionNotice({
                 enabledExplicit: permissionConfig.enabled ? true : false,
-                allocatedMinutes: permissionConfig.dailyAllowedMinutes
+                allocatedMinutes
             })
             : null;
 

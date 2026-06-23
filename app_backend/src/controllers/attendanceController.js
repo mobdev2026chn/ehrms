@@ -566,6 +566,43 @@ async function getApprovedPermissionForDate(employeeId, businessId, attendanceDa
     return matched;
 }
 
+// Shared permission-waiver math used by BOTH the punch-time fine pipeline
+// (calculateCombinedFine) and the read-time month enrichment. An approved permission
+// excuses late/early FINE minutes up to the APPROVED minutes themselves — the approval
+// is the authorization, so the waiver does NOT depend on a daily-allowance policy
+// (that field isn't reliably configured on the shift). lateArrival excuses late,
+// earlyExit excuses early, `both`/custom is a shared pool (late first, then early).
+// Returns the waivable minutes plus the approved total (no mutation).
+function computePermissionWaiverMinutes(rawLateMinutes, rawEarlyMinutes, approvedPermissions, permissionPolicy, isOpenShiftDay = false) {
+    const dailyAllowed = Math.max(0, Number(permissionPolicy?.dailyAllowedMinutes || 0));
+    const out = { waiveLate: 0, waiveEarly: 0, approvedMinutes: 0, dailyAllowed };
+    let lateOnly = 0, earlyOnly = 0, bothShared = 0, approvedMin = 0;
+    if (Array.isArray(approvedPermissions)) {
+        for (const req of approvedPermissions) {
+            const mins = Math.max(0, Math.floor(Number(req?.requestedMinutes) || 0));
+            if (mins <= 0) continue;
+            approvedMin += mins;
+            const t = String(req?.type || 'both').trim();
+            if (t === 'lateArrival') lateOnly += mins;
+            else if (t === 'earlyExit') earlyOnly += mins;
+            else bothShared += mins;
+        }
+    }
+    out.approvedMinutes = approvedMin;
+    // Open shifts have no fixed start/end window for a late/early permission to excuse.
+    if (isOpenShiftDay || approvedMin <= 0) return out;
+    const rawLate = Math.max(0, Number(rawLateMinutes) || 0);
+    const rawEarly = Math.max(0, Number(rawEarlyMinutes) || 0);
+    // Late draws from its own bucket first, then the shared `both` pool.
+    const waiveLate = Math.min(rawLate, lateOnly + bothShared);
+    const bothUsedByLate = Math.max(0, waiveLate - lateOnly);
+    const bothRemaining = Math.max(0, bothShared - bothUsedByLate);
+    const waiveEarly = Math.min(rawEarly, earlyOnly + bothRemaining);
+    out.waiveLate = waiveLate;
+    out.waiveEarly = waiveEarly;
+    return out;
+}
+
 async function getConsumedPermissionMinutesForMonth({
     employeeId,
     attendanceDate,
@@ -1082,6 +1119,12 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         let permissionRemainingMinutes = 0;  // day's allowance left
         let permissionFineMinutes = 0;       // used beyond the day's allowance
         let permissionFineAmount = 0;
+        // Late/early fine minutes WAIVED by an approved permission (within the day's
+        // free allowance). These reduce fineHours/fineAmount below — the ACTUAL
+        // lateMinutes/earlyMinutes are kept intact for the "Late Check-in" display —
+        // and are surfaced to the app as Permission Late Arrival / Early Exit.
+        let permissionWaivedLateMinutes = 0;
+        let permissionWaivedEarlyMinutes = 0;
         // Custom-time (`both`) overrun: minutes the actual Permission Out→In duration
         // exceeded the requested window (stored on PermissionRequest.overrunMinutes by
         // the permissionIn endpoint). Fined with the same per-day formula as late/early.
@@ -1133,11 +1176,24 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             permissionApprovedMinutes = usedToday;
             permissionConsumedMinutes = usedToday;
             permissionRemainingMinutes = Math.max(0, dailyAllowed - usedToday);
-            // Exceed is fined whenever a Permission policy is configured (any of the 4
-            // scenarios) — disabled shifts fine the ENTIRE duration via allowance = 0.
-            // Open shifts are fined for early exit only — no permission fine there.
+            // Waiver: an approved permission excuses late/early FINE minutes up to the
+            // approved minutes. Shared with the read-time enrichment so both paths agree.
+            const waiver = computePermissionWaiverMinutes(
+                lateFine?.lateMinutes,
+                earlyFine?.earlyMinutes,
+                approvedPermissions,
+                permPolicy,
+                isOpenShiftDay
+            );
+            permissionWaivedLateMinutes = waiver.waiveLate;
+            permissionWaivedEarlyMinutes = waiver.waiveEarly;
+            // Exceed (only when a Permission policy is configured): permission minutes
+            // beyond the day's allowance that were NOT already consumed by the late/early
+            // waiver above. Subtracting the waived minutes prevents double-charging the
+            // same permission as both a waiver and an exceed fine.
+            const waivedTotal = permissionWaivedLateMinutes + permissionWaivedEarlyMinutes;
             const exceed = (permConfigured && !isOpenShiftDay)
-                ? Math.max(0, usedToday - effectiveAllowedPermMin)
+                ? Math.max(0, usedToday - waivedTotal - effectiveAllowedPermMin)
                 : 0;
             permissionFineMinutes = exceed;
             if (exceed > 0 && fineConfig && fineConfig.enabled && effectiveDailyNet > 0) {
@@ -1178,11 +1234,33 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             console.error('[Permission][Daily Fine] Failed:', permissionErr?.message);
         }
 
-        // Apply fine amounts from payroll.fineCalculation when enabled (allowLateEntry/allowEarlyExit only control blocking punch, not whether fine is charged)
-        const lateFineAmount = (fineConfig && fineConfig.enabled) ? (lateFine.fineAmount || 0) : 0;
-        const earlyFineAmount = (fineConfig && fineConfig.enabled) ? (earlyFine.fineAmount || 0) : 0;
+        // Approved-permission waiver: subtract the waived minutes from the FINED
+        // late/early minutes (the raw lateMinutes/earlyMinutes stay intact for the
+        // "Late Check-in"/"Early Check-out" display) and recompute the leg amounts.
+        const finedLateMinutes = Math.max(0, (lateFine.lateMinutes || 0) - permissionWaivedLateMinutes);
+        const finedEarlyMinutes = Math.max(0, (earlyFine.earlyMinutes || 0) - permissionWaivedEarlyMinutes);
+        const isHalfDaySession = isHalfDay && (session === 'First Half Day' || session === 'Second Half Day');
+        // Re-derive a leg's fine on the reduced minutes. Standard legs recompute with
+        // the exact same formula used to charge them; half-day legs scale linearly to
+        // preserve their session-adjusted formula.
+        const recomputeLegFineAmount = (originalMin, finedMin, originalAmount, leg) => {
+            if (finedMin <= 0) return 0;
+            if (finedMin >= originalMin) return originalAmount || 0;
+            if (isHalfDaySession) {
+                return originalMin > 0 ? (originalAmount || 0) * (finedMin / originalMin) : 0;
+            }
+            if (!fineConfig || fineConfig.enabled === false || !(effectiveDailyNet > 0)) return 0;
+            return calculateFineAmount(finedMin, leg, fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross);
+        };
+        const finedLateFineAmount = recomputeLegFineAmount(lateFine.lateMinutes || 0, finedLateMinutes, lateFine.fineAmount || 0, 'lateArrival');
+        const finedEarlyFineAmount = recomputeLegFineAmount(earlyFine.earlyMinutes || 0, finedEarlyMinutes, earlyFine.fineAmount || 0, 'earlyExit');
 
-        const fineHours = lateFine.lateMinutes + earlyFine.earlyMinutes;
+        // Apply fine amounts from payroll.fineCalculation when enabled (allowLateEntry/allowEarlyExit only control blocking punch, not whether fine is charged)
+        const lateFineAmount = (fineConfig && fineConfig.enabled) ? (finedLateFineAmount || 0) : 0;
+        const earlyFineAmount = (fineConfig && fineConfig.enabled) ? (finedEarlyFineAmount || 0) : 0;
+
+        // fineHours = FINED late + FINED early (after the approved-permission waiver).
+        const fineHours = finedLateMinutes + finedEarlyMinutes;
         // Total Fine = Late + Early Exit + Permission (regular over-allowance + custom
         // overrun). Break fine is added on top at checkout (it lives on attendance.break
         // and accrues after this function runs). permissionFineAmount was previously
@@ -1239,14 +1317,17 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         }
 
         const out = {
-            lateMinutes: lateFine.lateMinutes,
-            earlyMinutes: earlyFine.earlyMinutes,
+            // NET of the approved-permission waiver (read-time enrichment + payroll rely
+            // on stored late/early minutes already being net). The waived minutes are
+            // surfaced separately as permissionLateMinutes/permissionEarlyMinutes.
+            lateMinutes: finedLateMinutes,
+            earlyMinutes: finedEarlyMinutes,
             fineHours: fineHours,
             fineAmount: fineAmount,
             lateFineAmount,
             earlyFineAmount,
-            permissionLateMinutes: 0,
-            permissionEarlyMinutes: 0,
+            permissionLateMinutes: permissionWaivedLateMinutes,
+            permissionEarlyMinutes: permissionWaivedEarlyMinutes,
             permissionApprovedMinutes,
             permissionConsumedMinutes,
             permissionRemainingMinutes,
@@ -3907,6 +3988,29 @@ const getMonthAttendance = async (req, res) => {
             console.warn('[getMonthAttendance] Could not compute daily salary for fine enrichment:', e?.message);
         }
 
+        // Approved permissions for the month (±a day for TZ boundaries), grouped by
+        // business-TZ date key. Admin permission approvals happen on the external web
+        // backend and never re-run the punch-time fine pipeline, so a stored fine can
+        // stay stale (not yet net of the waiver) until the day is checked out. Apply the
+        // waiver here at read time so an approved permission reflects on the fine at once.
+        const approvedPermsByDay = {};
+        try {
+            const permRangeStart = new Date(startOfMonth); permRangeStart.setUTCDate(permRangeStart.getUTCDate() - 1);
+            const permRangeEnd = new Date(endOfMonth); permRangeEnd.setUTCDate(permRangeEnd.getUTCDate() + 2);
+            const monthApprovedPerms = await PermissionRequest.find({
+                employeeId: req.staff._id,
+                status: 'Approved',
+                date: { $gte: permRangeStart, $lt: permRangeEnd }
+            }).select('date type requestedMinutes').lean();
+            for (const p of monthApprovedPerms) {
+                const key = toDateKeyInTimezone(p.date, businessTz);
+                if (!approvedPermsByDay[key]) approvedPermsByDay[key] = [];
+                approvedPermsByDay[key].push(p);
+            }
+        } catch (permFetchErr) {
+            console.warn('[getMonthAttendance] approved-permission fetch failed:', permFetchErr?.message);
+        }
+
         for (const doc of attendanceRaw) {
             // Fine enrichment is supplementary to the calendar (it only sets
             // doc.fineAmount). A throw here — e.g. a record with an odd shift config,
@@ -3931,8 +4035,31 @@ const getMonthAttendance = async (req, res) => {
                 // Include 'pending' — a checked-in-but-unapproved day still has late/early minutes and
                 // shows a fine in the app ("Approval Pending"); excluding it left the stale stored fine.
                 const isEligible = status === 'present' || status === 'approved' || status === 'pending' || (doc.leaveType || '').trim().toLowerCase() === 'half day';
-                const lateMin = Math.max(0, Number(doc.lateMinutes) || 0);
-                const earlyMin = Math.max(0, Number(doc.earlyMinutes) || 0);
+                let lateMin = Math.max(0, Number(doc.lateMinutes) || 0);
+                let earlyMin = Math.max(0, Number(doc.earlyMinutes) || 0);
+                // Approved-permission waiver, applied idempotently. The stored minutes may
+                // predate the approval, so reconstruct the RAW lateness/early-exit
+                // (net + previously-waived) and re-derive the net + waived split. Keeps the
+                // displayed late/early/fine in lockstep with an approved permission even
+                // before the day is checked out (which is when the punch-time pipeline reruns).
+                const permDayKey = toDateKeyInTimezone(doc.date, businessTz);
+                const dayApprovedPerms = approvedPermsByDay[permDayKey] || [];
+                const storedWaiveLate = Math.max(0, Number(doc.permissionLateMinutes) || 0);
+                const storedWaiveEarly = Math.max(0, Number(doc.permissionEarlyMinutes) || 0);
+                if (isEligible && (dayApprovedPerms.length > 0 || storedWaiveLate > 0 || storedWaiveEarly > 0)) {
+                    const rawLate = lateMin + storedWaiveLate;
+                    const rawEarly = earlyMin + storedWaiveEarly;
+                    const w = computePermissionWaiverMinutes(rawLate, rawEarly, dayApprovedPerms, shiftTimings?.permissionPolicy, isOpenShift);
+                    lateMin = Math.max(0, rawLate - w.waiveLate);
+                    earlyMin = Math.max(0, rawEarly - w.waiveEarly);
+                    doc.lateMinutes = lateMin;
+                    doc.earlyMinutes = earlyMin;
+                    doc.fineHours = lateMin + earlyMin;
+                    doc.permissionLateMinutes = w.waiveLate;
+                    doc.permissionEarlyMinutes = w.waiveEarly;
+                    doc.permissionApprovedMinutes = w.approvedMinutes;
+                    doc.permissionRemainingMinutes = Math.max(0, w.dailyAllowed - w.approvedMinutes);
+                }
                 const fineMinutes = lateMin + earlyMin || (Number(doc.fineHours) || 0);
 
                 // Always (re)compute the day's late/early fine from the FORMULA using the day's
