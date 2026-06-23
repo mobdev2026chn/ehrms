@@ -4192,13 +4192,10 @@ const getMonthAttendance = async (req, res) => {
                 } catch (_) { /* leave isWeekOff as-is on shift-resolution error */ }
             }
 
-            // Sundays (day 0) are ALWAYS week off — keep this stats counter in sync with the
-            // weekOffDates/absent loops so workingDays excludes Sundays even when no Weekly
-            // Holiday template is set (weeklyHolidays === []).
-            if (dayOfWeek === 0) {
-                isWeekOff = true;
-            }
-
+            // Week-off is driven solely by the weekly-off pattern / WeeklyHolidayTemplate
+            // (and rotational shift) resolved above. We no longer force Sundays to be a
+            // week-off here: when no template marks Sunday as off, it counts as a working
+            // day, matching the weekOffDates/absent loops below and the calendar display.
             if (isWeekOff) {
                 weekOffs++;
             } else {
@@ -4243,14 +4240,12 @@ const getMonthAttendance = async (req, res) => {
                 } catch (_) { /* leave isWeekOff as-is on shift-resolution error */ }
             }
 
-            // IMPORTANT: Sundays (day 0) are ALWAYS week off, regardless of configuration.
-            // Mirrors the absent-date loop below — without this, a Sunday with no Weekly
-            // Holiday template (weeklyHolidays === []) is neither added here (Weekend/grey)
-            // nor marked absent, so it renders with no color at all.
-            if (dayOfWeek === 0) {
-                isWeekOff = true;
-            }
-
+            // Week-off for the calendar is driven solely by the weekly-off pattern /
+            // WeeklyHolidayTemplate (and rotational shift) resolved above. Sundays are NO
+            // LONGER force-marked as week-off: a Sunday only shows "WF" when the assigned
+            // template (or oddEvenSaturday pattern / shift) marks it off. With no template
+            // the day renders as a normal/neutral date in the app, never marked absent
+            // (see the "never mark Sundays as absent" guard in the absent-date loop below).
             if (isWeekOff) {
                 // Use UTC methods to get consistent date string
                 const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -4405,18 +4400,16 @@ const getMonthAttendance = async (req, res) => {
                 isWeekOff = isTemplateWeeklyOff(new Date(year, month - 1, d), weeklyHolidays);
             }
             
-            // IMPORTANT: Sundays (day 0) are ALWAYS week off, regardless of configuration
-            if (dayOfWeek === 0) {
-                isWeekOff = true;
-            }
-
-            // Skip week offs (only if no attendance record exists)
+            // Skip week offs (only if no attendance record exists). Week-off is driven
+            // solely by the template / pattern / shift resolved above — Sundays are no
+            // longer force-marked as week-off here.
             if (isWeekOff) {
                 continue;
             }
 
-            // If we reach here, it's a working day without attendance = absent
-            // BUT: Never mark Sundays as absent
+            // If we reach here, it's a working day without attendance = absent.
+            // BUT: Never mark Sundays as absent — when no template marks Sunday as a
+            // week-off it should render as a neutral/normal day, not a red "Absent".
             if (dayOfWeek === 0) {
                 continue;
             }
