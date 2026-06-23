@@ -7,6 +7,7 @@ import 'package:hrms/screens/holidays/holidays_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../bloc/auth/auth_bloc.dart';
 import '../config/app_colors.dart';
+import '../utils/avatar_orientation.dart';
 import '../services/auth_service.dart';
 import '../services/presence_tracking_service.dart';
 import '../screens/auth/login_screen.dart';
@@ -34,6 +35,9 @@ class AppDrawer extends StatefulWidget {
 
 class _AppDrawerState extends State<AppDrawer> {
   Map<String, dynamic>? _userData;
+  // Whether the header avatar must be flipped 180° on display (legacy selfies were
+  // stored upside-down). Detected from the image via ML Kit, same as the dashboard.
+  bool _avatarNeedsFlip = false;
 
   @override
   void initState() {
@@ -47,6 +51,7 @@ class _AppDrawerState extends State<AppDrawer> {
     if (userString != null && mounted) {
       final data = jsonDecode(userString) as Map<String, dynamic>;
       setState(() => _userData = data);
+      _resolveAvatarFlip(data['avatar'] ?? data['photoUrl']);
 
       final needsLocationAccess = !data.containsKey('locationAccess');
       final needsBranchName = !data.containsKey('branchName') || data['branchName'] == null;
@@ -81,6 +86,16 @@ class _AppDrawerState extends State<AppDrawer> {
         } catch (_) {}
       }
     }
+  }
+
+  /// Detect (once, cached) whether the header avatar is stored upside-down and
+  /// flip it on display. No-op for empty / non-http urls or undetectable images.
+  Future<void> _resolveAvatarFlip(dynamic avatarUrl) async {
+    final url = avatarUrl?.toString().trim() ?? '';
+    if (url.isEmpty || !url.startsWith('http')) return;
+    final needsFlip = await AvatarOrientation.resolveNeedsFlip(url);
+    if (needsFlip == null || needsFlip == _avatarNeedsFlip || !mounted) return;
+    setState(() => _avatarNeedsFlip = needsFlip);
   }
 
   /// Admin-like roles that can access the LMS admin console.
@@ -253,15 +268,19 @@ class _AppDrawerState extends State<AppDrawer> {
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 2),
             ),
-            child: CircleAvatar(
-              radius: 32,
-              backgroundColor: Colors.white.withValues(alpha: 0.25),
-              backgroundImage: showAvatar ? CachedNetworkImageProvider(avatarUrl.toString().trim()) : null,
-              child: showAvatar
-                  ? null
-                  : Text(initial,
-                      style: const TextStyle(
-                        fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
+            // Flip legacy (pre-fix, upside-down) seeded avatars 180° on display.
+            child: RotatedBox(
+              quarterTurns: (showAvatar && _avatarNeedsFlip) ? 2 : 0,
+              child: CircleAvatar(
+                radius: 32,
+                backgroundColor: Colors.white.withValues(alpha: 0.25),
+                backgroundImage: showAvatar ? CachedNetworkImageProvider(avatarUrl.toString().trim()) : null,
+                child: showAvatar
+                    ? null
+                    : Text(initial,
+                        style: const TextStyle(
+                          fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
+              ),
             ),
           ),
           const SizedBox(height: 14),

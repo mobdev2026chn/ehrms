@@ -2361,9 +2361,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   Widget _buildWelcomeCard() {
     final dateStr = DateFormat('EEEE, MMM d').format(DateTime.now());
-    final initial = _userName.isNotEmpty ? _userName[0].toUpperCase() : 'U';
-    final hasAvatar =
-        _avatarUrl != null && _avatarUrl!.trim().startsWith('http');
     final greeting = _greetingForNow();
 
     return Container(
@@ -2386,46 +2383,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Avatar — opens the drawer (Figma replaces the app bar hamburger with this).
-          GestureDetector(
+          // Menu — opens the drawer (Figma's hamburger, now on the left of the header).
+          _buildHeaderIconButton(
+            icon: Icons.menu_rounded,
+            tooltip: 'Menu',
             onTap: () => _dashboardScaffoldKey.currentState?.openDrawer(),
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.7),
-                  width: 2,
-                ),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x33000000),
-                    blurRadius: 8,
-                    offset: Offset(0, 2),
-                  ),
-                ],
-              ),
-              // Flip legacy (pre-fix, upside-down) seeded avatars 180° on display.
-              child: RotatedBox(
-                quarterTurns: (hasAvatar && _avatarNeedsFlip) ? 2 : 0,
-                child: CircleAvatar(
-                  radius: 24,
-                  backgroundColor: Colors.white.withValues(alpha: 0.25),
-                  backgroundImage: hasAvatar
-                      ? CachedNetworkImageProvider(_avatarUrl!)
-                      : null,
-                  child: hasAvatar
-                      ? null
-                      : Text(
-                          initial,
-                          style: const TextStyle(
-                            fontSize: 19,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                ),
-              ),
-            ),
           ),
           const SizedBox(width: 14),
           // Greeting + name + date

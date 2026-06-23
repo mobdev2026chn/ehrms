@@ -8,7 +8,7 @@ face-attendance app's aiEngine. This removes the separate :5005 service: the fac
 engine runs as a child of the Node process, so there's only one thing to run.
 
 Commands (one JSON object per line):
-  {"cmd":"embed","image":"<base64|dataurl>"}        # lenient enroll: rotations, no guards
+  {"cmd":"embed","image":"<base64|dataurl>"}        # lenient enroll: rotations, no positioning guards, but blur-gated
       -> {"embedding":[...128 floats...], "error":null}  | {"embedding":null,"error":"..."}
   {"cmd":"embed_live","image":"<base64|dataurl>"}   # STRICT live punch/break: kiosk guards + anti-spoof
       -> {"embedding":[...128 floats...], "error":null}  | {"embedding":null,"error":"<guard msg>"}
@@ -45,12 +45,14 @@ def _out(obj):
 def _handle(cmd):
     action = cmd.get("cmd")
     if action == "embed":
+        # Lenient ENROLL path (rotations, no positioning guards) + sharpness gate, so a
+        # blurry capture is rejected and only a clear face is registered.
         img = verify_core.load_from_base64(cmd.get("image", ""))
         if img is None:
             return {"embedding": None, "error": "Could not load image"}
-        e = verify_core.embedding(img)
+        e, err = verify_core.embed_for_enroll(img)
         if e is None:
-            return {"embedding": None, "error": "No face detected"}
+            return {"embedding": None, "error": err or "No face detected"}
         return {"embedding": e.tolist(), "error": None}
 
     if action == "embed_live":

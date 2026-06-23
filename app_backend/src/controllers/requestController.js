@@ -1590,25 +1590,30 @@ const getPermissionBalance = async (req, res) => {
             monthlyQuotaMinutes
         });
 
-        // "Pending" = committed permission hours that are NOT yet utilized. This
-        // covers requests awaiting approval AND approved-but-unused requests. An
-        // approved request must STAY in Pending and only move to "Used" once the
-        // employee actually utilizes it (i.e. once it is reflected in the per-day
-        // permissionConsumedMinutes summed into `consumedMinutes` above). We take
-        // the total committed minutes (Pending + Approved) and subtract what has
-        // already been used, so the same minutes are never counted as both Pending
-        // and Used. consumedMinutes is sourced only from Approved permissions, so
-        // committed - consumed never goes negative for consistent data.
+        // The three tiles are distinct buckets so the same minute is never counted
+        // twice:
+        //   - "Used"     = minutes actually utilized from Approved permissions
+        //                  (consumedMinutes, computed above).
+        //   - "Pending"  = minutes still AWAITING approval (status 'Pending' only).
+        //                  Approved-but-not-yet-utilized minutes are NOT pending and
+        //                  NOT yet used — they simply reduce the remaining allocation.
+        // Group requested minutes by status so Pending reflects only what HR has yet
+        // to decide on, while Approved still holds against the quota for `remaining`.
         const committedAgg = await PermissionRequest.aggregate([
             { $match: { employeeId, date: { $gte: start, $lte: end }, status: { $in: ['Pending', 'Approved'] } } },
-            { $group: { _id: null, total: { $sum: { $ifNull: ['$requestedMinutes', 0] } } } }
+            { $group: { _id: '$status', total: { $sum: { $ifNull: ['$requestedMinutes', 0] } } } }
         ]);
-        const committedMinutes = Math.max(0, Number(committedAgg?.[0]?.total || 0));
-        const pendingMinutes = Math.max(0, committedMinutes - consumedMinutes);
+        const byStatus = Object.fromEntries((committedAgg || []).map(r => [r._id, Math.max(0, Number(r.total || 0))]));
+        // Displayed "Pending" = only requests still awaiting approval.
+        const pendingMinutes = byStatus['Pending'] || 0;
+        const approvedMinutes = byStatus['Approved'] || 0;
 
-        // Committed hours (used + pending) hold against the monthly quota so the
-        // employee cannot over-apply beyond their allocation.
-        remainingMinutes = Math.max(0, remainingMinutes - pendingMinutes);
+        // Remaining must account for ALL committed hours (pending + approved) so the
+        // employee cannot over-apply beyond their allocation — the approved-unused
+        // portion is reserved even though it is not shown in any tile. consumedMinutes
+        // is the utilized slice of `approvedMinutes`, so it is already covered by it.
+        const reservedMinutes = pendingMinutes + Math.max(approvedMinutes, consumedMinutes);
+        remainingMinutes = Math.max(0, monthlyQuotaMinutes - reservedMinutes);
 
         console.log('[PermissionBalance][Response]', {
             employeeId: employeeId?.toString?.() || String(employeeId || ''),

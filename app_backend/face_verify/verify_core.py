@@ -61,6 +61,23 @@ MIN_FACE_W = _env_int("FACE_MIN_WIDTH", 90)
 MAX_FACE_W = _env_int("FACE_MAX_WIDTH", 260)
 SCAN_MAX_W = _env_int("FACE_SCAN_MAX_WIDTH", 480)
 
+# SHARPNESS gate — reject a blurry / out-of-focus / motion-smeared face so ONLY a
+# clear capture produces an embedding, on BOTH recognition (embed_live) and enroll
+# (embed_for_enroll). Measured as the variance of the Laplacian on the detected face
+# crop, resized to a fixed 160x160 so a single threshold holds regardless of how big
+# the face is in frame or which detector downscale (480 scan / 640 enroll) was used.
+# Higher variance = more high-frequency detail = sharper. Tunable per deployment:
+#   FACE_BLUR_CHECK=0      -> disable the gate entirely
+#   FACE_BLUR_MIN_VAR=NN   -> raise to demand sharper faces, lower if it false-rejects
+# Every rejection (and the measured variance) is logged to stderr so the threshold
+# can be tuned against real kiosk captures.
+BLUR_CHECK = os.environ.get("FACE_BLUR_CHECK", "1") == "1"
+try:
+    BLUR_MIN_VAR = float(os.environ.get("FACE_BLUR_MIN_VAR", "45"))
+except (TypeError, ValueError):
+    BLUR_MIN_VAR = 45.0
+BLUR_MESSAGE = "Face too blurry. Hold steady in good light and try again."
+
 # Anti-spoofing (Silent-Face / MiniFASNet) lives in the face-attendance app repo.
 # EHRMS reaches the sibling checkout by default; override with FACE_ANTISPOOF_DIR.
 # Loading is lazy + attempted-once, and ALWAYS fail-open: a missing model or a
@@ -104,17 +121,47 @@ def _rotate(img, angle):
     return img
 
 
-def embedding(img):
-    """Largest detected face's 128-D dlib descriptor, trying rotations so selfies
-    stored upside-down/sideways still resolve. [img] is a BGR numpy array (as loaded
-    by cv2). None if no face is found."""
+def _is_blurry(rgb, loc):
+    """True only when the detected face crop is clearly blurry (variance of the
+    Laplacian below BLUR_MIN_VAR). The crop is resized to a fixed 160x160 so one
+    threshold is valid regardless of face size / detector downscale. Fail-OPEN: any
+    measurement error returns False (never blocks a punch on a broken metric)."""
+    if not BLUR_CHECK:
+        return False
     import cv2
-    import numpy as np
+    try:
+        top, right, bottom, left = loc
+        top = max(0, top)
+        left = max(0, left)
+        bottom = max(top + 1, bottom)
+        right = max(left + 1, right)
+        crop = rgb[top:bottom, left:right]
+        if crop.size == 0:
+            return False
+        gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+        gray = cv2.resize(gray, (160, 160), interpolation=cv2.INTER_AREA)
+        var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if var < BLUR_MIN_VAR:
+            sys.stderr.write(
+                f"[verify_core] blurry face rejected (lapVar={var:.1f} < {BLUR_MIN_VAR})\n")
+            sys.stderr.flush()
+            return True
+        return False
+    except Exception as e:
+        sys.stderr.write(f"[verify_core] sharpness check skipped (fail-open): {e}\n")
+        sys.stderr.flush()
+        return False
+
+
+def _largest_face_rgb_loc(img, max_w):
+    """Downscale [img] (BGR) to [max_w] wide, then try rotations so selfies stored
+    upside-down/sideways still resolve. Returns (rgb_used, loc) for the LARGEST face,
+    or (None, None) if no face is found. Shared by embedding() and embed_for_enroll()
+    so detection/rotation behaviour stays identical across the two."""
+    import cv2
     import face_recognition
 
-    # Downscale wide images so detection stays fast (matches the face app's worker).
     h, w = img.shape[:2]
-    max_w = 640
     if w > max_w:
         scale = max_w / w
         img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
@@ -129,12 +176,50 @@ def embedding(img):
             continue
         if not locs:
             continue
-        # Largest detected face.
         loc = max(locs, key=lambda l: (l[2] - l[0]) * (l[1] - l[3]))
-        encs = face_recognition.face_encodings(rgb, [loc], num_jitters=1)
-        if encs:
-            return np.array(encs[0], dtype=float)
+        return rgb, loc
+    return None, None
+
+
+def embedding(img):
+    """Largest detected face's 128-D dlib descriptor, trying rotations so selfies
+    stored upside-down/sideways still resolve. [img] is a BGR numpy array (as loaded
+    by cv2). None if no face is found.
+
+    NOTE: intentionally NOT sharpness-gated — this is the comparison path used by
+    verify_images() (selfie vs a STORED reference photo, which may legitimately be
+    soft). The blur gate lives in embed_for_enroll() (enroll) and embed_live() (live
+    scan), where the capture is fresh and a clear face can always be re-taken."""
+    import numpy as np
+    import face_recognition
+
+    rgb, loc = _largest_face_rgb_loc(img, 640)
+    if loc is None:
+        return None
+    encs = face_recognition.face_encodings(rgb, [loc], num_jitters=1)
+    if encs:
+        return np.array(encs[0], dtype=float)
     return None
+
+
+def embed_for_enroll(img):
+    """Lenient ENROLL embedding (rotation retries, no positioning guards) PLUS the
+    sharpness gate: a blurry capture is rejected so only a clear face is registered.
+    [img] is a BGR numpy array. Returns (embedding|None, error|None)."""
+    import numpy as np
+    import face_recognition
+
+    if img is None:
+        return None, "Could not load image"
+    rgb, loc = _largest_face_rgb_loc(img, 640)
+    if loc is None:
+        return None, "No face detected"
+    if _is_blurry(rgb, loc):
+        return None, BLUR_MESSAGE
+    encs = face_recognition.face_encodings(rgb, [loc], num_jitters=1)
+    if not encs:
+        return None, "Could not extract face biometrics. Please try again."
+    return np.array(encs[0], dtype=float), None
 
 
 def verify_images(img1, img2):
@@ -194,6 +279,12 @@ def embed_live(img):
         return None, "No face detected in feed. Please align your face inside the guide."
     if len(locs) > 1:
         return None, "Multiple faces detected! Only one person is allowed."
+
+    # 1.5. Sharpness gate — a blurry / out-of-focus / motion-smeared face must not
+    # produce a live embedding, so recognition stays accurate. Re-taking a steady,
+    # in-focus frame is the fix. Disable/tune via FACE_BLUR_CHECK / FACE_BLUR_MIN_VAR.
+    if _is_blurry(rgb, locs[0]):
+        return None, BLUR_MESSAGE
 
     # 2. Centering + proximity — KIOSK-only (off by default; see FRAMING_CHECK).
     top, right, bottom, left = locs[0]

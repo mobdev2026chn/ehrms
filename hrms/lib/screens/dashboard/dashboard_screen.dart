@@ -3620,6 +3620,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             onEndBreakTap: _endBreakFlow,
             showBreakNavButton: _showBreakNavForShiftPolicy,
             salaryConfigured: _salaryConfigured,
+            breakFineNotice: _breakPolicyInfoNotice(),
             onTap: (index) async {
               if (index == 6) {
                 if (_activeBreak != null) {

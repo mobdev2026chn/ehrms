@@ -51,6 +51,12 @@ class AppBottomNavigationBar extends StatefulWidget {
   /// dimmed and shows a "Salary is not configured. Contact HR." tooltip.
   final bool salaryConfigured;
 
+  /// Break-policy fine notice for the current shift (S2/S3/S4 wording), or null
+  /// when breaks are normally configured (S1). Break is ALWAYS allowed — when
+  /// non-null this is surfaced as a tap-tooltip on the Break tab so the employee
+  /// is told the break time will be processed with Fine; it never blocks the tap.
+  final String? breakFineNotice;
+
   const AppBottomNavigationBar({
     super.key,
     this.currentIndex = 0,
@@ -65,6 +71,7 @@ class AppBottomNavigationBar extends StatefulWidget {
     this.onEndBreakTap,
     this.showBreakNavButton = true,
     this.salaryConfigured = true,
+    this.breakFineNotice,
   });
 
   static int getCurrentIndex(BuildContext context) {
@@ -359,49 +366,63 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
       int navIdx, {
       bool dimmed = false,
       bool busy = false,
+      String? tooltip,
     }) {
       final isActive = widget.currentIndex == navIdx;
+      final hasTooltip = tooltip != null && tooltip.trim().isNotEmpty;
+      final gesture = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: busy
+            ? null
+            : () {
+                HapticFeedback.lightImpact();
+                _handleNavigation(context, navIdx);
+              },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            busy
+                ? SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(selected),
+                    ),
+                  )
+                : Icon(
+                    isActive ? item.activeIcon : item.icon,
+                    size: 22,
+                    color: isActive ? selected : unselected,
+                  ),
+            const SizedBox(height: 4),
+            Text(
+              busy ? 'Please wait' : item.label,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                color: isActive ? selected : unselected,
+              ),
+            ),
+          ],
+        ),
+      );
       return Expanded(
         child: Opacity(
           opacity: dimmed ? 0.4 : 1.0,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: busy
-                ? null
-                : () {
-                    HapticFeedback.lightImpact();
-                    _handleNavigation(context, navIdx);
-                  },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                busy
-                    ? SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(selected),
-                        ),
-                      )
-                    : Icon(
-                        isActive ? item.activeIcon : item.icon,
-                        size: 22,
-                        color: isActive ? selected : unselected,
-                      ),
-                const SizedBox(height: 4),
-                Text(
-                  busy ? 'Please wait' : item.label,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                    color: isActive ? selected : unselected,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // The break-fine notice is surfaced as a tap-tooltip (parity with the
+          // Punch button's salary tooltip). It NEVER blocks the tab — the
+          // underlying GestureDetector still navigates into the break flow.
+          child: hasTooltip
+              ? Tooltip(
+                  message: tooltip,
+                  triggerMode: TooltipTriggerMode.tap,
+                  preferBelow: false,
+                  showDuration: const Duration(seconds: 4),
+                  child: gesture,
+                )
+              : gesture,
         ),
       );
     }
@@ -540,6 +561,10 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
                     2,
                     dimmed: !breakAllowed && !widget.isBreakActionInProgress,
                     busy: widget.isBreakActionInProgress,
+                    // Show the configured break-fine notice on tap when a fine
+                    // applies (disabled / not-configured shift). Break is still
+                    // allowed in all cases; this only informs the employee.
+                    tooltip: widget.breakFineNotice,
                   ),
                 if (navItems.length > 3) navTab(3, navItems[3], 3),
               ],

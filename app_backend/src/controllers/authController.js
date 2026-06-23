@@ -1773,7 +1773,7 @@ function toUserFriendlyVerifyMessage(raw) {
     // messages verbatim — they tell the user exactly how to fix the capture.
     if (s.includes('too far') || s.includes('too close') || s.includes('off-center')
         || s.includes('multiple faces') || s.includes('only one person')
-        || s.includes('spoof') || s.includes('look straight')) {
+        || s.includes('spoof') || s.includes('look straight') || s.includes('blurry')) {
         return raw;
     }
     if (s.includes('no face') || s.includes('face could not be detected')) return 'No face detected. Please ensure your face is clearly visible.';
@@ -1798,6 +1798,9 @@ function toUserFriendlyEnrollMessage(raw) {
         || s.includes('crash') || s.includes('exception')) {
         return 'Face service isn\'t ready yet. Please try again in a moment.';
     }
+    // Blurry capture — pass the engine's actionable wording through verbatim so the
+    // user knows to hold steady / improve lighting rather than re-framing.
+    if (s.includes('blurry')) return raw;
     // Genuine capture problem — guide framing only (no lighting wording per request).
     if (s.includes('no face') || s.includes('could not be detected') || s.includes('detect')) {
         return 'We couldn\'t see your face clearly. Fit your face inside the oval and try again.';
@@ -2319,12 +2322,20 @@ const kioskClearFace = async (req, res) => {
             return res.status(404).json({ success: false, message: 'No enrolled employee found for that id/email.' });
         }
         const had = Array.isArray(staff.faceEnrollEmbeddings) ? staff.faceEnrollEmbeddings.length : 0;
+        // Clearing enrollment also removes the PROFILE IMAGE: enroll-face set the avatar
+        // FROM the enrollment selfie (Staff.avatar + Staff.faceEnrollImage + User.avatar),
+        // so a clear must wipe all three — otherwise the cleared person still shows their
+        // enrolled face as their profile photo on the kiosk roster/detail.
         await Staff.findByIdAndUpdate(staff._id, {
             faceEnrollEmbeddings: [],
             faceEnrolledAt: null,
             faceEnrollImage: null,
+            avatar: null,
         });
-        console.log(`[kioskClearFace] cleared staff=${staff._id} (${staff.employeeId}) samples=${had}`);
+        if (staff.userId) {
+            await User.findByIdAndUpdate(staff.userId, { avatar: null }).catch(() => {});
+        }
+        console.log(`[kioskClearFace] cleared staff=${staff._id} (${staff.employeeId}) samples=${had} + profile image`);
         return res.json({
             success: true,
             employee_id: staff.employeeId,

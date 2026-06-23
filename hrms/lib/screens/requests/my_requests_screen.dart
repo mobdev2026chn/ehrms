@@ -829,12 +829,18 @@ class _PaginationBar extends StatelessWidget {
   final String? createLabel;
   final VoidCallback? onCreate;
 
+  /// When non-empty, surfaced as a tap-tooltip on the create button (e.g. the
+  /// permission fine notice for a quota-0 / disabled / unconfigured shift). It
+  /// is purely informational — the button's [onCreate] still fires on tap.
+  final String? createTooltip;
+
   const _PaginationBar({
     required this.currentPage,
     required this.totalPages,
     required this.onPageSelected,
     this.createLabel,
     this.onCreate,
+    this.createTooltip,
   });
 
   /// Up to three contiguous page numbers. The window's right edge follows the
@@ -922,7 +928,7 @@ class _PaginationBar extends StatelessWidget {
   }
 
   Widget _createButton() {
-    return ElevatedButton.icon(
+    final button = ElevatedButton.icon(
       onPressed: onCreate,
       icon: const Icon(Icons.add, size: 20),
       label: Text(
@@ -936,6 +942,16 @@ class _PaginationBar extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
+    );
+    final tip = createTooltip;
+    if (tip == null || tip.trim().isEmpty) return button;
+    // Show the configured fine notice on tap; the button still opens the dialog.
+    return Tooltip(
+      message: tip,
+      triggerMode: TooltipTriggerMode.tap,
+      preferBelow: false,
+      showDuration: const Duration(seconds: 4),
+      child: button,
     );
   }
 
@@ -5680,6 +5696,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   bool get wantKeepAlive => true;
 
   final RequestService _requestService = RequestService();
+  final AttendanceService _attendanceService = AttendanceService();
   List<dynamic> _requests = [];
   bool _isLoading = true;
   bool _showFilters = false;
@@ -6067,16 +6084,60 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     return DateFormat('dd MMM yyyy, hh:mm a').format(d.toLocal());
   }
 
-  void showRequestPermissionDialog() {
-    // Block when permission is not configured for the shift at all.
-    if (_balance != null && _balance?['configured'] == false) {
+  /// Reads today's attendance to derive whether the user is mid-session
+  /// (punched in, not yet punched out). /attendance/today returns authoritative
+  /// top-level hasPunchIn/hasPunchOut flags; fall back to the record's punch
+  /// timestamps. Both fields stay null when the read fails (fail open).
+  Future<({bool? punchedIn, bool? punchedOut})> _resolveTodaySession() async {
+    bool? punchedIn;
+    bool? punchedOut;
+    try {
+      final now = DateTime.now();
+      final dateStr =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final att = await _attendanceService.getAttendanceByDate(dateStr);
+      final body = att['data'] as Map<String, dynamic>?;
+      if (att['success'] == true && body != null) {
+        final record = body['data'] is Map ? body['data'] as Map : null;
+        punchedIn = body['hasPunchIn'] == true ||
+            hasParsablePunchDateTime(record?['punchIn']);
+        punchedOut = body['hasPunchOut'] == true ||
+            hasParsablePunchDateTime(record?['punchOut']);
+      }
+    } catch (_) {}
+    return (punchedIn: punchedIn, punchedOut: punchedOut);
+  }
+
+  Future<void> showRequestPermissionDialog() async {
+    // Permission is ALWAYS allowed (parity with the break flow). When the shift
+    // has no permission policy / no quota, the request is still accepted and the
+    // entire duration is processed as Fine — the button tooltip + dialog notices
+    // already tell the employee this, so we no longer block the not-configured case.
+
+    // Permission can only be applied during an ACTIVE work session: after the
+    // employee has punched in and before they punch out for today. Gate this at
+    // the button tap so the form never opens out-of-session (the dialog's
+    // _submit re-checks too; this just surfaces the message earlier). When the
+    // attendance state can't be read we fail open — the backend is authoritative.
+    final session = await _resolveTodaySession();
+    if (!mounted) return;
+    if (session.punchedIn == false) {
       SnackBarUtils.showSnackBar(
         context,
-        'Permission is not configured for your shift. Contact HR.',
+        'You can apply for permission only after punching in.',
         isError: true,
       );
       return;
     }
+    if (session.punchedOut == true) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'You can apply for permission only before punching out.',
+        isError: true,
+      );
+      return;
+    }
+
     // Every other scenario opens the dialog — the request is always allowed and the
     // entire duration is processed as Fine when the shift is disabled and/or has no
     // quota: S2 (enabled, no quota), S3 (disabled, has quota), S4 (disabled, no quota).
@@ -6168,14 +6229,20 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                 // enabled, and has a quota. Hide when disabled/unconfigured/no-quota
                 // so misleading numbers (e.g. a stale monthly quota) are not shown.
                 if (configured && enabled && quota > 0) ...[
-                  Row(
-                    children: [
-                      _balanceTile('Monthly Allocated', hoursAndMinutes(quota)),
-                      const SizedBox(width: 8),
-                      _balanceTile('Used', hoursAndMinutes(consumed)),
-                      const SizedBox(width: 8),
-                      _balanceTile('Pending', hoursAndMinutes(pending)),
-                    ],
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _balanceTile(
+                          'Monthly Allocated',
+                          hoursAndMinutes(quota),
+                        ),
+                        const SizedBox(width: 8),
+                        _balanceTile('Used', hoursAndMinutes(consumed)),
+                        const SizedBox(width: 8),
+                        _balanceTile('Pending', hoursAndMinutes(pending)),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -6185,7 +6252,9 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   _permissionNotice(
                     icon: Icons.info_outline,
                     color: Colors.orange,
-                    message: 'Permission is not configured for your shift. Contact HR.',
+                    message:
+                        'Permission is not configured for your shift. Contact HR.\n'
+                        'Any permission request will be processed as Fine.',
                   ),
                 if (!configured) const SizedBox(height: 12),
                 if (configured && !enabled) ...[
@@ -6345,9 +6414,38 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
           onPageSelected: (page) => setState(() => _currentPage = page),
           createLabel: 'Request Permission',
           onCreate: showRequestPermissionDialog,
+          createTooltip: _permissionFineNotice(),
         ),
       ],
     );
+  }
+
+  /// Tap-tooltip wording for the Request Permission button, mirroring the
+  /// on-screen policy notices. The monthly quota = 0 vs > 0 split matches the
+  /// shift settings. Returns null when permission is normally configured
+  /// (configured + enabled + quota > 0) so no tooltip shows. Informational only —
+  /// the request itself is still allowed for the disabled / no-quota cases (it is
+  /// processed as Fine).
+  String? _permissionFineNotice() {
+    final quota = (_balance?['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
+    final configured = _balance == null || _balance?['configured'] != false;
+    final enabled = _balance == null || _balance?['enabled'] != false;
+    if (!configured) {
+      return 'Permission is not configured for your shift. Contact HR.\n'
+          'Any permission request will be processed as Fine.';
+    }
+    if (!enabled) {
+      return quota > 0
+          ? 'Permission is disabled for your shift. Contact HR to enable.\n'
+                'Any permission request will be processed as Fine.'
+          : 'Permission is not configured for your shift. Contact HR.\n'
+                'Any permission request will be processed as Fine.';
+    }
+    if (quota <= 0) {
+      return 'Permission is not configured for your shift. Contact HR.\n'
+          'Any permission request will be processed as Fine.';
+    }
+    return null; // configured + enabled + quota > 0 → normal, no tooltip
   }
 
   Widget _permissionNotice({
@@ -6408,6 +6506,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Row(
               children: [
@@ -6425,7 +6524,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                 ),
               ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 8),
             Text(
               value,
               style: TextStyle(
@@ -6464,8 +6563,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   final TextEditingController _reasonController = TextEditingController();
   bool _isSubmitting = false;
   HolidayOffConfig _offConfig = HolidayOffConfig.empty;
-  // Permission configuration gate. Defaults keep the form usable until config loads.
-  bool _configured = true;
+  // Permission configuration. Defaults keep the form usable until config loads.
+  // Not-configured is no longer a gate — it is allowed and processed as Fine
+  // (parity with break), so only `enabled` / quota drive the fine wording.
   bool _enabled = true;
   double _quotaMinutes = 0;
   double _consumedMinutes = 0;
@@ -6653,7 +6753,6 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     final data = result['data'];
     if (result['success'] == true && data is Map) {
       setState(() {
-        _configured = data['configured'] != false;
         _enabled = data['enabled'] != false;
         _quotaMinutes = (data['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
         _consumedMinutes = (data['consumedMinutes'] as num?)?.toDouble() ?? 0;
@@ -6997,14 +7096,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   }
 
   Future<void> _submit() async {
-    if (!_configured) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Permission is not configured for your shift. Contact HR.',
-        isError: true,
-      );
-      return;
-    }
+    // Not-configured no longer blocks: the request is allowed and processed as
+    // Fine (parity with the break flow). The `_quotaMinutes <= 0` branch below
+    // shows the fine warning and lets the employee confirm before submitting.
     if (!_formKey.currentState!.validate()) return;
 
     final minutes = int.tryParse(_minutesController.text.trim());
@@ -7367,10 +7461,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed:
-                            (_isSubmitting || !_configured)
-                            ? null
-                            : _submit,
+                        // Always enabled (except while submitting): a not-configured
+                        // shift is allowed too and processed as Fine, matching break.
+                        onPressed: _isSubmitting ? null : _submit,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primary,
                           foregroundColor: Colors.white,
