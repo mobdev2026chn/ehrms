@@ -25,6 +25,7 @@ import '../../services/attendance_service.dart';
 import '../../services/salary_service.dart';
 import '../../utils/fine_calculation_util.dart';
 import '../../utils/holiday_off_util.dart';
+import '../../utils/absent_alert_helper.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
@@ -6481,6 +6482,11 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   // request whose time period has already begun. Null until the template loads.
   int? _shiftStartMinutes;
   int? _shiftEndMinutes;
+  // Today's punch state. Permission can only be applied during an ACTIVE work
+  // session: after punch-in and before punch-out. Null until attendance loads
+  // (fail open — the backend re-checks and is authoritative).
+  bool? _punchedInToday;
+  bool? _punchedOutToday;
 
   @override
   void initState() {
@@ -6520,6 +6526,8 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     double shiftHours = _shiftHours;
     int? shiftStartMinutes;
     int? shiftEndMinutes;
+    bool? punchedIn;
+    bool? punchedOut;
     try {
       final now = DateTime.now();
       final dateStr =
@@ -6535,6 +6543,17 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         shiftStartMinutes = _shiftTimeToMinutes(start);
         shiftEndMinutes = _shiftTimeToMinutes(end);
       }
+      // Derive today's punch state so the form can gate apply on an active
+      // session (after punch-in, before punch-out). /attendance/today returns
+      // authoritative top-level hasPunchIn/hasPunchOut flags; fall back to the
+      // attendance record's punch timestamps under `data`.
+      if (att['success'] == true && body != null) {
+        final record = body['data'] is Map ? body['data'] as Map : null;
+        punchedIn = body['hasPunchIn'] == true ||
+            hasParsablePunchDateTime(record?['punchIn']);
+        punchedOut = body['hasPunchOut'] == true ||
+            hasParsablePunchDateTime(record?['punchOut']);
+      }
     } catch (_) {}
 
     if (!mounted) return;
@@ -6544,6 +6563,8 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       _shiftHours = shiftHours;
       _shiftStartMinutes = shiftStartMinutes;
       _shiftEndMinutes = shiftEndMinutes;
+      _punchedInToday = punchedIn;
+      _punchedOutToday = punchedOut;
     });
   }
 
@@ -7005,6 +7026,28 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       SnackBarUtils.showSnackBar(
         context,
         'Select both From and To time',
+        isError: true,
+      );
+      return;
+    }
+
+    // Permission can only be applied during an ACTIVE work session: after the
+    // employee has punched in and before they punch out for today. Before
+    // punch-in or after punch-out, the apply is blocked. When attendance state
+    // is still unknown (null) we fail open — the backend re-checks and is
+    // authoritative.
+    if (_punchedInToday == false) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'You can apply for permission only after punching in.',
+        isError: true,
+      );
+      return;
+    }
+    if (_punchedOutToday == true) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'You can apply for permission only before punching out.',
         isError: true,
       );
       return;

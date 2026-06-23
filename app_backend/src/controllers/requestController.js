@@ -1202,6 +1202,27 @@ const createPermissionRequest = async (req, res) => {
         const attendanceDate = new Date(date);
         attendanceDate.setHours(0, 0, 0, 0);
 
+        // Permission can only be applied during an ACTIVE work session: after the
+        // employee has punched in for TODAY and before they punch out. Before
+        // punch-in (no session yet) or after punch-out (session closed) the apply
+        // is rejected. Uses the same UTC day-bucket as the attendance punch log so
+        // the right record is matched.
+        {
+            const now = new Date();
+            const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+            const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+            const todayAttendance = await Attendance.findOne({
+                employeeId,
+                date: { $gte: startOfDay, $lte: endOfDay }
+            }).select('punchIn punchOut');
+            if (!todayAttendance || !todayAttendance.punchIn) {
+                return res.status(400).json({ success: false, error: { message: 'You can apply for permission only after punching in.' } });
+            }
+            if (todayAttendance.punchOut) {
+                return res.status(400).json({ success: false, error: { message: 'You can apply for permission only before punching out.' } });
+            }
+        }
+
         // Permission requests are ALWAYS allowed (all 4 policy scenarios). The policy
         // only governs how the time is fined later (entire duration vs the exceeded
         // portion). We no longer block submission for disabled / no-allowance shifts —
