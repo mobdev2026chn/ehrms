@@ -4,6 +4,7 @@ const { createRateLimitHandler } = require('../utils/rateLimitHandler');
 const router = express.Router();
 const {
     login,
+    kioskAdminLogin,
     googleLogin,
     refreshAccessToken,
     register,
@@ -53,6 +54,8 @@ const upload = multer({
 
 // Public auth routes with stricter limits
 router.post('/login', loginLimiter, login);
+// Face-kiosk admin gate: credential + users.role check only (no staff profile required).
+router.post('/kiosk-admin-login', loginLimiter, kioskAdminLogin);
 router.post('/google-login', authLimiter, googleLogin);
 router.post('/refresh', authLimiter, refreshAccessToken);
 router.post('/register', authLimiter, register);

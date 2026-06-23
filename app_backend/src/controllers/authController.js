@@ -423,6 +423,72 @@ const login = async (req, res) => {
     }
 };
 
+/**
+ * POST /auth/kiosk-admin-login — Face-kiosk admin gate.
+ *
+ * Authenticates an EXISTING user against the `users` collection and admits ONLY
+ * admin roles (Admin / Super Admin). Unlike POST /auth/login this does NOT
+ * require a linked Staff profile — the kiosk is operated by an admin who may not
+ * have their own staff record (e.g. leka@gmail.com). Pure credential + role check.
+ */
+const kioskAdminLogin = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                error: { message: 'Email and password are required' }
+            });
+        }
+
+        const emailNorm = (email || '').trim().toLowerCase();
+        const emailRegex = buildEmailRegex(emailNorm);
+
+        // Look up the user in the users collection (password is select:false by default).
+        const user = await User.findOne({ email: emailRegex }).select('+password');
+        if (!user || !user.password) {
+            return res.status(401).json({ success: false, error: { message: 'Invalid credentials' } });
+        }
+        if (user.isActive === false) {
+            return res.status(401).json({ success: false, error: { message: 'Account is inactive' } });
+        }
+
+        const passwordMatch = await user.matchPassword(password);
+        if (!passwordMatch) {
+            return res.status(401).json({ success: false, error: { message: 'Invalid credentials' } });
+        }
+
+        // Role gate — only admins may operate the kiosk.
+        const role = (user.role || '').toString().trim().toLowerCase();
+        const isAdmin = role === 'admin' || role === 'super admin' || role === 'superadmin';
+        if (!isAdmin) {
+            return res.status(403).json({
+                success: false,
+                error: { message: 'You are not an admin. Only admin accounts can log in.' }
+            });
+        }
+
+        const secret = process.env.JWT_SECRET || 'secret';
+        const accessToken = jwt.sign({ id: user._id }, secret, { expiresIn: '30d' });
+
+        return res.json({
+            success: true,
+            data: {
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role
+                },
+                accessToken
+            }
+        });
+    } catch (error) {
+        console.error('kioskAdminLogin Error:', error);
+        return res.status(500).json({ success: false, error: { message: error.message } });
+    }
+};
+
 const googleLogin = async (req, res) => {
     try {
         const { email } = req.body;
@@ -2222,6 +2288,7 @@ const kioskClearFace = async (req, res) => {
 
 module.exports = {
     login,
+    kioskAdminLogin,
     googleLogin,
     refreshAccessToken,
     register,
