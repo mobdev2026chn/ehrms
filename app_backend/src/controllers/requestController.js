@@ -11,7 +11,7 @@ const Attendance = require('../models/Attendance');
 const payslipGeneratorService = require('../services/payslipGeneratorService');
 const { calculateAttendanceStats } = require('./payrollController');
 const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays } = require('../utils/payableDaysRule');
-const { getShiftTimings } = require('../utils/leaveAttendanceHelper');
+const { getShiftTimings, staffShiftKeyFromStaff } = require('../utils/leaveAttendanceHelper');
 const { rollFaceReferenceFromSelfie } = require('../utils/faceReference');
 const { resolvePermissionNotice, permissionExceeded } = require('../constants/attendancePolicyMessages');
 
@@ -41,6 +41,15 @@ const toMonthRange = (year, monthOneBased) => {
 const resolvePermissionConfig = async (businessId, staff, year, month) => {
     const result = { configured: false, enabled: false, monthlyQuotaMinutes: 0, dailyAllowedMinutes: 0 };
     if (!businessId) return result;
+
+    // No shift assigned → no permission policy. getShiftTimings() defaults an unassigned staff to
+    // the first company shift (shifts[0]), which would make them silently inherit that shift's
+    // permission quota (e.g. "3h Monthly Allocated" with Shift = Not assigned). Permission is a
+    // per-shift policy, so a staff with no shift genuinely has none — report not-configured.
+    if (!staffShiftKeyFromStaff(staff)) {
+        return result;
+    }
+
     try {
         // .lean() so the fallback loop below can read shift.permissionPolicy directly
         // (on a hydrated doc, undeclared/strict fields are not exposed via dot access).
