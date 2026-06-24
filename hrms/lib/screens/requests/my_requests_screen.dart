@@ -6481,32 +6481,34 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     });
   }
 
-  /// Tap-tooltip wording for the Request Permission button, mirroring the
-  /// on-screen policy notices. The monthly quota = 0 vs > 0 split matches the
-  /// shift settings. Returns null when permission is normally configured
-  /// (configured + enabled + quota > 0) so no tooltip shows. Informational only —
-  /// the request itself is still allowed for the disabled / no-quota cases (it is
-  /// processed as Fine).
+  /// Tap-tooltip wording for the Request Permission button, mirroring the break
+  /// policy's four scenarios (keyed on enabled + monthly quota minutes).
+  /// Informational only — the request itself is still allowed in every case (the
+  /// disabled / no-quota cases are processed as Fine):
+  ///  - S1 enabled  + minutes > 0 : "Permission allowed for X minutes. Beyond X → Fine."
+  ///  - S2 enabled  + minutes = 0 : "Permission taken will be considered as Fine. Contact HR."
+  ///  - S3 disabled + minutes > 0 : "Permission taken will be considered as Fine. Contact HR."
+  ///  - S4 disabled + minutes = 0 : "Permission is not configured... Fine will be calculated."
   String? _permissionFineNotice() {
-    final quota = (_balance?['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
+    final quotaMin =
+        ((_balance?['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0).round();
     final configured = _balance == null || _balance?['configured'] != false;
     final enabled = _balance == null || _balance?['enabled'] != false;
-    if (!configured) {
-      return 'Permission is not configured for your shift. Contact HR.\n'
-          'Any permission request will be processed as Fine.';
-    }
+    final hasQuota = configured && quotaMin > 0;
     if (!enabled) {
-      return quota > 0
-          ? 'Permission is disabled for your shift. Contact HR to enable.\n'
-                'Any permission request will be processed as Fine.'
+      return hasQuota
+          ? 'Permission taken will be considered as Fine.\n'
+                'Contact HR.' // S3 (disabled + minutes)
           : 'Permission is not configured for your shift. Contact HR.\n'
-                'Any permission request will be processed as Fine.';
+                'Fine will be calculated.'; // S4 (disabled + no minutes)
     }
-    if (quota <= 0) {
-      return 'Permission is not configured for your shift. Contact HR.\n'
-          'Any permission request will be processed as Fine.';
+    if (!hasQuota) {
+      return 'Permission taken will be considered as Fine.\n'
+          'Contact HR.'; // S2 (enabled + no minutes)
     }
-    return null; // configured + enabled + quota > 0 → normal, no tooltip
+    // S1 (enabled + minutes): within the monthly quota is free; beyond is fined.
+    return 'Permission allowed for $quotaMin minutes.\n'
+        'Permission taken beyond $quotaMin minutes will be considered as Fine.';
   }
 
   Widget _permissionNotice({

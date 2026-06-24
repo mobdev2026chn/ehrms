@@ -1586,13 +1586,14 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  /// Informational break-policy notice for the dashboard quick-action, or null when
-  /// breaks are normally configured (enabled + allowance). Breaks are ALWAYS allowed —
-  /// this only tells the employee the break time will be processed with Fine. Prefers
-  /// the server-authored canonical wording (summary.breakNotice) and falls back to the
-  /// exact policy strings, following the same rule as the Break screen:
-  ///  - allowance = 0            -> "Break is not configured..." (S2 enabled / S4 disabled)
-  ///  - disabled + allowance > 0 -> "Break is disabled..."        (S3)
+  /// Informational break-policy notice for the dashboard quick-action. Breaks are
+  /// ALWAYS allowed — this tells the employee how the break time is treated. Prefers
+  /// the server-authored canonical wording (summary.breakNotice) and falls back to
+  /// the exact policy strings, following the same four scenarios as the Break screen:
+  ///  - S1 enabled  + minutes > 0 -> "Break allowed for X minutes. Beyond X → Fine."
+  ///  - S2 enabled  + minutes = 0 -> "Break taken will be considered as Fine. Contact HR."
+  ///  - S3 disabled + minutes > 0 -> "Break taken will be considered as Fine. Contact HR."
+  ///  - S4 disabled + minutes = 0 -> "Break is not configured... Fine will be calculated."
   String? _breakPolicyInfoNotice() {
     final summary = _breakSummary;
     if (summary == null) return null;
@@ -1602,17 +1603,27 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
     if (summary.policyDisabled) {
       return summary.configuredAllowedMinutes > 0
-          ? 'Break is disabled for your shift.\n'
-              'Contact HR to enable.\n'
-              'Break duration will be processed with Fine.' // S3
+          ? 'Break taken will be considered as Fine.\n'
+              'Contact HR.' // S3 (disabled + minutes)
           : 'Break is not configured for your shift. Contact HR.\n'
-              'Break duration will be processed with Fine.'; // S4
+              'Fine will be calculated.'; // S4 (disabled + no minutes)
     }
     if (summary.policyEnabled && !summary.policyConfigured) {
-      return 'Break is not configured for your shift. Contact HR.\n'
-          'Break duration will be processed with Fine.'; // S2
+      return 'Break taken will be considered as Fine.\n'
+          'Contact HR.'; // S2 (enabled + no minutes)
     }
-    return null; // S1 normal
+    if (summary.policyEnabled && summary.policyConfigured) {
+      // S1 (enabled + minutes): informational — break within the allowance is
+      // free; anything beyond the set minutes is fined.
+      final mins = summary.configuredAllowedMinutes > 0
+          ? summary.configuredAllowedMinutes
+          : summary.allowedMinutes;
+      if (mins > 0) {
+        return 'Break allowed for $mins minutes.\n'
+            'Break taken beyond $mins minutes will be considered as Fine.';
+      }
+    }
+    return null;
   }
 
   /// Returns a reason string when a break may NOT be started given the current

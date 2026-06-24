@@ -13,7 +13,7 @@ const { calculateAttendanceStats } = require('./payrollController');
 const { resolvePayableDaysConfig, resolvePayableBaseDays, computePayableDays } = require('../utils/payableDaysRule');
 const { getShiftTimings } = require('../utils/leaveAttendanceHelper');
 const { rollFaceReferenceFromSelfie } = require('../utils/faceReference');
-const { resolvePermissionNotice } = require('../constants/attendancePolicyMessages');
+const { resolvePermissionNotice, permissionExceeded } = require('../constants/attendancePolicyMessages');
 
 const _idLog = (v) => {
     if (v == null) return 'n/a';
@@ -1512,7 +1512,11 @@ const permissionIn = async (req, res) => {
             req.staff?.businessId ? String(req.staff.businessId) : undefined,
             req.staff?.name, 'permission-in'
         );
-        return res.json({ success: true, data: { permission, actualMinutes, overrunMinutes } });
+        // Canonical "approved permission time exceeded by N minutes" notice when the
+        // employee was out longer than the requested/approved window — surfaced by the
+        // app + face kiosk verbatim. The rupee amount still settles at checkout.
+        const notice = overrunMinutes > 0 ? permissionExceeded(overrunMinutes) : null;
+        return res.json({ success: true, notice, data: { permission, actualMinutes, overrunMinutes } });
     } catch (error) {
         console.error('Permission In Error:', error);
         return res.status(500).json({ success: false, error: { message: error.message || 'Failed to record permission in' } });

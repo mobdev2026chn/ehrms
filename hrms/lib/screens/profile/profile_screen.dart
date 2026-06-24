@@ -364,7 +364,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             // Full-bleed gradient header (avatar, name, EMP ID, status badge)
             _buildHeaderCard(),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
               child: Column(
                 children: [
                   // Joined / Location stat cards
@@ -440,7 +440,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     // name, EMP ID, status badge.
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -453,89 +453,138 @@ class _ProfileScreenState extends State<ProfileScreen>
           stops: [0.0, 0.55, 1.0],
         ),
       ),
-      child: Column(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Avatar with white ring (view-only — tap to view full size)
-          GestureDetector(
-            onTap: showPhoto ? () => _showPhotoFullScreen(photoUrlStr) : null,
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 4),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 14,
-                    offset: const Offset(0, 5),
+          Expanded(
+            child: Center(
+              child: GestureDetector(
+                onTap:
+                    showPhoto ? () => _showPhotoFullScreen(photoUrlStr) : null,
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 14,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              child: RotatedBox(
-                quarterTurns: (showPhoto && _avatarNeedsFlip) ? 2 : 0,
-                child: CircleAvatar(
-                radius: 48,
-                backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-                backgroundImage:
-                    showPhoto ? CachedNetworkImageProvider(photoUrlStr) : null,
-                onBackgroundImageError: showPhoto
-                    ? (_, __) {
-                        if (mounted) {
-                          setState(() => _profileImageError = true);
-                        }
-                      }
-                    : null,
-                child: showPhoto
-                    ? null
-                    : Text(initial,
-                        style: TextStyle(
-                            fontSize: 34,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary)),
+                  child: RotatedBox(
+                    quarterTurns: (showPhoto && _avatarNeedsFlip) ? 2 : 0,
+                    child: CircleAvatar(
+                      radius: 42,
+                      backgroundColor:
+                          AppColors.primary.withValues(alpha: 0.12),
+                      backgroundImage: showPhoto
+                          ? CachedNetworkImageProvider(photoUrlStr)
+                          : null,
+                      onBackgroundImageError: showPhoto
+                          ? (_, __) {
+                              if (mounted) {
+                                setState(() => _profileImageError = true);
+                              }
+                            }
+                          : null,
+                      child: showPhoto
+                          ? null
+                          : Text(initial,
+                              style: TextStyle(
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.primary)),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 14),
-          // Name
-          Text(name,
-              style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary),
-              textAlign: TextAlign.center),
-          const SizedBox(height: 4),
-          // EMP ID
-          Text('EMP ID: $empId',
-              style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3)),
-          const SizedBox(height: 12),
-          // Active Employee badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border:
-                  Border.all(color: AppColors.primary.withValues(alpha: 0.45)),
-            ),
-            child: Row(
+          const SizedBox(width: 16),
+          // Name / EMP ID / status — right of the avatar, centered
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                        color: AppColors.primary, shape: BoxShape.circle)),
-                const SizedBox(width: 6),
-                Text(statusLabel,
+                // Name
+                Text(name,
                     style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
-                        letterSpacing: 0.5)),
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 8),
+                // EMP ID chip
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.badge_outlined,
+                          size: 13, color: AppColors.textSecondary),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text('EMP ID: $empId',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textSecondary,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.3),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Active Employee badge
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color:
+                                      AppColors.primary.withValues(alpha: 0.5),
+                                  blurRadius: 4,
+                                  spreadRadius: 1,
+                                ),
+                              ])),
+                      const SizedBox(width: 7),
+                      Text(statusLabel,
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primary,
+                              letterSpacing: 0.6)),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),

@@ -10,40 +10,61 @@
  */
 
 // ---- BREAK -------------------------------------------------------------------
+// The four policy scenarios, keyed on (enabled, allocatedMinutes):
+//   S1  enabled  + minutes > 0  -> informational: within allowance is free,
+//                                  break taken beyond the set minutes is Fine.
+//   S2  enabled  + minutes = 0  -> any break is Fine; contact HR.
+//   S3  disabled + minutes > 0  -> any break is Fine; contact HR.
+//   S4  disabled + minutes = 0  -> not configured; contact HR; Fine calculated.
 
-// Scenario 1: enabled + allocated > 0, break exceeded the allowance.
+// Scenario 1 (informational, before any overage): the configured allowance and
+// the rule that anything beyond it is fined.
+const breakWithinAllowance = (allocatedMinutes) => {
+    const min = Math.max(0, Math.round(Number(allocatedMinutes) || 0));
+    return `Break allowed for ${min} minutes.\n`
+        + `Break taken beyond ${min} minutes will be considered as Fine.`;
+};
+
+// Scenario 1 (after the fact): break exceeded the allowance by N minutes.
 const breakExceeded = (exceededMinutes) =>
     `Allocated break time exceeded by ${Math.max(0, Math.round(Number(exceededMinutes) || 0))} minutes.\n`
     + `Exceeded minutes will be added to Fine.`;
 
-// Scenario 2 & 4: allocated = 0 (enabled-but-unconfigured, or disabled-and-unconfigured).
+// Scenario 2 (enabled + 0) & Scenario 3 (disabled + minutes): breaks are allowed
+// but every minute is fined.
+const BREAK_TAKEN_AS_FINE =
+    'Break taken will be considered as Fine.\n'
+    + 'Contact HR.';
+
+// Scenario 4: disabled + allocated = 0 → not configured.
 const BREAK_NOT_CONFIGURED =
     'Break is not configured for your shift. Contact HR.\n'
-    + 'Break duration will be processed with Fine.';
-
-// Scenario 3: disabled + allocated > 0.
-const BREAK_DISABLED =
-    'Break is disabled for your shift.\n'
-    + 'Contact HR to enable.\n'
-    + 'Break duration will be processed with Fine.';
+    + 'Fine will be calculated.';
 
 // ---- PERMISSION --------------------------------------------------------------
+// Same four scenarios as Break (keyed on enabled + allocatedMinutes).
 
-// Scenario 1: enabled + allocated > 0, permission exceeded the allowance.
+// Scenario 1 (informational, before any overage).
+const permissionWithinAllowance = (allocatedMinutes) => {
+    const min = Math.max(0, Math.round(Number(allocatedMinutes) || 0));
+    return `Permission allowed for ${min} minutes.\n`
+        + `Permission taken beyond ${min} minutes will be considered as Fine.`;
+};
+
+// Scenario 1 (after the fact): permission exceeded the allowance by N minutes.
 const permissionExceeded = (exceededMinutes) =>
     `Allocated permission time exceeded by ${Math.max(0, Math.round(Number(exceededMinutes) || 0))} minutes.\n`
     + `Exceeded minutes will be processed with Fine.`;
 
-// Scenario 2 & 4: allocated = 0.
+// Scenario 2 (enabled + 0) & Scenario 3 (disabled + minutes): any permission is fined.
+const PERMISSION_TAKEN_AS_FINE =
+    'Permission taken will be considered as Fine.\n'
+    + 'Contact HR.';
+
+// Scenario 4: disabled + allocated = 0 → not configured.
 const PERMISSION_NOT_CONFIGURED =
     'Permission is not configured for your shift. Contact HR.\n'
-    + 'Permission duration will be processed with Fine.';
-
-// Scenario 3: disabled + allocated > 0.
-const PERMISSION_DISABLED =
-    'Permission is disabled for your shift.\n'
-    + 'Contact HR to enable.\n'
-    + 'Permission duration will be processed with Fine.';
+    + 'Fine will be calculated.';
 
 // ---- OVERTIME ----------------------------------------------------------------
 
@@ -54,45 +75,48 @@ const OVERTIME_DISABLED = 'Overtime is disabled for you.';
 const OVERTIME_NOT_CONFIGURED = 'Overtime is not configured. Contact HR.';
 
 /**
- * Resolve the break notice for a given policy state. Returns null when breaks are
- * normally configured (enabled + allowance > 0) and not exceeded — callers then use
- * breakExceeded() once an overage is known.
+ * Resolve the break notice for a given policy state. Returns the informational
+ * within-allowance notice for the normal case (S1) so the employee always sees
+ * the configured allowance + fine rule; callers swap in breakExceeded() once an
+ * actual overage is known.
  *   enabledExplicit: true | false | null   (null = legacy/unconfigured, no notice)
  *   allocatedMinutes: configured allowedMinutes (before any fallback)
  */
 function resolveBreakNotice({ enabledExplicit, allocatedMinutes }) {
     const alloc = Math.max(0, Number(allocatedMinutes) || 0);
     if (enabledExplicit === false) {
-        return alloc > 0 ? BREAK_DISABLED : BREAK_NOT_CONFIGURED; // S3 / S4
+        return alloc > 0 ? BREAK_TAKEN_AS_FINE : BREAK_NOT_CONFIGURED; // S3 / S4
     }
-    if (enabledExplicit === true && alloc === 0) {
-        return BREAK_NOT_CONFIGURED; // S2
+    if (enabledExplicit === true) {
+        return alloc > 0 ? breakWithinAllowance(alloc) : BREAK_TAKEN_AS_FINE; // S1 / S2
     }
-    return null; // S1 normal (use breakExceeded when over) or legacy null
+    return null; // legacy/unknown (enabledExplicit null) → no notice
 }
 
 /**
- * Resolve the permission notice for a given policy state. Returns null when
- * permission is normally configured (enabled + allowance > 0) and not exceeded.
+ * Resolve the permission notice for a given policy state. Mirrors the break
+ * scenarios: S1 returns the informational within-allowance notice.
  */
 function resolvePermissionNotice({ enabledExplicit, allocatedMinutes }) {
     const alloc = Math.max(0, Number(allocatedMinutes) || 0);
     if (enabledExplicit === false) {
-        return alloc > 0 ? PERMISSION_DISABLED : PERMISSION_NOT_CONFIGURED; // S3 / S4
+        return alloc > 0 ? PERMISSION_TAKEN_AS_FINE : PERMISSION_NOT_CONFIGURED; // S3 / S4
     }
-    if (enabledExplicit === true && alloc === 0) {
-        return PERMISSION_NOT_CONFIGURED; // S2
+    if (enabledExplicit === true) {
+        return alloc > 0 ? permissionWithinAllowance(alloc) : PERMISSION_TAKEN_AS_FINE; // S1 / S2
     }
-    return null; // S1 normal (use permissionExceeded when over) or legacy null
+    return null; // legacy/unknown (enabledExplicit null) → no notice
 }
 
 module.exports = {
+    breakWithinAllowance,
     breakExceeded,
+    BREAK_TAKEN_AS_FINE,
     BREAK_NOT_CONFIGURED,
-    BREAK_DISABLED,
+    permissionWithinAllowance,
     permissionExceeded,
+    PERMISSION_TAKEN_AS_FINE,
     PERMISSION_NOT_CONFIGURED,
-    PERMISSION_DISABLED,
     OVERTIME_DISABLED,
     OVERTIME_NOT_CONFIGURED,
     resolveBreakNotice,

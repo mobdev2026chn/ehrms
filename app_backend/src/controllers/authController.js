@@ -1868,6 +1868,46 @@ const enrollFace = async (req, res) => {
             });
         }
 
+        // ── Duplicate-face guard ────────────────────────────────────────────────
+        // Stop ONE person from enrolling against MULTIPLE employee logins
+        // (buddy-enroll). Compare the freshly captured embedding(s) against every
+        // OTHER enrolled staff in the same business; if this face already matches
+        // someone else within the same-person threshold, refuse the enrollment.
+        // The 128-D dlib descriptors are comparable regardless of which path stored
+        // them (lenient enroll vs strict first-punch), same as identifyFromEnrollments.
+        // Scoped to the business so the same person can legitimately exist per tenant.
+        // Fails open on a DB error (logged) so an infra blip can't lock out enrollment.
+        try {
+            const scope = staff.businessId ? { businessId: staff.businessId } : {};
+            const others = await Staff.find({
+                ...scope,
+                _id: { $ne: staff._id },
+                faceEnrollEmbeddings: { $exists: true, $ne: [] },
+            }).select('_id employeeId name faceEnrollEmbeddings').lean();
+
+            let clash = null;
+            for (const other of others) {
+                const samples = Array.isArray(other.faceEnrollEmbeddings) ? other.faceEnrollEmbeddings : [];
+                for (const emb of samples) {
+                    for (const fresh of embeddings) {
+                        const d = euclideanDistance(fresh, emb);
+                        if (d <= FACE_MATCH_THRESHOLD && (clash === null || d < clash.distance)) {
+                            clash = { staff: other, distance: d };
+                        }
+                    }
+                }
+            }
+            if (clash) {
+                console.warn(`[enrollFace] duplicate face: staff=${staff._id} matches staff=${clash.staff._id} (${clash.staff.name}) distance=${clash.distance.toFixed(3)}`);
+                return res.status(409).json({
+                    success: false,
+                    message: `This face is already registered to another employee${clash.staff.name ? ` (${clash.staff.name})` : ''}. A face can only be enrolled for one employee.`,
+                });
+            }
+        } catch (e) {
+            console.warn('[enrollFace] duplicate-face check failed (allowing enrollment):', e?.message);
+        }
+
         // Use the first enrollment selfie as the user's PROFILE PHOTO (avatar). Upload
         // it to storage and point both Staff.avatar and User.avatar at it, so the
         // registered face is the profile photo everywhere.

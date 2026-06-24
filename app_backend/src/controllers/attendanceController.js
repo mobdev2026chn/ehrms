@@ -1249,12 +1249,17 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             // entire-duration notice; an enabled+quota shift that exceeded the MONTHLY
             // quota gets the "exceeded by N minutes" notice.
             if (permConfigured && !isOpenShiftDay) {
-                permissionNotice = resolvePermissionNotice({
-                    enabledExplicit: permEnabled ? true : false,
-                    allocatedMinutes: effectiveMonthlyQuota
-                });
-                if (!permissionNotice && exceed > 0) {
+                // S1 (enabled + quota): show the concrete "exceeded by N minutes" once
+                // over the monthly quota, otherwise the informational within-allowance
+                // notice. Disabled / no-quota shifts keep their entire-duration notice.
+                const isNormalPermConfig = permEnabled && effectiveMonthlyQuota > 0;
+                if (isNormalPermConfig && exceed > 0) {
                     permissionNotice = permissionExceeded(exceed);
+                } else {
+                    permissionNotice = resolvePermissionNotice({
+                        enabledExplicit: permEnabled ? true : false,
+                        allocatedMinutes: effectiveMonthlyQuota
+                    });
                 }
             }
             console.log('[Permission][Monthly Fine]', {
@@ -3051,27 +3056,78 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         fineAmount: attendance.fineAmount
     });
 
-    // Auto Half-Day: when the employee worked fewer minutes than a full day's required
-    // working hours, classify the day as Half Day (payroll counts it as 0.5). Gated by the
-    // company automationRules.autoMarkHalfDay flag. Days governed by an approved leave or an
-    // existing Half Day status are left untouched (those are authoritative).
+    // Auto Half-Day: classify the day as Half Day from the punch window (payroll counts it as 0.5).
+    //  - FIXED shift: decide by the half-day MIDPOINT (customMidPointTime, else the equal-split
+    //    midpoint of the shift). If the worked interval [punchIn, punchOut] lies entirely on one
+    //    side of the midpoint, the employee missed a whole half => Half Day, and we record which
+    //    half was off (halfDaySession). A window that spans the midpoint counts as a full day —
+    //    late-in / early-out within a half are handled by fines, not by downgrading the status.
+    //    Overnight shifts (end <= start) have no clean clock midpoint, so they fall back to the
+    //    duration rule (>= half but < full of the required hours).
+    //  - OPEN shift: no fixed clock midpoint. Required = workHours; if the duration worked from
+    //    punch-in is at least half but less than the full required hours => Half Day.
+    // Gated by company automationRules.autoMarkHalfDay. Approved-leave / pre-existing Half Day
+    // days are authoritative and left untouched.
     const autoMarkHalfDayEnabled = company?.settings?.attendance?.automationRules?.autoMarkHalfDay === true;
     if (autoMarkHalfDayEnabled && !activeLeave && !isHalfDayStatus && attendance.punchIn && attendance.punchOut) {
-        const { calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
+        const {
+            calculateWorkHoursFromShift,
+            getHalfDaySessionBoundaries,
+            getShiftBoundaryAsUTCDate,
+            getBusinessTimezone,
+        } = require('../utils/leaveAttendanceHelper');
         const stType = (shiftTiming?.shiftType || 'standard').toString().toLowerCase();
-        let requiredFullDayMin = null;
-        if (stType === 'open' || stType === 'open shift') {
-            const reqH = Number(shiftTiming?.workHours ?? shiftTiming?.openWorkHours);
-            if (Number.isFinite(reqH) && reqH > 0) requiredFullDayMin = Math.round(reqH * 60);
-        } else if (shiftTiming?.startTime && shiftTiming?.endTime) {
-            const fullDayHours = calculateWorkHoursFromShift(shiftTiming.startTime, shiftTiming.endTime);
-            if (Number.isFinite(fullDayHours) && fullDayHours > 0) requiredFullDayMin = Math.round(fullDayHours * 60);
-        }
+        const isOpen = stType === 'open' || stType === 'open shift';
+        const attId = attendance._id?.toString?.() || null;
+        const punchInAt = new Date(attendance.punchIn);
+        const punchOutDate = new Date(attendance.punchOut);
         const workedMin = Number(attendance.workHours) || 0;
-        if (requiredFullDayMin && requiredFullDayMin > 0 && workedMin < requiredFullDayMin) {
-            attendance.status = 'Half Day';
-            console.log('[Auto Half-Day][CHECK-OUT] worked %s min < required %s min => status=Half Day (attendanceId=%s)',
-                workedMin, requiredFullDayMin, attendance._id?.toString?.() || null);
+
+        // Duration-based Half Day: worked >= half but < full of the required minutes.
+        const markHalfByDuration = (requiredFullDayMin, ctxLabel) => {
+            if (!(requiredFullDayMin > 0)) return;
+            const halfDayMin = Math.round(requiredFullDayMin / 2);
+            if (workedMin >= halfDayMin && workedMin < requiredFullDayMin) {
+                attendance.status = 'Half Day';
+                console.log('[Auto Half-Day][CHECK-OUT][%s] worked %s min in [half %s, full %s) => Half Day (attendanceId=%s)',
+                    ctxLabel, workedMin, halfDayMin, requiredFullDayMin, attId);
+            }
+        };
+
+        if (isOpen) {
+            const reqH = Number(shiftTiming?.workHours ?? shiftTiming?.openWorkHours);
+            const requiredFullDayMin = (Number.isFinite(reqH) && reqH > 0) ? Math.round(reqH * 60) : null;
+            markHalfByDuration(requiredFullDayMin, 'OPEN');
+        } else if (shiftTiming?.startTime && shiftTiming?.endTime) {
+            const [sH, sM] = String(shiftTiming.startTime).split(':').map(Number);
+            const [eH, eM] = String(shiftTiming.endTime).split(':').map(Number);
+            const startMin = (sH || 0) * 60 + (sM || 0);
+            const endMin = (eH || 0) * 60 + (eM || 0);
+            const isOvernight = endMin <= startMin;
+            const bounds = getHalfDaySessionBoundaries(shiftTiming.startTime, shiftTiming.endTime, shiftTiming?.halfDaySettings || null);
+            const midStr = bounds?.session1End; // boundary between first and second half
+
+            if (!isOvernight && midStr) {
+                const tz = getBusinessTimezone(company);
+                const midUTC = getShiftBoundaryAsUTCDate(shiftDay, midStr, tz);
+                if (punchOutDate <= midUTC) {
+                    // Worked only the first half (missed the second) => Half Day.
+                    attendance.status = 'Half Day';
+                    attendance.halfDaySession = 'Second Half Day'; // the unworked (off) half
+                    console.log('[Auto Half-Day][CHECK-OUT][FIXED] worked first half only (out<=mid %s) => Half Day (attendanceId=%s)', midStr, attId);
+                } else if (punchInAt >= midUTC) {
+                    // Worked only the second half (missed the first) => Half Day.
+                    attendance.status = 'Half Day';
+                    attendance.halfDaySession = 'First Half Day'; // the unworked (off) half
+                    console.log('[Auto Half-Day][CHECK-OUT][FIXED] worked second half only (in>=mid %s) => Half Day (attendanceId=%s)', midStr, attId);
+                }
+                // else: window spans the midpoint => full day, status left as-is.
+            } else {
+                // Overnight shift: no clean clock midpoint — fall back to the duration rule.
+                const fullDayHours = calculateWorkHoursFromShift(shiftTiming.startTime, shiftTiming.endTime);
+                const requiredFullDayMin = (Number.isFinite(fullDayHours) && fullDayHours > 0) ? Math.round(fullDayHours * 60) : null;
+                markHalfByDuration(requiredFullDayMin, 'FIXED-OVERNIGHT');
+            }
         }
     }
 

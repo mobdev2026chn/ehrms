@@ -137,7 +137,7 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
       child: Text(
         text,
         style: TextStyle(
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: FontWeight.w600,
           color: textColor,
         ),
@@ -707,7 +707,7 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
             Text(
               title,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 15,
                 fontWeight: FontWeight.bold,
                 color: AppColors.textPrimary,
               ),
@@ -745,7 +745,7 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                   Text(
                     dateRangeStr,
                     style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 12,
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -762,7 +762,7 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                       Text(
                         'Progress',
                         style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 12,
                           color: AppColors.textSecondary,
                         ),
                       ),
@@ -782,7 +782,7 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                       Text(
                         '${progress.toStringAsFixed(0)}%',
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: AppColors.textPrimary,
                         ),

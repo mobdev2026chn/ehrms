@@ -662,45 +662,64 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   // ── Camera overlay: badge + scan frame + capture button ───────────────────
 
   Widget _buildCameraOverlay() {
-    return Column(
-      children: [
-        const SizedBox(height: 20),
-        Center(child: _buildReadyPill()),
-        if (_infoText != null && _infoText!.trim().isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Center(child: _buildInfoPill(_infoText!)),
-        ],
-        if (widget.noticeText != null &&
-            widget.noticeText!.trim().isNotEmpty) ...[
-          const SizedBox(height: 10),
-          _buildNoticeBanner(widget.noticeText!.trim()),
-        ],
-        const Spacer(),
-        // Live, color-coded guidance (mirrors the face app's scanner): green when
-        // the face is well-framed, red while it needs adjusting.
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Text(
-            _guidanceText,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _ovalColor,
-              fontWeight: FontWeight.w800,
-              fontSize: 15,
-              letterSpacing: 0.5,
+    // SafeArea keeps the capture button clear of the bottom gesture-nav bar, and
+    // the Expanded middle lets the guidance + oval shrink to whatever space is
+    // left under the top cards — so the overlay never overflows the screen,
+    // however tall the notice banner gets.
+    return SafeArea(
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          Center(child: _buildReadyPill()),
+          if (_infoText != null && _infoText!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Center(child: _buildInfoPill(_infoText!)),
+          ],
+          if (widget.noticeText != null &&
+              widget.noticeText!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _buildNoticeBanner(widget.noticeText!.trim()),
+          ],
+          // Flexible middle: guidance + oval are centered in the leftover space
+          // and scale down (FittedBox) rather than push the layout off-screen.
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Live, color-coded guidance (mirrors the face app's scanner):
+                // green when the face is well-framed, red while it needs adjusting.
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    _guidanceText,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: _ovalColor,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // The new-app guided oval: ring color tracks framing state;
+                // success badge flashes the moment the shot is taken.
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: FaceGuideOverlay(
+                        color: _ovalColor, showSuccessTick: _capturing),
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-        const SizedBox(height: 14),
-        // The new-app guided oval: ring color tracks framing state; success badge
-        // flashes the moment the shot is taken.
-        FaceGuideOverlay(color: _ovalColor, showSuccessTick: _capturing),
-        const Spacer(),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 40),
-          child: _buildCaptureButton(),
-        ),
-      ],
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 12),
+            child: _buildCaptureButton(),
+          ),
+        ],
+      ),
     );
   }
 

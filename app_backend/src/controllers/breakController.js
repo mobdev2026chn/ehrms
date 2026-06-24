@@ -1030,13 +1030,20 @@ exports.endBreak = async (req, res) => {
         );
 
         // Exact policy notice for the break that just ended:
-        //   S2/S3/S4 (misconfigured): the entire-duration "...processed with Fine" notice.
-        //   S1 (normal, exceeded the allowance): "Allocated break time exceeded by N minutes."
-        // null when within the allowance and normally configured.
+        //   S2/S3/S4 (misconfigured): the entire-duration "...considered as Fine" notice.
+        //   S1 (normal): "Allocated break time exceeded by N minutes" when over the
+        //     allowance, otherwise null (no notice — the break was within allowance).
+        // For S1, fineCtx.breakPolicy.notice is the informational within-allowance
+        // wording; at END we replace it with the concrete overage (or clear it).
         const exceededMinutes = Math.max(0, totalFineMinsAfterCurrent);
-        let breakEndNotice = fineCtx.breakPolicy.notice || null;
-        if (!breakEndNotice && exceededMinutes > 0) {
-            breakEndNotice = breakExceeded(exceededMinutes);
+        const isNormalBreakConfig =
+            fineCtx.breakPolicy.enabledExplicit === true &&
+            fineCtx.breakPolicy.configured === true;
+        let breakEndNotice;
+        if (isNormalBreakConfig) {
+            breakEndNotice = exceededMinutes > 0 ? breakExceeded(exceededMinutes) : null;
+        } else {
+            breakEndNotice = fineCtx.breakPolicy.notice || null;
         }
 
         return res.status(200).json({

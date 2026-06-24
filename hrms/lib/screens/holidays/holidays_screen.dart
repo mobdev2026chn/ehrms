@@ -5,6 +5,7 @@ import '../../models/holiday_model.dart';
 import '../../services/holiday_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/swr_cache.dart';
+import '../../widgets/app_bar_profile_avatar.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -402,18 +403,12 @@ class _HolidaysScreenState extends State<HolidaysScreen>
           ),
           Padding(
             padding: const EdgeInsets.only(right: 14, left: 4),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            child: AppBarProfileAvatar(
+              radius: 18,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => const ProfileScreen(dashboardTabIndex: 3),
                 ),
-              ),
-              child: CircleAvatar(
-                radius: 18,
-                backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-                child: Icon(Icons.person_rounded,
-                    color: AppColors.primary, size: 22),
               ),
             ),
           ),
