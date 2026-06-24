@@ -4235,6 +4235,23 @@ const getMonthAttendance = async (req, res) => {
             }
         }
 
+        // Pre-onboarding backlog window: when a staff record is created with a joining date that
+        // predates the record's creation, the days from the joining date up to (but NOT including)
+        // the day the record was created are a backlog — the employee was already employed but was
+        // not yet tracked in the system. Every such day is marked Absent regardless of the week-off
+        // / holiday templates (an actual punch or an approved leave on that day still wins). From the
+        // creation day onward the normal template logic applies. When joiningDate == createdAt (an
+        // ordinary new staff with no back-dating) the window is empty and nothing changes.
+        let backlogEndStr = null; // exclusive upper bound, yyyy-MM-dd (server-local calendar, matches dateStr)
+        const createdRaw = staffWithSalary?.createdAt || staffForCalendar?.createdAt;
+        if (createdRaw) {
+            const c = new Date(createdRaw);
+            if (!Number.isNaN(c.getTime())) {
+                backlogEndStr = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}-${String(c.getDate()).padStart(2, '0')}`;
+            }
+        }
+        const isBacklogDay = (dateStr) => backlogEndStr != null && dateStr < backlogEndStr;
+
         let workingDays = 0;
         let weekOffs = 0;
         let holidaysCount = 0;
@@ -4245,6 +4262,11 @@ const getMonthAttendance = async (req, res) => {
         for (let d = firstCountableDay; d <= lastDayToCount; d++) {
             const date = new Date(year, month - 1, d);
             date.setHours(0, 0, 0, 0);
+
+            // Backlog (pre-creation) day → counted as a working day so it lands in the absent
+            // total, ignoring week-off / holiday for the pre-onboarding period.
+            const statDateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            if (isBacklogDay(statDateStr)) { workingDays++; continue; }
 
             const dayOfWeek = date.getDay();
             let isWeekOff = false;
@@ -4289,6 +4311,11 @@ const getMonthAttendance = async (req, res) => {
             // Create date in local timezone for day of week calculation
             const date = new Date(year, month - 1, d);
             const dayOfWeek = date.getDay();
+
+            // Backlog (pre-creation) days are Absent, never week-off — skip painting them violet.
+            const weekOffDateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            if (isBacklogDay(weekOffDateStr)) continue;
+
             let isWeekOff = false;
 
             if (weeklyOffPattern === 'oddEvenSaturday') {
@@ -4452,6 +4479,13 @@ const getMonthAttendance = async (req, res) => {
                     }
                 }
                 // If attendance exists, skip further checks (attendance overrides week off/holiday)
+                continue;
+            }
+
+            // Backlog (pre-creation) day with no punch and no approved leave → Absent, overriding
+            // any week-off / holiday template for the pre-onboarding period.
+            if (isBacklogDay(dateStr)) {
+                absentDates.push(dateStr);
                 continue;
             }
 

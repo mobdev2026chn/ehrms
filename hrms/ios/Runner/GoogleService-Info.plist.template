@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TEMPLATE ONLY — DO NOT SHIP THIS FILE AS-IS.
+
+  iOS reads Firebase config from a native GoogleService-Info.plist (the app calls a
+  no-arg Firebase.initializeApp()). Without the real file the app CRASHES at launch.
+
+  To produce the real file:
+    1. Firebase console -> project "ehrms-929bb" -> Add app -> iOS.
+    2. iOS bundle ID: io.askeva.ektahr
+    3. Download GoogleService-Info.plist.
+    4. Save it next to this template as:  ios/Runner/GoogleService-Info.plist
+       (drop it into the Runner target in Xcode, "Copy items if needed" checked).
+    5. Copy CLIENT_ID + REVERSED_CLIENT_ID from it into Runner/Info.plist URL scheme
+       (see the commented CFBundleURLTypes block in Info.plist) for google_sign_in.
+
+  The <TODO_...> values below come ONLY from the downloaded file — they are iOS-app
+  specific and are NOT the web/Android values. The non-TODO values are this project's
+  known public identifiers, prefilled for reference.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>API_KEY</key>
+	<string>TODO_IOS_API_KEY</string>
+	<key>GCM_SENDER_ID</key>
+	<string>761328490721</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>io.askeva.ektahr</string>
+	<key>PROJECT_ID</key>
+	<string>ehrms-929bb</string>
+	<key>STORAGE_BUCKET</key>
+	<string>ehrms-929bb.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false/>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false/>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true/>
+	<key>IS_GCM_ENABLED</key>
+	<true/>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true/>
+	<key>GOOGLE_APP_ID</key>
+	<string>TODO_IOS_GOOGLE_APP_ID (looks like 1:761328490721:ios:xxxxxxxx)</string>
+	<key>CLIENT_ID</key>
+	<string>TODO_IOS_CLIENT_ID (xxxx.apps.googleusercontent.com)</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>TODO_REVERSED_CLIENT_ID (com.googleusercontent.apps.xxxx)</string>
+</dict>
+</plist>
