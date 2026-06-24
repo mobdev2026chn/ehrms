@@ -101,6 +101,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   /// Last-known break balance, shown instantly on the selfie screen.
   BreakSummary? _breakSummary;
   bool _openBreakAfterBuild = false;
+  bool _openPunchAfterBuild = false;
   Map<String, dynamic>? _fineCalculation;
 
   /// Staffs collection `salaryDetailsAccessEnabled` on profile [staffData] — must be explicitly true for Salary Overview quick action (tab 2).
@@ -206,6 +207,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       _currentIndex = _normalizeTabIndex(rawInitial);
     }
     _openBreakAfterBuild = widget.initialIndex == 6;
+    // Action code 5 = punch. A standalone screen (Performance, Announcements, …)
+    // routes here with initialIndex == 5 when its bottom-bar Punch button is
+    // tapped; trigger the punch flow after build instead of just landing on the
+    // Attendance tab (which is what _normalizeTabIndex(5) resolves to).
+    _openPunchAfterBuild = widget.initialIndex == 5;
     unawaited(_refreshSalaryOverviewAccess());
     _attendanceService.clearCachesForRefresh();
     _fetchPunchStatusForNavBar();
@@ -227,6 +233,10 @@ class _DashboardScreenState extends State<DashboardScreen>
       if (_openBreakAfterBuild) {
         _openBreakAfterBuild = false;
         _openRequestedBreakFlow();
+      }
+      if (_openPunchAfterBuild) {
+        _openPunchAfterBuild = false;
+        _startPunchFlow();
       }
     });
   }
@@ -1375,6 +1385,32 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+  /// Scan-time face validation for the dashboard break quick action: face-match
+  /// (1-to-1) + buddy-punch identity guard (1-to-many). Returns a user-facing error
+  /// to REJECT (shown on the camera right after scanning, scan re-arms), or null to
+  /// accept. Wired via SelfieCameraScreen.onCaptured, so a wrong/other face is caught
+  /// on the camera screen instead of only after the break is submitted.
+  Future<String?> _verifyBreakFace(File file) async {
+    final bytes = await file.readAsBytes();
+    final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
+    if (selfie.isEmpty) return null;
+    if (AppConstants.enableAttendanceFaceMatching) {
+      try {
+        final verify = await _authService.verifyFace(selfie);
+        if (verify['success'] != true || verify['match'] != true) {
+          return ErrorMessageUtils.sanitizeForDisplay(
+            verify['message']?.toString() ?? 'Face not matching. Please try again.',
+          );
+        }
+      } catch (_) {
+        return 'Face verification failed. Please try again.';
+      }
+    }
+    final verdict = await FaceIdentityGuard.verify(selfie);
+    if (!verdict.allow) return verdict.message ?? 'Face identity check failed.';
+    return null;
+  }
+
   Future<void> _submitBreakFromFile(
     File file, {
     required bool isEnding,
@@ -1402,17 +1438,9 @@ class _DashboardScreenState extends State<DashboardScreen>
       selfieBytes,
     );
     if (!mounted) return;
-    // Cross-user identity guard (anti buddy-punch) for breaks.
-    final breakVerdict = await FaceIdentityGuard.verify(selfie);
-    if (!mounted) return;
-    if (!breakVerdict.allow) {
-      SnackBarUtils.showSnackBar(
-        context,
-        breakVerdict.message ?? 'Face identity check failed.',
-        isError: true,
-      );
-      return;
-    }
+    // NOTE: face-match (verifyFace) + buddy-punch identity guard now run AT SCAN
+    // TIME via SelfieCameraScreen.onCaptured (_verifyBreakFace) — so a wrong/other
+    // face is rejected on the camera, before this submit ever runs. No re-check here.
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1494,6 +1522,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     Future<String?>? preSubmitGate,
     String? infoText,
     Future<String?>? infoTextFuture,
+    String? noticeText,
   }) async {
     // Require one-time face enrollment before the break face check.
     if (!await FaceEnrollmentGate.ensureEnrolled(context, actionLabel: 'break')) {
@@ -1507,12 +1536,17 @@ class _DashboardScreenState extends State<DashboardScreen>
       loadLocationOnOpen: true,
       infoText: infoText,
       infoTextFuture: infoTextFuture,
+      noticeText: noticeText,
       onRefreshLocation: () async {
         final location = await _getCurrentLocation();
         latestLocation = location;
         final formatted = _formatLocationText(location);
         return formatted.isEmpty ? null : formatted;
       },
+      // Face-match + buddy-punch identity guard at SCAN TIME, so a non-matching
+      // face is rejected on the camera (error shown + scan re-arms) instead of
+      // only after the break selfie is submitted.
+      onCaptured: _verifyBreakFace,
     );
     if (!mounted) return;
 
@@ -1645,7 +1679,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
     // Breaks are ALWAYS allowed (parity with the Break screen + backend). When the
     // shift disables or hasn't configured breaks, the break time is processed with
-    // Fine — surface the canonical notice but do NOT block the action.
+    // Fine — surface the canonical notice but do NOT block the action. The dashboard
+    // snackbar is instantly covered by the selfie camera, so the notice is also
+    // carried into that screen (noticeText) where the employee actually lands.
     final policyNotice = _breakPolicyInfoNotice();
     if (policyNotice != null) {
       SnackBarUtils.showSnackBar(context, policyNotice);
@@ -1660,6 +1696,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         preSubmitGate: _validateBreakStart(),
         infoText: _remainingBreakText(_breakSummary),
         infoTextFuture: _fetchBreakSummary().then(_remainingBreakText),
+        noticeText: policyNotice,
       );
     } finally {
       if (mounted) {
@@ -3111,6 +3148,34 @@ class _DashboardScreenState extends State<DashboardScreen>
     return true;
   }
 
+  /// Scan-time face validation for the dashboard Punch+ quick action: face-match
+  /// (1-to-1) + buddy-punch identity guard (1-to-many). Returns a user-facing error
+  /// to REJECT (shown on the camera RIGHT AFTER scanning, scan re-arms), or null to
+  /// accept. Wired into SelfieCameraScreen via onCaptured, so a wrong/other face is
+  /// caught on the camera screen instead of only after the photo is submitted.
+  Future<String?> _verifyPunchFace(File file, {required bool requireSelfie}) async {
+    if (!requireSelfie) return null;
+    final bytes = await file.readAsBytes();
+    final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
+    if (selfie.isEmpty) return null;
+    if (AppConstants.enableAttendanceFaceMatching) {
+      try {
+        final verify = await _authService.verifyFace(selfie);
+        if (verify['success'] != true || verify['match'] != true) {
+          return ErrorMessageUtils.sanitizeForDisplay(
+            verify['message']?.toString() ?? 'Face not matching. Please try again.',
+          );
+        }
+      } catch (_) {
+        return 'Face verification failed. Please try again.';
+      }
+    }
+    // Cross-user identity guard (anti buddy-punch): confirm the face is THIS user.
+    final verdict = await FaceIdentityGuard.verify(selfie);
+    if (!verdict.allow) return verdict.message ?? 'Face identity check failed.';
+    return null;
+  }
+
   Future<void> _submitAttendanceFromFile(
     BuildContext context,
     File file, {
@@ -3185,57 +3250,9 @@ class _DashboardScreenState extends State<DashboardScreen>
         await AttendanceSelfieCompress.compressRawBytesToDataUrl(imageBytes);
     if (!mounted) return;
 
-    if (AppConstants.enableAttendanceFaceMatching &&
-        requireSelfie &&
-        selfiePayload.isNotEmpty) {
-      try {
-        final verify = await _authService.verifyFace(selfiePayload);
-        if (!mounted) return;
-        if (verify['success'] != true || verify['match'] != true) {
-          _isSubmittingFromFingerprint = false;
-          _setPunchActionInProgress(false);
-          _dismissSubmitAttendanceDialogIfVisible(context);
-          SnackBarUtils.showSnackBar(
-            context,
-            ErrorMessageUtils.sanitizeForDisplay(
-              verify['message']?.toString() ?? 'Face not matching.',
-            ),
-            isError: true,
-          );
-          return;
-        }
-      } catch (_) {
-        if (mounted) {
-          _isSubmittingFromFingerprint = false;
-          _setPunchActionInProgress(false);
-          _dismissSubmitAttendanceDialogIfVisible(context);
-          SnackBarUtils.showSnackBar(
-            context,
-            'Face verification failed. Please try again.',
-            isError: true,
-          );
-        }
-        return;
-      }
-    }
-
-    // Cross-user identity guard (anti buddy-punch): confirm the captured face is
-    // THIS logged-in user and not a different enrolled employee.
-    if (requireSelfie && selfiePayload.isNotEmpty) {
-      final verdict = await FaceIdentityGuard.verify(selfiePayload);
-      if (!mounted) return;
-      if (!verdict.allow) {
-        _isSubmittingFromFingerprint = false;
-        _setPunchActionInProgress(false);
-        _dismissSubmitAttendanceDialogIfVisible(context);
-        SnackBarUtils.showSnackBar(
-          context,
-          verdict.message ?? 'Face identity check failed.',
-          isError: true,
-        );
-        return;
-      }
-    }
+    // NOTE: face-match (verifyFace) + buddy-punch identity guard now run AT SCAN
+    // TIME via SelfieCameraScreen.onCaptured (_verifyPunchFace) — so a wrong/other
+    // face is rejected on the camera, before this submit ever runs. No re-check here.
 
     if (!mounted) return;
     final lat = usePosition?.latitude ?? 0.0;
@@ -3635,7 +3652,26 @@ class _DashboardScreenState extends State<DashboardScreen>
                 return;
               }
               if (index == 5) {
-                if (_isPunchActionInProgress) return;
+                await _startPunchFlow();
+                return;
+              }
+              final normalized = _mapBottomNavIndexToScreenIndex(index);
+              setState(() => _currentIndex = normalized);
+              unawaited(_fetchPunchStatusForNavBar());
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The full Punch In / Punch Out flow (validation → location → selfie →
+  /// submit), shared by the bottom-bar Punch button and the cross-screen punch
+  /// entry point (when a standalone screen routes here via [initialIndex] == 5).
+  Future<void> _startPunchFlow() async {
+    {
+      {
+        if (_isPunchActionInProgress) return;
                 final punchFlowSw = Stopwatch()..start();
                 punchFlowLog('[PunchFlow] tap received');
                 // Capture the tap instant up front so the saved punch time is
@@ -3769,6 +3805,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 ? '${loc.area}, ${loc.city ?? ''}${loc.pincode != null ? ' ${loc.pincode}' : ''}'
                                 : null);
                     },
+                    // Face-match + buddy-punch identity guard at SCAN TIME, so a
+                    // non-matching face is rejected on the camera (error shown +
+                    // scan re-arms) instead of only after the photo is submitted.
+                    onCaptured: (captured) =>
+                        _verifyPunchFace(captured, requireSelfie: requireSelfie),
                   );
                   if (!mounted) return;
                   punchFlowLog(
@@ -3828,14 +3869,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   '[PunchFlow] submit finished in ${punchFlowSw.elapsedMilliseconds}ms',
                 );
                 return;
-              }
-              final normalized = _mapBottomNavIndexToScreenIndex(index);
-              setState(() => _currentIndex = normalized);
-              unawaited(_fetchPunchStatusForNavBar());
-            },
-          ),
-        ),
-      ),
-    );
+      }
+    }
   }
 }

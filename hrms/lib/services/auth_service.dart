@@ -635,8 +635,18 @@ class AuthService {
     return prefs.getString('token');
   }
 
-  /// Returns true if staff is active, false when deactivated or session expired, null on
-  /// transient network errors.
+  /// Returns true if staff is active, false ONLY when the backend explicitly reports
+  /// the account as deactivated (HTTP 200 `{active:false}`), and null for everything
+  /// else (transient network/auth errors).
+  ///
+  /// IMPORTANT: a 401 is NOT a deactivation signal. The access token expiring and the
+  /// silent /auth/refresh momentarily failing (flaky network, 429, 5xx) both surface
+  /// as 401 here, but the refresh token is usually still valid for days. Treating 401
+  /// as "deactivated → false" caused random logouts while the app was in active use
+  /// (this method is polled every 5s by DeactivationCheckWrapper). Token recovery is
+  /// the interceptors' job; if the session is genuinely unrecoverable they clear it,
+  /// and the wrapper's token==null branch then redirects to login. So here we only
+  /// ever return false for a real, explicit deactivation.
   Future<bool?> checkStaffActive() async {
     final prefs = await SharedPreferences.getInstance();
     String? token = prefs.getString('token');
@@ -647,24 +657,11 @@ class AuthService {
       final response = await _api.dio.get<Map<String, dynamic>>('/auth/check-active');
       final data = response.data;
       if (data == null) return null;
+      // Deactivation is signalled by a successful response carrying active:false.
       return data['active'] == true;
-    } on DioException catch (e) {
-      final statusCode = e.response?.statusCode;
-      if (statusCode == 401) {
-        // Only force logout when backend clearly indicates token expiry/invalidity.
-        // Some environments may transiently return 401 for reasons unrelated to session.
-        final bodyMessage = _messageFromBody(e.response?.data)?.toLowerCase() ?? '';
-        final raw = e.response?.data?.toString().toLowerCase() ?? '';
-        final combined = '$bodyMessage $raw';
-        final sessionExpired =
-            combined.contains('jwt expired') ||
-            combined.contains('token expired') ||
-            combined.contains('session expired') ||
-            combined.contains('token failed') ||
-            combined.contains('not authorized');
-        if (sessionExpired) return false;
-        return null;
-      }
+    } on DioException catch (_) {
+      // Includes 401: handled by the token-refresh / session-expiry interceptors,
+      // never treated as deactivation here. Return null so the poll does not log out.
       return null;
     } catch (_) {
       return null;

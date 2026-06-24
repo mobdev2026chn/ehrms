@@ -830,9 +830,16 @@ class _PaginationBar extends StatelessWidget {
   final VoidCallback? onCreate;
 
   /// When non-empty, surfaced as a tap-tooltip on the create button (e.g. the
-  /// permission fine notice for a quota-0 / disabled / unconfigured shift). It
-  /// is purely informational — the button's [onCreate] still fires on tap.
+  /// permission fine notice for a quota-0 / disabled / unconfigured shift, or the
+  /// out-of-session gating message). It is purely informational — the button's
+  /// [onCreate] still fires on tap.
   final String? createTooltip;
+
+  /// Optional handle to the create button's [Tooltip] so the owner can surface
+  /// the tooltip programmatically (e.g. show the gating message when the request
+  /// is blocked because the user is out of session). Only attached when
+  /// [createTooltip] is non-empty.
+  final GlobalKey<TooltipState>? createTooltipKey;
 
   const _PaginationBar({
     required this.currentPage,
@@ -841,6 +848,7 @@ class _PaginationBar extends StatelessWidget {
     this.createLabel,
     this.onCreate,
     this.createTooltip,
+    this.createTooltipKey,
   });
 
   /// Up to three contiguous page numbers. The window's right edge follows the
@@ -945,8 +953,10 @@ class _PaginationBar extends StatelessWidget {
     );
     final tip = createTooltip;
     if (tip == null || tip.trim().isEmpty) return button;
-    // Show the configured fine notice on tap; the button still opens the dialog.
+    // Show the notice on tap (fine notice, or the out-of-session gating message
+    // surfaced programmatically by the owner). The button still fires [onCreate].
     return Tooltip(
+      key: createTooltipKey,
       message: tip,
       triggerMode: TooltipTriggerMode.tap,
       preferBelow: false,
@@ -5711,6 +5721,17 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
   Map<String, dynamic>? _balance;
 
+  // Cached today's punch session, used to surface the out-of-session gating
+  // message as a tap-tooltip on the Request Permission button (parity with the
+  // fine-notice tooltip). Null until resolved (fail open → no gate tooltip).
+  bool? _sessionPunchedIn;
+  bool? _sessionPunchedOut;
+
+  // Handle to the Request Permission button's tooltip so a blocked tap can show
+  // the gating message in the same tooltip the fine notice uses.
+  final GlobalKey<TooltipState> _permissionTooltipKey =
+      GlobalKey<TooltipState>();
+
   // Permission requests come back for the whole month in one response, so we
   // page through them on the client (5 per page) to match the other tabs.
   int _currentPage = 1;
@@ -5725,6 +5746,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   void refresh() {
     // Background refresh: keep the current list instead of flashing the loader.
     _fetchRequests(showLoader: false);
+    _refreshSession();
   }
 
   @override
@@ -5732,6 +5754,18 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     super.initState();
     _fetchRequests();
     _fetchBalance();
+    _refreshSession();
+  }
+
+  /// Caches today's punch session so the button's gating tooltip is accurate
+  /// before the user taps. Fail-open: leaves the flags null on any error.
+  Future<void> _refreshSession() async {
+    final session = await _resolveTodaySession();
+    if (!mounted) return;
+    setState(() {
+      _sessionPunchedIn = session.punchedIn;
+      _sessionPunchedOut = session.punchedOut;
+    });
   }
 
   Future<void> _fetchRequests({bool showLoader = true}) async {
@@ -6121,20 +6155,15 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     // attendance state can't be read we fail open — the backend is authoritative.
     final session = await _resolveTodaySession();
     if (!mounted) return;
-    if (session.punchedIn == false) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'You can apply for permission only after punching in.',
-        isError: true,
-      );
-      return;
-    }
-    if (session.punchedOut == true) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'You can apply for permission only before punching out.',
-        isError: true,
-      );
+    // Cache the fresh session so the button tooltip (built below) reflects truth.
+    setState(() {
+      _sessionPunchedIn = session.punchedIn;
+      _sessionPunchedOut = session.punchedOut;
+    });
+    // Out of session → surface the gating reason in the SAME tap-tooltip the
+    // fine notice uses (instead of an error snackbar), then block the dialog.
+    if (session.punchedIn == false || session.punchedOut == true) {
+      _showPermissionTooltip();
       return;
     }
 
@@ -6414,10 +6443,42 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
           onPageSelected: (page) => setState(() => _currentPage = page),
           createLabel: 'Request Permission',
           onCreate: showRequestPermissionDialog,
-          createTooltip: _permissionFineNotice(),
+          createTooltip: _permissionButtonTooltip(),
+          createTooltipKey: _permissionTooltipKey,
         ),
       ],
     );
+  }
+
+  /// Out-of-session gating message for the Request Permission button, from the
+  /// cached today's punch state. Permission can only be applied during an active
+  /// work session (after punch-in, before punch-out). Null when in session (or
+  /// unknown → fail open).
+  String? _permissionSessionGateNotice() {
+    if (_sessionPunchedIn == false) {
+      return 'You can apply for permission only after punching in.';
+    }
+    if (_sessionPunchedOut == true) {
+      return 'You can apply for permission only before punching out.';
+    }
+    return null;
+  }
+
+  /// Combined tap-tooltip wording for the Request Permission button: the
+  /// out-of-session gating message takes precedence (the request is blocked),
+  /// otherwise the fine notice (informational, the request still opens).
+  String? _permissionButtonTooltip() =>
+      _permissionSessionGateNotice() ?? _permissionFineNotice();
+
+  /// Programmatically shows the button's tooltip with the current message — used
+  /// when a tap is blocked out of session so the gating reason appears in the
+  /// same tooltip instead of an error snackbar.
+  void _showPermissionTooltip() {
+    // Wait a frame so the tooltip rebuilds with the freshly-cached gate message
+    // before we force it visible.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _permissionTooltipKey.currentState?.ensureTooltipVisible();
+    });
   }
 
   /// Tap-tooltip wording for the Request Permission button, mirroring the

@@ -88,6 +88,13 @@ class SelfieCameraScreen extends StatefulWidget {
   /// and updates the pill when ready (e.g. a fresh break-balance fetch).
   final Future<String?>? infoTextFuture;
 
+  /// Optional policy/fine notice shown as a multi-line warning banner under the
+  /// info pill (e.g. the break-policy "processed with Fine" wording). Unlike the
+  /// single-line [infoText] pill, this renders the full multi-line message so the
+  /// employee reliably sees it the instant the camera opens — the dashboard
+  /// snackbar/tooltip is covered by this screen and never seen otherwise.
+  final String? noticeText;
+
   /// Optional post-capture validator. Runs on the captured file RIGHT AFTER the
   /// scan (before the review screen) — used by punch/break to do the face-match +
   /// buddy-punch identity check at scan time. Return an error message to REJECT
@@ -109,6 +116,7 @@ class SelfieCameraScreen extends StatefulWidget {
     this.loadLocationOnOpen = false,
     this.infoText,
     this.infoTextFuture,
+    this.noticeText,
     this.onCaptured,
     this.enrollMode = false,
   });
@@ -121,6 +129,7 @@ class SelfieCameraScreen extends StatefulWidget {
     bool loadLocationOnOpen = false,
     String? infoText,
     Future<String?>? infoTextFuture,
+    String? noticeText,
     Future<String?> Function(File capturedFile)? onCaptured,
     bool enrollMode = false,
   }) async {
@@ -133,6 +142,7 @@ class SelfieCameraScreen extends StatefulWidget {
           loadLocationOnOpen: loadLocationOnOpen,
           infoText: infoText,
           infoTextFuture: infoTextFuture,
+          noticeText: noticeText,
           onCaptured: onCaptured,
           enrollMode: enrollMode,
         ),
@@ -320,7 +330,8 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
         debugPrint('[Selfie][orient] asisFaces=${asis.faceCount} '
             'asisUpsideDown=${asis.isUpsideDown} inverted=$inverted '
             'faceCount=${chosen.faceCount} eyesOpen=${chosen.eyesOpen} '
-            'yaw=${chosen.headYaw?.toStringAsFixed(1)}');
+            'yaw=${chosen.headYaw?.toStringAsFixed(1)} '
+            'occluded=${chosen.occluded}');
       } catch (_) {
         // If detection fails entirely, assume upright (crop only).
       }
@@ -659,6 +670,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
           const SizedBox(height: 10),
           Center(child: _buildInfoPill(_infoText!)),
         ],
+        if (widget.noticeText != null &&
+            widget.noticeText!.trim().isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _buildNoticeBanner(widget.noticeText!.trim()),
+        ],
         const Spacer(),
         // Live, color-coded guidance (mirrors the face app's scanner): green when
         // the face is well-framed, red while it needs adjusting.
@@ -774,6 +790,48 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Multi-line warning banner for the break-policy notice (e.g. "Break duration
+  /// will be processed with Fine"). Shown the instant the camera opens so the
+  /// employee reliably reads the policy — unlike the dashboard tooltip/snackbar,
+  /// which this screen immediately covers.
+  Widget _buildNoticeBanner(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 28),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFB45309).withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.info_outline_rounded,
+              color: Colors.white,
+              size: 16,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                text,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  height: 1.3,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

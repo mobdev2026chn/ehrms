@@ -584,11 +584,11 @@ class _HolidaysScreenState extends State<HolidaysScreen>
           ),
         ),
         const Spacer(),
-        // TODAY
+        // THIS MONTH
         GestureDetector(
           onTap: _goToToday,
           child: Text(
-            'TODAY',
+            'THIS MONTH',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,

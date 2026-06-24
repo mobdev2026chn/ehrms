@@ -161,35 +161,64 @@ class TokenRefreshInterceptor extends Interceptor {
         },
       ),
     );
-    try {
-      final res = await plain.post<Map<String, dynamic>>(
-        '/auth/refresh',
-        data: {'refreshToken': refreshToken},
-      );
-      final body = res.data;
-      if (body == null || body['success'] != true) return null;
-      final data = body['data'];
-      if (data is! Map) return null;
-      final access = data['accessToken']?.toString();
-      final newRt = data['refreshToken']?.toString();
-      final prefs = await SharedPreferences.getInstance();
-      if (access != null && access.isNotEmpty) {
-        await prefs.setString('token', access);
+    // Retry once on TRANSIENT failures (timeout / 429 / 5xx / no response) so a
+    // single flaky-network moment doesn't bubble up as a 401 and bounce the user
+    // to login. A definitive 401 (refresh token rejected) is unrecoverable: clear
+    // the session and stop immediately.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final res = await plain.post<Map<String, dynamic>>(
+          '/auth/refresh',
+          data: {'refreshToken': refreshToken},
+        );
+        final body = res.data;
+        if (body == null || body['success'] != true) return null;
+        final data = body['data'];
+        if (data is! Map) return null;
+        final access = data['accessToken']?.toString();
+        final newRt = data['refreshToken']?.toString();
+        final prefs = await SharedPreferences.getInstance();
+        if (access != null && access.isNotEmpty) {
+          await prefs.setString('token', access);
+        }
+        if (newRt != null && newRt.isNotEmpty) {
+          await prefs.setString(AppConstants.refreshTokenPrefsKey, newRt);
+        }
+        return access;
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401) {
+          // Refresh token genuinely rejected — session cannot be recovered.
+          await clearStoredAuthSession();
+          return null;
+        }
+        // Transient: retry once after a short backoff, then give up WITHOUT
+        // clearing the session (it is still recoverable on a later request).
+        final transient = status == null || status == 429 || status >= 500;
+        if (transient && attempt == 0) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          continue;
+        }
+        return null;
       }
-      if (newRt != null && newRt.isNotEmpty) {
-        await prefs.setString(AppConstants.refreshTokenPrefsKey, newRt);
-      }
-      return access;
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 401) {
-        await clearStoredAuthSession();
-      }
-      return null;
     }
+    return null;
   }
 }
 
-/// Handles expired sessions globally: clear stale auth and let UI redirect to login.
+/// Handles UNRECOVERABLE expired sessions globally: clear stale auth and let UI
+/// redirect to login.
+///
+/// This runs AFTER [TokenRefreshInterceptor]. By the time a 401 reaches here, a
+/// refresh has already been attempted and did not resolve the request. There are
+/// two distinct reasons for that, and they must be treated differently:
+///   * The refresh token itself was rejected (definitively dead). [_doRefresh]
+///     already cleared the session in that case — nothing to do here.
+///   * The refresh merely failed transiently (timeout / 429 / 5xx / no network),
+///     OR there was a refresh token but the refresh couldn't complete. The session
+///     is still recoverable — we must NOT wipe it, or the user gets bounced to
+///     login mid-use over a flaky-network blip.
+/// So we only clear when there is no refresh token at all (truly unrecoverable).
 class SessionExpiryInterceptor extends Interceptor {
   SessionExpiryInterceptor(this.dio);
   final Dio dio;
@@ -213,13 +242,20 @@ class SessionExpiryInterceptor extends Interceptor {
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) async {
     if (_isExpiredTokenError(err) && !_handlingExpiry) {
-      _handlingExpiry = true;
-      try {
-        await _clearSession();
-      } catch (_) {
-        // Ignore local storage cleanup issues; still forward original error.
-      } finally {
-        _handlingExpiry = false;
+      final prefs = await SharedPreferences.getInstance();
+      var rt = prefs.getString(AppConstants.refreshTokenPrefsKey);
+      final hasRefreshToken = rt != null && rt.replaceAll('"', '').trim().isNotEmpty;
+      // A refresh token is present → session is still recoverable; leave it alone
+      // and let the next request refresh it. Only wipe when we have no way back.
+      if (!hasRefreshToken) {
+        _handlingExpiry = true;
+        try {
+          await _clearSession();
+        } catch (_) {
+          // Ignore local storage cleanup issues; still forward original error.
+        } finally {
+          _handlingExpiry = false;
+        }
       }
     }
     handler.next(err);

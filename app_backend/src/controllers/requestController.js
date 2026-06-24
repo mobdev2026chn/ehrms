@@ -1558,24 +1558,20 @@ const getPermissionBalance = async (req, res) => {
             {
                 $group: {
                     _id: null,
-                    consumed: { $sum: { $ifNull: ['$permissionConsumedMinutes', 0] } },
-                    remaining: { $max: { $ifNull: ['$permissionRemainingMinutes', 0] } }
+                    consumed: { $sum: { $ifNull: ['$permissionConsumedMinutes', 0] } }
                 }
             }
         ]);
         let consumedMinutes = Math.max(0, Number(consumedAgg?.[0]?.consumed || 0));
 
-        // Derived-quota fallback: only used when the shift has NO configured quota (0).
-        // Do NOT apply when a real quota is already configured — historical attendance
-        // rows may store stale higher values (e.g. from a previous 10h quota) and
-        // Math.max would wrongly override the current configured quota with that stale data.
-        if (monthlyQuotaMinutes === 0) {
-            const recordedRemaining = Math.max(0, Number(consumedAgg?.[0]?.remaining || 0));
-            const derivedMonthlyQuota = consumedMinutes + recordedRemaining;
-            if (derivedMonthlyQuota > 0) {
-                monthlyQuotaMinutes = derivedMonthlyQuota;
-            }
-        }
+        // NO derived-quota fallback. The monthly quota is ONLY what the shift's
+        // permissionPolicy actually configures. A configured-but-zero quota (or a
+        // disabled / unconfigured policy) must stay 0 so the app reports "not
+        // configured — processed as Fine" (parity with the break policy). Deriving
+        // a quota from historical attendance rows resurrected stale values (e.g. a
+        // previous 11h quota stored in permissionRemainingMinutes), which made a
+        // quota-0 shift wrongly display an 11h "Monthly Allocated" instead of the
+        // not-configured notice.
         // "Used" reflects the minutes the employee ACTUALLY consumed and is NOT
         // capped at the monthly quota: if usage exceeds the allocation the real
         // used figure is still surfaced (any excess is handled separately as fine).

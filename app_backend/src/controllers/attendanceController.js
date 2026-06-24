@@ -536,7 +536,7 @@ async function getApprovedPermissionForDate(employeeId, businessId, attendanceDa
     // ("both") overrun that is fined separately. Omitting it silently zeroed the
     // custom-permission fine.
     let rows = await PermissionRequest.find(query)
-        .select('date type requestedMinutes overrunMinutes')
+        .select('date type requestedMinutes overrunMinutes actualMinutes actualInAt')
         .lean();
     // Backward compatibility: some old rows may have inconsistent business linkage.
     if ((!rows || rows.length === 0) && businessId) {
@@ -546,7 +546,7 @@ async function getApprovedPermissionForDate(employeeId, businessId, attendanceDa
             status: 'Approved'
         };
         rows = await PermissionRequest.find(relaxedQuery)
-            .select('date type requestedMinutes overrunMinutes businessId')
+            .select('date type requestedMinutes overrunMinutes actualMinutes actualInAt businessId')
             .lean();
     }
     const attendanceKey = toDateKeyInTimezone(attendanceDate, businessTimezone);
@@ -1162,10 +1162,23 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 businessTimezone
             );
             let usedToday = 0;
+            // Mid-day "both"/custom permissions (Permission Out → In) consume their
+            // approved window even though they produce NO late-arrival/early-exit
+            // minutes (the employee checks in/out on time and steps away mid-shift).
+            // The waiver math below only excuses late/early, so a mid-day permission
+            // would otherwise register 0 "Used". Count the minutes actually spent out
+            // — min(actualMinutes, requestedMinutes) once Permission In is recorded —
+            // so "Used" reflects what the employee truly utilised after approval.
+            let midDayUsedMinutes = 0;
             if (Array.isArray(approvedPermissions)) {
                 for (const req of approvedPermissions) {
-                    usedToday += Math.max(0, Math.floor(Number(req?.requestedMinutes) || 0));
+                    const reqMin = Math.max(0, Math.floor(Number(req?.requestedMinutes) || 0));
+                    usedToday += reqMin;
                     permissionOverrunMinutes += Math.max(0, Math.floor(Number(req?.overrunMinutes) || 0));
+                    if (req?.actualInAt) {
+                        const actMin = Math.max(0, Math.floor(Number(req?.actualMinutes) || 0));
+                        midDayUsedMinutes += Math.min(reqMin, actMin);
+                    }
                 }
             }
             // Overrun is fined whenever fines are enabled (it is the employee exceeding
@@ -1194,7 +1207,13 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             );
             permissionWaivedLateMinutes = waiver.waiveLate;
             permissionWaivedEarlyMinutes = waiver.waiveEarly;
-            const usedActual = permissionWaivedLateMinutes + permissionWaivedEarlyMinutes;
+            // Real consumption = late/early excused + mid-day window actually spent out,
+            // capped at the approved total so a permission that somehow contributes to
+            // both buckets can never consume beyond what was approved.
+            const usedActual = Math.min(
+                usedToday,
+                permissionWaivedLateMinutes + permissionWaivedEarlyMinutes + midDayUsedMinutes
+            );
             // Draw this day's actual permission against the MONTH-TO-DATE remaining quota
             // (prior days' validated usage), so the quota is shared across the month, not
             // reset per day. Only the portion beyond the monthly quota is fined (S1 exceed);

@@ -10,6 +10,7 @@ import '../../services/auth_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../utils/snackbar_utils.dart';
+import '../attendance/selfie_camera_screen.dart';
 
 /// Full-screen Edit Profile matching the Figma design:
 /// Cancel / Edit Profile header, avatar with camera button, editable
@@ -510,26 +511,49 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Future<void> _changePhoto() async {
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.front,
-        imageQuality: 80,
-        maxWidth: 800,
+      // Capture through the guided oval camera (same flow as face enrollment):
+      // it shows the alignment ring, auto-captures a centered face, corrects the
+      // front-camera 180° flip, and crops to the oval guide box — so the saved
+      // profile photo is the framed face, not the full camera frame (ceiling and
+      // all). enrollMode relaxes the strict eyes-open/yaw gate to single-face.
+      final captured = await SelfieCameraScreen.captureSelfie(
+        context,
+        title: 'Update Photo',
+        enrollMode: true,
       );
-      if (picked == null) return;
-      final file = File(picked.path);
+      if (!mounted) return;
 
-      final faceResult = await FaceDetectionHelper.detectFromFile(file);
-      if (!faceResult.valid) {
-        if (mounted) {
-          SnackBarUtils.showSnackBar(
-            context,
-            faceResult.message ??
-                'Please take a selfie with exactly one face visible.',
-            isError: true,
-          );
+      File file;
+      if (captured is File) {
+        file = captured;
+      } else if (captured == useImagePickerFallback) {
+        // Camera failed to initialise — fall back to the system picker. The
+        // SelfieCameraScreen already validated framing when it works; for this
+        // fallback path we re-run the single-face check on the picked image.
+        final picker = ImagePicker();
+        final picked = await picker.pickImage(
+          source: ImageSource.camera,
+          preferredCameraDevice: CameraDevice.front,
+          imageQuality: 80,
+          maxWidth: 800,
+        );
+        if (picked == null) return;
+        file = File(picked.path);
+
+        final faceResult = await FaceDetectionHelper.detectFromFile(file);
+        if (!faceResult.valid) {
+          if (mounted) {
+            SnackBarUtils.showSnackBar(
+              context,
+              faceResult.message ??
+                  'Please take a selfie with exactly one face visible.',
+              isError: true,
+            );
+          }
+          return;
         }
+      } else {
+        // User backed out of the camera without capturing.
         return;
       }
 

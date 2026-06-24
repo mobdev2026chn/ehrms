@@ -496,6 +496,29 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
   }
 
+  /// Scan-time face validation for the permission selfie: face-match (1-to-1).
+  /// Returns a user-facing error to REJECT (shown on the camera right after
+  /// scanning, scan re-arms), or null to accept. Wired via
+  /// SelfieCameraScreen.onCaptured, so a non-matching face is caught on the camera
+  /// screen instead of only after the permission selfie is submitted.
+  Future<String?> _verifyPermissionFace(File file) async {
+    if (!AppConstants.enableAttendanceFaceMatching) return null;
+    final bytes = await file.readAsBytes();
+    final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
+    if (selfie.isEmpty) return null;
+    try {
+      final verify = await _authService.verifyFace(selfie);
+      if (verify['success'] != true || verify['match'] != true) {
+        return ErrorMessageUtils.sanitizeForDisplay(
+          verify['message']?.toString() ?? 'Face not matching. Please try again.',
+        );
+      }
+    } catch (_) {
+      return 'Face verification failed. Please try again.';
+    }
+    return null;
+  }
+
   /// Captures a required in-app selfie (single face) and returns it as a
   /// compressed base64 data URL, or null if cancelled / camera denied / no face.
   Future<String?> _capturePermissionSelfie() async {
@@ -513,8 +536,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       }
     }
     if (!mounted) return null;
-    final captureResult =
-        await SelfieCameraScreen.captureSelfie(context, title: 'Permission Selfie');
+    final captureResult = await SelfieCameraScreen.captureSelfie(
+      context,
+      title: 'Permission Selfie',
+      // Face-match at SCAN TIME, so a non-matching face is rejected on the camera
+      // (error shown + scan re-arms) instead of only after the selfie is submitted.
+      onCaptured: _verifyPermissionFace,
+    );
     File? file;
     if (captureResult is File) {
       file = captureResult;
@@ -559,36 +587,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final selfie = await _capturePermissionSelfie();
     if (selfie == null || selfie.isEmpty || !mounted) return;
 
-    // Validate the permission selfie against the rolling face reference before
-    // stamping, mirroring the attendance punch and break flows.
-    if (AppConstants.enableAttendanceFaceMatching) {
-      setState(() => _isPermissionStamping = true);
-      Map<String, dynamic> verify;
-      try {
-        verify = await _authService.verifyFace(selfie);
-      } catch (_) {
-        if (!mounted) return;
-        setState(() => _isPermissionStamping = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          'Face verification failed. Please try again.',
-          isError: true,
-        );
-        return;
-      }
-      if (!mounted) return;
-      if (!verify['success'] || verify['match'] != true) {
-        setState(() => _isPermissionStamping = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            verify['message']?.toString() ?? 'Face not matching. Please try again.',
-          ),
-          isError: true,
-        );
-        return;
-      }
-    }
+    // NOTE: face-match (verifyFace) now runs AT SCAN TIME via
+    // SelfieCameraScreen.onCaptured (_verifyPermissionFace) — so a non-matching
+    // face is rejected on the camera, before this stamp ever runs. No re-check here.
 
     setState(() => _isPermissionStamping = true);
     final result = isOut

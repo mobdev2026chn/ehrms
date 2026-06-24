@@ -955,6 +955,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       icon: Icons.location_on_outlined,
       title: 'Address',
       content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (line1.isNotEmpty)
             Column(

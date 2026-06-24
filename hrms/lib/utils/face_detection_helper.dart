@@ -37,6 +37,12 @@ class FaceDetectionResult {
   /// camera; large magnitude = turned away. Null when no face was found.
   final double? headYaw;
 
+  /// Whether the largest face appears OCCLUDED — a hand, finger, mask or other
+  /// object covering part of it. Derived from landmark completeness (see
+  /// [FaceDetectionHelper._isFaceOccluded]). Null when no landmarks were produced
+  /// (can't judge → don't block). True when core face landmarks are missing.
+  final bool? occluded;
+
   const FaceDetectionResult({
     required this.valid,
     required this.faceCount,
@@ -45,6 +51,7 @@ class FaceDetectionResult {
     this.upsideDown,
     this.eyesOpen,
     this.headYaw,
+    this.occluded,
   });
 
   /// True when a face is present and clearly upside-down.
@@ -65,6 +72,14 @@ class FaceDetectionResult {
     }
     if (faceCount > 1) {
       return 'Multiple faces detected. Keep only your face in frame.';
+    }
+    // Occlusion (hand/finger/mask/object over the face) is rejected for BOTH
+    // punch/break AND enrollment — an obstructed shot is unusable for matching and
+    // an obstructed enrollment template would poison every future verification.
+    // ML Kit still reports a "face" when partly covered, so without this check the
+    // single-face/eyes-open/frontal gate lets blocked faces through to submit.
+    if (occluded == true) {
+      return 'Your face is partly blocked. Remove anything covering it and try again.';
     }
     if (relaxed) return null;
     if (eyesOpen == false) {
@@ -155,6 +170,39 @@ class FaceDetectionHelper {
     return best >= 0.4;
   }
 
+  /// Occlusion verdict for [face] from landmark COMPLETENESS. ML Kit will happily
+  /// report a "face" when a hand, finger, mask or other object covers part of it —
+  /// so the single-face / eyes-open / frontal gate alone lets obstructed selfies
+  /// through. On a frontal face (the yaw gate already keeps captures < 30°) ML Kit
+  /// reliably locates the eyes, nose, mouth and cheeks; when something covers the
+  /// face the underlying landmark(s) drop out. We treat a missing element of the
+  /// central face "cross" (both eyes, nose, mouth), or both cheeks gone, as
+  /// occlusion.
+  ///
+  /// Returns null when ML Kit produced NO landmarks at all (e.g. classification-
+  /// only result): we can't judge, so the caller must not block on it — a detector
+  /// limitation should never hard-block a punch.
+  static bool? _isFaceOccluded(Face face) {
+    final lm = face.landmarks;
+    if (lm.isEmpty) return null; // no landmark data → can't judge, don't block
+    bool has(FaceLandmarkType t) => lm[t]?.position != null;
+
+    // Central face cross — present on any clear frontal face; a hand/finger/mask
+    // over the face removes at least one of these.
+    final eyes = has(FaceLandmarkType.leftEye) && has(FaceLandmarkType.rightEye);
+    final nose = has(FaceLandmarkType.noseBase);
+    final mouth = has(FaceLandmarkType.bottomMouth) ||
+        (has(FaceLandmarkType.leftMouth) && has(FaceLandmarkType.rightMouth));
+    if (!eyes || !nose || !mouth) return true;
+
+    // Both cheeks missing on a frontal face signals the lower/side face is covered.
+    final anyCheek =
+        has(FaceLandmarkType.leftCheek) || has(FaceLandmarkType.rightCheek);
+    if (!anyCheek) return true;
+
+    return false;
+  }
+
   /// Detects faces in [file]. Returns [FaceDetectionResult].
   /// [valid] is true only when exactly one face is found.
   static Future<FaceDetectionResult> detectFromFile(File file) async {
@@ -185,6 +233,7 @@ class FaceDetectionHelper {
       final upsideDown = _isFaceUpsideDown(faces.first);
       final headYaw = faces.first.headEulerAngleY;
       final eyesOpen = _areEyesOpen(faces.first);
+      final occluded = _isFaceOccluded(faces.first);
 
       if (faces.length > 1) {
         return FaceDetectionResult(
@@ -195,6 +244,7 @@ class FaceDetectionHelper {
           upsideDown: upsideDown,
           eyesOpen: eyesOpen,
           headYaw: headYaw,
+          occluded: occluded,
         );
       }
 
@@ -205,6 +255,7 @@ class FaceDetectionHelper {
         upsideDown: upsideDown,
         eyesOpen: eyesOpen,
         headYaw: headYaw,
+        occluded: occluded,
       );
     } catch (e) {
       return FaceDetectionResult(

@@ -218,6 +218,10 @@ class _BreakScreenState extends State<BreakScreen> {
       context,
       location: locationStr,
       infoText: _remainingBreakText(),
+      // Carry the break-policy "processed with Fine" notice onto the camera screen
+      // (only when starting) so the employee reliably reads it — parity with the
+      // dashboard Break flow.
+      noticeText: _isOnBreak ? null : _breakInfoNotice,
       onRefreshLocation: () async {
         await _determinePosition();
         return _address;
