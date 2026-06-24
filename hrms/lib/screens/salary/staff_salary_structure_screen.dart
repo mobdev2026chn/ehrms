@@ -6,6 +6,7 @@ import '../../services/salary_service.dart';
 import '../../utils/mongo_date_parse.dart';
 import '../../utils/salary_ctc_helpers.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../dashboard/dashboard_screen.dart';
 import 'ctc_details_screen.dart';
 import 'salary_revision_overview_screen.dart';
 import 'salary_revision_detail_screen.dart';
@@ -68,33 +69,50 @@ Future<void> _load() async {
   }
 
   void _showAccessDeniedDialog() {
-    // Capture the screen's navigator before the dialog pushes its own route, so
-    // OK can both dismiss the dialog and leave this (empty) screen for home.
-    final pageNavigator = Navigator.of(context);
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.lock_outline, color: Colors.red),
-            SizedBox(width: 8),
-            Text('Access Restricted'),
+      // canPop:false makes the Android system back button run the same
+      // navigation as OK (land on the dashboard) rather than just dismissing
+      // the dialog onto this empty screen.
+      builder: (dialogContext) => PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          Navigator.of(dialogContext).pop();
+          _goToDashboard();
+        },
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.lock_outline, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Access Restricted'),
+            ],
+          ),
+          content: const Text(
+            'Salary details are not enabled for your account. Please contact HR.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop(); // close dialog
+                _goToDashboard(); // leave salary screen, back to dashboard
+              },
+              child: const Text('OK'),
+            ),
           ],
         ),
-        content: const Text(
-          'Salary details are not enabled for your account. Please contact HR.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(dialogContext).pop(); // close dialog
-              pageNavigator.pop(); // leave salary screen, back to home
-            },
-            child: const Text('OK'),
-          ),
-        ],
       ),
+    );
+  }
+
+  /// Leave the (empty) salary screen and return to the dashboard.
+  void _goToDashboard() {
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const DashboardScreen()),
+      (route) => route.isFirst,
     );
   }
 

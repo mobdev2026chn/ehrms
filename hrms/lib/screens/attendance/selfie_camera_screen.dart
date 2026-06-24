@@ -675,11 +675,11 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
             const SizedBox(height: 8),
             Center(child: _buildInfoPill(_infoText!)),
           ],
-          if (widget.noticeText != null &&
-              widget.noticeText!.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _buildNoticeBanner(widget.noticeText!.trim()),
-          ],
+          // if (widget.noticeText != null &&
+          //     widget.noticeText!.trim().isNotEmpty) ...[
+          //   const SizedBox(height: 8),
+          //   _buildNoticeBanner(widget.noticeText!.trim()),
+          // ],
           // Flexible middle: guidance + oval are centered in the leftover space
           // and scale down (FittedBox) rather than push the layout off-screen.
           Expanded(

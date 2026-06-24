@@ -1417,10 +1417,17 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
   }
 
   Future<void> _pickAudioFile() async {
-    final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['mp3', 'm4a', 'aac', 'wav'],
-    );
+    // Allow ANY audio file, not a hardcoded extension whitelist: a user's clip
+    // may be .ogg/.opus/.flac/.amr/.wma/.3gp, etc. The interaction server's
+    // upload allowlist is the real gate on what ultimately sends; the picker
+    // shouldn't pre-filter and hide files the server would actually accept. If
+    // the platform can't enumerate audio, fall back to picking any file.
+    FilePickerResult? r;
+    try {
+      r = await FilePicker.platform.pickFiles(type: FileType.audio);
+    } catch (_) {
+      r = await FilePicker.platform.pickFiles();
+    }
     if (r == null || r.files.isEmpty) return;
     final f = r.files.first;
     final path = f.path;
@@ -2661,7 +2668,10 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                               ),
                             ),
                           Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
+                            // Center the circular send/mic button against the
+                            // input pill so it doesn't sit low; the pill still
+                            // grows upward for multi-line text.
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
                           Expanded(
                             child: Container(

@@ -120,29 +120,46 @@ class _SalaryStructureDetailScreenState
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Unable to load salary'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(dialogContext).pop();
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const DashboardScreen()),
-                (route) => route.isFirst,
-              );
-            },
-            child: const Text('OK'),
-          ),
-          // FilledButton(
-          //   onPressed: () {
-          //     Navigator.of(dialogContext).pop();
-          //     _fetchAndCalculateSalary();
-          //   },
-          //   child: const Text('Retry'),
-          // ),
-        ],
+      // canPop:false routes the Android system back button through
+      // onPopInvokedWithResult so it lands on the dashboard, exactly like OK,
+      // instead of just dismissing the dialog onto the empty screen behind it.
+      builder: (dialogContext) => PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          Navigator.of(dialogContext).pop();
+          _goToDashboard();
+        },
+        child: AlertDialog(
+          title: const Text('Unable to load salary'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _goToDashboard();
+              },
+              child: const Text('OK'),
+            ),
+            // FilledButton(
+            //   onPressed: () {
+            //     Navigator.of(dialogContext).pop();
+            //     _fetchAndCalculateSalary();
+            //   },
+            //   child: const Text('Retry'),
+            // ),
+          ],
+        ),
       ),
+    );
+  }
+
+  /// Leave the (empty) salary screen and return to the dashboard.
+  void _goToDashboard() {
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const DashboardScreen()),
+      (route) => route.isFirst,
     );
   }
 

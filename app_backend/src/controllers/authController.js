@@ -1526,7 +1526,38 @@ function euclideanDistance(a, b) {
 }
 
 // dlib same-person boundary (matches the Python service default / face app).
+// Used by the 1-to-1 VERIFY path (verifyFace), where we already know WHO the live
+// face claims to be and only confirm it's the same person.
 const FACE_MATCH_THRESHOLD = parseFloat(process.env.FACE_MATCH_THRESHOLD || '0.50');
+
+// 1-to-MANY IDENTIFY boundary (identifyFromEnrollments → kiosk identifyFace +
+// app verifyIdentity). Identification must be STRICTER than 1-to-1 verification:
+// with N enrolled faces in the gallery, the chance that *some* unrelated face
+// falls under a loose threshold grows with N, so a flat 0.50 false-accepts a
+// brand-new (unenrolled) person as whichever enrolled face is marginally closest.
+// That both mis-identifies new users AND, because the closest enrolled face
+// varies frame-to-frame, makes the kiosk flash "different" people and never
+// surface the enroll prompt. Tighten the accept boundary here.
+const FACE_IDENTIFY_THRESHOLD = parseFloat(process.env.FACE_IDENTIFY_THRESHOLD || '0.44');
+
+// Minimum gap the best candidate must beat the 2nd-best (different person) by for
+// the identification to be unambiguous. If the top two enrolled people are within
+// this margin of each other, the live face is too ambiguous to assign to either —
+// treat it as NOT recognized (→ at-kiosk enroll) instead of guessing.
+const FACE_IDENTIFY_MARGIN = parseFloat(process.env.FACE_IDENTIFY_MARGIN || '0.06');
+
+// Decide whether a 1-to-many identify result is a CONFIDENT, unambiguous match.
+// best/second are { staff, distance } (second may be null when only one person is
+// enrolled). A match must be both close enough (< identify threshold) AND clearly
+// separated from the next-closest different person (>= margin).
+function isConfidentIdentification(best, second) {
+    if (!best || typeof best.distance !== 'number') return false;
+    if (best.distance > FACE_IDENTIFY_THRESHOLD) return false;
+    if (second && typeof second.distance === 'number') {
+        if (second.distance - best.distance < FACE_IDENTIFY_MARGIN) return false;
+    }
+    return true;
+}
 
 // Slow fallback: download the reference, write the selfie to temp, and run the
 // one-shot CLI (reloads the model each call). Used only when the service is down.
@@ -2029,7 +2060,11 @@ async function identifyFromEnrollments(selfie, scopeFilter = {}) {
     const staffList = await Staff.find(filter)
         .select('_id userId employeeId name email businessId faceEnrollEmbeddings').lean();
 
+    // Track the closest AND second-closest (different) person so the caller can
+    // require a margin between them — an ambiguous near-tie is rejected rather than
+    // assigned to whichever enrolled face is marginally closer.
     let best = null;
+    let second = null;
     for (const s of staffList) {
         const samples = Array.isArray(s.faceEnrollEmbeddings) ? s.faceEnrollEmbeddings : [];
         let bestForStaff = Infinity;
@@ -2037,9 +2072,15 @@ async function identifyFromEnrollments(selfie, scopeFilter = {}) {
             const d = euclideanDistance(liveEmbedding, emb);
             if (d < bestForStaff) bestForStaff = d;
         }
-        if (best === null || bestForStaff < best.distance) best = { staff: s, distance: bestForStaff };
+        const cand = { staff: s, distance: bestForStaff };
+        if (best === null || bestForStaff < best.distance) {
+            second = best;
+            best = cand;
+        } else if (second === null || bestForStaff < second.distance) {
+            second = cand;
+        }
     }
-    return { ok: true, best, candidates: staffList.length };
+    return { ok: true, best, second, candidates: staffList.length };
 }
 
 /**
@@ -2079,7 +2120,9 @@ const verifyIdentity = async (req, res) => {
         }
 
         const confidence = Math.round((1 - r.best.distance) * 1000) / 10;
-        if (r.best.distance > FACE_MATCH_THRESHOLD) {
+        // Strict 1-to-many gate: close enough AND unambiguously separated from the
+        // next-closest person. An ambiguous/loose best match is NOT a recognition.
+        if (!isConfidentIdentification(r.best, r.second)) {
             return res.status(200).json({ verified: false, reason: 'not_recognized', confidence });
         }
         const isClaimer = String(r.best.staff._id) === String(claimer._id);
@@ -2121,7 +2164,17 @@ const identifyFace = async (req, res) => {
         if (!r.best) return res.status(200).json({ matched: false, reason: 'no_face', detail: r.liveError });
 
         const confidence = Math.round((1 - r.best.distance) * 1000) / 10;
-        if (r.best.distance > FACE_MATCH_THRESHOLD) {
+        // Strict 1-to-many gate (see isConfidentIdentification): a brand-new,
+        // unenrolled person must come back NOT recognized so the kiosk shows the
+        // "Enroll Your Face" prompt — never get assigned to whichever enrolled face
+        // happens to be marginally closest (which also flips between people across
+        // the 800ms scan frames).
+        if (!isConfidentIdentification(r.best, r.second)) {
+            const ambiguous = r.second && (r.second.distance - r.best.distance) < FACE_IDENTIFY_MARGIN
+                && r.best.distance <= FACE_IDENTIFY_THRESHOLD;
+            console.warn(`[identifyFace] not recognized: best=${r.best.distance.toFixed(3)}`
+                + (r.second ? ` second=${r.second.distance.toFixed(3)}` : ' (only candidate)')
+                + ` candidates=${r.candidates}${ambiguous ? ' [ambiguous near-tie]' : ''}`);
             return res.status(200).json({ matched: false, reason: 'not_recognized', confidence });
         }
 

@@ -146,6 +146,9 @@ class _AppDrawerState extends State<AppDrawer> {
   @override
   Widget build(BuildContext context) {
     return Drawer(
+      // Narrower than the Material default (304) so the drawer doesn't cover as
+      // much of the screen; capped to a fraction on small devices.
+      width: MediaQuery.of(context).size.width * 0.72,
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.white,
       child: SafeArea(
@@ -254,90 +257,176 @@ class _AppDrawerState extends State<AppDrawer> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: AppColors.primary,
-        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary,
+            AppColors.primaryDark,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.35),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
-      // Figma: vertical layout — avatar on top, name/role/ID stacked below.
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      // Decorative soft glow blobs behind the content for depth.
+      child: Stack(
         children: [
-          Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 2),
-            ),
-            // Flip legacy (pre-fix, upside-down) seeded avatars 180° on display.
-            child: RotatedBox(
-              quarterTurns: (showAvatar && _avatarNeedsFlip) ? 2 : 0,
-              child: CircleAvatar(
-                radius: 32,
-                backgroundColor: Colors.white.withValues(alpha: 0.25),
-                backgroundImage: showAvatar ? CachedNetworkImageProvider(avatarUrl.toString().trim()) : null,
-                child: showAvatar
-                    ? null
-                    : Text(initial,
-                        style: const TextStyle(
-                          fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
+          Positioned(
+            top: -28,
+            right: -24,
+            child: Container(
+              width: 110,
+              height: 110,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.10),
               ),
             ),
           ),
-          const SizedBox(height: 14),
-          Text(
-            name,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 20,
+          Positioned(
+            bottom: -36,
+            left: -20,
+            child: Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.06),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            // Avatar + name/role on a row, meta chips stacked below.
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(2.5),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.white.withValues(alpha: 0.9),
+                            Colors.white.withValues(alpha: 0.4),
+                          ],
+                        ),
+                      ),
+                      // Flip legacy (pre-fix, upside-down) seeded avatars 180°.
+                      child: RotatedBox(
+                        quarterTurns: (showAvatar && _avatarNeedsFlip) ? 2 : 0,
+                        child: CircleAvatar(
+                          radius: 32,
+                          backgroundColor: Colors.white.withValues(alpha: 0.25),
+                          backgroundImage: showAvatar
+                              ? CachedNetworkImageProvider(avatarUrl.toString().trim())
+                              : null,
+                          child: showAvatar
+                              ? null
+                              : Text(initial,
+                                  style: const TextStyle(
+                                      fontSize: 26,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 20,
+                              height: 1.1,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (role.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.22),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                role,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (empId.toString().isNotEmpty || branch.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    height: 1,
+                    color: Colors.white.withValues(alpha: 0.18),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (empId.toString().isNotEmpty)
+                  _metaRow(Icons.badge_outlined, 'Employee ID: $empId'),
+                if (empId.toString().isNotEmpty && branch.isNotEmpty)
+                  const SizedBox(height: 8),
+                if (branch.isNotEmpty)
+                  _metaRow(Icons.location_on_outlined, branch),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A small icon + label row used for employee ID / branch under the header.
+  Widget _metaRow(IconData icon, String label) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: Colors.white.withValues(alpha: 0.85)),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.9),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          if (role.isNotEmpty) ...[
-            const SizedBox(height: 3),
-            Text(
-              role,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.9),
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-          if (empId.toString().isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Employee ID: $empId',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.75),
-                fontSize: 11,
-              ),
-            ),
-          ],
-          if (branch.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Icon(Icons.location_on_outlined,
-                    size: 13, color: Colors.white.withValues(alpha: 0.75)),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    branch,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.75),
-                      fontSize: 11,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
+        ),
+      ],
     );
   }
 

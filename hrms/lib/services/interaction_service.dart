@@ -540,12 +540,31 @@ class InteractionService {
     // "Invalid Format" (notably for videos picked from the gallery).
     final contentType = _resolveMediaType(filename, filePath, type);
 
-    // Guarantee the multipart filename carries an extension matching the MIME
-    // type. Android's image_picker often returns gallery videos with an
-    // extension-less cache name (e.g. `.../cache/REC0001`), so a server filter
-    // that validates by file extension rejects the upload as "Invalid file
-    // type" even though the Content-Type header is a correct `video/mp4`.
-    final uploadFilename = _filenameForUpload(filename, contentType, type);
+    // The interaction server's upload filter validates by the file's
+    // Content-Type, NOT by the message-type field — so a picked audio clip in a
+    // format the server doesn't allowlist is rejected as "Invalid file type" on
+    // EVERY field-name shape above. The recorder proves `audio/x-m4a` is on the
+    // server allowlist; a picked `.mp3`/`.aac`/`.wav`/`.ogg` is often not. Probe
+    // the known server-accepted audio types for voice so a picked audio file
+    // still sends even when its native MIME is rejected. Voice/audio clips are
+    // small, so the extra fast-failing attempts are cheap. Non-voice keeps its
+    // single resolved MIME (re-labelling a document/video would corrupt it).
+    final mimeCandidates = <DioMediaType?>[contentType];
+    if (type == 'voice') {
+      for (final m in const [
+        'audio/x-m4a', // what the in-app recorder sends — known accepted
+        'audio/aac',
+        'audio/mpeg',
+        'audio/wav',
+        'audio/webm',
+        'audio/ogg',
+      ]) {
+        final mt = DioMediaType.parse(m);
+        if (!mimeCandidates.any((c) => c?.mimeType == mt.mimeType)) {
+          mimeCandidates.add(mt);
+        }
+      }
+    }
 
     // Media uploads need a far more generous timeout than the 45s the client
     // applies to ordinary JSON calls: a multi-MB document or voice clip over a
@@ -558,68 +577,84 @@ class InteractionService {
     );
 
     final attemptLog = <String>[];
-    for (var i = 0; i < payloads.length; i++) {
-      final candidate = payloads[i];
-      final shapeLabel =
-          '${candidate.fields.entries.where((e) => e.key != 'receiverId').map((e) => '${e.key}=${e.value}').join(',')} file=${candidate.fileField}';
-      try {
-        final form = FormData.fromMap({
-          ...candidate.fields,
-          candidate.fileField: await MultipartFile.fromFile(
-            filePath,
-            filename: uploadFilename,
-            contentType: contentType,
-          ),
-        });
-        final res = await _client().post<Map<String, dynamic>>(
-          endpoint,
-          data: form,
-          options: uploadOptions,
-        );
-        // Remember the shape that worked so the next upload of this type skips
-        // the fallback walk and uploads the file exactly once.
-        final field = candidate.fields.keys.firstWhere(
-          (k) => k == 'messageType' || k == 'type',
-          orElse: () => '',
-        );
-        if (field.isNotEmpty) {
-          _uploadShapeCache[type] = (
-            typeKey: field,
-            typeValue: candidate.fields[field].toString(),
-            fileField: candidate.fileField,
+    var lastFilename = filename;
+    var stop = false;
+    // Outer axis: Content-Type to label the file with. Inner axis: the
+    // field-name/value shape. The server rejects by MIME, so for the first MIME
+    // we walk every shape; for each alternate MIME (only audio) we just retry
+    // the best shape — the field-name axis was already exhausted on MIME #0.
+    for (var ci = 0; ci < mimeCandidates.length && !stop; ci++) {
+      final ct = mimeCandidates[ci];
+      // Keep the multipart filename's extension consistent with the MIME we're
+      // labelling — a server that validates by extension rejects a `.mp3` name
+      // carried as `audio/x-m4a`. Guarantees an extension when the picker
+      // returned an extension-less cache name too.
+      final uploadFilename = _filenameForUpload(filename, ct, type, force: ci > 0);
+      lastFilename = uploadFilename;
+      final shapesForThisMime = ci == 0 ? payloads : payloads.take(1).toList();
+      for (final candidate in shapesForThisMime) {
+        final shapeLabel =
+            '${candidate.fields.entries.where((e) => e.key != 'receiverId').map((e) => '${e.key}=${e.value}').join(',')} file=${candidate.fileField} as=${ct?.mimeType ?? 'octet-stream'}';
+        try {
+          final form = FormData.fromMap({
+            ...candidate.fields,
+            candidate.fileField: await MultipartFile.fromFile(
+              filePath,
+              filename: uploadFilename,
+              contentType: ct,
+            ),
+          });
+          final res = await _client().post<Map<String, dynamic>>(
+            endpoint,
+            data: form,
+            options: uploadOptions,
           );
+          // Remember the shape that worked so the next upload of this type skips
+          // the fallback walk and uploads the file exactly once.
+          final field = candidate.fields.keys.firstWhere(
+            (k) => k == 'messageType' || k == 'type',
+            orElse: () => '',
+          );
+          if (field.isNotEmpty) {
+            _uploadShapeCache[type] = (
+              typeKey: field,
+              typeValue: candidate.fields[field].toString(),
+              fileField: candidate.fileField,
+            );
+          }
+          return res.data ?? {};
+        } on DioException catch (e) {
+          final code = e.response?.statusCode ?? 0;
+          final isTimeout = e.type == DioExceptionType.connectionTimeout ||
+              e.type == DioExceptionType.sendTimeout ||
+              e.type == DioExceptionType.receiveTimeout;
+          final serverMsg = isTimeout
+              ? 'timed out (${e.type.name})'
+              : (ErrorMessageUtils.messageFromResponseData(e.response?.data) ??
+                  e.message ??
+                  e.type.name);
+          attemptLog.add('• $shapeLabel → ${code == 0 ? '—' : code} $serverMsg');
+          // A wrong message-type value or a rejected MIME shows up across server
+          // versions as 400/422 (validation), 415 (unsupported media type), or
+          // 500 (a multer `fileFilter` error surfaces as a generic 500). Advance
+          // to the next known shape / MIME for these so the `file`→`document`
+          // and audio-MIME fallbacks are actually exercised.
+          if (code == 400 || code == 415 || code == 422 || code == 500) {
+            continue;
+          }
+          // A timeout means the request never got a response (the file part is
+          // small for voice, so this is the server stalling, not a slow upload).
+          // Re-uploading the same clip through the remaining shapes would just
+          // stall again for minutes each — the "endless loading" symptom. Stop
+          // here and report instead of spinning.
+          stop = true;
+          break;
         }
-        return res.data ?? {};
-      } on DioException catch (e) {
-        final code = e.response?.statusCode ?? 0;
-        final isTimeout = e.type == DioExceptionType.connectionTimeout ||
-            e.type == DioExceptionType.sendTimeout ||
-            e.type == DioExceptionType.receiveTimeout;
-        final serverMsg = isTimeout
-            ? 'timed out (${e.type.name})'
-            : (ErrorMessageUtils.messageFromResponseData(e.response?.data) ??
-                e.message ??
-                e.type.name);
-        attemptLog.add('• $shapeLabel → ${code == 0 ? '—' : code} $serverMsg');
-        // A wrong message-type value or a rejected MIME shows up across server
-        // versions as 400/422 (validation), 415 (unsupported media type), or
-        // 500 (a multer `fileFilter` error surfaces as a generic 500). Advance
-        // to the next known field-name/value shape for these so the
-        // `file`→`document` and audio fallbacks are actually exercised.
-        if (code == 400 || code == 415 || code == 422 || code == 500) {
-          continue;
-        }
-        // A timeout means the request never got a response (the file part is
-        // small for voice, so this is the server stalling, not a slow upload).
-        // Re-uploading the same clip through the remaining shapes would just
-        // stall again for minutes each — the "endless loading" symptom. Stop
-        // here and report instead of spinning.
-        break;
       }
     }
     final diagnostics = attemptLog.isEmpty
         ? 'No upload attempts were made.'
-        : 'Upload of "$uploadFilename" (${contentType?.mimeType ?? 'unknown type'}) '
+        : 'Upload of "$lastFilename" (${contentType?.mimeType ?? 'unknown type'}) '
             'failed. Tried ${attemptLog.length} shape(s):\n${attemptLog.join('\n')}';
     final friendly = (type == 'voice')
         ? 'Voice message could not be sent.'
@@ -674,15 +709,27 @@ class InteractionService {
   /// the multipart Content-Type header) reject extension-less names as "Invalid
   /// file type". Leaves names that already carry a recognised media extension
   /// untouched.
+  ///
+  /// When [force] is true the extension is REPLACED to match [contentType] even
+  /// if the name already has one — used when probing alternate audio MIMEs so a
+  /// `.mp3` re-labelled as `audio/x-m4a` is named `.m4a`, keeping an
+  /// extension-validating filter consistent with the Content-Type header.
   String _filenameForUpload(
     String filename,
     DioMediaType? contentType,
-    String type,
-  ) {
-    final name = filename.trim().isEmpty ? 'upload' : filename.trim();
-    if (lookupMimeType(name) != null) return name;
+    String type, {
+    bool force = false,
+  }) {
+    var name = filename.trim().isEmpty ? 'upload' : filename.trim();
     final ext =
         _extensionForMime(contentType?.mimeType) ?? _fallbackExtensionForType(type);
+    if (force && ext != null) {
+      final dot = name.lastIndexOf('.');
+      // Strip an existing short extension (avoid clipping a dotted base name).
+      if (dot > 0 && name.length - dot <= 5) name = name.substring(0, dot);
+      return '$name.$ext';
+    }
+    if (lookupMimeType(name) != null) return name;
     if (ext == null) return name;
     return '$name.$ext';
   }

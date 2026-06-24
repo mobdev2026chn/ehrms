@@ -2150,13 +2150,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 width: 26,
                 height: 26,
                 decoration: BoxDecoration(
-                  color: AppColors.indigoBg,
+                  color: AppColors.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
                   Icons.bar_chart_rounded,
                   size: 16,
-                  color: AppColors.indigo,
+                  color: AppColors.primary,
                 ),
               ),
               const SizedBox(width: 8),
@@ -2213,7 +2213,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   Icon(
                     Icons.star_rounded,
                     size: 16,
-                    color: AppColors.indigo.withValues(alpha: 0.22),
+                    color: AppColors.primary.withValues(alpha: 0.22),
                   ),
                   if (i < 4) const SizedBox(width: 2),
                 ],
@@ -2243,7 +2243,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.indigo,
+                  color: AppColors.primary,
                 ),
               ),
               Icon(
@@ -2321,7 +2321,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       ),
                       child: Icon(
                         items[i].$1,
-                        color: AppColors.textSecondary,
+                        color: AppColors.primary.withValues(alpha: 0.9),
                         size: 18,
                       ),
                     ),
@@ -2332,7 +2332,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     Icon(
                       Icons.chevron_right_rounded,
                       size: 18,
-                      color: AppColors.textCaption,
+                      color: AppColors.primary.withValues(alpha: 0.9),
                     ),
                   ],
                 ),
@@ -3605,7 +3605,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.bold,
-                color: AppColors.indigo,
+                color: AppColors.primary,
                 letterSpacing: -0.5,
               ),
             ),

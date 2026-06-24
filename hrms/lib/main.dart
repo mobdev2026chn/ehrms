@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'firebase_options.dart';
 import 'package:background_location_tracker/background_location_tracker.dart';
 import 'services/alarm_service.dart';
 import 'services/fcm_service.dart';
@@ -65,7 +66,11 @@ void main() {
       WidgetsFlutterBinding.ensureInitialized();
 
       try {
-        await Firebase.initializeApp();
+        // Web has no google-services.json — it needs explicit options.
+        // Mobile keeps native no-arg init (options: null reads the bundled config).
+        await Firebase.initializeApp(
+          options: kIsWeb ? DefaultFirebaseOptions.web : null,
+        );
       } catch (e, st) {
         debugPrint('[main] Firebase.initializeApp failed: $e $st');
         runApp(
@@ -80,7 +85,12 @@ void main() {
       debugPrint(
         '[FCM] main: registering onBackgroundMessage handler (required for app closed/background → in-app list)',
       );
-      FirebaseMessaging.onBackgroundMessage(firebaseBackgroundMessageHandler);
+      // Web FCM needs a firebase-messaging-sw.js service worker (not present in
+      // this deployment); registering a background handler there throws. Push is
+      // a mobile-only feature here, so skip it on web.
+      if (!kIsWeb) {
+        FirebaseMessaging.onBackgroundMessage(firebaseBackgroundMessageHandler);
+      }
 
       // Catch unhandled async errors (e.g. from plugins) so release build doesn't show black screen on some devices
       FlutterError.onError = (details) {
