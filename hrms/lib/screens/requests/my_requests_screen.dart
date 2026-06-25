@@ -1071,10 +1071,12 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     if (mounted) {
       if (result['success']) {
         setState(() {
-          _leaveBalances = (result['data'] as List).where((e) {
-            final type = e['type'].toString().toLowerCase();
-            return type != 'paid' && type != 'paid leave';
-          }).toList();
+          // Show every configured leave type as a card. This is the same set
+          // the Apply Leave dropdown offers (template leaveTypes + Unpaid Leave);
+          // do NOT filter out 'paid'/'paid leave' — those are now legitimate
+          // admin-configured types, not the old synthetic aggregate pool entry,
+          // so dropping them left configured types missing from the dashboard.
+          _leaveBalances = List<dynamic>.from(result['data'] as List);
           _isLoadingBalances = false;
         });
       } else {
@@ -1974,6 +1976,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       _totalAllowed = total;
       _usedLeaveDays = beUsed ?? usage.$1;
       _pendingLeaveDays = bePending ?? usage.$2;
+      // Now that per-type usage is known, drop any capped type that has become
+      // fully consumed for this month and keep the selection on a valid type.
+      _reconcileSelectedType();
     });
   }
 
@@ -2142,9 +2147,11 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
           // The shift gates half-day via halfDaySettings.enabled; the backend
           // reports it so the form can offer First/Second Half on any type.
           _halfDayEnabled = result['halfDayEnabled'] == true;
-          if (_allowedTypes.isNotEmpty) {
-            _leaveType = _allowedTypes.first['type'] as String?;
-          }
+          // Default to a type that still has balance (skip fully-consumed
+          // capped types). Balances may not have loaded yet, in which case
+          // capped types still read as available and are reconciled again once
+          // the balance arrives (see _fetchLeaveBalance).
+          _reconcileSelectedType();
           _isLoadingTypes = false;
         });
       } else {
@@ -2206,6 +2213,14 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_leaveType == null || _leaveType!.isEmpty) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'No leave type with remaining balance is available to apply.',
+        isError: true,
+      );
+      return;
+    }
     if (_startDate == null) {
       SnackBarUtils.showSnackBar(context, 'Please select date');
       return;
@@ -2448,14 +2463,43 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   /// allocation minus approved (taken) and pending days of that SAME type.
   /// Types without a fixed allocation (e.g. Unpaid Leave, or a configured type
   /// carrying no `days`) fall back to the overall pool remaining. Clamped >= 0.
-  double get _selectedTypeRemaining {
-    final allocated = _allocatedForType(_leaveType);
+  double get _selectedTypeRemaining => _remainingForType(_leaveType);
+
+  /// Remaining balance for [type] this month: its own allocation minus approved
+  /// (taken) and pending days of that SAME type. Types without a fixed
+  /// allocation (e.g. Unpaid Leave) fall back to the overall pool remaining.
+  /// Clamped >= 0.
+  double _remainingForType(String? type) {
+    final allocated = _allocatedForType(type);
     if (allocated == null) {
       final pool = _totalAllowed - _usedLeaveDays - _pendingLeaveDays;
       return pool > 0 ? pool : 0.0;
     }
-    final rem = allocated - _usedForSelectedType - _pendingForSelectedType;
+    final key = _leaveTypeKey(type);
+    final rem =
+        allocated - (_usedByType[key] ?? 0.0) - (_pendingByType[key] ?? 0.0);
     return rem > 0 ? rem : 0.0;
+  }
+
+  /// Leave types the member can pick right now. A capped type whose monthly
+  /// balance is fully consumed (approved + pending >= its allocation) is dropped
+  /// so it can't be selected with no balance left. Uncapped types (e.g. Unpaid
+  /// Leave, which carry no fixed allocation) always remain selectable.
+  List<dynamic> get _selectableTypes => _allowedTypes.where((e) {
+        final type = e is Map ? e['type'] as String? : null;
+        if (_allocatedForType(type) == null) return true; // uncapped
+        return _remainingForType(type) > 0;
+      }).toList();
+
+  /// Keeps [_leaveType] pointing at a still-selectable type after the types or
+  /// balances change; falls back to the first selectable type (or null when the
+  /// member has exhausted every capped type). Call inside setState.
+  void _reconcileSelectedType() {
+    final values = _selectableTypes
+        .map((e) => e is Map ? e['type'] as String? : null)
+        .toList();
+    if (_leaveType != null && values.contains(_leaveType)) return;
+    _leaveType = values.isNotEmpty ? values.first : null;
   }
 
   Widget _buildLimitWarningBanner(String message) {
@@ -2635,8 +2679,16 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
   /// Grey filled Leave Type dropdown card (Figma).
   Widget _buildLeaveTypeDropdown() {
+    final selectable = _selectableTypes;
+    final values = selectable
+        .map((e) => e is Map ? e['type'] as String? ?? '' : '')
+        .toList();
+    // Guard against a transient frame where the prior selection is no longer in
+    // the (balance-filtered) item list — the underlying DropdownButton asserts
+    // the value matches exactly one item.
+    final selected = values.contains(_leaveType) ? _leaveType : null;
     return DropdownButtonFormField<String>(
-      initialValue: _leaveType,
+      initialValue: selected,
       isExpanded: true,
       icon: const Icon(Icons.keyboard_arrow_down_rounded),
       style: const TextStyle(
@@ -2664,7 +2716,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
           vertical: 14,
         ),
       ),
-      items: _allowedTypes.map((e) {
+      items: selectable.map((e) {
         final type = e['type'] as String? ?? '';
         // Show the leave template's total allocated count next to the type.
         // Skip Half Day (its 0.5 is a per-request duration, not an annual
@@ -2804,7 +2856,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back, size: 24),
+                    icon: const Icon(Icons.arrow_back_ios, size: 24),
                     color: AppColors.textPrimary,
                   ),
                   const Text(
@@ -2830,21 +2882,6 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     if (_showLimitWarning)
                       _buildLimitWarningBanner(_limitWarningMsg),
                     if (!_showLimitWarning) const SizedBox(height: 10),
-
-                    // Leave Type
-                    _sectionLabel('Leave Type'),
-                    if (_isLoadingTypes)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        child: Center(child: AppTabLoader()),
-                      )
-                    else if (_allowedTypes.isEmpty)
-                      const Text(
-                        'No leave types available. Please contact HR to assign a leave template.',
-                        style: TextStyle(color: AppColors.error),
-                      )
-                    else
-                      _buildLeaveTypeDropdown(),
                     const SizedBox(height: 20),
 
                     // Leave duration (Full / First Half / Second Half) — applies
@@ -2882,48 +2919,81 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         ),
                       ),
 
-                    // From / To date cards
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: _buildDateCard(
-                            label: isSingle ? 'Date' : 'From',
-                            date: _startDate,
-                            onTap: () => _pickDate(true),
+                    // Date selection: a single "Date" picker for one-day / half-day
+                    // leave, or a "From"/"To" range for multi-day leave.
+                    if (isSingle)
+                      _buildDateCard(
+                        label: 'Date',
+                        date: _startDate,
+                        onTap: () => _pickDate(true),
+                      )
+                    else
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: _buildDateCard(
+                              label: 'From',
+                              date: _startDate,
+                              onTap: () => _pickDate(true),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: _buildDateCard(
-                            label: 'To',
-                            date: isSingle ? _startDate : _endDate,
-                            onTap: isSingle ? null : () => _pickDate(false),
-                            enabled: !isSingle,
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: _buildDateCard(
+                              label: 'To',
+                              date: _endDate,
+                              onTap: () => _pickDate(false),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    if (_startDate != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 10),
-                        child: Text(
-                          _isUnpaidLeave
-                              ? (_isHalf
-                                    ? 'Total: 0.5 day · No balance limit'
-                                    : 'Total: $_days day${_days == 1 ? '' : 's'} · No balance limit')
-                              : _isHalf
-                              ? 'Total: 0.5 day - ${_trimNum(_selectedTypeRemaining)} days remaining'
-                              : 'Total: $_days day${_days == 1 ? '' : 's'} - ${_trimNum(_selectedTypeRemaining)} days remaining',
-                          style: TextStyle(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
+                        ],
                       ),
+                                          const SizedBox(height: 20),
 
-                    const SizedBox(height: 22),
+                    if (_startDate != null)
+                      // Padding(
+                      //   padding: const EdgeInsets.only(top: 10),
+                      //   child: Text(
+                      //     _isUnpaidLeave
+                      //         ? (_isHalf
+                      //               ? 'Total: 0.5 day · No balance limit'
+                      //               : 'Total: $_days day${_days == 1 ? '' : 's'} · No balance limit')
+                      //         : _isHalf
+                      //         ? 'Total: 0.5 day - ${_trimNum(_selectedTypeRemaining)} days remaining'
+                      //         : 'Total: $_days day${_days == 1 ? '' : 's'} - ${_trimNum(_selectedTypeRemaining)} days remaining',
+                      //     style: TextStyle(
+                      //       color: AppColors.primary,
+                      //       fontWeight: FontWeight.bold,
+                      //       fontSize: 13,
+                      //     ),
+                      //   ),
+                      // ),
+
+                   // const SizedBox(height: 22),
+
+                    const SizedBox(height: 20),
+                    // Leave Type
+                    _sectionLabel('Leave Type'),
+                    if (_isLoadingTypes)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Center(child: AppTabLoader()),
+                      )
+                    else if (_allowedTypes.isEmpty)
+                      const Text(
+                        'No leave types available. Please contact HR to assign a leave template.',
+                        style: TextStyle(color: AppColors.error),
+                      )
+                    else if (_selectableTypes.isEmpty)
+                      Text(
+                        'You have used your full leave allocation for '
+                        '${DateFormat('MMMM').format(_balanceMonth)}. '
+                        'No leave type has balance remaining this month.',
+                        style: const TextStyle(color: AppColors.error),
+                      )
+                    else
+                      _buildLeaveTypeDropdown(),
+                    const SizedBox(height: 20),
 
                     // Reason for Leave
                     _sectionLabel('Reason for Leave'),
@@ -4184,21 +4254,22 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 8, 8),
+           Padding(
+              padding: const EdgeInsets.fromLTRB(8, 14, 16, 6),
               child: Row(
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back, size: 24),
+                    icon: const Icon(Icons.arrow_back_ios, size: 24),
                     color: AppColors.textPrimary,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
                   ),
-                  const SizedBox(width: 12),
                   const Text(
                     'Request Loan',
-                    style: AppTextStyles.headingMedium,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
                 ],
               ),
@@ -5542,7 +5613,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back, size: 24),
+                    icon: const Icon(Icons.arrow_back_ios, size: 24),
                     color: AppColors.textPrimary,
                   ),
                   const Text(
@@ -7436,7 +7507,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back, size: 24),
+                    icon: const Icon(Icons.arrow_back_ios, size: 24),
                     color: AppColors.textPrimary,
                   ),
                   const Text(

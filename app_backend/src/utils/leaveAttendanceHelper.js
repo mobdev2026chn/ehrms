@@ -1863,12 +1863,20 @@ const getWorkingSessionTimings = (session, shiftStartTime, shiftEndTime, halfDay
  * @param {Object} [fineConfig] - from getEffectiveFineConfig(company)
  * @returns {{ lateMinutes: number, fineAmount: number }}
  */
-const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePeriodMinutes, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null, dailyGrossForRules = null) => {
+const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePeriodMinutes, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null, dailyGrossForRules = null, businessTimezone = null) => {
     const timings = getWorkingSessionTimings(session, shiftStartTime, shiftEndTime, halfDaySettings);
     if (!timings) return { lateMinutes: 0, fineAmount: 0 };
-    const [startHours, startMins] = timings.startTime.split(':').map(Number);
-    const shiftStart = new Date(attendanceDate);
-    shiftStart.setHours(startHours, startMins, 0, 0);
+    // Session start (e.g. shift start or the midpoint) is in business local time. On a
+    // UTC server, naive setHours would offset it by the TZ gap, so build it in business TZ
+    // (parity with the full-day calculateLateFine path).
+    let shiftStart;
+    if (businessTimezone) {
+        shiftStart = getShiftBoundaryAsUTCDate(attendanceDate, timings.startTime, businessTimezone);
+    } else {
+        const [startHours, startMins] = timings.startTime.split(':').map(Number);
+        shiftStart = new Date(attendanceDate);
+        shiftStart.setHours(startHours, startMins, 0, 0);
+    }
     const graceTimeEnd = new Date(shiftStart);
     graceTimeEnd.setMinutes(graceTimeEnd.getMinutes() + gracePeriodMinutes);
     if (punchInTime <= graceTimeEnd) return { lateMinutes: 0, fineAmount: 0 };
@@ -1896,12 +1904,21 @@ const calculateHalfDayLateFine = (punchInTime, attendanceDate, session, gracePer
  * @param {Object} [fineConfig] - from getEffectiveFineConfig(company)
  * @returns {{ earlyMinutes: number, fineAmount: number }}
  */
-const calculateHalfDayEarlyFine = (punchOutTime, attendanceDate, session, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null, dailyGrossForRules = null) => {
+const calculateHalfDayEarlyFine = (punchOutTime, attendanceDate, session, dailySalary, shiftHours, shiftStartTime, shiftEndTime, fineConfig = null, halfDaySettings = null, dailyGrossForRules = null, businessTimezone = null) => {
     const timings = getWorkingSessionTimings(session, shiftStartTime, shiftEndTime, halfDaySettings);
     if (!timings) return { earlyMinutes: 0, fineAmount: 0 };
-    const [endHours, endMins] = timings.endTime.split(':').map(Number);
-    const shiftEnd = new Date(attendanceDate);
-    shiftEnd.setHours(endHours, endMins, 0, 0);
+    // Working-session end (the midpoint for Second Half leave, shift end for First Half) is in
+    // business local time. On a UTC server, naive setHours offsets it by the TZ gap and turns a
+    // small early-exit into a near-full-shift fine — build it in business TZ instead
+    // (parity with the full-day calculateEarlyFine path).
+    let shiftEnd;
+    if (businessTimezone) {
+        shiftEnd = getShiftBoundaryAsUTCDate(attendanceDate, timings.endTime, businessTimezone);
+    } else {
+        const [endHours, endMins] = timings.endTime.split(':').map(Number);
+        shiftEnd = new Date(attendanceDate);
+        shiftEnd.setHours(endHours, endMins, 0, 0);
+    }
     if (punchOutTime >= shiftEnd) return { earlyMinutes: 0, fineAmount: 0 };
     const earlyMinutes = Math.max(0, Math.round((shiftEnd.getTime() - punchOutTime.getTime()) / (1000 * 60)));
     if (earlyMinutes <= 0) return { earlyMinutes, fineAmount: 0 };

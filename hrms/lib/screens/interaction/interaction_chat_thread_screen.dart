@@ -1683,12 +1683,20 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (!mounted) return;
     if (!await _audioRecorder.hasPermission()) return;
     final dir = await getTemporaryDirectory();
-    // Record AAC/m4a, not Opus/.ogg: the interaction server's upload filter
-    // rejects OGG ("OGG, MP4, and WEBM file formats are not supported"), so an
-    // Opus recording could never be sent. m4a is on the server allowlist.
-    final filePath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    // Record Opus, NOT AAC/m4a. Verified against the live web client
+    // (hrms.askeva.net bundle): a sent voice note is a `audio/webm` Opus blob
+    // (`new Blob(chunks,{type:"audio/webm"})` → `voice-<ts>.webm`), and the
+    // interaction server's CURRENT upload filter accepts that while REJECTING
+    // `audio/x-m4a` AAC ("400 Invalid file type" on every shape). The app can't
+    // emit a WebM container on Android, but Opus is the same codec the web uses;
+    // `record` writes it in an Ogg container (`.ogg`, `audio/ogg`). The upload
+    // (`uploadChatMedia`) leads with the proven-accepted `audio/webm` label and
+    // falls back to `audio/ogg`, so the Opus bytes land in a form the server
+    // takes. (Prior comment claimed the server rejected OGG/WEBM and only took
+    // m4a — that was true once but the server allowlist has since flipped.)
+    final filePath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.ogg';
     await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc),
+      const RecordConfig(encoder: AudioEncoder.opus),
       path: filePath,
     );
     if (mounted) {
@@ -2364,7 +2372,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
 
   Future<void> _sendPendingVoice() async {
     final path = _pendingVoicePath;
-    final name = _pendingVoiceName ?? 'voice.m4a';
+    final name = _pendingVoiceName ?? 'voice.ogg';
     if (path == null || path.isEmpty) return;
     await _upload(path, name, 'voice');
     if (!mounted) return;

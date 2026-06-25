@@ -855,9 +855,24 @@ class _ProfileScreenState extends State<ProfileScreen>
     // Open shift (required hours, no fixed window) or unconfigured timing.
     final st = (wrapper['shiftType'] ?? '').toString().toLowerCase().trim();
     if (st == 'open' || st == 'open shift') {
-      return (label: 'Shift Timing', value: 'Open Shift');
+      final hours = _openShiftHoursLabel(wrapper['workHours']);
+      return (
+        label: 'Shift Timing',
+        value: hours != null ? 'Open Shift · $hours' : 'Open Shift',
+      );
     }
     return (label: 'Shift Timing', value: 'N/A');
+  }
+
+  /// Required-hours label for an open shift, e.g. 9 → "9h/day", 8.5 → "8.5h/day".
+  /// Null when no positive [workHours] is configured.
+  String? _openShiftHoursLabel(dynamic workHours) {
+    final h = workHours is num
+        ? workHours.toDouble()
+        : double.tryParse(workHours?.toString().trim() ?? '');
+    if (h == null || h <= 0) return null;
+    final hStr = h == h.roundToDouble() ? h.toInt().toString() : h.toString();
+    return '${hStr}h/day';
   }
 
   /// General Information card — shows the employee's Shift Timing (from the

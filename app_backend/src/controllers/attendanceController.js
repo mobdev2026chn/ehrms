@@ -1084,7 +1084,7 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
             const { calculateHalfDayLateFine } = require('../utils/leaveAttendanceHelper');
             const halfDayGrace = session === 'First Half Day' ? 0 : gracePeriodMinutes;
-            lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, halfDayGrace, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross);
+            lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, halfDayGrace, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross, businessTimezone);
         } else {
             lateFine = calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, effectiveDailyNet, shiftHours, fineConfig, businessTimezone, isOpenShiftDay, effectiveDailyGross);
         }
@@ -1105,7 +1105,7 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 }
             } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
                 const { calculateHalfDayEarlyFine } = require('../utils/leaveAttendanceHelper');
-                earlyFine = calculateHalfDayEarlyFine(punchOutTime, attendanceDate, session, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross);
+                earlyFine = calculateHalfDayEarlyFine(punchOutTime, attendanceDate, session, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross, businessTimezone);
             } else {
                 earlyFine = calculateEarlyFine(punchOutTime, attendanceDate, shiftEndTime, effectiveDailyNet, shiftHours, fineConfig, businessTimezone, effectiveDailyGross, shiftStartTime);
             }

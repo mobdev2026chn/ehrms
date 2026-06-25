@@ -519,16 +519,36 @@ class InteractionService {
     if (cached != null) {
       add(cached.typeKey, cached.typeValue, cached.fileField);
     }
-    // 1) The intended type, both field-name conventions.
+    // 1) EXACT shape the production web client sends — verified by reading the
+    //    deployed hrms.askeva.net bundle. Its chat send builds:
+    //        const o = new FormData;
+    //        o.append("type", n);      // body field is `type`, NOT `messageType`
+    //        o.append("file", r);      // file part is `file`
+    //    and the server keys its file-type allowlist off `type` (its attach-menu
+    //    config `AFe`):
+    //        type "image"  → image/* AND video/*   ("Photos & videos" picker)
+    //        type "voice"  → audio/*
+    //        type "file"   → documents ONLY (pdf/doc/docx/xls/xlsx/ppt/pptx/
+    //                        txt/csv/zip)
+    //    So VIDEOS must go up as `type:"image"` (the web has no `video`/`file`
+    //    video path) — sending a video as `type:"file"` hits the documents-only
+    //    branch and is rejected "Invalid file type". Map our internal `video`
+    //    onto `image` accordingly; documents stay `file`.
+    final webType = (type == 'image' || type == 'video')
+        ? 'image'
+        : (type == 'voice' ? 'voice' : 'file');
+    add('type', webType, 'file');
+    // 2) The intended type under both field-name conventions, in case a server
+    //    version keys off `messageType` or wants the literal `video`/etc. value.
     add('messageType', type, 'file');
     add('type', type, 'file');
-    // 2) Generic attachment fallbacks so ANY file still posts even when the
+    // 3) Generic attachment fallbacks so ANY file still posts even when the
     //    server doesn't accept the specific type value. `file` and `document`
     //    are the two values HRMS backends use for arbitrary uploads.
     add('messageType', 'file', 'file');
     add('messageType', 'document', 'file');
     add('type', 'document', 'file');
-    // 3) Voice/audio-specific shapes (web records voice as audio).
+    // 4) Voice/audio-specific shapes (web records voice as audio).
     if (type == 'voice') {
       add('messageType', 'audio', 'file');
       add('messageType', 'voice', 'audio');
@@ -541,23 +561,28 @@ class InteractionService {
     final contentType = _resolveMediaType(filename, filePath, type);
 
     // The interaction server's upload filter validates by the file's
-    // Content-Type, NOT by the message-type field — so a picked audio clip in a
-    // format the server doesn't allowlist is rejected as "Invalid file type" on
-    // EVERY field-name shape above. The recorder proves `audio/x-m4a` is on the
-    // server allowlist; a picked `.mp3`/`.aac`/`.wav`/`.ogg` is often not. Probe
-    // the known server-accepted audio types for voice so a picked audio file
-    // still sends even when its native MIME is rejected. Voice/audio clips are
-    // small, so the extra fast-failing attempts are cheap. Non-voice keeps its
-    // single resolved MIME (re-labelling a document/video would corrupt it).
+    // Content-Type, NOT by the message-type field — so an audio clip in a format
+    // the server doesn't allowlist is rejected as "Invalid file type" on EVERY
+    // field-name shape above. VERIFIED current allowlist (from the live web
+    // bundle): the web sends voice as `audio/webm` (Opus) and the server accepts
+    // it; `audio/x-m4a` (AAC) is REJECTED. The app records Opus in an Ogg
+    // container (`.ogg`, `audio/ogg`) since Android can't write WebM. The
+    // resolved MIME of the `.ogg` file is `audio/ogg`, so attempt #1 sends that
+    // honest label; if the server only takes WebM, attempt #2 relabels the same
+    // Opus bytes as the proven-accepted `audio/webm` (Opus plays fine under that
+    // label via content-sniffing). The rest are a safety net for older/other
+    // server versions. Voice clips are small, so the extra fast-failing attempts
+    // are cheap. Non-voice keeps its single resolved MIME (re-labelling a
+    // document/video would corrupt it).
     final mimeCandidates = <DioMediaType?>[contentType];
     if (type == 'voice') {
       for (final m in const [
-        'audio/x-m4a', // what the in-app recorder sends — known accepted
-        'audio/aac',
+        'audio/webm', // proven accepted by the current server (web sends this)
+        'audio/ogg', // the real container the app records Opus into
         'audio/mpeg',
+        'audio/aac',
         'audio/wav',
-        'audio/webm',
-        'audio/ogg',
+        'audio/x-m4a',
       ]) {
         final mt = DioMediaType.parse(m);
         if (!mimeCandidates.any((c) => c?.mimeType == mt.mimeType)) {
@@ -567,13 +592,17 @@ class InteractionService {
     }
 
     // Media uploads need a far more generous timeout than the 45s the client
-    // applies to ordinary JSON calls: a multi-MB document or voice clip over a
-    // mobile network can legitimately take minutes. Without this override a slow
-    // upload is cut mid-transfer and surfaces as "audio not sent" / an endless
-    // attach spinner that ultimately fails.
+    // applies to ordinary JSON calls: a multi-MB document over a mobile network
+    // can legitimately take minutes. Without this override a slow upload is cut
+    // mid-transfer and surfaces as "audio not sent" / an endless attach spinner.
+    // Voice clips are tiny (a few seconds of Opus), so a stall there is the
+    // server choking on the format, not a slow transfer — cap its RESPONSE wait
+    // short so the walk falls through to the next MIME candidate (the proven
+    // `audio/webm`) quickly instead of hanging ~3 min per attempt.
     final uploadOptions = Options(
       sendTimeout: const Duration(minutes: 3),
-      receiveTimeout: const Duration(minutes: 3),
+      receiveTimeout:
+          type == 'voice' ? const Duration(seconds: 30) : const Duration(minutes: 3),
     );
 
     final attemptLog = <String>[];
@@ -642,11 +671,16 @@ class InteractionService {
           if (code == 400 || code == 415 || code == 422 || code == 500) {
             continue;
           }
-          // A timeout means the request never got a response (the file part is
-          // small for voice, so this is the server stalling, not a slow upload).
-          // Re-uploading the same clip through the remaining shapes would just
-          // stall again for minutes each — the "endless loading" symptom. Stop
-          // here and report instead of spinning.
+          // A timeout means no response came back. For voice the clip is tiny,
+          // so a stall is the server choking on THIS format — advance to the
+          // next MIME candidate (the next one is the proven `audio/webm`),
+          // skipping the remaining same-MIME shapes that would stall identically.
+          // For non-voice there's a single MIME, so re-uploading through the
+          // remaining shapes would just stall again for minutes each (the
+          // "endless loading" symptom): stop and report instead of spinning.
+          if (type == 'voice') {
+            break; // breaks the shape loop → outer loop tries the next MIME
+          }
           stop = true;
           break;
         }
@@ -671,15 +705,13 @@ class InteractionService {
     // server rejects. Use a sensible default per message type in that case.
     var mime =
         lookupMimeType(filename) ?? lookupMimeType(filePath) ?? _fallbackMimeForType(type);
-    // The `mime` package maps `.m4a` → `audio/mp4`, but the interaction server's
-    // upload filter rejects anything it reads as MP4 ("OGG, MP4, and WEBM file
-    // formats are not supported"). A browser uploads the same `.m4a` as
-    // `audio/x-m4a`, which is on the server allowlist — so voice works from web
-    // but not the app. Mirror the browser's Content-Type for voice/audio so the
-    // recorded AAC/m4a clip (and picked `.m4a` files) pass the filter.
-    if (type == 'voice' && mime == 'audio/mp4') {
-      mime = 'audio/x-m4a';
-    }
+    // NOTE: the current server allowlist rejects AAC/m4a entirely (both
+    // `audio/mp4` and `audio/x-m4a` come back "Invalid file type"); it accepts
+    // Opus as `audio/webm`/`audio/ogg`. So we deliberately do NOT remap a voice
+    // `audio/mp4` to `audio/x-m4a` anymore — that only produced a guaranteed
+    // first-attempt rejection. A picked `.m4a` keeps its real `audio/mp4` here
+    // and relies on the voice MIME-candidate fallback (webm/ogg) above; the
+    // in-app recorder now writes Opus/`.ogg`, which resolves cleanly.
     if (mime == null) return null;
     try {
       return DioMediaType.parse(mime);
@@ -696,9 +728,10 @@ class InteractionService {
       case 'image':
         return 'image/jpeg';
       case 'voice':
-        // Browser-compatible audio type the server allowlist accepts; never
-        // `audio/mp4`, which the upload filter rejects as an MP4 format.
-        return 'audio/x-m4a';
+        // The current server allowlist accepts Opus as `audio/webm`; the app
+        // records Opus and the upload relabels to `audio/webm` if `audio/ogg`
+        // isn't taken. Never `audio/mp4`/`audio/x-m4a` — both are rejected now.
+        return 'audio/webm';
       default:
         return null;
     }
@@ -765,6 +798,8 @@ class InteractionService {
         return 'wav';
       case 'audio/ogg':
         return 'ogg';
+      case 'audio/webm':
+        return 'webm';
       default:
         return null;
     }
@@ -778,7 +813,7 @@ class InteractionService {
       case 'image':
         return 'jpg';
       case 'voice':
-        return 'm4a';
+        return 'ogg';
       default:
         return null;
     }

@@ -162,12 +162,10 @@ class _HolidaysScreenState extends State<HolidaysScreen>
   List<Holiday> get _upcomingMonthHolidays =>
       _selectedMonthHolidays.where((h) => !h.isPast).toList();
 
-  /// Next upcoming holiday (falls back to the first holiday of the year).
-  Holiday? get _nextHoliday {
-    if (_upcomingHolidays.isNotEmpty) return _upcomingHolidays.first;
-    if (_holidays.isNotEmpty) return _holidays.first;
-    return null;
-  }
+  /// Next upcoming holiday. Returns null when every holiday in the year has
+  /// already passed — the "Coming Soon" card must never surface a past holiday.
+  Holiday? get _nextHoliday =>
+      _upcomingHolidays.isNotEmpty ? _upcomingHolidays.first : null;
 
   Future<void> _showYearPickerSheet(BuildContext context) async {
     final picked = await showModalBottomSheet<int>(
