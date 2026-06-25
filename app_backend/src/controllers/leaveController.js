@@ -1147,22 +1147,11 @@ const createLeave = async (req, res) => {
                 });
             }
 
-            // Session 1 only: block if user has already checked in for that date (attendance has punchIn)
-            if (session === '1') {
-                const startOfDay = new Date(startDateNorm);
-                const endOfDay = new Date(Date.UTC(startDateNorm.getUTCFullYear(), startDateNorm.getUTCMonth(), startDateNorm.getUTCDate(), 23, 59, 59, 999));
-                const todayAttendance = await Attendance.findOne({
-                    $or: [{ employeeId: currentStaffId }, { user: currentStaffId }],
-                    date: { $gte: startOfDay, $lte: endOfDay },
-                    punchIn: { $exists: true, $ne: null }
-                });
-                if (todayAttendance) {
-                    return res.status(400).json({
-                        success: false,
-                        error: { message: 'You are already check in for session 1' }
-                    });
-                }
-            }
+            // Session 1 (First Half Day): the employee is OFF for the first half and
+            // works the second half. Applying it after already punching in is allowed —
+            // an early/accidental punch-in must not block claiming first-half leave. The
+            // half-day fine/attendance logic reconciles the worked half. (Previously this
+            // returned "You are already check in for session 1"; that block is removed.)
 
             // Session 2 (Second Half Day): the employee is off for the second half
             // (midpoint → shift end). Block applying once that second half has already
