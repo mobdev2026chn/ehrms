@@ -1081,10 +1081,16 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         let lateFine;
         if (isOpenShiftDay) {
             lateFine = { lateMinutes: 0, fineAmount: 0 };
-        } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+        } else if (isHalfDay && session === 'First Half Day') {
+            // First Half leave: employee works the SECOND half (midpoint → shift end).
+            // The working-half START is the midpoint, which borders the leave half — do NOT
+            // fine late arrival there. Only the early-exit leg at the real shift end is fined.
+            lateFine = { lateMinutes: 0, fineAmount: 0 };
+        } else if (isHalfDay && session === 'Second Half Day') {
+            // Second Half leave: employee works the FIRST half (shift start → midpoint).
+            // Late arrival is measured at the REAL shift start, so it is fined normally.
             const { calculateHalfDayLateFine } = require('../utils/leaveAttendanceHelper');
-            const halfDayGrace = session === 'First Half Day' ? 0 : gracePeriodMinutes;
-            lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, halfDayGrace, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross, businessTimezone);
+            lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, gracePeriodMinutes, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross, businessTimezone);
         } else {
             lateFine = calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, effectiveDailyNet, shiftHours, fineConfig, businessTimezone, isOpenShiftDay, effectiveDailyGross);
         }
@@ -1103,7 +1109,14 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 if (fineConfig && fineConfig.enabled && shortBy > 0 && effectiveDailyNet > 0) {
                     earlyFine.fineAmount = calculateFineAmount(shortBy, 'earlyExit', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross);
                 }
-            } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+            } else if (isHalfDay && session === 'Second Half Day') {
+                // Second Half leave: employee works the FIRST half (shift start → midpoint).
+                // The working-half END is the midpoint, which borders the leave half — leaving
+                // before it just starts the (leave) second half early, so do NOT fine early exit.
+                earlyFine = { earlyMinutes: 0, fineAmount: 0 };
+            } else if (isHalfDay && session === 'First Half Day') {
+                // First Half leave: employee works the SECOND half (midpoint → shift end).
+                // Early exit is measured at the REAL shift end, so it is fined normally.
                 const { calculateHalfDayEarlyFine } = require('../utils/leaveAttendanceHelper');
                 earlyFine = calculateHalfDayEarlyFine(punchOutTime, attendanceDate, session, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross, businessTimezone);
             } else {
