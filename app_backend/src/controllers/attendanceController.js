@@ -4228,6 +4228,26 @@ const getMonthAttendance = async (req, res) => {
             console.warn('[getMonthAttendance] approved-permission fetch failed:', permFetchErr?.message);
         }
 
+        // Approved HALF-DAY leaves for the month, keyed by business-TZ date → session ('1'/'2').
+        // Used to recompute each day's late/early MINUTES against the WORKED half so the leave
+        // half is deducted (never fined). Needed because the stored fine may have been computed
+        // against the FULL shift — e.g. the punch happened before the half-day leave was approved,
+        // or the leave was approved out-of-band (web admin) which never reruns the punch pipeline.
+        const halfDaySessionByDay = {};
+        try {
+            for (const lv of (leaves || [])) {
+                if (!isHalfDayLeave(lv)) continue;
+                const sess = (lv.session === '1' || lv.session === '2') ? lv.session
+                    : (lv.halfDaySession === 'First Half Day' || lv.halfDayType === 'First Half Day') ? '1'
+                    : (lv.halfDaySession === 'Second Half Day' || lv.halfDayType === 'Second Half Day') ? '2'
+                    : null;
+                if (sess !== '1' && sess !== '2') continue;
+                halfDaySessionByDay[toDateKeyInTimezone(lv.startDate, businessTz)] = sess;
+            }
+        } catch (hdMapErr) {
+            console.warn('[getMonthAttendance] half-day leave map build failed:', hdMapErr?.message);
+        }
+
         for (const doc of attendanceRaw) {
             // Fine enrichment is supplementary to the calendar (it only sets
             // doc.fineAmount). A throw here — e.g. a record with an odd shift config,
@@ -4263,6 +4283,32 @@ const getMonthAttendance = async (req, res) => {
                 const dayApprovedPerms = approvedPermsByDay[permDayKey] || [];
                 const storedWaiveLate = Math.max(0, Number(doc.permissionLateMinutes) || 0);
                 const storedWaiveEarly = Math.max(0, Number(doc.permissionEarlyMinutes) || 0);
+                // Half-day leave day: recompute late/early MINUTES against the WORKED half so the
+                // leave half is DEDUCTED. First Half leave → worked half is midpoint→shiftEnd (late
+                // measured from the midpoint); Second Half leave → shiftStart→midpoint (early to the
+                // midpoint). Runs before the permission waiver so the waiver applies to net minutes.
+                const hdSession = halfDaySessionByDay[permDayKey]
+                    || ((doc.session === '1' || doc.session === '2') ? doc.session : null);
+                if (isEligible && hdSession && doc.punchIn && !isOpenShift) {
+                    try {
+                        const { calculateHalfDayLateFine, calculateHalfDayEarlyFine } = require('../utils/leaveAttendanceHelper');
+                        const sessionEnum = hdSession === '1' ? 'First Half Day' : 'Second Half Day';
+                        const halfDayGrace = sessionEnum === 'First Half Day' ? 0 : (shiftTimings.gracePeriodMinutes ?? 0);
+                        const lf = calculateHalfDayLateFine(new Date(doc.punchIn), new Date(doc.date), sessionEnum, halfDayGrace, dailySalaryForEnrich, shiftHours, shiftTimings.startTime, shiftTimings.endTime, fineConfig, shiftTimings.halfDaySettings, dailyGrossForEnrich, businessTz);
+                        lateMin = Math.max(0, lf?.lateMinutes || 0);
+                        if (doc.punchOut) {
+                            const ef = calculateHalfDayEarlyFine(new Date(doc.punchOut), new Date(doc.date), sessionEnum, dailySalaryForEnrich, shiftHours, shiftTimings.startTime, shiftTimings.endTime, fineConfig, shiftTimings.halfDaySettings, dailyGrossForEnrich, businessTz);
+                            earlyMin = Math.max(0, ef?.earlyMinutes || 0);
+                        } else {
+                            earlyMin = 0;
+                        }
+                        doc.lateMinutes = lateMin;
+                        doc.earlyMinutes = earlyMin;
+                        doc.fineHours = lateMin + earlyMin;
+                    } catch (hdFineErr) {
+                        console.warn('[getMonthAttendance] half-day minute recompute failed:', hdFineErr?.message);
+                    }
+                }
                 if (isEligible && (dayApprovedPerms.length > 0 || storedWaiveLate > 0 || storedWaiveEarly > 0)) {
                     const rawLate = lateMin + storedWaiveLate;
                     const rawEarly = earlyMin + storedWaiveEarly;
