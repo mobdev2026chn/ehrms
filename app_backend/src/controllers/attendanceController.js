@@ -1081,16 +1081,14 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
         let lateFine;
         if (isOpenShiftDay) {
             lateFine = { lateMinutes: 0, fineAmount: 0 };
-        } else if (isHalfDay && session === 'First Half Day') {
-            // First Half leave: employee works the SECOND half (midpoint → shift end).
-            // The working-half START is the midpoint, which borders the leave half — do NOT
-            // fine late arrival there. Only the early-exit leg at the real shift end is fined.
-            lateFine = { lateMinutes: 0, fineAmount: 0 };
-        } else if (isHalfDay && session === 'Second Half Day') {
-            // Second Half leave: employee works the FIRST half (shift start → midpoint).
-            // Late arrival is measured at the REAL shift start, so it is fined normally.
+        } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+            // Half-day leave: fine ONLY the worked half — never the leave half. The worked
+            // half's window is shift-start→midpoint (Second Half leave) or midpoint→shift-end
+            // (First Half leave); calculateHalfDayLateFine measures late arrival against that
+            // half's START, so the leave half is excluded automatically.
             const { calculateHalfDayLateFine } = require('../utils/leaveAttendanceHelper');
-            lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, gracePeriodMinutes, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross, businessTimezone);
+            const halfDayGrace = session === 'First Half Day' ? 0 : gracePeriodMinutes;
+            lateFine = calculateHalfDayLateFine(punchInTime, attendanceDate, session, halfDayGrace, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross, businessTimezone);
         } else {
             lateFine = calculateLateFine(punchInTime, attendanceDate, shiftStartTime, gracePeriodMinutes, effectiveDailyNet, shiftHours, fineConfig, businessTimezone, isOpenShiftDay, effectiveDailyGross);
         }
@@ -1109,14 +1107,11 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
                 if (fineConfig && fineConfig.enabled && shortBy > 0 && effectiveDailyNet > 0) {
                     earlyFine.fineAmount = calculateFineAmount(shortBy, 'earlyExit', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross);
                 }
-            } else if (isHalfDay && session === 'Second Half Day') {
-                // Second Half leave: employee works the FIRST half (shift start → midpoint).
-                // The working-half END is the midpoint, which borders the leave half — leaving
-                // before it just starts the (leave) second half early, so do NOT fine early exit.
-                earlyFine = { earlyMinutes: 0, fineAmount: 0 };
-            } else if (isHalfDay && session === 'First Half Day') {
-                // First Half leave: employee works the SECOND half (midpoint → shift end).
-                // Early exit is measured at the REAL shift end, so it is fined normally.
+            } else if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+                // Half-day leave: early exit is measured against the worked half's END
+                // (the midpoint for Second Half leave, the real shift end for First Half
+                // leave), so leaving early from the worked half is fined and the leave half
+                // is never counted.
                 const { calculateHalfDayEarlyFine } = require('../utils/leaveAttendanceHelper');
                 earlyFine = calculateHalfDayEarlyFine(punchOutTime, attendanceDate, session, effectiveDailyNet, shiftHours, dbShiftStartTime, dbShiftEndTime, fineConfig, dbShiftTimings.halfDaySettings, effectiveDailyGross, businessTimezone);
             } else {
@@ -4856,4 +4851,4 @@ const getFineCalculation = async (req, res) => {
     }
 };
 
-module.exports = { checkIn, checkOut, getTodayAttendance, getAttendanceHistory, getEmployeeAttendance, getMonthAttendance, getFineCalculation };
+module.exports = { checkIn, checkOut, getTodayAttendance, getAttendanceHistory, getEmployeeAttendance, getMonthAttendance, getFineCalculation, calculateCombinedFine };

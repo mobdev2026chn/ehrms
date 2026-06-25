@@ -1558,6 +1558,50 @@ const markAttendanceForApprovedLeave = async (leave) => {
                 }
                 attendance.approvedBy = leave.approvedBy;
                 attendance.approvedAt = leave.approvedAt || new Date();
+                // If the employee already punched in/out before this half-day leave was
+                // approved, the fine was computed against the FULL shift (e.g. late from
+                // the morning shift start). Recompute it against the WORKED half so late/
+                // early are measured from the session boundary (midpoint), not the full day.
+                if (isHalfDayRow && attendance.punchIn) {
+                    try {
+                        const { calculateCombinedFine } = require('../controllers/attendanceController');
+                        const fineTemplate = { shiftStartTime: punchStart, shiftEndTime: punchEnd };
+                        const fineRes = await calculateCombinedFine(
+                            attendance.punchIn,
+                            attendance.punchOut || null,
+                            startOfDay,
+                            fineTemplate,
+                            staff,
+                            company,
+                            leave,
+                            null,
+                            { attendanceId: attendance._id, appliedShiftId: attendance.appliedShiftId || null }
+                        );
+                        if (fineRes) {
+                            const breakFineAmount = Number(attendance.break?.totalBreakFineAmount) || 0;
+                            attendance.lateMinutes = fineRes.lateMinutes ?? 0;
+                            attendance.earlyMinutes = fineRes.earlyMinutes ?? 0;
+                            attendance.fineHours = fineRes.fineHours ?? ((attendance.lateMinutes || 0) + (attendance.earlyMinutes || 0));
+                            attendance.fineAmount = (Number(fineRes.fineAmount) || 0) + breakFineAmount;
+                            attendance.permissionLateMinutes = fineRes.permissionLateMinutes ?? 0;
+                            attendance.permissionEarlyMinutes = fineRes.permissionEarlyMinutes ?? 0;
+                            attendance.permissionApprovedMinutes = fineRes.permissionApprovedMinutes ?? 0;
+                            attendance.permissionConsumedMinutes = fineRes.permissionConsumedMinutes ?? 0;
+                            attendance.permissionRemainingMinutes = fineRes.permissionRemainingMinutes ?? 0;
+                            attendance.permissionFineMinutes = fineRes.permissionFineMinutes ?? 0;
+                            attendance.permissionFineAmount = fineRes.permissionFineAmount ?? 0;
+                            console.log('[LeaveAttendanceHelper] Recomputed half-day fine on approval:', {
+                                attendanceId: String(attendance._id),
+                                session: halfDaySessionValue,
+                                lateMinutes: attendance.lateMinutes,
+                                earlyMinutes: attendance.earlyMinutes,
+                                fineAmount: attendance.fineAmount
+                            });
+                        }
+                    } catch (recErr) {
+                        console.error('[LeaveAttendanceHelper] Half-day fine recompute on approval failed:', recErr?.message);
+                    }
+                }
                 await attendance.save();
             } else {
                 await Attendance.create({
