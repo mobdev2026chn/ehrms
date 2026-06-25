@@ -584,10 +584,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       }
     }
 
-    final selfie = await _capturePermissionSelfie();
-    if (selfie == null || selfie.isEmpty || !mounted) return;
+    // With the in-app selfie step disabled, skip the camera entirely and stamp
+    // the permission without a selfie (empty string); the backend treats the
+    // selfie as optional for permission out/in.
+    String selfie = '';
+    if (AppConstants.enableAttendanceSelfie) {
+      final captured = await _capturePermissionSelfie();
+      if (captured == null || captured.isEmpty || !mounted) return;
+      selfie = captured;
+    }
 
-    // NOTE: face-match (verifyFace) now runs AT SCAN TIME via
+    // NOTE: when enabled, face-match (verifyFace) runs AT SCAN TIME via
     // SelfieCameraScreen.onCaptured (_verifyPermissionFace) — so a non-matching
     // face is rejected on the camera, before this stamp ever runs. No re-check here.
 

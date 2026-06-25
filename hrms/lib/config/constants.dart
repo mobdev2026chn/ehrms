@@ -97,6 +97,15 @@ class AppConstants {
   /// (face_verify/venv, or FACE_PYTHON_BIN) — see face_verify/setup_engine.sh.
   static const bool enableAttendanceFaceMatching = true;
 
+  /// Master switch for the in-app selfie step on punch, break and custom
+  /// permission. When false (current product decision), the app NEVER opens the
+  /// selfie camera for these actions — punch/break/permission submit straight
+  /// through WITHOUT a selfie (and without the scan-time face-match, which can
+  /// only run on a captured selfie). The backend treats the selfie as optional
+  /// for these flows, while web / face-kiosk entry points still capture & store
+  /// selfies. Set true to restore the in-app selfie + face-match step.
+  static const bool enableAttendanceSelfie = false;
+
   /// Cross-user face check (anti buddy-punch): before a punch/break the app asks
   /// the Face backend whether the captured face is the logged-in user and NOT a
   /// different enrolled employee. EHRMS's own verify-face is 1-to-1 (self only);

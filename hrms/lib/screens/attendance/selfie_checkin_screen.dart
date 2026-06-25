@@ -721,8 +721,12 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   bool get _isCheckOutDisabled => _isCheckedIn && !_checkOutAllowed;
 
   /// Selfie is required on both punch-in and punch-out (when the template asks
-  /// for it) so image-based face validation runs on every punch.
-  bool get _requireSelfieForCurrentAction => _template?['requireSelfie'] ?? true;
+  /// for it) so image-based face validation runs on every punch — but only while
+  /// the app-wide selfie step is enabled. With AppConstants.enableAttendanceSelfie
+  /// off, no punch ever asks for a selfie (the selfie card is hidden and the punch
+  /// submits without one).
+  bool get _requireSelfieForCurrentAction =>
+      AppConstants.enableAttendanceSelfie && (_template?['requireSelfie'] ?? true);
   bool get _isButtonDisabled =>
       _isCompleted ||
       _isLoading ||

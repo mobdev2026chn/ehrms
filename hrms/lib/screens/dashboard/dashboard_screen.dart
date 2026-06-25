@@ -1412,7 +1412,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _submitBreakFromFile(
-    File file, {
+    File? file, {
     required bool isEnding,
     required Map<String, dynamic>? activeBreak,
     _ResolvedLocation? prefetchedLocation,
@@ -1432,11 +1432,16 @@ class _DashboardScreenState extends State<DashboardScreen>
       return;
     }
 
-    final selfieBytes = await file.readAsBytes();
-    if (!mounted) return;
-    final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(
-      selfieBytes,
-    );
+    // When the in-app selfie step is disabled, [file] is null and the break is
+    // submitted without a selfie (empty string); the backend treats it as optional.
+    String selfie = '';
+    if (file != null) {
+      final selfieBytes = await file.readAsBytes();
+      if (!mounted) return;
+      selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(
+        selfieBytes,
+      );
+    }
     if (!mounted) return;
     // NOTE: face-match (verifyFace) + buddy-punch identity guard now run AT SCAN
     // TIME via SelfieCameraScreen.onCaptured (_verifyBreakFace) — so a wrong/other
@@ -1524,48 +1529,52 @@ class _DashboardScreenState extends State<DashboardScreen>
     Future<String?>? infoTextFuture,
     String? noticeText,
   }) async {
-    // Require one-time face enrollment before the break face check.
-    if (!await FaceEnrollmentGate.ensureEnrolled(context, actionLabel: 'break')) {
-      return;
-    }
-    if (!mounted) return;
     _ResolvedLocation? latestLocation;
-    final result = await SelfieCameraScreen.captureSelfie(
-      context,
-      title: isEnding ? 'End Break' : 'Start Break',
-      loadLocationOnOpen: true,
-      infoText: infoText,
-      infoTextFuture: infoTextFuture,
-      noticeText: noticeText,
-      onRefreshLocation: () async {
-        final location = await _getCurrentLocation();
-        latestLocation = location;
-        final formatted = _formatLocationText(location);
-        return formatted.isEmpty ? null : formatted;
-      },
-      // Face-match + buddy-punch identity guard at SCAN TIME, so a non-matching
-      // face is rejected on the camera (error shown + scan re-arms) instead of
-      // only after the break selfie is submitted.
-      onCaptured: _verifyBreakFace,
-    );
-    if (!mounted) return;
-
     File? file;
-    if (result is File) {
-      file = result;
-    } else if (identical(result, useImagePickerFallback)) {
-      final pickedFile = await ImagePicker().pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.front,
-        imageQuality: 85,
-        maxWidth: 1024,
+    // With the in-app selfie step disabled, skip the camera entirely and submit the
+    // break without a selfie (location still resolved inside _submitBreakFromFile).
+    if (AppConstants.enableAttendanceSelfie) {
+      // Require one-time face enrollment before the break face check.
+      if (!await FaceEnrollmentGate.ensureEnrolled(context, actionLabel: 'break')) {
+        return;
+      }
+      if (!mounted) return;
+      final result = await SelfieCameraScreen.captureSelfie(
+        context,
+        title: isEnding ? 'End Break' : 'Start Break',
+        loadLocationOnOpen: true,
+        infoText: infoText,
+        infoTextFuture: infoTextFuture,
+        noticeText: noticeText,
+        onRefreshLocation: () async {
+          final location = await _getCurrentLocation();
+          latestLocation = location;
+          final formatted = _formatLocationText(location);
+          return formatted.isEmpty ? null : formatted;
+        },
+        // Face-match + buddy-punch identity guard at SCAN TIME, so a non-matching
+        // face is rejected on the camera (error shown + scan re-arms) instead of
+        // only after the break selfie is submitted.
+        onCaptured: _verifyBreakFace,
       );
       if (!mounted) return;
-      if (pickedFile != null) {
-        file = File(pickedFile.path);
+
+      if (result is File) {
+        file = result;
+      } else if (identical(result, useImagePickerFallback)) {
+        final pickedFile = await ImagePicker().pickImage(
+          source: ImageSource.camera,
+          preferredCameraDevice: CameraDevice.front,
+          imageQuality: 85,
+          maxWidth: 1024,
+        );
+        if (!mounted) return;
+        if (pickedFile != null) {
+          file = File(pickedFile.path);
+        }
       }
+      if (file == null) return;
     }
-    if (file == null) return;
 
     // Authoritative validation ran WHILE the camera was initializing; enforce it
     // now (before submit) so the camera could open instantly without waiting.
@@ -3732,7 +3741,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                               stored['template'] as Map,
                             ))
                     : null;
-                final requireSelfie = template?['requireSelfie'] ?? true;
+                // The app-wide selfie step gates the template flag: with
+                // AppConstants.enableAttendanceSelfie off, punch never opens the
+                // camera and submits without a selfie.
+                final requireSelfie = AppConstants.enableAttendanceSelfie &&
+                    (template?['requireSelfie'] ?? true);
                 final requireGeolocation =
                     template?['requireGeolocation'] ?? true;
                 punchFlowLog(

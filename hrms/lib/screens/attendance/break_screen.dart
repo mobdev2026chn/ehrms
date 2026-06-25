@@ -367,7 +367,7 @@ class _BreakScreenState extends State<BreakScreen> {
     if (_isOnBreak && mounted) {
       setState(() => _endClickTime = clickInstant);
     }
-    if (_imageFile == null) {
+    if (AppConstants.enableAttendanceSelfie && _imageFile == null) {
       if (mounted) setState(() => _endClickTime = null);
       SnackBarUtils.showSnackBar(
         context,
@@ -390,7 +390,11 @@ class _BreakScreenState extends State<BreakScreen> {
       }
     }
 
-    final selfie = await _encodeSelfie();
+    // When the in-app selfie step is disabled, submit the break without a selfie
+    // (empty string); the backend treats it as optional for breaks.
+    final selfie = AppConstants.enableAttendanceSelfie
+        ? await _encodeSelfie()
+        : '';
     if (selfie == null) {
       if (mounted) setState(() => _endClickTime = null);
       return;
@@ -768,8 +772,10 @@ class _BreakScreenState extends State<BreakScreen> {
                       ),
                       const SizedBox(height: 16),
                     ],
-                    _buildSelfieCard(),
-                    const SizedBox(height: 20),
+                    if (AppConstants.enableAttendanceSelfie) ...[
+                      _buildSelfieCard(),
+                      const SizedBox(height: 20),
+                    ],
                     _buildLocationCard(),
                     const SizedBox(height: 24),
                     ElevatedButton(

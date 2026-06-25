@@ -6856,9 +6856,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
     if (!mounted) return;
 
-    // Selfie is required only on punch-out, not on punch-in.
-    final requireSelfie =
-        isCheckedIn ? (_attendanceTemplate?['requireSelfie'] ?? true) : false;
+    // Selfie is required only on punch-out, not on punch-in — and only when the
+    // app-wide selfie step is enabled. With AppConstants.enableAttendanceSelfie
+    // off, punch never opens the camera (submits without a selfie).
+    final requireSelfie = AppConstants.enableAttendanceSelfie &&
+        (isCheckedIn ? (_attendanceTemplate?['requireSelfie'] ?? true) : false);
     final requireGeolocation =
         _attendanceTemplate?['requireGeolocation'] ?? true;
     if (kDebugMode) {

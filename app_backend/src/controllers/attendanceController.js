@@ -1790,9 +1790,10 @@ const checkIn = async (req, res) => {
                 ? selfieInput.length > 0
                 : String(selfieInput).trim().length > 0)
         );
-        if (template.requireSelfie !== false && !hasSelfiePayload) {
-            return res.status(400).json({ message: 'Selfie is required for check-in.' });
-        }
+        // Selfie is OPTIONAL: the EHRMS app no longer captures a punch selfie. A
+        // provided selfie (face-kiosk / web / software) is still validated & stored
+        // below; when absent the check-in proceeds without one. (The block fired only
+        // for no-selfie clients, which is now the intended app behaviour.)
         console.log('[Attendance checkIn] start', {
             staffId: staffId?.toString(),
             contentLength: req.headers['content-length'],
@@ -2606,13 +2607,8 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
         attendanceId: attendance._id?.toString(),
     });
 
-    const hasCheckOutSelfiePayload = Boolean(
-        selfie &&
-        (Buffer.isBuffer(selfie) ? selfie.length > 0 : String(selfie).trim().length > 0)
-    );
-    if (template.requireSelfie !== false && !hasCheckOutSelfiePayload) {
-        return res.status(400).json({ message: 'Selfie is required for check-out.' });
-    }
+    // Selfie is OPTIONAL (see check-in): proceed without one when the app sends no
+    // selfie; a provided selfie is still validated & stored below.
 
     // Half Day: allow updating punchOut even if already set (update existing record)
     const isHalfDayStatus = attendance && String(attendance.status || '').trim().toLowerCase() === 'half day';

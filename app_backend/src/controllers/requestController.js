@@ -1473,10 +1473,9 @@ const stampPermissionOverrunMinutesToAttendance = async (employeeId) => {
 // @access  Private
 const permissionOut = async (req, res) => {
     try {
+        // Selfie is OPTIONAL: the EHRMS app no longer captures a permission selfie.
+        // A provided selfie (e.g. face-kiosk) is still stored & rolled forward below.
         const { selfie } = req.body || {};
-        if (!selfie || !String(selfie).trim()) {
-            return res.status(400).json({ success: false, error: { message: 'Selfie is required' } });
-        }
         const permission = await loadOwnTodayPermission(req, res);
         if (!permission) return; // response already sent
         if (permission.actualOutAt) {
@@ -1488,12 +1487,15 @@ const permissionOut = async (req, res) => {
             permission.employeeId, 'out', permission.actualOutAt, selfie, permission.requestedMinutes
         );
         // Roll the face-validation reference forward to this permission-out selfie
-        // (uploads it to Spaces off the response path). Fire-and-forget.
-        void rollFaceReferenceFromSelfie(
-            permission.employeeId, selfie, req,
-            req.staff?.businessId ? String(req.staff.businessId) : undefined,
-            req.staff?.name, 'permission-out'
-        );
+        // (uploads it to Spaces off the response path). Fire-and-forget. Skipped
+        // when no selfie was sent.
+        if (selfie && String(selfie).trim()) {
+            void rollFaceReferenceFromSelfie(
+                permission.employeeId, selfie, req,
+                req.staff?.businessId ? String(req.staff.businessId) : undefined,
+                req.staff?.name, 'permission-out'
+            );
+        }
         return res.json({ success: true, data: { permission } });
     } catch (error) {
         console.error('Permission Out Error:', error);
@@ -1509,10 +1511,9 @@ const permissionOut = async (req, res) => {
 // @access  Private
 const permissionIn = async (req, res) => {
     try {
+        // Selfie is OPTIONAL (see permissionOut): proceed without one when the app
+        // sends no selfie; a provided selfie is still stored & rolled forward below.
         const { selfie } = req.body || {};
-        if (!selfie || !String(selfie).trim()) {
-            return res.status(400).json({ success: false, error: { message: 'Selfie is required' } });
-        }
         const permission = await loadOwnTodayPermission(req, res);
         if (!permission) return; // response already sent
         if (!permission.actualOutAt) {
@@ -1534,12 +1535,15 @@ const permissionIn = async (req, res) => {
         // Reflect the overrun minutes on today's attendance immediately (amount settles
         // at checkout). Only meaningful once this request is Approved.
         await stampPermissionOverrunMinutesToAttendance(permission.employeeId);
-        // Roll the face-validation reference forward to this permission-in selfie. Fire-and-forget.
-        void rollFaceReferenceFromSelfie(
-            permission.employeeId, selfie, req,
-            req.staff?.businessId ? String(req.staff.businessId) : undefined,
-            req.staff?.name, 'permission-in'
-        );
+        // Roll the face-validation reference forward to this permission-in selfie.
+        // Fire-and-forget. Skipped when no selfie was sent.
+        if (selfie && String(selfie).trim()) {
+            void rollFaceReferenceFromSelfie(
+                permission.employeeId, selfie, req,
+                req.staff?.businessId ? String(req.staff.businessId) : undefined,
+                req.staff?.name, 'permission-in'
+            );
+        }
         // Canonical "approved permission time exceeded by N minutes" notice when the
         // employee was out longer than the requested/approved window — surfaced by the
         // app + face kiosk verbatim. The rupee amount still settles at checkout.

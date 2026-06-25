@@ -6,8 +6,7 @@ const Attendance = require('../models/Attendance');
 const AttendanceLog = require('../models/AttendanceLog');
 const digitalOceanService = require('../services/digitalOceanService');
 const { getEffectiveFineConfig, calculateFineAmount } = require('../utils/fineCalculationHelper');
-const { getShiftTimings, calculateWorkHoursFromShift, isHalfDayLeave } = require('../utils/leaveAttendanceHelper');
-const Leave = require('../models/Leave');
+const { getShiftTimings, calculateWorkHoursFromShift } = require('../utils/leaveAttendanceHelper');
 const { setFaceReferenceUrl } = require('../utils/faceReference');
 const {
     breakExceeded,
@@ -235,28 +234,6 @@ async function getBreakFineContext(staff, dayDate) {
         .lean();
     const payrollFineConfig = getEffectiveFineConfig(company || {});
 
-    // Half-day leave day: the employee works only one half, so every fine input is scoped
-    // to the working half — break allowance, per-day salary and shift hours are halved
-    // (parity with the late/early/permission half-day handling in calculateCombinedFine).
-    // Half-day is a DURATION on any leave type, detected from the record (not the name).
-    let isHalfDayLeaveDay = false;
-    try {
-        if (staff?._id && dayDate) {
-            const d = new Date(dayDate);
-            const startOfDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
-            const endOfDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
-            const leaveForDay = await Leave.findOne({
-                employeeId: staff._id,
-                status: { $regex: /^approved$/i },
-                startDate: { $lte: endOfDay },
-                endDate: { $gte: startOfDay }
-            }).lean();
-            isHalfDayLeaveDay = isHalfDayLeave(leaveForDay);
-        }
-    } catch (hdErr) {
-        console.error('[Break Fine] half-day leave lookup failed, treating as full day:', hdErr?.message);
-    }
-
     let dailyNet = 0;
     let dailyGross = 0;
     if (staff?.salary) {
@@ -321,15 +298,6 @@ async function getBreakFineContext(staff, dayDate) {
     } else {
         effectiveAllowedBreakMin = DEFAULT_BREAK_ALLOWED_MINUTES;      // legacy null
     }
-    // Scope the break allowance (and salary base) to the working half on a half-day leave
-    // day so only that half's break overage is fined — never the half the employee is on
-    // leave. Halving salary AND shift hours leaves the per-minute fine rate unchanged; the
-    // substantive effect is the proportional (half) break allowance.
-    if (isHalfDayLeaveDay) {
-        effectiveAllowedBreakMin = Math.round(effectiveAllowedBreakMin / 2);
-        if (dailyNet > 0) dailyNet = dailyNet / 2;
-        if (dailyGross > 0) dailyGross = dailyGross / 2;
-    }
     const isUnlimitedBreak = false;
     // Fines apply (open shifts always excluded — break time is captured by the
     // early-exit shortfall there) when:
@@ -380,8 +348,6 @@ async function getBreakFineContext(staff, dayDate) {
         const fixedHours = calculateWorkHoursFromShift(shiftTiming?.startTime || '09:30', shiftTiming?.endTime || '18:30');
         if (Number.isFinite(fixedHours) && fixedHours > 0) shiftHours = fixedHours;
     }
-    // Working half is ~half the shift length (rate-neutral with the halved salary above).
-    if (isHalfDayLeaveDay && shiftHours > 0) shiftHours = shiftHours / 2;
 
     return {
         allowedBreakMin,
@@ -690,9 +656,9 @@ exports.startBreak = async (req, res) => {
         if (latitude === undefined || longitude === undefined) {
             return res.status(400).json({ success: false, message: 'Location coordinates are missing' });
         }
-        if (!selfie) {
-            return res.status(400).json({ success: false, message: 'Break start selfie is required' });
-        }
+        // Selfie is OPTIONAL for breaks: the EHRMS app no longer captures a selfie
+        // for break/punch/permission. When a selfie IS sent (e.g. face-kiosk), it is
+        // still stored & uploaded below; when absent the break proceeds without one.
 
         const staff = await Staff.findById(req.staff._id).select('_id businessId name email userId appPerDayNetSalary appPerdayGrossSalary salary joiningDate shiftId shiftName');
         if (!staff?.businessId) {
@@ -829,9 +795,8 @@ exports.endBreak = async (req, res) => {
         if (latitude === undefined || longitude === undefined) {
             return res.status(400).json({ success: false, message: 'Location coordinates are missing' });
         }
-        if (!selfie) {
-            return res.status(400).json({ success: false, message: 'Kindly End the Break' });
-        }
+        // Selfie is OPTIONAL for breaks (see startBreak): proceed without one when
+        // the app sends no selfie; a provided selfie is still stored below.
 
         const staff = await Staff.findById(req.staff._id).select('_id businessId name email userId appPerDayNetSalary appPerdayGrossSalary salary joiningDate shiftId shiftName');
         if (!staff?.businessId) {
