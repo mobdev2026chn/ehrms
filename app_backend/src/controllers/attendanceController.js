@@ -1119,6 +1119,30 @@ async function calculateCombinedFine(punchInTime, punchOutTime, attendanceDate, 
             }
         }
 
+        // VALIDATION (half-day): the fine only covers the WORKED half, so late/early can
+        // never exceed that half's window — the leave half must be deducted. If any value
+        // exceeds it (e.g. a path that measured from the full-shift morning start), clamp it
+        // to the worked-half length so a half-day day is never fined as a full day.
+        if (isHalfDay && (session === 'First Half Day' || session === 'Second Half Day')) {
+            const workedHalfMinutes = Math.max(0, Math.round((Number(shiftHours) || 0) * 60));
+            if (workedHalfMinutes > 0) {
+                if ((lateFine.lateMinutes || 0) > workedHalfMinutes) {
+                    console.log('[Fine][half-day][validation] late clamped from', lateFine.lateMinutes, 'to worked-half window', workedHalfMinutes);
+                    lateFine.lateMinutes = workedHalfMinutes;
+                    lateFine.fineAmount = (fineConfig && fineConfig.enabled && effectiveDailyNet > 0)
+                        ? calculateFineAmount(workedHalfMinutes, 'lateArrival', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross)
+                        : 0;
+                }
+                if ((earlyFine.earlyMinutes || 0) > workedHalfMinutes) {
+                    console.log('[Fine][half-day][validation] early clamped from', earlyFine.earlyMinutes, 'to worked-half window', workedHalfMinutes);
+                    earlyFine.earlyMinutes = workedHalfMinutes;
+                    earlyFine.fineAmount = (fineConfig && fineConfig.enabled && effectiveDailyNet > 0)
+                        ? calculateFineAmount(workedHalfMinutes, 'earlyExit', fineConfig, effectiveDailyNet, shiftHours, effectiveDailyGross)
+                        : 0;
+                }
+            }
+        }
+
         // Permission allowance is a MONTHLY quota (parity with the Request module /
         // getPermissionBalance). An approved permission excuses late/early up to the
         // remaining monthly quota; only minutes consumed BEYOND the monthly quota are
@@ -3360,6 +3384,85 @@ const getTodayAttendance = async (req, res) => {
         const shiftEndForLeave = dbShiftTimingsForLeave.endTime || null;
         const halfDaySettingsForLeave = dbShiftTimingsForLeave.halfDaySettings || null;
         const businessTimezone = getBusinessTimezone(company) || 'Asia/Kolkata';
+
+        // Reconcile a half-day leave that was approved AFTER the employee punched in (or
+        // approved out-of-band, e.g. on the web admin, which never reruns the punch-time
+        // fine pipeline). In that case the stored fine was computed against the FULL shift
+        // (late from the morning shift start) and the record's session doesn't yet match the
+        // leave. Recompute the fine against the WORKED half so late/early are measured from
+        // the session boundary, and stamp the session so this runs once (not every read).
+        try {
+            const { isHalfDayLeave: isHalfDayLeaveForRead, getWorkingSessionTimings: getWorkingSessionTimingsForRead } = require('../utils/leaveAttendanceHelper');
+            const leaveSessionForFine = activeLeave ? resolveSession(activeLeave) : null;
+            const isHalfDayLeaveForFine = activeLeave && isHalfDayLeaveForRead(activeLeave);
+            // Worked-half window length (minutes). Stored late/early above this means the
+            // leave half was NOT deducted (fine measured from the full-shift start) — recompute
+            // even when the session is already stamped, so a stale full-shift fine is corrected.
+            let workedHalfMinutesRead = null;
+            if (isHalfDayLeaveForFine) {
+                const sessionEnum = leaveSessionForFine === '1' ? 'First Half Day' : leaveSessionForFine === '2' ? 'Second Half Day' : null;
+                const wt = sessionEnum ? getWorkingSessionTimingsForRead(sessionEnum, shiftStartForLeave, shiftEndForLeave, halfDaySettingsForLeave) : null;
+                if (wt && wt.startTime && wt.endTime) {
+                    const [ws, wsm] = wt.startTime.split(':').map(Number);
+                    const [we, wem] = wt.endTime.split(':').map(Number);
+                    workedHalfMinutesRead = Math.max(0, (we * 60 + wem) - (ws * 60 + wsm));
+                }
+            }
+            const storedLateRead = Math.max(0, Number(attendance?.lateMinutes) || 0);
+            const storedEarlyRead = Math.max(0, Number(attendance?.earlyMinutes) || 0);
+            const sessionMismatch = String(attendance?.session || '') !== String(leaveSessionForFine || '');
+            const minutesExceedHalf = workedHalfMinutesRead != null &&
+                (storedLateRead > workedHalfMinutesRead || storedEarlyRead > workedHalfMinutesRead);
+            if (
+                isHalfDayLeaveForFine &&
+                attendance && attendance.punchIn && typeof attendance.save === 'function' &&
+                (sessionMismatch || minutesExceedHalf)
+            ) {
+                const fineTemplate = {
+                    shiftStartTime: shiftStartForLeave || attendanceTemplateLeanEarly?.shiftStartTime || '09:30',
+                    shiftEndTime: shiftEndForLeave || attendanceTemplateLeanEarly?.shiftEndTime || '18:30',
+                    gracePeriodMinutes: dbShiftTimingsForLeave?.gracePeriodMinutes ?? 0
+                };
+                const fineRes = await calculateCombinedFine(
+                    attendance.punchIn,
+                    attendance.punchOut || null,
+                    attendance.date || startOfDay,
+                    fineTemplate,
+                    staff,
+                    company,
+                    activeLeave,
+                    null,
+                    { attendanceId: attendance._id, appliedShiftId: attendance.appliedShiftId || null }
+                );
+                if (fineRes) {
+                    const breakFineAmount = Number(attendance.break?.totalBreakFineAmount) || 0;
+                    attendance.lateMinutes = fineRes.lateMinutes ?? 0;
+                    attendance.earlyMinutes = fineRes.earlyMinutes ?? 0;
+                    attendance.fineHours = fineRes.fineHours ?? ((attendance.lateMinutes || 0) + (attendance.earlyMinutes || 0));
+                    attendance.fineAmount = (Number(fineRes.fineAmount) || 0) + breakFineAmount;
+                    attendance.permissionLateMinutes = fineRes.permissionLateMinutes ?? 0;
+                    attendance.permissionEarlyMinutes = fineRes.permissionEarlyMinutes ?? 0;
+                    attendance.permissionApprovedMinutes = fineRes.permissionApprovedMinutes ?? 0;
+                    attendance.permissionConsumedMinutes = fineRes.permissionConsumedMinutes ?? 0;
+                    attendance.permissionRemainingMinutes = fineRes.permissionRemainingMinutes ?? 0;
+                    attendance.permissionFineMinutes = fineRes.permissionFineMinutes ?? 0;
+                    attendance.permissionFineAmount = fineRes.permissionFineAmount ?? 0;
+                    // Stamp the worked-half session so the guard above trips only once.
+                    attendance.session = leaveSessionForFine;
+                    attendance.halfDaySession = resolveHalfDayDisplay(activeLeave);
+                    try { await attendance.save(); } catch (saveErr) { console.warn('[getStatus] half-day fine persist failed:', saveErr?.message); }
+                    console.log('[getStatus] Recomputed half-day fine for worked half:', {
+                        attendanceId: String(attendance._id),
+                        session: attendance.session,
+                        lateMinutes: attendance.lateMinutes,
+                        earlyMinutes: attendance.earlyMinutes,
+                        fineAmount: attendance.fineAmount
+                    });
+                }
+            }
+        } catch (hdFineErr) {
+            console.warn('[getStatus] half-day fine recompute on read failed:', hdFineErr?.message);
+        }
 
         // Device local time HH:mm (24h) for half-day check when server Intl timezone is unreliable
         let clientCurrentMinutesOverride = null;
