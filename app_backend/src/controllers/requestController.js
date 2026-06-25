@@ -1211,25 +1211,44 @@ const createPermissionRequest = async (req, res) => {
         const attendanceDate = new Date(date);
         attendanceDate.setHours(0, 0, 0, 0);
 
-        // Permission can only be applied during an ACTIVE work session: after the
-        // employee has punched in for TODAY and before they punch out. Before
-        // punch-in (no session yet) or after punch-out (session closed) the apply
-        // is rejected. Uses the same UTC day-bucket as the attendance punch log so
-        // the right record is matched.
+        // Permission eligibility by date + punch status, mirroring the app matrix:
+        //  - Future date: only Late Arrival can be planned ahead (no punch needed).
+        //  - Today before punch-in: only Late Arrival.
+        //  - Today active session (punched in, not out): all types.
+        //  - Today after punch-out: none (the day is closed).
+        // Past dates are not offered by the app and are left to admin policy.
+        // Uses the same UTC day-bucket as the attendance punch log to match records.
         {
             const now = new Date();
-            const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
-            const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
-            const todayAttendance = await Attendance.findOne({
-                employeeId,
-                date: { $gte: startOfDay, $lte: endOfDay }
-            }).select('punchIn punchOut');
-            if (!todayAttendance || !todayAttendance.punchIn) {
-                return res.status(400).json({ success: false, error: { message: 'You can apply for permission only after punching in.' } });
+            const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+            const endOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+
+            // Day-bucket of the requested permission date (UTC) vs today.
+            const reqDate = new Date(date);
+            const reqDay = new Date(Date.UTC(reqDate.getUTCFullYear(), reqDate.getUTCMonth(), reqDate.getUTCDate(), 0, 0, 0, 0));
+            const isFuture = reqDay.getTime() > startOfToday.getTime();
+            const isToday = reqDay.getTime() === startOfToday.getTime();
+
+            if (isFuture) {
+                if (String(type) !== 'lateArrival') {
+                    return res.status(400).json({ success: false, error: { message: 'Only Late Arrival permission can be applied for future dates.' } });
+                }
+                // Future Late Arrival — no punch requirement.
+            } else if (isToday) {
+                const todayAttendance = await Attendance.findOne({
+                    employeeId,
+                    date: { $gte: startOfToday, $lte: endOfToday }
+                }).select('punchIn punchOut');
+                const punchedIn = !!(todayAttendance && todayAttendance.punchIn);
+                const punchedOut = !!(todayAttendance && todayAttendance.punchOut);
+                if (punchedOut) {
+                    return res.status(400).json({ success: false, error: { message: 'Attendance is closed for today. Permission can no longer be applied.' } });
+                }
+                if (!punchedIn && String(type) !== 'lateArrival') {
+                    return res.status(400).json({ success: false, error: { message: 'Early Exit and Custom permissions can only be applied after punching in.' } });
+                }
             }
-            if (todayAttendance.punchOut) {
-                return res.status(400).json({ success: false, error: { message: 'You can apply for permission only before punching out.' } });
-            }
+            // Past dates are not gated here — governed by company/admin policy.
         }
 
         // Permission requests are ALWAYS allowed (all 4 policy scenarios). The policy

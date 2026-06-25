@@ -6728,6 +6728,12 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       _shiftEndMinutes = shiftEndMinutes;
       _punchedInToday = punchedIn;
       _punchedOutToday = punchedOut;
+      // Punch state just resolved — if today is closed/before punch-in, Early
+      // Exit / Custom are no longer offered, so coerce a stale selection back to
+      // Late Arrival to keep the dropdown value valid.
+      if (!_earlyAndCustomAllowed() && _type != 'lateArrival') {
+        _type = 'lateArrival';
+      }
     });
   }
 
@@ -6777,6 +6783,51 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       return 'A permission request must be submitted before its time period '
           'begins. The requested time has already passed for today — please '
           'request it for a future date.';
+    }
+    return null;
+  }
+
+  /// Early Exit and Custom permissions are tied to an active work session, so
+  /// they are only offered for TODAY while a session is open (punched in, not
+  /// yet out). Future dates — and today before punch-in — allow Late Arrival
+  /// only. Unknown punch state for today fails open (the backend re-checks).
+  bool _earlyAndCustomAllowed() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d = DateTime(_date.year, _date.month, _date.day);
+    if (d.isAfter(today)) return false; // future → Late Arrival only
+    if (_punchedOutToday == true) return false; // today, attendance closed
+    if (_punchedInToday == false) return false; // today, before punch-in
+    return true; // active session today, or state still loading (fail open)
+  }
+
+  /// Validates the selected permission type against the date + punch context,
+  /// per the permission matrix: future dates allow Late Arrival only; today
+  /// allows Early Exit / Custom only during an active session (after punch-in,
+  /// before punch-out); after punch-out nothing is allowed. Returns an error
+  /// message to show, or null when the request may proceed.
+  String? _permissionEligibilityError() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d = DateTime(_date.year, _date.month, _date.day);
+
+    if (d.isAfter(today)) {
+      // Future date — only Late Arrival can be planned ahead.
+      if (_type == 'lateArrival') return null;
+      return _type == 'earlyExit'
+          ? 'Early Exit permission can only be applied on the working day after punching in.'
+          : 'Custom permission can only be applied on the working day after punching in.';
+    }
+
+    // Today (past dates aren't selectable). After punch-out the day is closed.
+    if (_punchedOutToday == true) {
+      return 'Attendance is closed for today. Permission can no longer be applied.';
+    }
+    // Before punch-in only Late Arrival is allowed.
+    if (_punchedInToday == false && _type != 'lateArrival') {
+      return _type == 'earlyExit'
+          ? 'Early Exit permission can only be applied after punching in.'
+          : 'Custom permission can only be applied after punching in.';
     }
     return null;
   }
@@ -6864,6 +6915,11 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       setState(() {
         _date = DateTime(picked.year, picked.month, picked.day);
         _showLimitWarning = false;
+        // A future date allows Late Arrival only — drop a now-invalid selection
+        // so the dropdown value stays in sync with its available items.
+        if (!_earlyAndCustomAllowed() && _type != 'lateArrival') {
+          _type = 'lateArrival';
+        }
       });
     }
   }
@@ -7188,25 +7244,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       return;
     }
 
-    // Permission can only be applied during an ACTIVE work session: after the
-    // employee has punched in and before they punch out for today. Before
-    // punch-in or after punch-out, the apply is blocked. When attendance state
-    // is still unknown (null) we fail open — the backend re-checks and is
-    // authoritative.
-    if (_punchedInToday == false) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'You can apply for permission only after punching in.',
-        isError: true,
-      );
-      return;
-    }
-    if (_punchedOutToday == true) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'You can apply for permission only before punching out.',
-        isError: true,
-      );
+    // Gate the apply on the permission matrix: future dates allow Late Arrival
+    // only; today allows Early Exit / Custom only during an active session
+    // (after punch-in, before punch-out); after punch-out nothing is allowed.
+    // When attendance state is still unknown (null) we fail open — the backend
+    // re-checks and is authoritative.
+    final eligibilityError = _permissionEligibilityError();
+    if (eligibilityError != null) {
+      SnackBarUtils.showSnackBar(context, eligibilityError, isError: true);
       return;
     }
 
@@ -7405,20 +7450,41 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                         color: AppColors.textPrimary,
                       ),
                       decoration: _fieldDecoration(),
-                      items: const [
-                        DropdownMenuItem(
+                      items: [
+                        const DropdownMenuItem(
                           value: 'lateArrival',
                           child: Text('Late Arrival'),
                         ),
-                        DropdownMenuItem(
-                          value: 'earlyExit',
-                          child: Text('Early Exit'),
-                        ),
-                        DropdownMenuItem(value: 'both', child: Text('Custom')),
+                        if (_earlyAndCustomAllowed())
+                          const DropdownMenuItem(
+                            value: 'earlyExit',
+                            child: Text('Early Exit'),
+                          ),
+                        if (_earlyAndCustomAllowed())
+                          const DropdownMenuItem(
+                            value: 'both',
+                            child: Text('Custom'),
+                          ),
                       ],
                       onChanged: (v) =>
                           setState(() => _type = v ?? 'lateArrival'),
                     ),
+                    // Early Exit / Custom are tied to an active work session, so
+                    // for future dates (and today before punch-in) only Late
+                    // Arrival is offered.
+                    if (!_earlyAndCustomAllowed()) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Only Late Arrival can be applied for the selected date. '
+                        'Early Exit and Custom permissions are available on the '
+                        'working day after punching in.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
 
                     // Out/In window — only for the 'both' (custom-time) type.
