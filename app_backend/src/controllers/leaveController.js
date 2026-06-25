@@ -614,6 +614,70 @@ const getAvailableLeavePool = async (employeeId, staff) => {
 };
 
 /**
+ * Resolve a single leave type's monthly allocation from a template's leaveTypes[].
+ * Matches by canonical key so "Casual Leave"/"Casual" resolve to the same config.
+ * @returns {number|null} the configured days (limit) for the type, or null if the
+ *   type isn't listed in this template.
+ */
+const getMonthlyAllocationForType = (leaveTypes, leaveType) => {
+    if (!Array.isArray(leaveTypes)) return null;
+    const key = leaveTypeMatchKey(leaveType);
+    if (!key) return null;
+    const cfg = leaveTypes.find(t => t.type && leaveTypeMatchKey(t.type) === key);
+    if (!cfg) return null;
+    const days = Number(cfg.days);
+    if (Number.isFinite(days)) return days;
+    const limit = Number(cfg.limit);
+    return Number.isFinite(limit) ? limit : null;
+};
+
+/**
+ * Available balance for a SPECIFIC leave type in the current month.
+ *
+ * Unlike getAvailableLeavePool (one shared bucket for every type), each leave
+ * type carries its own monthly allocation: a Casual leave only draws down the
+ * Casual quota, a Sick leave only the Sick quota, etc. Allocation comes from the
+ * staff's assigned template, falling back to the latest active business template
+ * (mirrors getAvailableLeavePool). Only APPROVED leaves of the SAME type consumed
+ * in the current month are deducted.
+ *
+ * Returns the type's remaining balance, or — when the type isn't configured in
+ * any template — falls back to the shared pool so unconfigured types aren't
+ * silently blocked (legacy behaviour).
+ * @returns {Promise<number>} remaining days for this type this month
+ */
+const getAvailableLeavePoolForType = async (employeeId, staff, leaveType) => {
+    let allocation = getMonthlyAllocationForType(staff?.leaveTemplateId?.leaveTypes, leaveType);
+    if (allocation == null) {
+        const businessId = staff?.businessId;
+        if (businessId) {
+            const latest = await LeaveTemplate.findOne({ businessId, isActive: true })
+                .sort({ updatedAt: -1 })
+                .lean();
+            allocation = getMonthlyAllocationForType(latest?.leaveTypes, leaveType);
+        }
+    }
+    // Type not configured in any template → preserve legacy shared-pool behaviour.
+    if (allocation == null) return getAvailableLeavePool(employeeId, staff);
+    if (!(allocation > 0)) return 0;
+
+    // Deduct only approved leaves of THIS type consumed in the current month.
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+    const key = leaveTypeMatchKey(leaveType);
+    const approvedLeaves = await Leave.find({
+        employeeId,
+        status: { $regex: /^approved$/i },
+        startDate: { $lte: monthEnd },
+        endDate: { $gte: monthStart }
+    }).select('leaveType startDate endDate days session halfDaySession halfDayType').lean();
+    const sameType = approvedLeaves.filter(l => leaveTypeMatchKey(l.leaveType) === key);
+    const usedDays = Math.max(0, sumLeaveDaysInRange(sameType, monthStart, monthEnd));
+    return Math.max(0, allocation - usedDays);
+};
+
+/**
  * Returns leave types for the Apply Leave dropdown: from staff's assigned leave
  * template + Half Day (when the shift enables it) + Unpaid Leave. Each item has
  * { type, days } where days is the limit (null for Unpaid Leave, 0.5 for Half Day).
@@ -1026,17 +1090,18 @@ const createLeave = async (req, res) => {
 
         const isUnpaidLeave = /^\s*unpaid(\s+leave)?\s*$/i.test(leaveType);
 
-        // Leave balance validation: use available pool (from attendances or template). Unpaid Leave has no limit.
-        // Pool is shared across all leave types (e.g. 5 total = 3 casual + 2 half-days + 1 sick).
+        // Leave balance validation: each leave type draws down its OWN monthly
+        // allocation (Casual from Casual, Sick from Sick, ...), not a shared pool.
+        // Unpaid Leave has no limit. Half Day consumes 0.5 of its type's quota.
         if (!isUnpaidLeave) {
-            const availableCasualLeaves = await getAvailableLeavePool(currentStaffId, staff);
-            if (availableCasualLeaves <= 0) {
+            const availableForType = await getAvailableLeavePoolForType(currentStaffId, staff, leaveType);
+            if (availableForType <= 0) {
                 return res.status(400).json({
                     success: false,
                     error: { message: "You don't have enough leave balance." }
                 });
             }
-            if (availableCasualLeaves === 0.5) {
+            if (availableForType === 0.5) {
                 if (!isHalfDay) {
                     return res.status(400).json({
                         success: false,
@@ -1044,7 +1109,7 @@ const createLeave = async (req, res) => {
                     });
                 }
                 // 0.5 balance: only a half-day leave is allowed (days is already 0.5)
-            } else if (days > availableCasualLeaves) {
+            } else if (days > availableForType) {
                 return res.status(400).json({
                     success: false,
                     error: { message: "You don't have enough leave balance." }

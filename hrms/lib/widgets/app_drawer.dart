@@ -358,7 +358,7 @@ class _AppDrawerState extends State<AppDrawer> {
                               fontSize: 20,
                               height: 1.1,
                             ),
-                            maxLines: 1,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
                           if (role.isNotEmpty) ...[

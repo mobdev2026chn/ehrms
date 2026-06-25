@@ -16,6 +16,7 @@ import '../../widgets/menu_icon_button.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/avatar_orientation.dart';
+import '../../utils/rotational_shift_util.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../notifications/notifications_screen.dart';
 import 'face_enroll_screen.dart';
@@ -370,16 +371,8 @@ class _ProfileScreenState extends State<ProfileScreen>
                   // Joined / Location stat cards
                   _buildStatCardsRow(),
                   const SizedBox(height: 24),
-                  if (_fieldsForCategory('General Information').isNotEmpty) ...[
-                    _buildCardSection(
-                      icon: Icons.info_outline,
-                      title: 'General Information',
-                      content: _buildCustomFieldColumnForCard(
-                        _fieldsForCategory('General Information'),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                  ],
+                  _buildGeneralInfoSection(),
+                  const SizedBox(height: 24),
                   if (_fieldsForCategory('Profile Information').isNotEmpty) ...[
                     _buildCardSection(
                       icon: Icons.account_circle_outlined,
@@ -456,49 +449,44 @@ class _ProfileScreenState extends State<ProfileScreen>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Avatar with white ring (view-only — tap to view full size)
-          Expanded(
-            child: Center(
-              child: GestureDetector(
-                onTap:
-                    showPhoto ? () => _showPhotoFullScreen(photoUrlStr) : null,
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 4),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.12),
-                        blurRadius: 14,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
+          // Avatar with white ring (view-only — tap to view full size).
+          // Natural-sized so the name column keeps the rest of the row.
+          GestureDetector(
+            onTap: showPhoto ? () => _showPhotoFullScreen(photoUrlStr) : null,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 4),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 14,
+                    offset: const Offset(0, 5),
                   ),
-                  child: RotatedBox(
-                    quarterTurns: (showPhoto && _avatarNeedsFlip) ? 2 : 0,
-                    child: CircleAvatar(
-                      radius: 42,
-                      backgroundColor:
-                          AppColors.primary.withValues(alpha: 0.12),
-                      backgroundImage: showPhoto
-                          ? CachedNetworkImageProvider(photoUrlStr)
-                          : null,
-                      onBackgroundImageError: showPhoto
-                          ? (_, __) {
-                              if (mounted) {
-                                setState(() => _profileImageError = true);
-                              }
-                            }
-                          : null,
-                      child: showPhoto
-                          ? null
-                          : Text(initial,
-                              style: TextStyle(
-                                  fontSize: 30,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.primary)),
-                    ),
-                  ),
+                ],
+              ),
+              child: RotatedBox(
+                quarterTurns: (showPhoto && _avatarNeedsFlip) ? 2 : 0,
+                child: CircleAvatar(
+                  radius: 42,
+                  backgroundColor: AppColors.primary.withValues(alpha: 0.12),
+                  backgroundImage: showPhoto
+                      ? CachedNetworkImageProvider(photoUrlStr)
+                      : null,
+                  onBackgroundImageError: showPhoto
+                      ? (_, __) {
+                          if (mounted) {
+                            setState(() => _profileImageError = true);
+                          }
+                        }
+                      : null,
+                  child: showPhoto
+                      ? null
+                      : Text(initial,
+                          style: TextStyle(
+                              fontSize: 30,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary)),
                 ),
               ),
             ),
@@ -510,13 +498,14 @@ class _ProfileScreenState extends State<ProfileScreen>
               crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Name
+                // Name — wraps up to 2 lines for long names before eliding
                 Text(name,
+                    textAlign: TextAlign.center,
                     style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                         color: AppColors.textPrimary),
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 8),
                 // EMP ID chip
@@ -810,6 +799,90 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: rows,
+    );
+  }
+
+  /// Converts a 24-hour "HH:mm" time to a 12-hour label, e.g. "18:00" → "6:00 PM".
+  /// Returns the input unchanged if it isn't "HH:mm".
+  String _formatTime12(String time24) {
+    final parts = time24.split(':');
+    if (parts.length != 2) return time24;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return time24;
+    final period = h >= 12 ? 'PM' : 'AM';
+    final h12 = h % 12 == 0 ? 12 : h % 12;
+    final mm = m.toString().padLeft(2, '0');
+    return '$h12:$mm $period';
+  }
+
+  /// Resolves the staff's assigned shift template into a label/value pair for the
+  /// General Information card. Standard shifts show their timing window
+  /// (e.g. "10:00 AM to 6:00 PM"); rotational shifts—whose window varies by day—
+  /// show "Rotational Shift" instead, matching the requirement.
+  ({String label, String value}) _shiftTimingInfo() {
+    final company = _staffData?['businessId'];
+    final companyDoc =
+        company is Map ? Map<String, dynamic>.from(company) : null;
+    final shifts = shiftsListFromCompany(companyDoc);
+    if (companyDoc == null || shifts == null || shifts.isEmpty) {
+      return (label: 'Shift Timing', value: 'Not Assigned');
+    }
+
+    final key = staffShiftKeyFromProfileMap(_staffData ?? {}) ?? '';
+    final raw = key.trim().isEmpty
+        ? (shifts.first is Map ? shifts.first as Map : null)
+        : findShiftByStaffKey(shifts, key);
+    final wrapper = raw is Map ? Map<String, dynamic>.from(raw) : null;
+    if (wrapper == null) {
+      return (label: 'Shift Timing', value: 'Not Assigned');
+    }
+
+    // Rotational templates have no single fixed window — surface the template.
+    if (isRotationalShiftWrapper(wrapper)) {
+      return (label: 'Shift Template', value: 'Rotational Shift');
+    }
+
+    // Standard shift → format the configured start/end window.
+    final win = resolveStandardShiftWindowFromCompany(companyDoc, wrapper);
+    if (win.start != null && win.end != null) {
+      return (
+        label: 'Shift Timing',
+        value: '${_formatTime12(win.start!)} to ${_formatTime12(win.end!)}',
+      );
+    }
+
+    // Open shift (required hours, no fixed window) or unconfigured timing.
+    final st = (wrapper['shiftType'] ?? '').toString().toLowerCase().trim();
+    if (st == 'open' || st == 'open shift') {
+      return (label: 'Shift Timing', value: 'Open Shift');
+    }
+    return (label: 'Shift Timing', value: 'N/A');
+  }
+
+  /// General Information card — shows the employee's Shift Timing (from the
+  /// assigned shift template) plus any admin-defined "General Information"
+  /// custom fields.
+  Widget _buildGeneralInfoSection() {
+    final shift = _shiftTimingInfo();
+    final customFields = _fieldsForCategory('General Information');
+
+    return _buildCardSection(
+      icon: Icons.info_outline,
+      title: 'General Information',
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildInfoGrid([
+            _buildInfoItem(shift.label, shift.value),
+            const SizedBox(),
+          ]),
+          if (customFields.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _buildCustomFieldColumnForCard(customFields),
+          ],
+        ],
+      ),
     );
   }
 

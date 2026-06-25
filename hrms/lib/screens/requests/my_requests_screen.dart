@@ -1852,10 +1852,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   final TextEditingController _reasonController = TextEditingController();
   bool _isSubmitting = false;
   bool _isLoadingTypes = true;
-  double _availableCasualLeaves = 0.0;
   double _totalAllowed = 0.0;
   double _usedLeaveDays = 0.0;
   double _pendingLeaveDays = 0.0;
+  // Per-type used/pending days for the balance month, keyed by leave-type match
+  // key (see _leaveTypeKey). Each leave type draws down its OWN monthly
+  // allocation, so balance/entitlement are scoped to the selected type — not a
+  // shared pool (mirrors the backend getAvailableLeavePoolForType).
+  Map<String, double> _usedByType = {};
+  Map<String, double> _pendingByType = {};
   HolidayOffConfig _offConfig = HolidayOffConfig.empty;
   bool _showLimitWarning = false;
   String _limitWarningMsg = '';
@@ -1969,7 +1974,6 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       _totalAllowed = total;
       _usedLeaveDays = beUsed ?? usage.$1;
       _pendingLeaveDays = bePending ?? usage.$2;
-      _availableCasualLeaves = (total - _usedLeaveDays).clamp(0.0, total);
     });
   }
 
@@ -2028,6 +2032,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
     double used = 0;
     double pending = 0;
+    // Per-type tallies for the month so the entitlement/balance can be scoped to
+    // the selected leave type (each type has its own monthly allocation).
+    final usedByType = <String, double>{};
+    final pendingByType = <String, double>{};
+    String typeKeyOf(dynamic l) =>
+        _leaveTypeKey((l is Map ? l['leaveType'] : null)?.toString());
     try {
       final approved = await _requestService.getLeaveRequests(
         status: 'Approved',
@@ -2038,7 +2048,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       );
       if (approved['success'] == true) {
         for (final l in listOf(approved)) {
-          used += daysOf(l);
+          final d = daysOf(l);
+          used += d;
+          usedByType[typeKeyOf(l)] = (usedByType[typeKeyOf(l)] ?? 0) + d;
         }
       }
 
@@ -2053,14 +2065,26 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       );
       if (pend['success'] == true) {
         for (final l in listOf(pend)) {
-          pending += daysOf(l);
+          final d = daysOf(l);
+          pending += d;
+          pendingByType[typeKeyOf(l)] = (pendingByType[typeKeyOf(l)] ?? 0) + d;
         }
       }
     } catch (_) {
       // Best-effort; leave totals at 0 on failure.
     }
+    _usedByType = usedByType;
+    _pendingByType = pendingByType;
     return (used, pending);
   }
+
+  /// Approved days already taken for the selected leave type in the balance
+  /// month (0 when none / no type selected).
+  double get _usedForSelectedType => _usedByType[_leaveTypeKey(_leaveType)] ?? 0.0;
+
+  /// Still-pending days for the selected leave type in the balance month.
+  double get _pendingForSelectedType =>
+      _pendingByType[_leaveTypeKey(_leaveType)] ?? 0.0;
 
   /// Gender-restricted leave types: Maternity is female-only, Paternity is
   /// male-only. Returns false only when the employee's gender is positively
@@ -2399,12 +2423,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       _leaveType != null &&
       _leaveType!.toLowerCase().replaceAll(RegExp(r'\s+'), '') == 'unpaidleave';
 
-  /// Approved balance minus still-pending requests, clamped to the allowance.
-  double get _effectiveAvailableLeaves =>
-      (_availableCasualLeaves - _pendingLeaveDays).clamp(
-        0.0,
-        _totalAllowed > 0 ? _totalAllowed : _availableCasualLeaves,
-      );
+  /// Balance available for the selected leave type: its own remaining after
+  /// approved + pending days of that same type (see _selectedTypeRemaining).
+  /// Each type has its own monthly allocation, so this is NOT a shared pool.
+  double get _effectiveAvailableLeaves => _selectedTypeRemaining;
 
   /// Combined allocated days across ALL leave types in the staff's template
   /// (sum of every type's `days`). Half Day is excluded (its 0.5 is a
@@ -2422,13 +2444,18 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     return sum;
   }
 
-  /// Full entitlement for the selected leave type (its allocated days). The
-  /// "days remaining" labels show the entitlement; used/pending are
-  /// informational and surfaced separately, so they are NOT subtracted here
-  /// (mirrors the entitlement card headline).
+  /// Remaining balance for the selected leave type this month: its own
+  /// allocation minus approved (taken) and pending days of that SAME type.
+  /// Types without a fixed allocation (e.g. Unpaid Leave, or a configured type
+  /// carrying no `days`) fall back to the overall pool remaining. Clamped >= 0.
   double get _selectedTypeRemaining {
-    final allocated = _allocatedForType(_leaveType) ?? _totalAllowed;
-    return allocated > 0 ? allocated : 0.0;
+    final allocated = _allocatedForType(_leaveType);
+    if (allocated == null) {
+      final pool = _totalAllowed - _usedLeaveDays - _pendingLeaveDays;
+      return pool > 0 ? pool : 0.0;
+    }
+    final rem = allocated - _usedForSelectedType - _pendingForSelectedType;
+    return rem > 0 ? rem : 0.0;
   }
 
   Widget _buildLimitWarningBanner(String message) {
@@ -2503,22 +2530,25 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     );
   }
 
-  /// Amber "Leave Entitlement" hero - the headline shows the FULL leave
-  /// entitlement (total allocated days). Approved (used) and pending days are
-  /// informational only and shown in the sub-line; they do NOT reduce the
-  /// headline figure.
+  /// Amber "Leave Entitlement" hero - scoped to the SELECTED leave type: the
+  /// headline shows that type's remaining balance (allocation minus taken and
+  /// pending), with the allocated/taken/pending breakdown in the sub-line. A
+  /// type with no fixed allocation (e.g. Unpaid Leave) falls back to the overall
+  /// pool.
   Widget _buildEntitlementCard() {
-    // Show the COMBINED entitlement across all leave types (sum of the
-    // template's per-type allocations), not just the selected type. Falls back
-    // to the backend overall total if the template carries no per-type days.
-    final allocated =
-        _totalAllocatedAllTypes > 0 ? _totalAllocatedAllTypes : _totalAllowed;
-    final total = allocated;
-    final usedType = _usedLeaveDays;
-    final pendingType = _pendingLeaveDays;
-    // Headline = full entitlement (allocated). Used/pending are not subtracted.
-    final entitlement = total;
-    final usedClamped = usedType > allocated ? allocated : usedType;
+    final double? allocatedType = _allocatedForType(_leaveType);
+    final bool hasFixed = allocatedType != null && allocatedType > 0;
+    // Allocation, used and pending are per-selected-type when the type carries a
+    // fixed allocation; otherwise fall back to the combined pool / overall usage.
+    final double total = hasFixed
+        ? allocatedType
+        : (_totalAllocatedAllTypes > 0 ? _totalAllocatedAllTypes : _totalAllowed);
+    final double usedType = hasFixed ? _usedForSelectedType : _usedLeaveDays;
+    final double pendingType =
+        hasFixed ? _pendingForSelectedType : _pendingLeaveDays;
+    // Headline = remaining for this type (allocation minus taken and pending).
+    final double entitlement = _selectedTypeRemaining;
+    final usedClamped = usedType > total ? total : usedType;
     final progress = total > 0 ? (usedClamped / total).clamp(0.0, 1.0) : 0.0;
     return Container(
       width: double.infinity,
@@ -6143,33 +6173,12 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   }
 
   Future<void> showRequestPermissionDialog() async {
-    // Permission is ALWAYS allowed (parity with the break flow). When the shift
-    // has no permission policy / no quota, the request is still accepted and the
-    // entire duration is processed as Fine — the button tooltip + dialog notices
-    // already tell the employee this, so we no longer block the not-configured case.
-
-    // Permission can only be applied during an ACTIVE work session: after the
-    // employee has punched in and before they punch out for today. Gate this at
-    // the button tap so the form never opens out-of-session (the dialog's
-    // _submit re-checks too; this just surfaces the message earlier). When the
-    // attendance state can't be read we fail open — the backend is authoritative.
-    final session = await _resolveTodaySession();
-    if (!mounted) return;
-    // Cache the fresh session so the button tooltip (built below) reflects truth.
-    setState(() {
-      _sessionPunchedIn = session.punchedIn;
-      _sessionPunchedOut = session.punchedOut;
-    });
-    // Out of session → surface the gating reason in the SAME tap-tooltip the
-    // fine notice uses (instead of an error snackbar), then block the dialog.
-    if (session.punchedIn == false || session.punchedOut == true) {
-      _showPermissionTooltip();
-      return;
-    }
-
-    // Every other scenario opens the dialog — the request is always allowed and the
-    // entire duration is processed as Fine when the shift is disabled and/or has no
-    // quota: S2 (enabled, no quota), S3 (disabled, has quota), S4 (disabled, no quota).
+    // Permission is ALWAYS allowed (parity with the break flow) and we no longer
+    // block opening the form out-of-session. The dialog itself restricts which
+    // permission TYPES are selectable per the date + punch matrix — future dates
+    // and today-before-punch-in offer Late Arrival only; an active session offers
+    // all types; after punch-out none — and re-checks on submit. This lets a
+    // member plan a future-dated Late Arrival before punching in.
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -6450,36 +6459,30 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     );
   }
 
-  /// Out-of-session gating message for the Request Permission button, from the
-  /// cached today's punch state. Permission can only be applied during an active
-  /// work session (after punch-in, before punch-out). Null when in session (or
-  /// unknown → fail open).
-  String? _permissionSessionGateNotice() {
+  /// Informational out-of-session note for the Request Permission button, from
+  /// the cached today's punch state. The request is NOT blocked — only the
+  /// selectable permission TYPES change (enforced in the dialog): a future-dated
+  /// Late Arrival can be applied even before punch-in / after punch-out. Null
+  /// when mid-session (or unknown → fail open).
+  String? _permissionSessionInfoNotice() {
     if (_sessionPunchedIn == false) {
-      return 'You can apply for permission only after punching in.';
+      return 'Before punching in you can apply Late Arrival '
+          '(including for future dates). Early Exit and Custom '
+          'permissions need an active session.';
     }
     if (_sessionPunchedOut == true) {
-      return 'You can apply for permission only before punching out.';
+      return 'Today is closed. You can still apply a Late Arrival '
+          'permission for a future date.';
     }
     return null;
   }
 
   /// Combined tap-tooltip wording for the Request Permission button: the
-  /// out-of-session gating message takes precedence (the request is blocked),
-  /// otherwise the fine notice (informational, the request still opens).
+  /// out-of-session info note takes precedence, otherwise the fine notice. Both
+  /// are informational — the request always opens; type eligibility is handled
+  /// inside the dialog.
   String? _permissionButtonTooltip() =>
-      _permissionSessionGateNotice() ?? _permissionFineNotice();
-
-  /// Programmatically shows the button's tooltip with the current message — used
-  /// when a tap is blocked out of session so the gating reason appears in the
-  /// same tooltip instead of an error snackbar.
-  void _showPermissionTooltip() {
-    // Wait a frame so the tooltip rebuilds with the freshly-cached gate message
-    // before we force it visible.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _permissionTooltipKey.currentState?.ensureTooltipVisible();
-    });
-  }
+      _permissionSessionInfoNotice() ?? _permissionFineNotice();
 
   /// Tap-tooltip wording for the Request Permission button, mirroring the break
   /// policy's four scenarios (keyed on enabled + monthly quota minutes).
@@ -6728,6 +6731,13 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       _shiftEndMinutes = shiftEndMinutes;
       _punchedInToday = punchedIn;
       _punchedOutToday = punchedOut;
+      // Today's attendance is closed once punched out — today is no longer a
+      // valid permission date, so move the selection to the next selectable
+      // working day (only a future-dated Late Arrival can be applied).
+      final earliest = _earliestPermissionDate();
+      if (_date.isBefore(earliest)) {
+        _date = earliest;
+      }
       // Punch state just resolved — if today is closed/before punch-in, Early
       // Exit / Custom are no longer offered, so coerce a stale selection back to
       // Late Arrival to keep the dropdown value valid.
@@ -6898,16 +6908,30 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     super.dispose();
   }
 
-  Future<void> _pickDate() async {
+  /// Earliest date the member may request a permission for. Normally today, but
+  /// once today's attendance is closed (already punched out) today is no longer
+  /// applicable, so the floor moves to the next selectable working day — closed
+  /// days only support a Late Arrival planned for a future date. Holidays and
+  /// week-offs are skipped.
+  DateTime _earliestPermissionDate() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    // Only today and future dates are selectable; past dates and holidays/week-offs are not.
-    final base = _date.isBefore(today) ? today : _date;
+    final floor = _punchedOutToday == true
+        ? today.add(const Duration(days: 1)) // today closed → future only
+        : today;
+    return _offConfig.firstSelectableOnOrAfter(floor);
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    // Selection floor: today, or the next working day once today is closed.
+    final earliest = _earliestPermissionDate();
+    final base = _date.isBefore(earliest) ? earliest : _date;
     final initial = _offConfig.firstSelectableOnOrAfter(base);
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
-      firstDate: today,
+      firstDate: earliest,
       lastDate: DateTime(now.year + 1, 12, 31),
       selectableDayPredicate: (day) => !_offConfig.isDisabled(day),
     );
@@ -7475,9 +7499,12 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     if (!_earlyAndCustomAllowed()) ...[
                       const SizedBox(height: 8),
                       Text(
-                        'Only Late Arrival can be applied for the selected date. '
-                        'Early Exit and Custom permissions are available on the '
-                        'working day after punching in.',
+                        _punchedOutToday == true
+                            ? 'Today\'s attendance is closed. Only a Late Arrival '
+                                'permission for a future date can be applied.'
+                            : 'Only Late Arrival can be applied for the selected '
+                                'date. Early Exit and Custom permissions are '
+                                'available on the working day after punching in.',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
