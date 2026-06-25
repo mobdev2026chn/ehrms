@@ -1788,6 +1788,14 @@ const checkIn = async (req, res) => {
             return res.status(400).json({ message: 'Salary not configured. Contact HR.' });
         }
 
+        // Branch must be assigned. Presence (in/out of office) resolution, geofence and
+        // payroll location all key off the branch, so a staff with no branchId cannot punch.
+        // (Frontends pre-block this with a popup; this is the server-side enforcement that
+        // also covers the selfie-checkin/face-kiosk/web/software entry points.)
+        if (!staff.branchId) {
+            return res.status(403).json({ message: 'Branch not assigned. Contact HR.' });
+        }
+
         if (!isShiftAssignedForStaff(company, staff, templateDoc)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }

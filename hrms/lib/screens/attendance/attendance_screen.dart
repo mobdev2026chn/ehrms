@@ -3233,6 +3233,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   /// Shows a popup alert for check-in/check-out validation failures (blocks marking attendance).
   /// Uses the same UI style as the "You are late" / "You are early" dialog.
+  /// Salary is "configured" when the profile staffData carries a salary map with a
+  /// positive basicSalary — same rule the home dashboard uses to gate punch-in.
+  bool _isSalaryConfiguredFromStaff(Map<String, dynamic>? staffData) {
+    final salary = staffData?['salary'];
+    if (salary is! Map) return false;
+    final basicSalary = salary['basicSalary'];
+    return basicSalary is num && basicSalary > 0;
+  }
+
   Future<void> _showValidationAlert(String message) async {
     if (!mounted) return;
     return showDialog<void>(
@@ -6266,6 +6275,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (!mounted) return;
 
     // --- Check-in/check-out validation: show popup and block if any check fails ---
+    // Salary must be configured to punch IN (drives fine/late/early storage and payroll).
+    // Guarded to check-in only so an already-open day is never stranded at check-out.
+    if (!isCheckedIn &&
+        !_isSalaryConfiguredFromStaff(_profileStaffDataSnapshot)) {
+      await _showValidationAlert('Salary is not configured. Contact HR.');
+      _setPunchActionInProgress(false);
+      return;
+    }
     if (!staffHasAssignedAttendanceTemplate(
       profileAttendanceTemplateRef: _profileAttendanceTemplateId,
       todayAttendanceTemplate: _attendanceTemplate,
