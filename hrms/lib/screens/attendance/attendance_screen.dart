@@ -154,6 +154,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   bool _checkOutAllowed = true;
   bool _shiftAssigned = true;
   bool _weeklyOffAssigned = true;
+  bool _holidayTemplateAssigned = true;
+  bool _leaveTemplateAssigned = true;
   bool _isHoliday = false;
   bool _isWeeklyOff = false;
   bool _isAlternateWorkDate = false;
@@ -402,6 +404,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               _shiftAssigned = responseBody['shiftAssigned'] as bool? ?? true;
               _weeklyOffAssigned =
                   responseBody['weeklyOffAssigned'] as bool? ?? true;
+              _holidayTemplateAssigned =
+                  responseBody['holidayTemplateAssigned'] as bool? ?? true;
+              _leaveTemplateAssigned =
+                  responseBody['leaveTemplateAssigned'] as bool? ?? true;
               _isHoliday = responseBody['isHoliday'] ?? false;
               _isWeeklyOff = responseBody['isWeeklyOff'] ?? false;
               _isAlternateWorkDate =
@@ -1089,6 +1095,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               _shiftAssigned = responseBody['shiftAssigned'] as bool? ?? true;
               _weeklyOffAssigned =
                   responseBody['weeklyOffAssigned'] as bool? ?? true;
+              _holidayTemplateAssigned =
+                  responseBody['holidayTemplateAssigned'] as bool? ?? true;
+              _leaveTemplateAssigned =
+                  responseBody['leaveTemplateAssigned'] as bool? ?? true;
               _isHoliday = responseBody['isHoliday'] ?? false;
               _isWeeklyOff = responseBody['isWeeklyOff'] ?? false;
               _isAlternateWorkDate =
@@ -2330,8 +2340,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         final when = punch['at'];
         final selfie = punch['selfie']?.toString();
         final title = kind == 'out' ? 'Permission Out' : 'Permission In';
+        // Custom-permission overrun (out→in longer than the approved window) is
+        // fined. Surface it on the Permission In entry so a fined permission is
+        // visible in the log; the rupee amount settles into the day's Fine Details.
+        final overrunMins = kind == 'in'
+            ? (_parseLogNumericValue(punch['overrunMinutes'])?.toInt() ?? 0)
+            : 0;
         final headlineParts = [
           _formatLogTime(when),
+          if (overrunMins > 0) 'Exceeded by $overrunMins min · Fine',
           if (branchName != null && branchName.trim().isNotEmpty)
             branchName.trim(),
         ];
@@ -6277,36 +6294,38 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // --- Check-in/check-out validation: show popup and block if any check fails ---
     // Salary must be configured to punch IN (drives fine/late/early storage and payroll).
     // Guarded to check-in only so an already-open day is never stranded at check-out.
+    // Punch-in config gates, surfaced in a fixed priority order every time:
+    // 1) salary  2) attendance & shift  3) weekly off  4) holiday  5) leave.
     if (!isCheckedIn &&
         !_isSalaryConfiguredFromStaff(_profileStaffDataSnapshot)) {
-      await _showValidationAlert('Salary is not configured. Contact HR.');
+      await _showValidationAlert('Salary not configured. Contact HR.');
       _setPunchActionInProgress(false);
       return;
     }
     if (!staffHasAssignedAttendanceTemplate(
-      profileAttendanceTemplateRef: _profileAttendanceTemplateId,
-      todayAttendanceTemplate: _attendanceTemplate,
-    )) {
+          profileAttendanceTemplateRef: _profileAttendanceTemplateId,
+          todayAttendanceTemplate: _attendanceTemplate,
+        ) ||
+        !isValidAttendanceTemplateMap(_attendanceTemplate) ||
+        _shiftAssigned != true) {
       await _showValidationAlert(
-        'Attendance template is not assigned. Contact HR.',
+        'Attendance and shift not configured. Contact HR.',
       );
-      _setPunchActionInProgress(false);
-      return;
-    }
-    if (!isValidAttendanceTemplateMap(_attendanceTemplate)) {
-      await _showValidationAlert('Template not mapped. Contact HR.');
       _setPunchActionInProgress(false);
       return;
     }
     if (_weeklyOffAssigned != true) {
-      await _showValidationAlert(
-        'Weekly Off template is not assigned. Contact HR.',
-      );
+      await _showValidationAlert('Weekly off not configured. Contact HR.');
       _setPunchActionInProgress(false);
       return;
     }
-    if (_shiftAssigned != true) {
-      await _showValidationAlert('Shift not assigned. Contact HR.');
+    if (_holidayTemplateAssigned != true) {
+      await _showValidationAlert('Holiday not configured. Contact HR.');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_leaveTemplateAssigned != true) {
+      await _showValidationAlert('Leave template not configured. Contact HR.');
       _setPunchActionInProgress(false);
       return;
     }

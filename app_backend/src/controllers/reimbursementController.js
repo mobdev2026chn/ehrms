@@ -81,12 +81,27 @@ const getReimbursementSummary = async (req, res) => {
             });
         }
 
+        // Match by the string form of employeeId so the card counts the SAME
+        // records the list shows, regardless of whether employeeId is stored as
+        // an ObjectId or a legacy string. A raw aggregate $match does NOT cast
+        // (unlike .find()), so a plain { employeeId: _id } can silently match
+        // nothing -> the hero card collapses to 0. Likewise coerce `amount` to a
+        // number so externally/legacy-created string amounts still sum.
+        const staffIdStr = currentStaff._id.toString();
         const results = await Reimbursement.aggregate([
-            { $match: { employeeId: currentStaff._id } },
+            {
+                $match: {
+                    $expr: { $eq: [{ $toString: '$employeeId' }, staffIdStr] }
+                }
+            },
             {
                 $group: {
                     _id: '$status',
-                    total: { $sum: '$amount' },
+                    total: {
+                        $sum: {
+                            $convert: { input: '$amount', to: 'double', onError: 0, onNull: 0 }
+                        }
+                    },
                     count: { $sum: 1 }
                 }
             }
@@ -100,7 +115,7 @@ const getReimbursementSummary = async (req, res) => {
             // externally-created records stored as 'pending'/'PENDING') are
             // still counted correctly.
             const st = (r._id || '').toString().trim().toLowerCase();
-            if (st === 'approved' || st === 'paid') {
+            if (st === 'approved' || st === 'paid' || st === 'processed') {
                 totalReimbursed += r.total;
             } else if (st === 'pending') {
                 totalPending += r.total;

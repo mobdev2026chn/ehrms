@@ -157,9 +157,15 @@ class SelfieCameraScreen extends StatefulWidget {
 
 class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     with SingleTickerProviderStateMixin {
-  static const Duration _initTimeout = Duration(seconds: 12);
+  static const Duration _initTimeout = Duration(seconds: 8);
   Timer? _timeoutTimer;
   bool _showTimeoutOverlay = false;
+  // Set once the camera actually produces output (first analysis frame or a
+  // capture). Until then the timeout can fire and offer the system-camera
+  // fallback — covers devices whose front sensor can't bind the
+  // preview+capture+analysis stream combo (CameraX "No supported surface
+  // combination", which camerawesome otherwise paints as a raw stack trace).
+  bool _cameraReady = false;
   String? _locationText;
   bool _isRefreshingLocation = false;
   bool _isHandlingBack = false;
@@ -217,8 +223,23 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       }
     });
     _timeoutTimer = Timer(_initTimeout, () {
-      // Timeout overlay disabled; code kept for future use.
+      // Camera never produced a frame in time — almost always a hard init/bind
+      // failure (e.g. unsupported surface combination on this front sensor).
+      // Surface the fallback overlay so the user can switch to the system camera
+      // instead of being stranded on camerawesome's raw error screen.
+      if (mounted && !_cameraReady) setState(() => _showTimeoutOverlay = true);
     });
+  }
+
+  /// Marks the camera as live (first frame / capture seen) and dismisses the
+  /// timeout fallback. Safe to call repeatedly; only the first call does work.
+  void _markCameraReady() {
+    if (_cameraReady) return;
+    _cameraReady = true;
+    _timeoutTimer?.cancel();
+    if (mounted && _showTimeoutOverlay) {
+      setState(() => _showTimeoutOverlay = false);
+    }
   }
 
   Future<void> _refreshLocation() async {
@@ -431,6 +452,8 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   /// multiple-face warning still appears here too. Guidance strings mirror the face
   /// app's scanner (_applyErrorGuidance).
   Future<void> _analyzeLiveFrame(AnalysisImage image) async {
+    // A frame arriving means the camera bound successfully — cancel the fallback.
+    _markCameraReady();
     if (_analyzingFrame || !mounted || _capturedFilePath != null || _capturing) {
       return;
     }
@@ -635,6 +658,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                     ),
                     onImageForAnalysis: _analyzeLiveFrame,
                     onMediaCaptureEvent: (MediaCapture event) {
+                      _markCameraReady();
                       if (event.status == MediaCaptureStatus.success &&
                           event.isPicture &&
                           !event.isVideo) {

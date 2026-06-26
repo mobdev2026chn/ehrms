@@ -1065,7 +1065,10 @@ const createLeave = async (req, res) => {
                 endDateNorm = normalizeToDateOnlyUTC(effectiveDates[effectiveDates.length - 1] + 'T00:00:00.000Z');
             }
         } else {
-            // Start/end range: use all calendar days (no holiday/weekoff filtering). Only check leave already applied.
+            // Start/end range: exclude holidays and week-offs (per the staff's assigned
+            // holiday / weekly-holiday templates) from the leave-day count, so off-days that
+            // fall between the from/to dates are NOT deducted from the leave balance. This
+            // mirrors the selectedDates path and the /requests/leave/check-dates preview.
             startDate = normalizeToDateOnlyUTC(startDate);
             endDate = normalizeToDateOnlyUTC(endDate);
             if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
@@ -1074,15 +1077,37 @@ const createLeave = async (req, res) => {
             if (startDate > endDate) {
                 return res.status(400).json({ success: false, error: { message: 'Start date must be on or before end date.' } });
             }
-            effectiveDates = getCalendarDatesInRange(startDate, endDate);
-            if (isHalfDay && effectiveDates.length !== 1) {
-                return res.status(400).json({
-                    success: false,
-                    error: { message: 'Half day leave requires exactly one date (start and end must be the same).' }
-                });
+            if (isHalfDay) {
+                // Half-day spans exactly one calendar date; both ends must match...
+                if (getCalendarDatesInRange(startDate, endDate).length !== 1) {
+                    return res.status(400).json({
+                        success: false,
+                        error: { message: 'Half day leave requires exactly one date (start and end must be the same).' }
+                    });
+                }
+                // ...and that single date must be a working day (not a holiday / week off).
+                effectiveDates = await getEffectiveWorkDatesInRange(staff, startDate, endDate);
+                if (effectiveDates.length !== 1) {
+                    return res.status(400).json({
+                        success: false,
+                        error: { message: 'Half day leave cannot be applied on a holiday or week off.' }
+                    });
+                }
+                startDateNorm = startDate;
+                endDateNorm = endDate;
+            } else {
+                effectiveDates = await getEffectiveWorkDatesInRange(staff, startDate, endDate);
+                if (effectiveDates.length === 0) {
+                    return res.status(400).json({
+                        success: false,
+                        error: { message: 'The selected dates are all holidays or week offs. No working days to apply leave.' }
+                    });
+                }
+                // Anchor the stored leave period to the actual working days so calendar
+                // marking / display does not stretch over leading/trailing off-days.
+                startDateNorm = normalizeToDateOnlyUTC(effectiveDates[0] + 'T00:00:00.000Z');
+                endDateNorm = normalizeToDateOnlyUTC(effectiveDates[effectiveDates.length - 1] + 'T00:00:00.000Z');
             }
-            startDateNorm = startDate;
-            endDateNorm = endDate;
         }
 
         // Calculate days: half-day = 0.5, else = count of effective work days
@@ -1402,5 +1427,8 @@ module.exports = {
     getLeaveBalance,
     checkLeaveDates,
     createLeave,
-    updateLeaveStatus
+    updateLeaveStatus,
+    // Exported so leaveAttendanceHelper can mark only working days for approved leaves
+    // (skipping the same holidays / week-offs excluded from the leave-day count).
+    getEffectiveWorkDatesInRange
 };

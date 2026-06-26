@@ -1414,8 +1414,12 @@ const markAttendanceForApprovedLeave = async (leave) => {
 
         const { employeeId, startDate, endDate, businessId, leaveType, days } = leave;
         
-        // Fetch staff with leaveTemplateId populated
-        const staff = await Staff.findById(employeeId).populate('leaveTemplateId');
+        // Fetch staff with leaveTemplateId populated. holidayTemplateId /
+        // weeklyHolidayTemplateId are needed to skip off-days when marking attendance.
+        const staff = await Staff.findById(employeeId)
+            .populate('leaveTemplateId')
+            .populate('holidayTemplateId')
+            .populate('weeklyHolidayTemplateId');
         if (!staff) {
             console.error(`[LeaveAttendanceHelper] Staff not found: ${employeeId}`);
             return;
@@ -1508,8 +1512,24 @@ const markAttendanceForApprovedLeave = async (leave) => {
             currentUtc += oneDayMs;
         }
 
+        // Skip holidays / week-offs (per the staff's templates) that fall inside the leave
+        // range so they are not marked "On Leave" — they were never deducted from the leave
+        // count either. If resolution fails, fall back to marking every calendar day.
+        let effectiveDateSet = null;
+        try {
+            const { getEffectiveWorkDatesInRange } = require('../controllers/leaveController');
+            const eff = await getEffectiveWorkDatesInRange(staff, start, end);
+            if (Array.isArray(eff) && eff.length > 0) effectiveDateSet = new Set(eff);
+        } catch (e) {
+            console.warn('[LeaveAttendanceHelper] effective-dates resolve failed, marking all calendar days:', e?.message);
+        }
+
         // Mark attendance for each calendar day; use local midnight so it matches check-in (attendance controller uses local date)
         for (const date of dates) {
+            // Off-days (holidays / week-offs) in the range are not part of the leave — skip them.
+            if (effectiveDateSet && !effectiveDateSet.has(formatDateUtcYmd(date))) {
+                continue;
+            }
             const y = date.getUTCFullYear(), m = date.getUTCMonth(), d = date.getUTCDate();
             const startOfDay = new Date(y, m, d, 0, 0, 0, 0);
             const endOfDay = new Date(y, m, d, 23, 59, 59, 999);

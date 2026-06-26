@@ -1866,6 +1866,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   HolidayOffConfig _offConfig = HolidayOffConfig.empty;
   bool _showLimitWarning = false;
   String _limitWarningMsg = '';
+  // Today's shift start time ("HH:mm", 24h). Used with _shiftEndTime to derive
+  // the shift mid-point that splits the first and second half of the day. Falls
+  // back to the codebase-wide default shift start when the template is unknown.
+  String _shiftStartTime = '09:30';
   // Today's shift end time ("HH:mm", 24h). Once this passes, the working day is
   // over and same-day leave no longer makes sense — today gets blocked. Falls
   // back to the codebase-wide default shift end when the template is unknown.
@@ -1906,22 +1910,25 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       final att = await _attendanceService.getAttendanceByDate(dateStr);
       final body = att['data'] as Map<String, dynamic>?;
       final template = body?['template'] as Map?;
+      final start = template?['shiftStartTime']?.toString().trim();
       final end = template?['shiftEndTime']?.toString().trim();
-      if (end != null && end.isNotEmpty && mounted) {
-        setState(() => _shiftEndTime = end);
-      }
+      if (!mounted) return;
+      setState(() {
+        if (start != null && start.isNotEmpty) _shiftStartTime = start;
+        if (end != null && end.isNotEmpty) _shiftEndTime = end;
+      });
     } catch (_) {
       // Best-effort; keep the default shift end.
     }
   }
 
-  /// Today's same-day leave cutoff: today's date at the shift end time. After
-  /// this instant the working day is over, so today can no longer be chosen.
-  DateTime _todayCutoff() {
+  /// Parses an "HH:mm" string into today's DateTime, falling back to
+  /// [defH]:[defM] when the value is missing or malformed.
+  DateTime _timeToday(String hhmm, {required int defH, required int defM}) {
     final now = DateTime.now();
-    var h = 18;
-    var m = 30;
-    final parts = _shiftEndTime.split(':');
+    var h = defH;
+    var m = defM;
+    final parts = hhmm.split(':');
     if (parts.length >= 2) {
       h = int.tryParse(parts[0].trim()) ?? h;
       m = int.tryParse(parts[1].trim()) ?? m;
@@ -1929,17 +1936,57 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     return DateTime(now.year, now.month, now.day, h, m);
   }
 
+  /// Today's same-day leave cutoff: today's date at the shift end time. After
+  /// this instant the working day is over, so today can no longer be chosen.
+  DateTime _todayCutoff() =>
+      _timeToday(_shiftEndTime, defH: 18, defM: 30);
+
+  /// Today's shift mid-point — the instant that splits the first half (shift
+  /// start → mid) from the second half (mid → shift end). Once it passes, the
+  /// first half of today's shift is over.
+  DateTime _shiftMidpoint() {
+    final start = _timeToday(_shiftStartTime, defH: 9, defM: 30);
+    final end = _todayCutoff();
+    // Guard against a malformed window (end ≤ start): fall back to start so the
+    // mid-point never lands before the shift begins.
+    if (!end.isAfter(start)) return start;
+    return start.add(Duration(
+      milliseconds: end.difference(start).inMilliseconds ~/ 2,
+    ));
+  }
+
   /// True once today's working day has ended — same-day leave is no longer
   /// allowed and the leave must start tomorrow or later.
   bool get _isTodayClosed => DateTime.now().isAfter(_todayCutoff());
 
-  /// True when [day] is today and the working day has already ended.
-  bool _isClosedToday(DateTime day) {
+  /// True when [day] is today.
+  bool _isToday(DateTime day) {
     final now = DateTime.now();
     return day.year == now.year &&
         day.month == now.month &&
-        day.day == now.day &&
-        _isTodayClosed;
+        day.day == now.day;
+  }
+
+  /// True when [day] is today and the working day has already ended.
+  bool _isClosedToday(DateTime day) => _isToday(day) && _isTodayClosed;
+
+  /// True when [day] is today and the shift mid-point has already passed — the
+  /// first half of the shift is over, so First-Half leave can no longer be
+  /// applied for today (time-based on the shift window).
+  bool _isFirstHalfClosed(DateTime day) =>
+      _isToday(day) && DateTime.now().isAfter(_shiftMidpoint());
+
+  /// True when [day] is today and the shift has ended — the second half is over,
+  /// so Second-Half leave can no longer be applied for today. (Once the whole
+  /// day is closed the second half is necessarily over.)
+  bool _isSecondHalfClosed(DateTime day) => _isClosedToday(day);
+
+  /// True when the given half-day [duration] can no longer be applied for [day]
+  /// because that half of the shift has already elapsed today.
+  bool _isDurationClosed(_LeaveDuration duration, DateTime day) {
+    if (duration == _LeaveDuration.firstHalf) return _isFirstHalfClosed(day);
+    if (duration == _LeaveDuration.secondHalf) return _isSecondHalfClosed(day);
+    return false;
   }
 
   @override
@@ -2165,7 +2212,17 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     if (_isHalf) return 0; // 0.5 on backend
     if (_isOneDay) return 1;
     if (_endDate == null) return 1;
-    return _endDate!.difference(_startDate!).inDays + 1;
+    // Count only working days: week-offs and holidays (per the assigned template)
+    // that fall between the from/to dates are not deducted from the leave balance.
+    // Mirrors the backend, which recomputes the deduction from working days only.
+    var count = 0;
+    var d = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+    final end = DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
+    while (!d.isAfter(end)) {
+      if (!_offConfig.isDisabled(d)) count++;
+      d = d.add(const Duration(days: 1));
+    }
+    return count;
   }
 
   Future<void> _pickDate(bool isStart) async {
@@ -2189,8 +2246,19 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
           !_offConfig.isDisabled(day) && !_isClosedToday(day),
     );
     if (picked == null || !mounted) return;
+    // Picking today after the relevant half has elapsed makes the selected
+    // half-day invalid — fall back to Full Day and tell the user why.
+    final resetHalf =
+        isStart && _isHalf && _isDurationClosed(_duration, picked);
+    final resetMsg = resetHalf
+        ? (_duration == _LeaveDuration.firstHalf
+            ? 'The first half of today\'s shift is over — switched to Full Day. '
+                'Apply First-Half leave before the shift mid-point.'
+            : 'Today\'s shift has ended — switched to Full Day.')
+        : null;
     setState(() {
       _showLimitWarning = false;
+      if (resetHalf) _duration = _LeaveDuration.full;
       if (isStart) {
         _startDate = picked;
         if (_isOneDay || _isHalf) {
@@ -2205,6 +2273,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
         }
       }
     });
+    if (resetMsg != null && mounted) {
+      SnackBarUtils.showSnackBar(context, resetMsg, isError: true);
+    }
     // The chosen start date may fall in a different month than was last loaded;
     // refresh the balance so the entitlement card and limit warning reflect that
     // month's quota (usage resets monthly — see _balanceMonth).
@@ -2244,6 +2315,22 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
       SnackBarUtils.showSnackBar(
         context,
         'The working day has already ended. You can apply leave from tomorrow onwards.',
+        isError: true,
+      );
+      return;
+    }
+    // Time-based half-day gate: once today's shift mid-point has passed the
+    // first half is over, and once the shift ends the second half is over — so
+    // a same-day half whose part of the shift has elapsed can't be applied.
+    if (_isHalf && _isDurationClosed(_duration, _startDate!)) {
+      SnackBarUtils.showSnackBar(
+        context,
+        _duration == _LeaveDuration.firstHalf
+            ? 'The first half of today\'s shift is over (mid-point '
+                '${_formatTime12h(_shiftMidpoint())} has passed). Apply '
+                'First-Half leave before the mid-point.'
+            : 'Today\'s shift has ended, so Second-Half leave can no longer '
+                'be applied. You can apply from tomorrow onwards.',
         isError: true,
       );
       return;
@@ -2792,11 +2879,24 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   }
 
   /// Build a single duration choice chip (Full Day / First Half / Second Half).
-  Widget _durationChip(String label, _LeaveDuration value) {
+  /// When [disabled] (that half of today's shift has already elapsed) the chip
+  /// is greyed out and tapping it explains why instead of selecting it.
+  Widget _durationChip(
+    String label,
+    _LeaveDuration value, {
+    bool disabled = false,
+    String? disabledReason,
+  }) {
     return ChoiceChip(
       label: Text(label),
       selected: _duration == value,
       onSelected: (_) {
+        if (disabled) {
+          if (disabledReason != null) {
+            SnackBarUtils.showSnackBar(context, disabledReason, isError: true);
+          }
+          return;
+        }
         setState(() {
           _duration = value;
           // Half-day is always a single date — collapse any range.
@@ -2807,12 +2907,24 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
         });
       },
       selectedColor: AppColors.primary.withValues(alpha: 0.3),
+      disabledColor: AppColors.inputFill,
+      labelStyle: disabled
+          ? const TextStyle(color: AppColors.textCaption)
+          : null,
     );
   }
 
   /// Leave duration selector — lets the employee take any leave type as a Full
   /// Day, First Half, or Second Half. Only shown when the shift enables half-day.
+  ///
+  /// When the selected date is today, a half whose part of the shift has already
+  /// elapsed (first half past the mid-point, second half past shift end) is
+  /// disabled — you can't apply leave for time that's already gone.
   Widget _buildDurationSelector() {
+    final day = _startDate ?? DateTime.now();
+    final firstClosed = _isFirstHalfClosed(day);
+    final secondClosed = _isSecondHalfClosed(day);
+    final midLabel = _formatTime12h(_shiftMidpoint());
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
@@ -2824,14 +2936,32 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
             runSpacing: 8,
             children: [
               _durationChip('Full Day', _LeaveDuration.full),
-              _durationChip('First Half', _LeaveDuration.firstHalf),
-              _durationChip('Second Half', _LeaveDuration.secondHalf),
+              _durationChip(
+                'First Half',
+                _LeaveDuration.firstHalf,
+                disabled: firstClosed,
+                disabledReason:
+                    'The first half of today\'s shift is over (mid-point '
+                    '$midLabel has passed). First-Half leave can be applied '
+                    'before the mid-point only.',
+              ),
+              _durationChip(
+                'Second Half',
+                _LeaveDuration.secondHalf,
+                disabled: secondClosed,
+                disabledReason:
+                    'Today\'s shift has ended, so Second-Half leave can no '
+                    'longer be applied. You can apply from tomorrow onwards.',
+              ),
             ],
           ),
         ],
       ),
     );
   }
+
+  /// Formats a DateTime as a short 12-hour clock label (e.g. "2:15 PM").
+  String _formatTime12h(DateTime t) => DateFormat('h:mm a').format(t);
 
   @override
   Widget build(BuildContext context) {
@@ -4483,7 +4613,9 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
           final amount = amt is num
               ? amt.toDouble()
               : double.tryParse(amt?.toString() ?? '') ?? 0;
-          if (status == 'approved' || status == 'paid') {
+          if (status == 'approved' ||
+              status == 'paid' ||
+              status == 'processed') {
             reimbursed += amount;
           } else if (status == 'pending') {
             pending += amount;
@@ -6334,27 +6466,38 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   ),
                 ),
                 const SizedBox(height: 8),
-                // Balance figures: only meaningful when Permission is configured,
-                // enabled, and has a quota. Hide when disabled/unconfigured/no-quota
-                // so misleading numbers (e.g. a stale monthly quota) are not shown.
-                if (configured && enabled && quota > 0) ...[
-                  IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _balanceTile(
-                          'Monthly Allocated',
-                          hoursAndMinutes(quota),
-                        ),
-                        const SizedBox(width: 8),
-                        _balanceTile('Used', hoursAndMinutes(consumed)),
-                        const SizedBox(width: 8),
-                        _balanceTile('Pending', hoursAndMinutes(pending)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
+                // Balance figures: always show the three cards. When Permission is
+                // configured, enabled, and has a quota, show the real figures;
+                // otherwise (disabled/unconfigured/no-quota) show 0 values so the
+                // layout stays consistent and a policy notice explains the state.
+                Builder(
+                  builder: (context) {
+                    final bool hasBalance =
+                        configured && enabled && quota > 0;
+                    return IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _balanceTile(
+                            'Monthly Allocated',
+                            hoursAndMinutes(hasBalance ? quota : 0),
+                          ),
+                          const SizedBox(width: 8),
+                          _balanceTile(
+                            'Used',
+                            hoursAndMinutes(hasBalance ? consumed : 0),
+                          ),
+                          const SizedBox(width: 8),
+                          _balanceTile(
+                            'Pending',
+                            hoursAndMinutes(hasBalance ? pending : 0),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
                 // Policy-state notices — show the appropriate message based on
                 // configured / enabled / quota state.
                 if (!configured)
@@ -6809,11 +6952,11 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       if (_date.isBefore(earliest)) {
         _date = earliest;
       }
-      // Punch state just resolved — if today is closed/before punch-in, Early
-      // Exit / Custom are no longer offered, so coerce a stale selection back to
-      // Late Arrival to keep the dropdown value valid.
-      if (!_earlyAndCustomAllowed() && _type != 'lateArrival') {
-        _type = 'lateArrival';
+      // Punch state just resolved — if a now-stale type is no longer offered
+      // (e.g. Late Arrival after punch-in, or Early Exit before punch-in),
+      // coerce it to the first valid type so the dropdown value stays valid.
+      if (!_isTypeAllowed(_type)) {
+        _type = _firstAllowedType();
       }
     });
   }
@@ -6868,49 +7011,112 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     return null;
   }
 
-  /// Early Exit and Custom permissions are tied to an active work session, so
-  /// they are only offered for TODAY while a session is open (punched in, not
-  /// yet out). Future dates — and today before punch-in — allow Late Arrival
-  /// only. Unknown punch state for today fails open (the backend re-checks).
-  bool _earlyAndCustomAllowed() {
+  /// Whether the requested [_date] is a future calendar day.
+  bool _isFutureDate() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final d = DateTime(_date.year, _date.month, _date.day);
-    if (d.isAfter(today)) return false; // future → Late Arrival only
+    return d.isAfter(today);
+  }
+
+  /// True when [_date] is today and a work session is open (punched in, not yet
+  /// out). Unknown punch state for today fails open (the backend re-checks).
+  bool _isActiveSessionToday() {
+    if (_isFutureDate()) return false;
     if (_punchedOutToday == true) return false; // today, attendance closed
     if (_punchedInToday == false) return false; // today, before punch-in
     return true; // active session today, or state still loading (fail open)
   }
 
-  /// Validates the selected permission type against the date + punch context,
-  /// per the permission matrix: future dates allow Late Arrival only; today
-  /// allows Early Exit / Custom only during an active session (after punch-in,
-  /// before punch-out); after punch-out nothing is allowed. Returns an error
-  /// message to show, or null when the request may proceed.
-  String? _permissionEligibilityError() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final d = DateTime(_date.year, _date.month, _date.day);
+  /// Late Arrival applies to the START of the day, before you punch in. For
+  /// TODAY it is therefore only offered before punch-in — once punched in you
+  /// have already arrived, so it no longer applies (and after punch-out the day
+  /// is closed). For a FUTURE date any type can be planned, no punch logic. The
+  /// "already passed for today" past-hours guard is `_periodAlreadyStartedError`.
+  bool _lateArrivalAllowed() {
+    if (_isFutureDate()) return true; // future: any type, no punch logic
+    if (_punchedInToday == true) return false; // today, already arrived
+    if (_punchedOutToday == true) return false; // today, attendance closed
+    return true; // today before punch-in, or state still loading (fail open)
+  }
 
-    if (d.isAfter(today)) {
-      // Future date — only Late Arrival can be planned ahead.
-      if (_type == 'lateArrival') return null;
-      return _type == 'earlyExit'
-          ? 'Early Exit permission can only be applied on the working day after punching in.'
-          : 'Custom permission can only be applied on the working day after punching in.';
+  /// Early Exit can be planned for a FUTURE date, or applied during today's
+  /// active session — but not before punch-in / after punch-out today.
+  bool _earlyExitAllowed() => _isFutureDate() || _isActiveSessionToday();
+
+  /// Custom (out/in window) can be planned for a FUTURE date, or applied during
+  /// today's active session — but not before punch-in / after punch-out today.
+  bool _customAllowed() => _isFutureDate() || _isActiveSessionToday();
+
+  /// Whether the given permission [type] is selectable in the current
+  /// date + punch context.
+  bool _isTypeAllowed(String type) {
+    switch (type) {
+      case 'lateArrival':
+        return _lateArrivalAllowed();
+      case 'earlyExit':
+        return _earlyExitAllowed();
+      case 'both':
+        return _customAllowed();
+      default:
+        return false;
     }
+  }
 
-    // Today (past dates aren't selectable). After punch-out the day is closed.
+  /// The first permission type selectable in the current context — used to
+  /// coerce a now-invalid `_type` to a valid one so the dropdown value always
+  /// matches one of its items (e.g. Late Arrival drops out after punch-in).
+  String _firstAllowedType() {
+    if (_lateArrivalAllowed()) return 'lateArrival';
+    if (_earlyExitAllowed()) return 'earlyExit';
+    if (_customAllowed()) return 'both';
+    return 'lateArrival'; // safe fallback (shouldn't happen for a selectable date)
+  }
+
+  /// Note shown under the type dropdown when not every permission type is
+  /// available for the selected date + punch context. Null on a future date
+  /// (all types available) or while the punch state is still loading.
+  String? _permissionTypeRestrictionNote() {
+    if (_isFutureDate()) return null; // future: all types available
     if (_punchedOutToday == true) {
+      return 'Today\'s attendance is closed. Apply your permission for a '
+          'future date.';
+    }
+    if (_punchedInToday == true) {
+      return 'After punching in, only Early Exit or Custom permission can be '
+          'applied for today. Late Arrival can be applied before punch-in or '
+          'for a future date.';
+    }
+    if (_punchedInToday == false) {
+      return 'Before punching in, only Late Arrival can be applied for today. '
+          'Early Exit and Custom permissions need an active session or a '
+          'future date.';
+    }
+    return null; // punch state still loading — no note yet
+  }
+
+  /// Validates the selected permission type against the date + punch context,
+  /// per the permission matrix. Returns an error message to show, or null when
+  /// the request may proceed.
+  String? _permissionEligibilityError() {
+    // After punch-out today the day is closed (the date picker also bars today,
+    // but guard here too). A future-dated request is unaffected.
+    if (!_isFutureDate() && _punchedOutToday == true) {
       return 'Attendance is closed for today. Permission can no longer be applied.';
     }
-    // Before punch-in only Late Arrival is allowed.
-    if (_punchedInToday == false && _type != 'lateArrival') {
-      return _type == 'earlyExit'
-          ? 'Early Exit permission can only be applied after punching in.'
-          : 'Custom permission can only be applied after punching in.';
+    if (_isTypeAllowed(_type)) return null;
+    // The selected type is not valid for this date + punch context.
+    switch (_type) {
+      case 'lateArrival':
+        return 'Late Arrival permission can only be applied before punching in, '
+            'or planned for a future date.';
+      case 'both':
+        return 'Custom permission can only be applied after punching in, '
+            'or planned for a future date.';
+      default: // earlyExit
+        return 'Early Exit permission can only be applied after punching in, '
+            'or planned for a future date.';
     }
-    return null;
   }
 
   /// Maps the selected permission type to the fine-rule action key.
@@ -7010,10 +7216,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       setState(() {
         _date = DateTime(picked.year, picked.month, picked.day);
         _showLimitWarning = false;
-        // A future date allows Late Arrival only — drop a now-invalid selection
-        // so the dropdown value stays in sync with its available items.
-        if (!_earlyAndCustomAllowed() && _type != 'lateArrival') {
-          _type = 'lateArrival';
+        // Drop a now-invalid type selection so the dropdown value stays in sync
+        // with its available items (e.g. Late Arrival drops out after punch-in).
+        if (!_isTypeAllowed(_type)) {
+          _type = _firstAllowedType();
         }
       });
     }
@@ -7339,10 +7545,12 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
       return;
     }
 
-    // Gate the apply on the permission matrix: future dates allow Late Arrival
-    // only; today allows Early Exit / Custom only during an active session
-    // (after punch-in, before punch-out); after punch-out nothing is allowed.
-    // When attendance state is still unknown (null) we fail open — the backend
+    // Gate the apply on the permission matrix: future dates allow any type (no
+    // punch logic); today allows Late Arrival only before punch-in, and Early
+    // Exit / Custom only during an active session (after punch-in, before
+    // punch-out); after punch-out nothing is allowed. The past-hours guard
+    // below additionally blocks a today window that has already begun. When the
+    // attendance state is still unknown (null) we fail open — the backend
     // re-checks and is authoritative.
     final eligibilityError = _permissionEligibilityError();
     if (eligibilityError != null) {
@@ -7546,16 +7754,17 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       ),
                       decoration: _fieldDecoration(),
                       items: [
-                        const DropdownMenuItem(
-                          value: 'lateArrival',
-                          child: Text('Late Arrival'),
-                        ),
-                        if (_earlyAndCustomAllowed())
+                        if (_lateArrivalAllowed())
+                          const DropdownMenuItem(
+                            value: 'lateArrival',
+                            child: Text('Late Arrival'),
+                          ),
+                        if (_earlyExitAllowed())
                           const DropdownMenuItem(
                             value: 'earlyExit',
                             child: Text('Early Exit'),
                           ),
-                        if (_earlyAndCustomAllowed())
+                        if (_customAllowed())
                           const DropdownMenuItem(
                             value: 'both',
                             child: Text('Custom'),
@@ -7567,15 +7776,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     // Early Exit / Custom are tied to an active work session, so
                     // for future dates (and today before punch-in) only Late
                     // Arrival is offered.
-                    if (!_earlyAndCustomAllowed()) ...[
+                    if (_permissionTypeRestrictionNote() != null) ...[
                       const SizedBox(height: 8),
                       Text(
-                        _punchedOutToday == true
-                            ? 'Today\'s attendance is closed. Only a Late Arrival '
-                                'permission for a future date can be applied.'
-                            : 'Only Late Arrival can be applied for the selected '
-                                'date. Early Exit and Custom permissions are '
-                                'available on the working day after punching in.',
+                        _permissionTypeRestrictionNote()!,
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,

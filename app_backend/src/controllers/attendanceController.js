@@ -3887,6 +3887,11 @@ const getTodayAttendance = async (req, res) => {
             shiftAssigned,
             staffHasAttendanceTemplate,
             weeklyOffAssigned,
+            // Whether a Holiday template is assigned to this staff (null when none). Surfaced so the
+            // app's punch validation can pre-block with a "Holiday not configured" reason, mirroring weeklyOffAssigned.
+            holidayTemplateAssigned: !!holidayTemplate,
+            // Whether a Leave template is assigned to this staff. Surfaced for the same punch-config pre-block.
+            leaveTemplateAssigned: !!staff.leaveTemplateId,
             isOnLeave: isOnLeave,
             leaveMessage: finalLeaveMessage,
             leaveInfo: activeLeave,
@@ -4855,6 +4860,7 @@ const getMonthAttendance = async (req, res) => {
                                 compensationType
                             };
                         });
+                       
                         leaveDateSetHalf.forEach(d => {
                             if (!dateMap[d]) dateMap[d] = {};
                             dateMap[d].hasHalfDayLeave = true;
@@ -4997,3 +5003,4 @@ const getFineCalculation = async (req, res) => {
 };
 
 module.exports = { checkIn, checkOut, getTodayAttendance, getAttendanceHistory, getEmployeeAttendance, getMonthAttendance, getFineCalculation, calculateCombinedFine };
+

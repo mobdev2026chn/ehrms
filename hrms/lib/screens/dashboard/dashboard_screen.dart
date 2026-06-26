@@ -1927,6 +1927,10 @@ class _DashboardScreenState extends State<DashboardScreen>
       return {
         'staffHasTemplate': staffHasTemplate,
         'weeklyOffAssigned': body['weeklyOffAssigned'] as bool? ?? true,
+        'holidayTemplateAssigned':
+            body['holidayTemplateAssigned'] as bool? ?? true,
+        'leaveTemplateAssigned':
+            body['leaveTemplateAssigned'] as bool? ?? true,
         'template': template,
         'companyDocForShift': companyDocForShift,
         'staffData': staffData != null
@@ -2438,6 +2442,10 @@ class _DashboardScreenState extends State<DashboardScreen>
   ) async {
     final staffHasTemplate = data['staffHasTemplate'] as bool? ?? false;
     final weeklyOffAssigned = data['weeklyOffAssigned'] as bool? ?? true;
+    final holidayTemplateAssigned =
+        data['holidayTemplateAssigned'] as bool? ?? true;
+    final leaveTemplateAssigned =
+        data['leaveTemplateAssigned'] as bool? ?? true;
     final template = data['template'] as Map<String, dynamic>?;
     final branchData = data['branchData'] as Map<String, dynamic>?;
     final shiftAssigned = data['shiftAssigned'] as bool? ?? true;
@@ -2496,26 +2504,32 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     final salaryStaffData = data['staffData'] as Map<String, dynamic>?;
     _updateSalaryConfigured(salaryStaffData);
+    // Punch-in config gates, surfaced in a fixed priority order every time:
+    // 1) salary  2) attendance & shift  3) weekly off  4) holiday  5) leave.
     if (!_isSalaryConfiguredFromStaff(salaryStaffData)) {
-      await _showValidationAlertDialog(
-        'Salary is not configured. Contact HR.',
-      );
+      await _showValidationAlertDialog('Salary not configured. Contact HR.');
       return false;
     }
-    if (staffHasTemplate != true) {
+    if (staffHasTemplate != true ||
+        !isValidAttendanceTemplateMap(template) ||
+        shiftAssigned != true) {
       await _showValidationAlertDialog(
-        'Attendance template is not assigned. Contact HR.',
+        'Attendance and shift not configured. Contact HR.',
       );
       return false;
     }
     if (weeklyOffAssigned != true) {
-      await _showValidationAlertDialog(
-        'Weekly Off template is not assigned. Contact HR.',
-      );
+      await _showValidationAlertDialog('Weekly off not configured. Contact HR.');
       return false;
     }
-    if (!isValidAttendanceTemplateMap(template)) {
-      await _showValidationAlertDialog('Template not mapped. Contact HR.');
+    if (holidayTemplateAssigned != true) {
+      await _showValidationAlertDialog('Holiday not configured. Contact HR.');
+      return false;
+    }
+    if (leaveTemplateAssigned != true) {
+      await _showValidationAlertDialog(
+        'Leave template not configured. Contact HR.',
+      );
       return false;
     }
     final Map<String, dynamic> tmpl = template!;
@@ -2553,10 +2567,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       'effectiveIsWeekOff=${todayEffectiveShift?.isWeekOff == true} '
       'effectiveWindow=${effWin.isEmpty ? '(n/a)' : effWin}',
     );
-    if (shiftAssigned != true) {
-      await _showValidationAlertDialog('Shift not assigned. Contact HR.');
-      return false;
-    }
     if (branchData == null) {
       await _showValidationAlertDialog('Branch not assigned.');
       return false;

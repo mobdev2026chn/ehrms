@@ -1212,9 +1212,11 @@ const createPermissionRequest = async (req, res) => {
         attendanceDate.setHours(0, 0, 0, 0);
 
         // Permission eligibility by date + punch status, mirroring the app matrix:
-        //  - Future date: only Late Arrival can be planned ahead (no punch needed).
+        //  - Future date: any type (Late Arrival / Early Exit / Custom) can be
+        //    planned ahead — no punch requirement.
         //  - Today before punch-in: only Late Arrival.
-        //  - Today active session (punched in, not out): all types.
+        //  - Today active session (punched in, not out): Early Exit / Custom only
+        //    — Late Arrival no longer applies once you've arrived (punched in).
         //  - Today after punch-out: none (the day is closed).
         // Past dates are not offered by the app and are left to admin policy.
         // Uses the same UTC day-bucket as the attendance punch log to match records.
@@ -1226,15 +1228,11 @@ const createPermissionRequest = async (req, res) => {
             // Day-bucket of the requested permission date (UTC) vs today.
             const reqDate = new Date(date);
             const reqDay = new Date(Date.UTC(reqDate.getUTCFullYear(), reqDate.getUTCMonth(), reqDate.getUTCDate(), 0, 0, 0, 0));
-            const isFuture = reqDay.getTime() > startOfToday.getTime();
             const isToday = reqDay.getTime() === startOfToday.getTime();
 
-            if (isFuture) {
-                if (String(type) !== 'lateArrival') {
-                    return res.status(400).json({ success: false, error: { message: 'Only Late Arrival permission can be applied for future dates.' } });
-                }
-                // Future Late Arrival — no punch requirement.
-            } else if (isToday) {
+            // Future dates are unrestricted (any type, no punch needed); only
+            // TODAY is gated on the punch session.
+            if (isToday) {
                 const todayAttendance = await Attendance.findOne({
                     employeeId,
                     date: { $gte: startOfToday, $lte: endOfToday }
@@ -1244,8 +1242,16 @@ const createPermissionRequest = async (req, res) => {
                 if (punchedOut) {
                     return res.status(400).json({ success: false, error: { message: 'Attendance is closed for today. Permission can no longer be applied.' } });
                 }
-                if (!punchedIn && String(type) !== 'lateArrival') {
-                    return res.status(400).json({ success: false, error: { message: 'Early Exit and Custom permissions can only be applied after punching in.' } });
+                if (!punchedIn) {
+                    // Before punch-in: only Late Arrival applies for today.
+                    if (String(type) !== 'lateArrival') {
+                        return res.status(400).json({ success: false, error: { message: 'Early Exit and Custom permissions can only be applied after punching in.' } });
+                    }
+                } else {
+                    // Active session: Late Arrival no longer applies (already arrived).
+                    if (String(type) === 'lateArrival') {
+                        return res.status(400).json({ success: false, error: { message: 'Late Arrival permission can only be applied before punching in, or planned for a future date.' } });
+                    }
                 }
             }
             // Past dates are not gated here — governed by company/admin policy.
@@ -1409,7 +1415,7 @@ const loadOwnTodayPermission = async (req, res) => {
 // Appends a selfie-stamped permission punch to TODAY's attendance record (the
 // per-day log). Uses the same UTC day-bucket as check-in so the right record is
 // found. No-op (logged) when the employee has no attendance row yet today.
-const appendPermissionPunchToAttendance = async (employeeId, kind, at, selfie, minutes) => {
+const appendPermissionPunchToAttendance = async (employeeId, kind, at, selfie, minutes, overrunMinutes = 0) => {
     try {
         const now = new Date();
         const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
@@ -1424,7 +1430,11 @@ const appendPermissionPunchToAttendance = async (employeeId, kind, at, selfie, m
             kind,
             at,
             selfie: selfie ? String(selfie) : undefined,
-            minutes: Math.max(0, Math.floor(Number(minutes) || 0))
+            minutes: Math.max(0, Math.floor(Number(minutes) || 0)),
+            // Overrun minutes the actual out→in duration exceeded the approved window.
+            // Only meaningful on the 'in' punch; surfaced on the Log timeline so a fined
+            // custom permission is visible there (the rupee amount settles at checkout).
+            overrunMinutes: Math.max(0, Math.floor(Number(overrunMinutes) || 0))
         });
         await attendance.save();
         console.log('[Permission][Punch] logged to attendance', { employeeId: String(employeeId), kind, minutes });
@@ -1530,7 +1540,7 @@ const permissionIn = async (req, res) => {
         permission.overrunMinutes = overrunMinutes;
         await permission.save();
         await appendPermissionPunchToAttendance(
-            permission.employeeId, 'in', permission.actualInAt, selfie, permission.requestedMinutes
+            permission.employeeId, 'in', permission.actualInAt, selfie, permission.requestedMinutes, overrunMinutes
         );
         // Reflect the overrun minutes on today's attendance immediately (amount settles
         // at checkout). Only meaningful once this request is Approved.
