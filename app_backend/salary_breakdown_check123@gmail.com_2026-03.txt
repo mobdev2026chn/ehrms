@@ -1,0 +1,144 @@
+========================================================================================
+HRMS SALARY BREAKDOWN (app parity: Salary Overview + backend payroll)
+Generated: 2026-03-27T05:20:30.368Z
+Target email: check123@gmail.com
+Period: 2026-03
+========================================================================================
+
+--- FORMULA REFERENCE (Flutter: lib/utils/salary_structure_calculator.dart) ---
+1) grossFixedSalary = Basic + DA + HRA + Special Allowance
+2) PF applicable if (Basic + DA) < 15000; ESI if (Basic + DA + HRA) < 21000
+3) employerPF = employerPFRate% × Basic (if PF applicable, else 0)
+4) employerESI = employerESIRate% × grossFixedSalary (if ESI applicable)
+5) pfStaticAmount = 0 if PF applicable, else 1800 (added to gross)
+6) grossSalary = grossFixedSalary + employerPF + employerESI + pfStaticAmount
+7) employeePF = employeePFRate% × Basic if PF applicable, else pfStaticAmount (1800)
+8) employeeESI = employeeESIRate% × grossSalary (if ESI applicable)
+9) totalMonthlyDeductions = employeePF + employeeESI
+10) netMonthlySalary = grossSalary - totalMonthlyDeductions
+
+MTD proration (Flutter client / getPayrollStats no-payroll path):
+  prorationFactor = presentDays / workingDaysFullMonth
+  proratedGross = monthlyGross × factor
+  proratedDeductions = monthlyDeductions × factor
+  MTD net = proratedGross - proratedDeductions - totalLateFines
+  (presentDays = weighted present/approved/half-day from attendance; excludes paid-leave-only rows)
+
+Payroll PREVIEW API (POST /api/payrolls/preview) uses:
+  prorationFactor = (presentDays + paidLeaveDays) / workingDaysFullMonth
+  App MTD cards prefer preview gross/net when returned, else client prorated values.
+
+Daily salary for fines: netMonthlySalary / workingDaysFullMonth
+========================================================================================
+
+--- USER / STAFF (from DB) ---
+User._id: 69c3b5af05742908e8c1f6ab
+User.name: check
+User.email: check123@gmail.com
+User.role: Employee
+Staff._id: 69c3b5ae05742908e8c1f6a8
+Staff.name: check
+Staff.email: check123@gmail.com
+Staff.employeeId: ASG00001
+Staff.designation: Tester
+Staff.department: IT
+Staff.businessId: 69a13b64ce4d07bf2d7d280e
+
+--- staff.salary (raw from DB) ---
+{
+  "basicSalary": 10000,
+  "dearnessAllowance": 5000,
+  "houseRentAllowance": 3000,
+  "specialAllowance": 0,
+  "employerPFRate": 13,
+  "employerESIRate": 3.25,
+  "incentiveRate": 0,
+  "gratuityRate": 4.81,
+  "statutoryBonusRate": 8.33,
+  "medicalInsuranceAmount": 0,
+  "mobileAllowance": 0,
+  "mobileAllowanceType": "monthly",
+  "employeePFRate": 12,
+  "employeeESIRate": 0.75
+}
+
+--- FULL MONTH (computeMonthlySalaryFromStaffSalary / app calculator) ---
+PF applicable (Basic+DA < 15000): false
+ESI applicable (Basic+DA+HRA < 21000): true
+Basic:                    ₹10,000.00
+DA:                       ₹5,000.00
+HRA:                      ₹3,000.00
+Special Allowance:        ₹0.00
+Gross fixed:              ₹18,000.00
+Employer PF:              ₹0.00
+Employer ESI:             ₹585.00
+Statutory PF (fixed):     ₹1,800.00
+Monthly GROSS:            ₹20,385.00
+Employee PF:              ₹1,800.00
+Employee ESI:             ₹152.8875
+Total monthly deductions: ₹1,952.8875
+Monthly NET:              ₹18,432.1125
+
+--- CTC (same as getPayrollStats no-payroll path) ---
+Annual gross (gross×12):  ₹2,44,620.00
+Annual incentive:         ₹0.00 (incentiveRate% × annual basic)
+Annual gratuity:          ₹5,772.00
+Annual statutory bonus:   ₹9,996.00
+Medical insurance (yr):   ₹0.00
+Annual mobile allowance:₹0.00
+Total CTC:                ₹2,60,388.00
+
+--- ATTENDANCE STATS (calculateAttendanceStats) ---
+{
+  "workingDays": 22,
+  "workingDaysFullMonth": 24,
+  "presentDays": 5,
+  "paidLeaveDays": 0,
+  "absentDays": 17,
+  "holidays": 0,
+  "halfDayPaidLeaveCount": 0,
+  "leaveDays": 0,
+  "attendancePercentage": 22.727272727272727
+}
+
+workingDays (till today in month):     22
+workingDaysFullMonth:                  24
+presentDays (weighted):                5
+paidLeaveDays:                         0
+effectivePaidDays (present+paid):      5
+absentDays:                            17
+
+--- FINES (getRecordFineAmount; daily net = monthlyNet / workingDaysFullMonth) ---
+Shift hours (for formula): 9
+Daily salary (net / full month WD): ₹768.0047
+Total late / fine amount: ₹200.00
+Per-record (non-zero):
+  2026-03-02  fine=₹50.00  lateMin=60 fineHours=60 fineAmount=50
+  2026-03-04  fine=₹50.00  lateMin=0 fineHours=60 fineAmount=50
+  2026-03-13  fine=₹100.00  lateMin=0 fineHours=120 fineAmount=100
+
+--- MTD ESTIMATES ---
+Denominator (workingDaysFullMonth): 24
+
+A) getPayrollStats / Flutter client proration (present ONLY):
+   factor = presentDays / WDM = 5 / 24 = 0.208333
+   MTD gross = ₹4,246.875
+   MTD emp deductions (prorated) = ₹406.8516
+   MTD net (before unpaid leave adj. in app) = ₹3,640.0234
+   (Flutter also subtracts unpaid leave × daily net after this — see salary_overview_screen.)
+
+B) POST /api/payrolls/preview (present + paid leave):
+   factor = (5 + 0) / 24 = 0.208333
+   MTD gross = ₹4,246.875
+   MTD deductions (prorated) = ₹406.8516
+   MTD net (max 0) = ₹3,640.0234
+
+C) Recheck Flutter calculateProratedSalary (same as A):
+   proratedGross=₹4,246.875 proratedDed=₹406.8516 net=₹3,640.0234
+
+--- PAYROLL ROW (if any) ---
+No payroll document for this staff + month + year.
+
+========================================================================================
+END
+========================================================================================

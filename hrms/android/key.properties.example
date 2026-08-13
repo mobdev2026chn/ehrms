@@ -1,0 +1,8 @@
+# Copy this file to key.properties and fill in your values.
+# key.properties is git-ignored; never commit it or your keystore.
+# Generate upload keystore: see PLAYSTORE_SETUP.md
+
+storePassword=your_keystore_password
+keyPassword=your_key_password
+keyAlias=upload
+storeFile=upload-keystore.jks

@@ -1,0 +1,57 @@
+const express = require('express');
+const router = express.Router();
+const { protect } = require('../middleware/authMiddleware');
+const { getLeaves, createLeave, getLeaveTypes, getLeaveTypesForApply, getLeaveBalance, checkLeaveDates, updateLeaveStatus } = require('../controllers/leaveController');
+const { getReimbursements, getReimbursementSummary, createReimbursement } = require('../controllers/reimbursementController');
+
+const { getLoans, createLoan, getLoanSummary } = require('../controllers/loanController');
+const {
+  requestPayslip,
+  getPayslipRequests,
+  viewPayslipRequest,
+  downloadPayslipRequest,
+  createPermissionRequest,
+  getPermissionRequests,
+  cancelPermissionRequest,
+  permissionOut,
+  permissionIn,
+  getPermissionBalance
+} = require('../controllers/requestController');
+
+// Leave Routes
+router.get('/leave', protect, getLeaves);
+router.get('/leave-types', protect, getLeaveTypes);
+router.get('/leave-types/for-apply', protect, getLeaveTypesForApply);
+router.get('/leave-balance', protect, getLeaveBalance);
+router.post('/leave/check-dates', protect, checkLeaveDates);
+router.post('/leave', protect, createLeave);
+router.patch('/leave/:id/status', protect, updateLeaveStatus); // Approve/Reject leave
+
+// Reimbursement (Expense) Routes
+router.get('/reimbursement/summary', protect, getReimbursementSummary);
+router.get('/reimbursement', protect, getReimbursements);
+router.post('/reimbursement', protect, createReimbursement);
+router.get('/expense/summary', protect, getReimbursementSummary);
+router.get('/expense', protect, getReimbursements);
+router.post('/expense', protect, createReimbursement);
+
+// Loan Routes
+router.get('/loan/summary', protect, getLoanSummary);
+router.get('/loan', protect, getLoans);
+router.post('/loan', protect, createLoan);
+
+// Payslip Routes
+router.get('/payslip', protect, getPayslipRequests);
+router.post('/payslip', protect, requestPayslip);
+router.get('/payslip/:id/view', protect, viewPayslipRequest);
+router.get('/payslip/:id/download', protect, downloadPayslipRequest);
+
+// Permission Routes
+router.get('/permission', protect, getPermissionRequests);
+router.get('/permission/balance', protect, getPermissionBalance);
+router.post('/permission', protect, createPermissionRequest);
+router.patch('/permission/:id/cancel', protect, cancelPermissionRequest);
+router.post('/permission/:id/out', protect, permissionOut); // stamp actual step-out
+router.post('/permission/:id/in', protect, permissionIn);   // stamp return + compute overrun
+
+module.exports = router;
