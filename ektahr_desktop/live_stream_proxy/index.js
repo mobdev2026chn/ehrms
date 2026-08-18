@@ -12,13 +12,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/health', (req, res) => {
-    res.json({ ok: true, activeDevices: agentSockets.size, activeSessions: viewerSockets.size });
-});
-
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ noServer: true });
-
 // Data structures for routing streams
 // deviceId -> WebSocket (Agent socket)
 const agentSockets = new Map();
@@ -26,8 +19,15 @@ const agentSockets = new Map();
 // deviceId -> Set<WebSocket> (Viewer sockets)
 const deviceViewers = new Map();
 
-// liveSessionId -> metadata { deviceId, quality, fps, frameCount, lastFpsCalc, resolution }
+// liveSessionId -> metadata
 const activeSessions = new Map();
+
+app.get('/health', (req, res) => {
+    res.json({ ok: true, activeDevices: agentSockets.size, activeSessions: deviceViewers.size });
+});
+
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ noServer: true });
 
 // Handle HTTP upgrade to WebSocket
 server.on('upgrade', (request, socket, head) => {
@@ -36,7 +36,7 @@ server.on('upgrade', (request, socket, head) => {
     const query = parsedUrl.query;
 
     if (pathname === '/agent' || pathname === '/ws/agent') {
-        const deviceId = query.deviceId;
+        const deviceId = query.deviceId || query.hostname;
         if (!deviceId) {
             socket.destroy();
             return;
@@ -47,9 +47,9 @@ server.on('upgrade', (request, socket, head) => {
             wss.emit('connection', ws, request);
         });
     } else if (pathname === '/viewer' || pathname === '/ws/viewer') {
-        const deviceId = query.deviceId;
-        const liveSessionId = query.liveSessionId;
-        if (!deviceId || !liveSessionId) {
+        const deviceId = query.deviceId || query.targetDeviceId;
+        const liveSessionId = query.liveSessionId || `session_${Date.now()}`;
+        if (!deviceId) {
             socket.destroy();
             return;
         }
@@ -92,7 +92,6 @@ function handleAgentConnection(ws) {
             // Forward binary screen frame directly to all connected viewers for this device
             const viewers = deviceViewers.get(deviceId);
             if (viewers && viewers.size > 0) {
-                // Calculate FPS for tracking
                 updateDeviceFps(deviceId);
 
                 for (const viewerWs of viewers) {
@@ -107,7 +106,7 @@ function handleAgentConnection(ws) {
                 const text = message.toString();
                 const payload = JSON.parse(text);
                 if (payload.type === 'RESOLUTION_INFO') {
-                    notifyViewersResolution(deviceId, payload.resolution);
+                    notifyViewersResolution(deviceId, payload.resolution || payload);
                 } else if (payload.type === 'AGENT_ERROR') {
                     notifyViewersStatus(deviceId, 'Connection Failed', payload.message || 'Stream error');
                 }
@@ -152,7 +151,6 @@ function handleViewerConnection(ws) {
 
     const agentWs = agentSockets.get(deviceId);
     if (agentWs && agentWs.readyState === WebSocket.OPEN) {
-        // Send start stream to agent if this is the first viewer
         if (viewers.size === 1) {
             notifyAgentStartStream(deviceId, quality);
         }
@@ -163,13 +161,9 @@ function handleViewerConnection(ws) {
 
     ws.on('message', (message) => {
         try {
-            const payload = JSON.parse(message.toString());
-            if (payload.type === 'CHANGE_QUALITY') {
-                const newQuality = payload.quality || 'high';
-                ws.quality = newQuality;
-                const sessionMeta = activeSessions.get(liveSessionId);
-                if (sessionMeta) sessionMeta.quality = newQuality;
-                notifyAgentQualityChange(deviceId, newQuality);
+            const agentWs = agentSockets.get(deviceId);
+            if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+                agentWs.send(message.toString());
             }
         } catch (err) {
             // ignore
@@ -182,7 +176,6 @@ function handleViewerConnection(ws) {
 
         if (viewers.size === 0) {
             deviceViewers.delete(deviceId);
-            // Notify agent to stop streaming as no active viewers remain
             notifyAgentStopStream(deviceId);
         }
 
@@ -217,16 +210,6 @@ function notifyAgentStopStream(deviceId) {
     }
 }
 
-function notifyAgentQualityChange(deviceId, quality) {
-    const agentWs = agentSockets.get(deviceId);
-    if (agentWs && agentWs.readyState === WebSocket.OPEN) {
-        agentWs.send(JSON.stringify({
-            type: 'CHANGE_QUALITY',
-            quality
-        }));
-    }
-}
-
 function notifyViewersStatus(deviceId, status, message) {
     const viewers = deviceViewers.get(deviceId);
     if (viewers) {
@@ -252,32 +235,20 @@ function notifyViewersResolution(deviceId, resolution) {
 }
 
 function updateDeviceFps(deviceId) {
-    const viewers = deviceViewers.get(deviceId);
-    if (!viewers) return;
-
-    for (const viewerWs of viewers) {
-        const sessionMeta = activeSessions.get(viewerWs.liveSessionId);
-        if (sessionMeta) {
-            sessionMeta.frameCount++;
+    for (const [sessionId, session] of activeSessions.entries()) {
+        if (session.deviceId === deviceId) {
+            session.frameCount++;
             const now = Date.now();
-            const elapsed = (now - sessionMeta.lastFpsCalc) / 1000;
+            const elapsed = (now - session.lastFpsCalc) / 1000;
             if (elapsed >= 1.0) {
-                sessionMeta.currentFps = Math.round(sessionMeta.frameCount / elapsed);
-                sessionMeta.frameCount = 0;
-                sessionMeta.lastFpsCalc = now;
-
-                // Send FPS update to viewer
-                if (viewerWs.readyState === WebSocket.OPEN) {
-                    viewerWs.send(JSON.stringify({
-                        type: 'FPS_INFO',
-                        fps: sessionMeta.currentFps
-                    }));
-                }
+                session.currentFps = Math.round(session.frameCount / elapsed);
+                session.frameCount = 0;
+                session.lastFpsCalc = now;
             }
         }
     }
 }
 
 server.listen(PORT, () => {
-    console.log(`[LiveStreamProxy] Service listening on port ${PORT}`);
+    console.log(`[LiveStreamProxy] Listening on port ${PORT}`);
 });

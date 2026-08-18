@@ -36,5 +36,6 @@ router.post('/set-inactive', protectDeviceForLogout, deviceController.setInactiv
 router.post('/set-logout', protectDeviceForLogout, deviceController.setLogout);
 router.post('/set-exit', protectDeviceForLogout, deviceController.setExit);
 router.post('/start', protectDeviceForLogout, deviceController.startDevice);
+router.get('/active-list', deviceController.getActiveDevicesList);
 
 module.exports = router;

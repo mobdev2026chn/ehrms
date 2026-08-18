@@ -75,9 +75,6 @@ class AppConstants {
   }
 
 
-
-
-
   /// Debug console: presence + live task tracking POSTs (flutter run / debug only).
   static const bool logTrackingsToConsole = true;
   // static const bool logTrackingsToConsole = false;

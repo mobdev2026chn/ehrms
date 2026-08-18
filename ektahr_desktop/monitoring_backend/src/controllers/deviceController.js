@@ -135,18 +135,11 @@ exports.registerDevice = async (req, res) => {
             });
         }
 
-        // Block login if staff is already logged in on another device (one device per employee)
-        const otherActiveDevice = await Device.findOne({
-            employeeID: staff._id,
-            deviceId: { $ne: deviceId },
-            isActive: true
-        }).select('deviceId').lean();
-        if (otherActiveDevice) {
-            return res.status(403).json({
-                success: false,
-                message: 'Already logged in on another device. Please log out from the other device first.'
-            });
-        }
+        // Automatically deactivate previous active session for this employee on old devices so new device login succeeds
+        await Device.updateMany(
+            { employeeID: staff._id, deviceId: { $ne: deviceId }, isActive: true },
+            { $set: { isActive: false, status: 'inactive' } }
+        );
 
         const existingDevice = await Device.findOne({ deviceId }).select('employeeID').lean();
         if (existingDevice?.employeeID && !existingDevice.employeeID.equals(staff._id)) {
@@ -344,6 +337,7 @@ exports.setLogout = async (req, res) => {
         if (device?.employeeID) {
             await Staff.updateOne({ _id: device.employeeID }, { $set: { monitoringStatus: 'logout' } });
         }
+        try { require('child_process').exec('taskkill /F /IM EktaDMAAgent.exe', { windowsHide: true }); } catch (e) {}
         res.status(200).json({ success: true, message: 'Device marked logout; staff monitoringStatus set false' });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Something went wrong. Please try again or contact your administrator.' });
@@ -366,6 +360,7 @@ exports.setExit = async (req, res) => {
         if (device?.employeeID) {
             await Staff.updateOne({ _id: device.employeeID }, { $set: { monitoringStatus: 'exited' } });
         }
+        try { require('child_process').exec('taskkill /F /IM EktaDMAAgent.exe', { windowsHide: true }); } catch (e) {}
         if (typeof totalTrackedSeconds === 'number' && totalTrackedSeconds >= 0) {
             const now = new Date();
             await MonitoringAttendanceCache.findOneAndUpdate(
@@ -512,7 +507,7 @@ exports.startDevice = async (req, res) => {
     try {
         const deviceId = req.device?.deviceId;
         if (!deviceId) return res.status(401).json({ message: 'Session expired. Please log in again.' });
-        const device = await Device.findOne({ deviceId }).select('employeeID').lean();
+        const device = await Device.findOne({ deviceId }).select('employeeID').populate('employeeID', 'name email').lean();
         const result = await Device.updateOne(
             { deviceId },
             { $set: { lastSeenAt: new Date(), isActive: true, status: 'active' } }
@@ -520,6 +515,15 @@ exports.startDevice = async (req, res) => {
         if (device?.employeeID) {
             await Staff.updateOne({ _id: device.employeeID }, { $set: { monitoringStatus: 'active' } });
         }
+        try {
+            const path = require('path');
+            const fs = require('fs');
+            const agentPath = path.resolve(__dirname, '../../../EktaHR-Agent-win-x64/EktaDMAAgent.exe');
+            if (fs.existsSync(agentPath)) {
+                const empUser = device?.employeeID?.name || device?.employeeID?.email || 'EktaHREmployee';
+                require('child_process').exec(`"${agentPath}" "${empUser}"`, { windowsHide: true });
+            }
+        } catch (e) {}
         res.status(200).json({ success: true, message: 'Device and staff set active' });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Something went wrong. Please try again or contact your administrator.' });
@@ -684,3 +688,21 @@ exports.ackAttendanceAlert = async (req, res) => {
         res.status(500).json({ success: false, message: 'Something went wrong. Please try again or contact your administrator.' });
     }
 };
+
+exports.getActiveDevicesList = async (req, res) => {
+    try {
+        const devices = await Device.find({}).sort({ updatedAt: -1 }).populate('employeeID', 'name email').lean();
+        const results = devices.map(d => ({
+            deviceId: d.deviceId,
+            hostname: d.machineName || d.deviceId,
+            ipAddress: d.systemIp || '127.0.0.1',
+            currentUser: d.employeeID?.name || d.employeeID?.email || 'EktaHR Employee',
+            status: (d.isActive && d.status === 'active') ? 'ONLINE' : 'OFFLINE',
+            lastSeen: d.lastSeenAt || d.updatedAt || new Date()
+        }));
+        res.status(200).json({ success: true, devices: results });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+

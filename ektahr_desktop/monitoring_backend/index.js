@@ -41,6 +41,7 @@ app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
 
 app.use('/api/device', deviceRoutes);
+app.use('/api/v1/device', deviceRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/break', breakRoutes);
 app.use('/api/pause', pauseRoutes);

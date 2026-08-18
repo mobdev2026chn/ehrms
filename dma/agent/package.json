@@ -1,0 +1,13 @@
+{
+  "name": "dma-agent",
+  "version": "1.0.0",
+  "description": "EktaDMA Node.js Agent for Windows Desktop Screen Stream & Remote Input",
+  "main": "node_agent.js",
+  "scripts": {
+    "start": "node node_agent.js"
+  },
+  "dependencies": {
+    "screenshot-desktop": "^1.15.0",
+    "ws": "^8.18.0"
+  }
+}
