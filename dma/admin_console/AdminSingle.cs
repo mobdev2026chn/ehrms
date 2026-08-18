@@ -258,8 +258,11 @@ namespace EktaHR.AdminConsole
         private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
         private const int GWL_STYLE = -16;
+        private const int GWL_EXSTYLE = -20;
         private const int WS_VISIBLE = 0x10000000;
         private const int WS_CHILD = 0x40000000;
+        private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int WS_EX_APPWINDOW = 0x00040000;
         private const int WM_SETICON = 0x80;
         private const int ICON_SMALL = 0;
         private const int ICON_BIG = 1;
@@ -306,6 +309,7 @@ namespace EktaHR.AdminConsole
             this.Size = new Size(1360, 850);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = Color.FromArgb(245, 247, 250);
+            this.ShowInTaskbar = true;
 
             pnlBrowserHost = new Panel()
             {
@@ -367,7 +371,10 @@ namespace EktaHR.AdminConsole
                         embedTimer.Stop();
                         embedTimer.Dispose();
 
-                        // Strip inner window frame/titlebar style to leave ONLY outer Form titlebar
+                        // Strip inner window frame and remove child Edge window from taskbar
+                        int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+                        SetWindowLong(hWnd, GWL_EXSTYLE, (exStyle | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW);
+
                         SetWindowLong(hWnd, GWL_STYLE, WS_CHILD | WS_VISIBLE);
                         SetParent(hWnd, pnlBrowserHost.Handle);
                         MoveWindow(hWnd, 0, 0, pnlBrowserHost.Width, pnlBrowserHost.Height, true);
