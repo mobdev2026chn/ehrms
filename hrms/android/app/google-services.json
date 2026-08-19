@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "761328490721",
+    "project_id": "ehrms-929bb",
+    "storage_bucket": "ehrms-929bb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:761328490721:android:3f05090eb421f840c2ffa0",
+        "android_client_info": {
+          "package_name": "io.askeva.ektahr"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNLUlI8TYeVA9Ind4YGZB79YiVj8peguQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

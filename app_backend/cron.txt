@@ -1,0 +1,1029 @@
+/**
+ * Centralized Cron Jobs Manager
+ * 
+ * This file contains all scheduled cron jobs for the application.
+ * All cron jobs should be initialized here for easier deployment and management.
+ * 
+ * Usage:
+ * - Import and call `initializeAllCronJobs()` in server.ts after database connection
+ * - For deployment, this file can be deployed separately if needed
+ * 
+ * Local Testing:
+ * - Set NODE_ENV=development or CRON_TEST_MODE=true to run jobs every minute
+ */
+
+import { initializeAttendanceAutoMark, autoMarkPastAttendance } from '../services/attendanceAutoMark.service';
+import { runCourseDeadlineJob } from './courseDeadline.job';
+import { runPerformanceReviewDeadlineJob } from './performanceReviewDeadline.job';
+
+/**
+ * Check if we're in local/test mode
+ * Jobs will run every minute instead of their normal schedules
+ */
+const isLocalTestMode = process.env.NODE_ENV === 'development' || process.env.CRON_TEST_MODE === 'true';
+const TEST_INTERVAL_MS = 60 * 1000; // 1 minute for local testing
+
+/**
+ * Interface for cron job configuration
+ */
+interface CronJobConfig {
+  name: string;
+  enabled: boolean;
+  description: string;
+}
+
+/**
+ * Configuration for all cron jobs
+ * Set enabled: false to disable a specific cron job
+ */
+const cronJobsConfig: Record<string, CronJobConfig> = {
+  attendanceAutoMark: {
+    name: 'Attendance Auto-Mark',
+    enabled: true,
+    description: 'Automatically marks employees as absent if they did not punch in/out yesterday. Runs daily at midnight.'
+  },
+  courseDeadline: {
+    name: 'Course Deadline',
+    enabled: true,
+    description: 'Expires course enrollments past due date and sends deadline reminders (7d, 3d, 1d). Runs hourly.'
+  },
+  performanceReviewDeadline: {
+    name: 'Performance Review Deadline',
+    enabled: true,
+    description: 'Sends deadline reminders for performance reviews (self-review, manager-review, HR-review). Runs daily at 9 AM.'
+  }
+};
+
+/**
+ * Initialize Attendance Auto-Mark Cron Job
+ * Marks employees as absent if they didn't punch in/out yesterday
+ * Runs: Daily at midnight (or every minute in local test mode)
+ */
+function initializeAttendanceAutoMarkJob(): void {
+  if (!cronJobsConfig.attendanceAutoMark.enabled) {
+    console.log('[CronJobs] ⏭️  Attendance Auto-Mark job is disabled');
+    return;
+  }
+
+  try {
+    if (isLocalTestMode) {
+      console.log('[CronJobs] 🔄 Initializing Attendance Auto-Mark job (TEST MODE: runs every minute)...');
+      
+      // Run immediately
+      autoMarkPastAttendance().catch((error: any) => {
+        console.error('[CronJobs] Error in initial attendance auto-mark run:', error);
+      });
+
+      // Then run every minute for testing
+      setInterval(() => {
+        autoMarkPastAttendance().catch((error: any) => {
+          console.error('[CronJobs] Error in scheduled attendance auto-mark run:', error);
+        });
+      }, TEST_INTERVAL_MS);
+
+      console.log('[CronJobs] ✅ Attendance Auto-Mark job initialized (TEST MODE: every minute)');
+    } else {
+      console.log('[CronJobs] 🔄 Initializing Attendance Auto-Mark job...');
+      initializeAttendanceAutoMark();
+      console.log('[CronJobs] ✅ Attendance Auto-Mark job initialized (PRODUCTION: daily at midnight)');
+    }
+  } catch (error: any) {
+    console.error('[CronJobs] ❌ Failed to initialize Attendance Auto-Mark job:', error.message);
+  }
+}
+
+/**
+ * Initialize Course Deadline Cron Job
+ * Expires enrollments and sends deadline reminders
+ * Runs: Hourly (or every minute in local test mode)
+ */
+function initializeCourseDeadlineJob(): void {
+  if (!cronJobsConfig.courseDeadline.enabled) {
+    console.log('[CronJobs] ⏭️  Course Deadline job is disabled');
+    return;
+  }
+
+  try {
+    const interval = isLocalTestMode ? TEST_INTERVAL_MS : 60 * 60 * 1000; // 1 minute or 1 hour
+    const intervalDescription = isLocalTestMode ? 'every minute (TEST MODE)' : 'hourly';
+    
+    console.log(`[CronJobs] 🔄 Initializing Course Deadline job (${intervalDescription})...`);
+    
+    // Run immediately on startup
+    runCourseDeadlineJob().catch(error => {
+      console.error('[CronJobs] Error in initial course deadline run:', error);
+    });
+
+    // Then run at specified interval
+    setInterval(() => {
+      runCourseDeadlineJob().catch(error => {
+        console.error('[CronJobs] Error in scheduled course deadline run:', error);
+      });
+    }, interval);
+
+    console.log(`[CronJobs] ✅ Course Deadline job initialized (runs ${intervalDescription})`);
+  } catch (error: any) {
+    console.error('[CronJobs] ❌ Failed to initialize Course Deadline job:', error.message);
+  }
+}
+
+/**
+ * Initialize Performance Review Deadline Cron Job
+ * Sends deadline reminders for performance reviews
+ * Runs: Daily at 9 AM (or every minute in local test mode)
+ */
+function initializePerformanceReviewDeadlineJob(): void {
+  if (!cronJobsConfig.performanceReviewDeadline.enabled) {
+    console.log('[CronJobs] ⏭️  Performance Review Deadline job is disabled');
+    return;
+  }
+
+  try {
+    if (isLocalTestMode) {
+      console.log('[CronJobs] 🔄 Initializing Performance Review Deadline job (TEST MODE: runs every minute)...');
+      
+      // Run immediately
+      runPerformanceReviewDeadlineJob().catch((error: any) => {
+        console.error('[CronJobs] Error in initial performance review deadline run:', error);
+      });
+
+      // Then run every minute for testing
+      setInterval(() => {
+        runPerformanceReviewDeadlineJob().catch((error: any) => {
+          console.error('[CronJobs] Error in scheduled performance review deadline run:', error);
+        });
+      }, TEST_INTERVAL_MS);
+
+      console.log('[CronJobs] ✅ Performance Review Deadline job initialized (TEST MODE: every minute)');
+    } else {
+      console.log('[CronJobs] 🔄 Initializing Performance Review Deadline job...');
+      
+      // Calculate milliseconds until 9 AM today (or tomorrow if past 9 AM)
+      const now = new Date();
+      const targetTime = new Date();
+      targetTime.setHours(9, 0, 0, 0);
+      
+      if (now >= targetTime) {
+        // If past 9 AM, schedule for tomorrow
+        targetTime.setDate(targetTime.getDate() + 1);
+      }
+      
+      const msUntil9AM = targetTime.getTime() - now.getTime();
+      
+      // Run at 9 AM
+      setTimeout(() => {
+        runPerformanceReviewDeadlineJob().catch((error: any) => {
+          console.error('[CronJobs] Error in performance review deadline run:', error);
+        });
+        
+        // Then run daily
+        setInterval(() => {
+          runPerformanceReviewDeadlineJob().catch((error: any) => {
+            console.error('[CronJobs] Error in scheduled performance review deadline run:', error);
+          });
+        }, 24 * 60 * 60 * 1000); // 24 hours
+      }, msUntil9AM);
+
+      console.log('[CronJobs] ✅ Performance Review Deadline job initialized (PRODUCTION: daily at 9 AM)');
+    }
+  } catch (error: any) {
+    console.error('[CronJobs] ❌ Failed to initialize Performance Review Deadline job:', error.message);
+  }
+}
+
+/**
+ * Get status of all cron jobs
+ */
+export function getCronJobsStatus(): Record<string, CronJobConfig> {
+  return { ...cronJobsConfig };
+}
+
+/**
+ * Enable or disable a specific cron job
+ */
+export function toggleCronJob(jobName: string, enabled: boolean): boolean {
+  if (cronJobsConfig[jobName]) {
+    cronJobsConfig[jobName].enabled = enabled;
+    console.log(`[CronJobs] ${enabled ? '✅ Enabled' : '⏸️  Disabled'} ${cronJobsConfig[jobName].name}`);
+    return true;
+  }
+  console.error(`[CronJobs] ❌ Unknown cron job: ${jobName}`);
+  return false;
+}
+
+/**
+ * Initialize all cron jobs
+ * Call this function after database connection is established
+ */
+export function initializeAllCronJobs(): void {
+  const mode = isLocalTestMode ? '🧪 TEST MODE (runs every minute)' : '🚀 PRODUCTION MODE';
+  console.log('\n========================================');
+  console.log(`🚀 Initializing All Cron Jobs`);
+  console.log(`   ${mode}`);
+  console.log('========================================\n');
+
+  // Initialize each cron job
+  initializeAttendanceAutoMarkJob();
+  initializeCourseDeadlineJob();
+  initializePerformanceReviewDeadlineJob();
+
+  // Log summary
+  const enabledJobs = Object.values(cronJobsConfig).filter(job => job.enabled);
+  const disabledJobs = Object.values(cronJobsConfig).filter(job => !job.enabled);
+
+  console.log('\n========================================');
+  console.log('📊 Cron Jobs Summary');
+  console.log('========================================');
+  console.log(`✅ Enabled: ${enabledJobs.length}`);
+  enabledJobs.forEach(job => {
+    console.log(`   - ${job.name}: ${job.description}`);
+  });
+  
+  if (disabledJobs.length > 0) {
+    console.log(`\n⏸️  Disabled: ${disabledJobs.length}`);
+    disabledJobs.forEach(job => {
+      console.log(`   - ${job.name}`);
+    });
+  }
+  
+  console.log('========================================\n');
+}
+
+/**
+ * Export individual job initializers for selective initialization if needed
+ */
+export {
+  initializeAttendanceAutoMarkJob,
+  initializeCourseDeadlineJob,
+  initializePerformanceReviewDeadlineJob
+};
+================================
+/**
+ * Performance Review Deadline Reminder Job
+ * Sends alerts to employees, managers, and HR about pending review deadlines
+ * Runs: Daily at 9 AM (or every minute in local test mode)
+ */
+import ReviewCycle from '../models/ReviewCycle.model';
+import PerformanceReview from '../models/PerformanceReview.model';
+import Staff from '../models/Staff.model';
+import socketService from '../services/socket.service';
+import mongoose from 'mongoose';
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Send deadline reminder notifications
+ * Alerts users 7 days, 3 days, 1 day before deadline, and on deadline day
+ */
+export async function runPerformanceReviewDeadlineReminders(): Promise<{ sent: number }> {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0); // Normalize to start of day
+  let sent = 0;
+
+  try {
+    // Get all active review cycles (not completed or cancelled and haven't ended)
+    const cycles = await ReviewCycle.find({
+      status: { $nin: ['completed', 'cancelled'] },
+      endDate: { $gte: now } // Only cycles that haven't ended
+    }).lean();
+
+    for (const cycle of cycles) {
+      const selfReviewDeadline = new Date(cycle.selfReviewDeadline);
+      const managerReviewDeadline = new Date(cycle.managerReviewDeadline);
+      const hrReviewDeadline = new Date(cycle.hrReviewDeadline);
+
+      selfReviewDeadline.setHours(0, 0, 0, 0);
+      managerReviewDeadline.setHours(0, 0, 0, 0);
+      hrReviewDeadline.setHours(0, 0, 0, 0);
+
+      // Calculate days until each deadline
+      const daysUntilSelfReview = Math.ceil((selfReviewDeadline.getTime() - now.getTime()) / ONE_DAY_MS);
+      const daysUntilManagerReview = Math.ceil((managerReviewDeadline.getTime() - now.getTime()) / ONE_DAY_MS);
+      const daysUntilHRReview = Math.ceil((hrReviewDeadline.getTime() - now.getTime()) / ONE_DAY_MS);
+
+      // Self Review Deadline Alerts (for employees)
+      if (daysUntilSelfReview >= 0 && daysUntilSelfReview <= 7) {
+        const reviewsQuery: any = {
+          reviewCycle: cycle.name,
+          status: { $in: ['self-review-pending', 'draft'] }
+        };
+        if (cycle.businessId) {
+          reviewsQuery.businessId = cycle.businessId;
+        }
+
+        const pendingSelfReviews = await PerformanceReview.find(reviewsQuery)
+          .populate('employeeId', 'userId name')
+          .lean();
+
+        for (const review of pendingSelfReviews) {
+          const employee = review.employeeId as any;
+          if (employee?.userId) {
+            const userId = employee.userId?._id?.toString() || employee.userId?.toString() || employee.userId;
+            if (userId) {
+              let message = '';
+              let title = '';
+              
+              if (daysUntilSelfReview === 0) {
+                title = 'Self Review Deadline Today';
+                message = `Your self-review for "${cycle.name}" is due today. Please submit it as soon as possible.`;
+              } else if (daysUntilSelfReview === 1) {
+                title = 'Self Review Deadline Tomorrow';
+                message = `Your self-review for "${cycle.name}" is due tomorrow (${selfReviewDeadline.toLocaleDateString()}). Please complete it soon.`;
+              } else if (daysUntilSelfReview === 3) {
+                title = 'Self Review Deadline in 3 Days';
+                message = `Your self-review for "${cycle.name}" is due in 3 days (${selfReviewDeadline.toLocaleDateString()}). Please start working on it.`;
+              } else if (daysUntilSelfReview === 7) {
+                title = 'Self Review Deadline in 7 Days';
+                message = `Your self-review for "${cycle.name}" is due in 7 days (${selfReviewDeadline.toLocaleDateString()}). Please plan accordingly.`;
+              }
+
+              if (message) {
+                // Check if we've already sent this reminder (to avoid duplicates)
+                // We'll use a simple approach: send reminders on specific days
+                const shouldSend = daysUntilSelfReview === 0 || daysUntilSelfReview === 1 || 
+                                  daysUntilSelfReview === 3 || daysUntilSelfReview === 7;
+                
+                if (shouldSend) {
+                  socketService.notifyUser(
+                    userId.toString(),
+                    'performance_review_deadline',
+                    {
+                      type: 'performance_review_deadline',
+                      title,
+                      message,
+                      reviewId: review._id.toString(),
+                      reviewCycle: cycle.name,
+                      deadline: selfReviewDeadline.toISOString(),
+                      daysRemaining: daysUntilSelfReview,
+                      link: '/employee/performance/reviews',
+                      timestamp: new Date()
+                    }
+                  );
+                  sent++;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Manager Review Deadline Alerts (for managers)
+      if (daysUntilManagerReview >= 0 && daysUntilManagerReview <= 7) {
+        const reviewsQuery: any = {
+          reviewCycle: cycle.name,
+          status: { $in: ['self-review-submitted', 'manager-review-pending'] }
+        };
+        if (cycle.businessId) {
+          reviewsQuery.businessId = cycle.businessId;
+        }
+
+        const pendingManagerReviews = await PerformanceReview.find(reviewsQuery)
+          .populate('managerId', 'userId name')
+          .lean();
+
+        // Group by manager to avoid duplicate notifications
+        const managerMap = new Map<string, any[]>();
+        for (const review of pendingManagerReviews) {
+          const manager = review.managerId as any;
+          if (manager?._id) {
+            const managerId = manager._id.toString();
+            if (!managerMap.has(managerId)) {
+              managerMap.set(managerId, []);
+            }
+            managerMap.get(managerId)!.push(review);
+          }
+        }
+
+        for (const [managerId, reviews] of managerMap.entries()) {
+          const manager = reviews[0].managerId as any;
+          if (manager?.userId) {
+            const userId = manager.userId?._id?.toString() || manager.userId?.toString() || manager.userId;
+            if (userId) {
+              let message = '';
+              let title = '';
+              
+              if (daysUntilManagerReview === 0) {
+                title = 'Manager Review Deadline Today';
+                message = `You have ${reviews.length} manager review(s) for "${cycle.name}" due today. Please submit them as soon as possible.`;
+              } else if (daysUntilManagerReview === 1) {
+                title = 'Manager Review Deadline Tomorrow';
+                message = `You have ${reviews.length} manager review(s) for "${cycle.name}" due tomorrow (${managerReviewDeadline.toLocaleDateString()}). Please complete them soon.`;
+              } else if (daysUntilManagerReview === 3) {
+                title = 'Manager Review Deadline in 3 Days';
+                message = `You have ${reviews.length} manager review(s) for "${cycle.name}" due in 3 days (${managerReviewDeadline.toLocaleDateString()}). Please start working on them.`;
+              } else if (daysUntilManagerReview === 7) {
+                title = 'Manager Review Deadline in 7 Days';
+                message = `You have ${reviews.length} manager review(s) for "${cycle.name}" due in 7 days (${managerReviewDeadline.toLocaleDateString()}). Please plan accordingly.`;
+              }
+
+              if (message) {
+                const shouldSend = daysUntilManagerReview === 0 || daysUntilManagerReview === 1 || 
+                                  daysUntilManagerReview === 3 || daysUntilManagerReview === 7;
+                
+                if (shouldSend) {
+                  socketService.notifyUser(
+                    userId.toString(),
+                    'manager_review_deadline',
+                    {
+                      type: 'manager_review_deadline',
+                      title,
+                      message,
+                      reviewCycle: cycle.name,
+                      deadline: managerReviewDeadline.toISOString(),
+                      daysRemaining: daysUntilManagerReview,
+                      pendingCount: reviews.length,
+                      link: '/performance/reviews',
+                      timestamp: new Date()
+                    }
+                  );
+                  sent++;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // HR Review Deadline Alerts (for HR/Admin)
+      if (daysUntilHRReview >= 0 && daysUntilHRReview <= 7) {
+        const reviewsQuery: any = {
+          reviewCycle: cycle.name,
+          status: { $in: ['manager-review-submitted', 'hr-review-pending'] }
+        };
+        if (cycle.businessId) {
+          reviewsQuery.businessId = cycle.businessId;
+        }
+
+        const pendingHRReviews = await PerformanceReview.find(reviewsQuery).lean();
+        const pendingCount = pendingHRReviews.length;
+
+        if (pendingCount > 0) {
+          // Get all HR/Admin users for this business
+          const User = (await import('../models/User.model')).default;
+          const hrUsersQuery: any = {
+            role: { $in: ['HR', 'Admin'] }
+          };
+          if (cycle.businessId) {
+            hrUsersQuery.companyId = cycle.businessId;
+          }
+
+          const hrUsers = await User.find(hrUsersQuery).select('_id').lean();
+
+          for (const hrUser of hrUsers) {
+            const userId = hrUser._id.toString();
+            
+            let message = '';
+            let title = '';
+            
+            if (daysUntilHRReview === 0) {
+              title = 'HR Review Deadline Today';
+              message = `You have ${pendingCount} HR review(s) for "${cycle.name}" due today. Please submit them as soon as possible.`;
+            } else if (daysUntilHRReview === 1) {
+              title = 'HR Review Deadline Tomorrow';
+              message = `You have ${pendingCount} HR review(s) for "${cycle.name}" due tomorrow (${hrReviewDeadline.toLocaleDateString()}). Please complete them soon.`;
+            } else if (daysUntilHRReview === 3) {
+              title = 'HR Review Deadline in 3 Days';
+              message = `You have ${pendingCount} HR review(s) for "${cycle.name}" due in 3 days (${hrReviewDeadline.toLocaleDateString()}). Please start working on them.`;
+            } else if (daysUntilHRReview === 7) {
+              title = 'HR Review Deadline in 7 Days';
+              message = `You have ${pendingCount} HR review(s) for "${cycle.name}" due in 7 days (${hrReviewDeadline.toLocaleDateString()}). Please plan accordingly.`;
+            }
+
+            if (message) {
+              const shouldSend = daysUntilHRReview === 0 || daysUntilHRReview === 1 || 
+                                daysUntilHRReview === 3 || daysUntilHRReview === 7;
+              
+              if (shouldSend) {
+                socketService.notifyUser(
+                  userId,
+                  'hr_review_deadline',
+                  {
+                    type: 'hr_review_deadline',
+                    title,
+                    message,
+                    reviewCycle: cycle.name,
+                    deadline: hrReviewDeadline.toISOString(),
+                    daysRemaining: daysUntilHRReview,
+                    pendingCount,
+                    link: '/performance/reviews',
+                    timestamp: new Date()
+                  }
+                );
+                sent++;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { sent };
+  } catch (error: any) {
+    console.error('[PerformanceReviewDeadline] Error in deadline reminders:', error);
+    return { sent };
+  }
+}
+
+/**
+ * Run the performance review deadline job
+ * Call this daily (or every minute in test mode)
+ */
+export async function runPerformanceReviewDeadlineJob(): Promise<void> {
+  try {
+    console.log('[PerformanceReviewDeadline] Starting deadline reminder job...');
+    const result = await runPerformanceReviewDeadlineReminders();
+    console.log(`[PerformanceReviewDeadline] ✅ Sent ${result.sent} deadline reminder(s)`);
+  } catch (error: any) {
+    console.error('[PerformanceReviewDeadline] ❌ Error in deadline job:', error.message);
+  }
+}
+
+=====================
+
+/**
+ * Service to automatically mark past attendance records with "Not Marked" status as "Absent"
+ * This runs daily to ensure past days are properly marked
+ */
+
+import Attendance from '../models/Attendance.model';
+import HolidayTemplate from '../models/HolidayTemplate.model';
+import Business from '../models/Business.model';
+import Staff from '../models/Staff.model';
+import mongoose from 'mongoose';
+
+interface AutoMarkResult {
+  updatedCount: number;
+  skippedCount: number;
+  errors: string[];
+}
+
+/**
+ * Check if a date is a Sunday
+ */
+function isSunday(date: Date): boolean {
+  return date.getDay() === 0;
+}
+
+/**
+ * Check if a date is a holiday based on holiday templates
+ */
+async function isHoliday(date: Date, businessId?: mongoose.Types.ObjectId): Promise<boolean> {
+  if (!businessId) return false;
+
+  try {
+    const holidayTemplate = await HolidayTemplate.findOne({
+      businessId,
+      isActive: true
+    });
+
+    if (!holidayTemplate) return false;
+
+    const dateStr = date.toISOString().split('T')[0];
+    return holidayTemplate.holidays.some((holiday: any) => {
+      const holidayDate = new Date(holiday.date);
+      holidayDate.setHours(0, 0, 0, 0);
+      return holidayDate.toISOString().split('T')[0] === dateStr;
+    });
+  } catch (error) {
+    console.error('[AttendanceAutoMark] Error checking holiday:', error);
+    return false;
+  }
+}
+
+/**
+ * Automatically mark past attendance records with "Not Marked" status as "Absent"
+ * Also creates "Absent" records for employees who didn't punch in/out yesterday
+ * Excludes Sundays and holidays
+ */
+export async function autoMarkPastAttendance(): Promise<AutoMarkResult> {
+  const result: AutoMarkResult = {
+    updatedCount: 0,
+    skippedCount: 0,
+    errors: []
+  };
+
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Calculate start of current month (first day of current month)
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    // Process all previous days in the current month (excluding today)
+    console.log(`[AttendanceAutoMark] Processing attendance for current month from ${startOfMonth.toISOString().split('T')[0]} to ${today.toISOString().split('T')[0]}`);
+
+    // Step 1: Update existing "Not Marked" records to "Absent" for all previous days in current month
+    const notMarkedRecords = await Attendance.find({
+      status: 'Not Marked',
+      date: {
+        $gte: startOfMonth,
+        $lt: today
+      }
+    }).populate('employeeId', 'businessId').lean();
+
+    console.log(`[AttendanceAutoMark] Found ${notMarkedRecords.length} "Not Marked" attendance record(s) for previous days in current month`);
+
+    // Process existing "Not Marked" records
+    for (const record of notMarkedRecords) {
+      try {
+        const recordDate = new Date(record.date);
+        recordDate.setHours(0, 0, 0, 0);
+
+        // Skip if it's a Sunday
+        if (isSunday(recordDate)) {
+          result.skippedCount++;
+          continue;
+        }
+
+        // Get businessId from record or employee
+        let businessId: mongoose.Types.ObjectId | undefined;
+        if (record.businessId) {
+          businessId = new mongoose.Types.ObjectId(record.businessId.toString());
+        } else if ((record.employeeId as any)?.businessId) {
+          businessId = new mongoose.Types.ObjectId((record.employeeId as any).businessId.toString());
+        }
+
+        // Skip if it's a holiday
+        if (businessId && await isHoliday(recordDate, businessId)) {
+          result.skippedCount++;
+          continue;
+        }
+
+        // Update to Absent
+        const updateResult = await Attendance.updateOne(
+          { _id: record._id },
+          {
+            $set: {
+              status: 'Absent',
+              remarks: 'Auto-marked as Absent - no punch in/out recorded'
+            }
+          }
+        );
+
+        if (updateResult.modifiedCount > 0) {
+          result.updatedCount++;
+        }
+      } catch (error: any) {
+        const errorMsg = `Error processing record ${record._id}: ${error.message}`;
+        console.error(`[AttendanceAutoMark] ${errorMsg}`);
+        result.errors.push(errorMsg);
+      }
+    }
+
+    // Step 2: Check for employees who didn't punch in/out for previous days in current month and create "Absent" records
+    // Process each day from start of month to today (excluding today)
+    const daysToProcess: Date[] = [];
+    const currentDate = new Date(startOfMonth);
+    while (currentDate < today) {
+      daysToProcess.push(new Date(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    console.log(`[AttendanceAutoMark] Processing ${daysToProcess.length} days in current month`);
+
+    // Get all active employees once (outside the loop for efficiency)
+    const allActiveEmployees = await Staff.find({
+      status: 'Active'
+    }).select('_id businessId joiningDate').lean();
+
+    // Group employees by businessId
+    const employeesByBusiness = new Map<string, any[]>();
+    for (const employee of allActiveEmployees) {
+      const businessIdStr = employee.businessId?.toString() || 'unknown';
+      if (!employeesByBusiness.has(businessIdStr)) {
+        employeesByBusiness.set(businessIdStr, []);
+      }
+      employeesByBusiness.get(businessIdStr)!.push(employee);
+    }
+
+    // Process each day
+    for (const processDate of daysToProcess) {
+      // Skip if it's a Sunday
+      if (isSunday(processDate)) {
+        result.skippedCount++;
+        continue;
+      }
+
+      try {
+        // Process each business for this date
+        for (const [businessIdStr, employees] of employeesByBusiness.entries()) {
+          try {
+            const businessId = businessIdStr !== 'unknown' && mongoose.Types.ObjectId.isValid(businessIdStr)
+              ? new mongoose.Types.ObjectId(businessIdStr)
+              : null;
+
+            // Skip if it's a holiday for this business
+            if (businessId && await isHoliday(processDate, businessId)) {
+              result.skippedCount += employees.length;
+              continue;
+            }
+
+            // Filter employees who joined on or before this date
+            const eligibleEmployees = employees.filter(emp => {
+              if (!emp.joiningDate) return true; // Include if no joining date (backward compatibility)
+              const joiningDate = new Date(emp.joiningDate);
+              joiningDate.setHours(0, 0, 0, 0);
+              return joiningDate <= processDate;
+            });
+
+            if (eligibleEmployees.length === 0) continue;
+
+            // Get employee IDs
+            const employeeIds = eligibleEmployees.map(emp => emp._id);
+
+            // Check which employees already have attendance records for this date
+            const dateStart = new Date(processDate);
+            dateStart.setHours(0, 0, 0, 0);
+            const dateEnd = new Date(processDate);
+            dateEnd.setHours(23, 59, 59, 999);
+
+            const existingAttendance = await Attendance.find({
+              employeeId: { $in: employeeIds },
+              date: {
+                $gte: dateStart,
+                $lte: dateEnd
+              }
+            }).select('employeeId').lean();
+
+            const existingEmployeeIds = new Set(
+              existingAttendance.map(att => att.employeeId?.toString() || att.employeeId.toString())
+            );
+
+            // Find employees without attendance records for this date
+            const missingEmployees = eligibleEmployees.filter(
+              emp => !existingEmployeeIds.has(emp._id.toString())
+            );
+
+            if (missingEmployees.length > 0) {
+              const dateStr = processDate.toISOString().split('T')[0];
+              console.log(`[AttendanceAutoMark] Creating ${missingEmployees.length} "Absent" records for ${dateStr}`);
+
+              // Create "Absent" records for missing employees
+              const absentRecords = missingEmployees.map(emp => ({
+                employeeId: emp._id,
+                date: dateStart,
+                status: 'Absent' as const,
+                remarks: `Auto-marked as Absent - no punch in/out recorded for ${dateStr}`,
+                businessId: emp.businessId || undefined,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }));
+
+              // Insert in batches to avoid overwhelming the database
+              const batchSize = 100;
+              for (let i = 0; i < absentRecords.length; i += batchSize) {
+                const batch = absentRecords.slice(i, i + batchSize);
+                try {
+                  await Attendance.insertMany(batch, { ordered: false });
+                  result.updatedCount += batch.length;
+                } catch (batchError: any) {
+                  // Handle duplicate key errors (if record was created between check and insert)
+                  if (batchError.code === 11000) {
+                    // Count how many were actually inserted
+                    const insertedCount = batch.length - (batchError.writeErrors?.length || 0);
+                    result.updatedCount += insertedCount;
+                  } else {
+                    throw batchError;
+                  }
+                }
+              }
+            }
+          } catch (businessError: any) {
+            const errorMsg = `Error processing business ${businessIdStr} for date ${processDate.toISOString().split('T')[0]}: ${businessError.message}`;
+            console.error(`[AttendanceAutoMark] ${errorMsg}`);
+            result.errors.push(errorMsg);
+          }
+        }
+      } catch (error: any) {
+        const errorMsg = `Error creating missing attendance records for date ${processDate.toISOString().split('T')[0]}: ${error.message}`;
+        console.error(`[AttendanceAutoMark] ${errorMsg}`);
+        result.errors.push(errorMsg);
+      }
+    }
+
+    console.log(`[AttendanceAutoMark] ✅ Completed: Updated ${result.updatedCount}, Skipped ${result.skippedCount}, Errors: ${result.errors.length}`);
+
+    return result;
+  } catch (error: any) {
+    const errorMsg = `Auto-mark attendance failed: ${error.message}`;
+    console.error(`[AttendanceAutoMark] ❌ ${errorMsg}`);
+    result.errors.push(errorMsg);
+    return result;
+  }
+}
+
+/**
+ * Initialize the auto-mark service to run daily
+ * This should be called once when the server starts
+ */
+export function initializeAttendanceAutoMark(): void {
+  console.log('[AttendanceAutoMark] Initializing daily auto-mark service...');
+
+  // Run immediately on startup to catch any missed days
+  autoMarkPastAttendance().catch(error => {
+    console.error('[AttendanceAutoMark] Error in initial run:', error);
+  });
+
+  // Calculate milliseconds until next midnight
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const msUntilMidnight = tomorrow.getTime() - now.getTime();
+
+  // Schedule first run at midnight
+  setTimeout(() => {
+    // Run at midnight
+    autoMarkPastAttendance().catch(error => {
+      console.error('[AttendanceAutoMark] Error in scheduled run:', error);
+    });
+
+    // Then run every 24 hours (86400000 ms)
+    setInterval(() => {
+      autoMarkPastAttendance().catch(error => {
+        console.error('[AttendanceAutoMark] Error in daily run:', error);
+      });
+    }, 24 * 60 * 60 * 1000); // 24 hours
+
+    console.log('[AttendanceAutoMark] ✅ Daily auto-mark service scheduled (runs at midnight)');
+  }, msUntilMidnight);
+
+  console.log(`[AttendanceAutoMark] ✅ Auto-mark service initialized. Next run in ${Math.round(msUntilMidnight / 1000 / 60)} minutes`);
+}
+
+/**
+ * Manual function to process all past days immediately
+ * Can be called via API endpoint if needed
+ */
+export async function processAllPastDays(): Promise<AutoMarkResult> {
+  console.log('[AttendanceAutoMark] Manual trigger: Processing all past days...');
+  return await autoMarkPastAttendance();
+}
+
+===================
+/**
+ * Course deadline expiration and reminder notifications.
+ * Run hourly to: (1) expire enrollments past dueDate, (2) send 7d/3d/1d reminders and expiration notifications.
+ */
+import CourseProgress from '../models/CourseProgress.model';
+import { Course } from '../models/Course.model';
+import Staff from '../models/Staff.model';
+import Notification from '../models/Notification.model';
+import mongoose from 'mongoose';
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function getLmsNotificationLink(courseId: string) {
+    return `/lms/employee/course/${courseId}`;
+}
+
+async function sendLmsNotification(employeeId: mongoose.Types.ObjectId, title: string, message: string, type: 'info' | 'warning' | 'error', link?: string) {
+    const staff = await Staff.findById(employeeId).select('userId').lean();
+    const userId = staff?.userId;
+    if (!userId) return;
+    await Notification.create({
+        userId,
+        title,
+        message,
+        type,
+        link: link || undefined,
+        isRead: false
+    });
+}
+
+/** Expire enrollments past dueDate and send expiration notification. Skip learners who passed the assessment (they keep access). */
+export async function runExpireEnrollments(): Promise<{ expired: number }> {
+    const now = new Date();
+    const expired = await CourseProgress.find({
+        dueDate: { $lt: now },
+        status: { $nin: ['Completed', 'Expired'] },
+        assessmentStatus: { $ne: 'Passed' }
+    }).populate('courseId', 'title').populate('employeeId', 'name').lean();
+
+    let count = 0;
+    for (const p of expired) {
+        await CourseProgress.updateOne(
+            { _id: p._id },
+            { $set: { status: 'Expired', isAccessBlocked: true } }
+        );
+        count++;
+        const courseTitle = (p.courseId as any)?.title || 'Course';
+        const name = (p.employeeId as any)?.name || 'Learner';
+        const staffId = (p.employeeId as any)?._id ?? p.employeeId;
+        await sendLmsNotification(
+            staffId,
+            'Course expired',
+            `Your enrollment for "${courseTitle}" has expired. The completion deadline has passed. Contact your administrator to request an extension.`,
+            'error',
+            getLmsNotificationLink(String(p.courseId))
+        );
+    }
+    return { expired: count };
+}
+
+/** Send deadline reminder (7d, 3d, 1d) if not yet sent. Skip learners who passed the assessment (they have access without validity). */
+export async function runDeadlineReminders(): Promise<{ sent: number }> {
+    const now = new Date();
+    let sent = 0;
+
+    const progressList = await CourseProgress.find({
+        dueDate: { $gte: now },
+        status: { $nin: ['Completed', 'Expired'] },
+        assessmentStatus: { $ne: 'Passed' }
+    }).populate('courseId', 'title').populate('employeeId', 'name').lean();
+
+    for (const p of progressList) {
+        const due = new Date(p.dueDate!);
+        const daysLeft = Math.ceil((due.getTime() - now.getTime()) / ONE_DAY_MS);
+        const courseTitle = (p.courseId as any)?.title || 'Course';
+
+        if (daysLeft <= 7 && !(p as any).deadlineWarning7dSentAt) {
+            await CourseProgress.updateOne(
+                { _id: p._id },
+                { $set: { deadlineWarning7dSentAt: now } }
+            );
+            const staffId = (p.employeeId as any)?._id ?? p.employeeId;
+            await sendLmsNotification(
+                staffId,
+                'Course deadline in 7 days',
+                `"${courseTitle}" must be completed in 7 days (by ${due.toLocaleDateString()}).`,
+                'warning',
+                getLmsNotificationLink(String(p.courseId))
+            );
+            sent++;
+        }
+        if (daysLeft <= 3 && !(p as any).deadlineWarning3dSentAt) {
+            await CourseProgress.updateOne(
+                { _id: p._id },
+                { $set: { deadlineWarning3dSentAt: now } }
+            );
+            const staffId3 = (p.employeeId as any)?._id ?? p.employeeId;
+            await sendLmsNotification(
+                staffId3,
+                'Course deadline in 3 days',
+                `"${courseTitle}" must be completed in 3 days (by ${due.toLocaleDateString()}).`,
+                'warning',
+                getLmsNotificationLink(String(p.courseId))
+            );
+            sent++;
+        }
+        if (daysLeft <= 1 && !(p as any).deadlineWarning1dSentAt) {
+            await CourseProgress.updateOne(
+                { _id: p._id },
+                { $set: { deadlineWarning1dSentAt: now } }
+            );
+            const staffId1 = (p.employeeId as any)?._id ?? p.employeeId;
+            await sendLmsNotification(
+                staffId1,
+                'Course deadline tomorrow',
+                `"${courseTitle}" must be completed by ${due.toLocaleDateString()}.`,
+                'warning',
+                getLmsNotificationLink(String(p.courseId))
+            );
+            sent++;
+        }
+    }
+    return { sent };
+}
+
+/** Run both expiration and reminders. Call this hourly. */
+export async function runCourseDeadlineJob(): Promise<void> {
+    try {
+        const [r1, r2] = await Promise.all([runExpireEnrollments(), runDeadlineReminders()]);
+        if (r1.expired > 0 || r2.sent > 0) {
+            console.log(`[courseDeadline] Expired: ${r1.expired}, Reminders sent: ${r2.sent}`);
+        }
+    } catch (err) {
+        console.error('[courseDeadline] Error:', err);
+    }
+}
+
+/** Send "course assigned" notifications for enrollments created in the last 2 minutes (call after assignCourse). */
+export async function sendAssignmentNotificationsForCourse(courseId: string, businessId: string): Promise<number> {
+    const since = new Date(Date.now() - 2 * 60 * 1000);
+    const list = await CourseProgress.find({
+        courseId: new mongoose.Types.ObjectId(courseId),
+        businessId: new mongoose.Types.ObjectId(businessId),
+        createdAt: { $gte: since }
+    }).populate('courseId', 'title').populate('employeeId', 'name').lean();
+
+    const course = await Course.findById(courseId).select('completionDuration').lean();
+    const duration = course?.completionDuration || { value: 30, unit: 'Days' };
+    let sent = 0;
+    for (const p of list) {
+        const due = p.dueDate ? new Date(p.dueDate) : null;
+        const dueStr = due ? due.toLocaleDateString() : 'see course';
+        const courseTitle = (p.courseId as any)?.title || 'Course';
+        const staffId = (p.employeeId as any)?._id ?? p.employeeId;
+        await sendLmsNotification(
+            staffId,
+            'Course assigned',
+            `You have been assigned to "${courseTitle}". Please complete by ${dueStr}.`,
+            'info',
+            getLmsNotificationLink(String(p.courseId))
+        );
+        sent++;
+    }
+    return sent;
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "customerId": "CUST001",
+    "customerName": "Sowjanya",
+    "customerNumber": "1234567890",
+    "address": "9, Grand Southern Trunk Rd, St. Thomas Mount",
+    "city": "Chennai",
+    "pincode": "600016"
+  },
+  {
+    "customerId": "CUST002",
+    "customerName": "Malathy",
+    "customerNumber": "0987654321",
+    "address": "24 Boganram Apartment",
+    "city": "Chennai",
+    "pincode": "600035"
+  },
+  {
+    "customerId": "CUST003",
+    "customerName": "Ganesan",
+    "customerNumber": "1122334455",
+    "address": "New No.3, Vedammal Avenue",
+    "city": "Chennai",
+    "pincode": "600024"
+  }
+]

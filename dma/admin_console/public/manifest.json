@@ -1,0 +1,15 @@
+{
+  "short_name": "EktaHR Admin",
+  "name": "EktaHR DMA Admin Console",
+  "icons": [
+    {
+      "src": "/ekta_logo.jpeg",
+      "sizes": "192x192 512x512",
+      "type": "image/jpeg"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#ffffff",
+  "theme_color": "#f59e0b",
+  "display": "standalone"
+}
