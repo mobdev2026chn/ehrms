@@ -926,8 +926,8 @@ namespace EktaDMAAgent
             {
                 try
                 {
-                    // Capture 5-minute automated screenshot (JPEG quality 70%)
-                    byte[] jpegBytes = CaptureScreenJpeg(70L);
+                    // Capture 5-minute automated screenshot (JPEG quality 85L)
+                    byte[] jpegBytes = CaptureScreenJpeg(85L);
                     if (jpegBytes != null && jpegBytes.Length > 0)
                     {
                         string base64Image = Convert.ToBase64String(jpegBytes);
@@ -1099,9 +1099,6 @@ namespace EktaDMAAgent
                         g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
                     }
 
-                    Bitmap finalBmp = rawBmp;
-                    bool isBlurred = false;
-
                     ImageCodecInfo jpegEncoder = null;
                     ImageCodecInfo[] encoders = ImageCodecInfo.GetImageEncoders();
                     for (int i = 0; i < encoders.Length; i++)
@@ -1113,19 +1110,14 @@ namespace EktaDMAAgent
                         }
                     }
 
-                    if (jpegEncoder == null)
-                    {
-                        if (isBlurred && finalBmp != null) finalBmp.Dispose();
-                        return null;
-                    }
+                    if (jpegEncoder == null) return null;
 
                     using (EncoderParameters encoderParams = new EncoderParameters(1))
                     {
                         encoderParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
                         using (MemoryStream ms = new MemoryStream())
                         {
-                            finalBmp.Save(ms, jpegEncoder, encoderParams);
-                            if (isBlurred && finalBmp != null) finalBmp.Dispose();
+                            rawBmp.Save(ms, jpegEncoder, encoderParams);
                             return ms.ToArray();
                         }
                     }
@@ -1287,7 +1279,7 @@ namespace EktaDMAAgent
         private static async Task CaptureLoop(ClientWebSocket ws, CancellationToken token)
         {
             EncoderParameters encoderParams = new EncoderParameters(1);
-            encoderParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 65L);
+            encoderParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 85L);
             ImageCodecInfo jpegEncoder = GetEncoder(ImageFormat.Jpeg);
 
             while (!token.IsCancellationRequested && IsLoggedIn && ws != null && ws.State == WebSocketState.Open)
@@ -1304,14 +1296,10 @@ namespace EktaDMAAgent
                                 g.CopyFromScreen(Point.Empty, Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
                             }
 
-                            Bitmap finalBmp = rawBmp;
-                            bool isBlurred = false;
-
                             using (MemoryStream ms = new MemoryStream())
                             {
-                                finalBmp.Save(ms, jpegEncoder, encoderParams);
+                                rawBmp.Save(ms, jpegEncoder, encoderParams);
                                 byte[] frameBytes = ms.ToArray();
-                                if (isBlurred && finalBmp != null) finalBmp.Dispose();
                                 await SafeSendAsync(ws, frameBytes, WebSocketMessageType.Binary, token);
                                 LastCaptureTime = DateTime.Now.ToString("hh:mm tt");
                                 TotalScreenshots++;
