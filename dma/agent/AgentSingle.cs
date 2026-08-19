@@ -1153,30 +1153,43 @@ namespace EktaDMAAgent
         {
             try
             {
+                int taskbarHeight = 55;
+                int mainH = Math.Max(100, src.Height - taskbarHeight);
+
                 int scaleFactor = 35;
                 int smallW = Math.Max(8, src.Width / scaleFactor);
-                int smallH = Math.Max(6, src.Height / scaleFactor);
+                int smallH = Math.Max(6, mainH / scaleFactor);
 
                 Bitmap smallBmp = new Bitmap(smallW, smallH, PixelFormat.Format32bppArgb);
                 using (Graphics gSmall = Graphics.FromImage(smallBmp))
                 {
                     gSmall.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
-                    gSmall.DrawImage(src, 0, 0, smallW, smallH);
+                    gSmall.DrawImage(src, new Rectangle(0, 0, smallW, smallH), new Rectangle(0, 0, src.Width, mainH), GraphicsUnit.Pixel);
                 }
 
                 Bitmap blurredBmp = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
                 using (Graphics gBlur = Graphics.FromImage(blurredBmp))
                 {
+                    // 1. Draw blurred main screen area
                     gBlur.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
-                    gBlur.DrawImage(smallBmp, 0, 0, src.Width, src.Height);
+                    gBlur.DrawImage(smallBmp, new Rectangle(0, 0, src.Width, mainH), new Rectangle(0, 0, smallW, smallH), GraphicsUnit.Pixel);
 
-                    // Draw Privacy Overlay Banner
+                    // 2. Draw ORIGINAL UNBLURRED Taskbar at bottom so Admin can see and click Taskbar icons!
+                    gBlur.DrawImage(src, new Rectangle(0, mainH, src.Width, taskbarHeight), new Rectangle(0, mainH, src.Width, taskbarHeight), GraphicsUnit.Pixel);
+
+                    // 3. Draw Taskbar border separator line
+                    using (Pen borderPen = new Pen(Color.FromArgb(245, 158, 11), 2))
+                    {
+                        gBlur.DrawLine(borderPen, 0, mainH, src.Width, mainH);
+                    }
+
+                    // 4. Draw Privacy Overlay Banner across middle
                     using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(210, 15, 23, 42)))
                     using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(245, 158, 11)))
                     using (Font font = new Font("Segoe UI", 24f, FontStyle.Bold))
                     {
                         int bannerH = 110;
-                        int bannerY = (src.Height - bannerH) / 2;
+                        int bannerY = (mainH - bannerH) / 2;
                         gBlur.FillRectangle(bgBrush, 0, bannerY, src.Width, bannerH);
 
                         string msg = "🔒 PERSONAL WEBSITE / APP BLURRED FOR PRIVACY";
