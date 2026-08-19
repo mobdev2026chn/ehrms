@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const PORT = process.env.VITE_PORT || process.env.PORT || 3000;
-const SERVER_URL = process.env.VITE_SERVER_URL || 'http://localhost:9000';
+const SERVER_URL = process.env.VITE_SERVER_URL || 'https://track.ektahr.com:2005';
 
 export default defineConfig({
   plugins: [react()],

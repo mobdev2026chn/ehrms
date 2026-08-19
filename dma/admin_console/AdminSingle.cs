@@ -97,7 +97,7 @@ namespace EktaHR.AdminConsole
                     if (!string.IsNullOrEmpty(text))
                     {
                         if (!text.StartsWith("http://") && !text.StartsWith("https://")) text = "http://" + text;
-                        if (!text.Substring(text.IndexOf("//") + 2).Contains(":")) text = text + ":9000";
+                        if (!text.Substring(text.IndexOf("//") + 2).Contains(":")) text = text + ":2005";
                         ServerUrl = text.TrimEnd('/');
                     }
                 }
@@ -142,7 +142,7 @@ namespace EktaHR.AdminConsole
                     {
                         string portStr = respStr.Replace("EKTA_SERVER:", "").Trim();
                         string serverIp = remoteEp.Address.ToString();
-                        return "http://" + serverIp + ":" + (string.IsNullOrEmpty(portStr) ? "9000" : portStr);
+                        return "http://" + serverIp + ":" + (string.IsNullOrEmpty(portStr) ? "2005" : portStr);
                     }
                 }
             }
@@ -182,11 +182,12 @@ namespace EktaHR.AdminConsole
             List<string> quickCandidates = new List<string>();
 
             if (!string.IsNullOrEmpty(ServerUrl)) quickCandidates.Add(ServerUrl);
-            quickCandidates.Add("http://127.0.0.1:9000");
-            quickCandidates.Add("http://localhost:9000");
-            quickCandidates.Add("http://192.168.0.31:9000");
-            quickCandidates.Add("http://192.168.1.31:9000");
-            if (!string.IsNullOrEmpty(localIp)) quickCandidates.Add("http://" + localIp + ":9000");
+            quickCandidates.Add("https://track.ektahr.com:2005");
+            quickCandidates.Add("http://127.0.0.1:2005");
+            quickCandidates.Add("http://localhost:2005");
+            quickCandidates.Add("http://192.168.0.31:2005");
+            quickCandidates.Add("http://192.168.1.31:2005");
+            if (!string.IsNullOrEmpty(localIp)) quickCandidates.Add("http://" + localIp + ":2005");
 
             foreach (string candidate in quickCandidates)
             {
@@ -203,7 +204,7 @@ namespace EktaHR.AdminConsole
                 System.Threading.Tasks.Parallel.For(1, 255, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = 100 }, i =>
                 {
                     if (foundUrl != null) return;
-                    string target = "http://" + subnetPrefix + i + ":9000";
+                    string target = "http://" + subnetPrefix + i + ":2005";
                     if (PingHealthEndpointFast(target))
                     {
                         lock (lockObj)
@@ -221,14 +222,20 @@ namespace EktaHR.AdminConsole
 
         private static void AutoDetectPort()
         {
-            // 1. Try 127.0.0.1:9000 loopback FIRST (0.01ms instant response)
-            if (PingHealthEndpointFast("http://127.0.0.1:9000"))
+            // 1. If ServerUrl configured and responding, keep it
+            if (!string.IsNullOrEmpty(ServerUrl) && PingHealthEndpointFast(ServerUrl))
             {
-                ServerUrl = "http://127.0.0.1:9000";
                 return;
             }
 
-            // 2. Discover LAN active server
+            // 2. Try 127.0.0.1:2005 loopback if local server is active
+            if (PingHealthEndpointFast("http://127.0.0.1:2005"))
+            {
+                ServerUrl = "http://127.0.0.1:2005";
+                return;
+            }
+
+            // 3. Discover LAN active server
             string discovered = DiscoverActiveLanServerUrl();
             if (!string.IsNullOrEmpty(discovered))
             {
@@ -236,7 +243,11 @@ namespace EktaHR.AdminConsole
                 return;
             }
 
-            ServerUrl = "http://127.0.0.1:9000";
+            // 4. Default fallback to track.ektahr.com
+            if (string.IsNullOrEmpty(ServerUrl) || ServerUrl.Contains("127.0.0.1") || ServerUrl.Contains("localhost"))
+            {
+                ServerUrl = "https://track.ektahr.com:2005";
+            }
         }
     }
 

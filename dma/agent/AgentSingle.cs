@@ -379,11 +379,12 @@ namespace EktaDMAAgent
             List<string> quickCandidates = new List<string>();
 
             if (!string.IsNullOrEmpty(ServerHttpUrl)) quickCandidates.Add(ServerHttpUrl);
-            quickCandidates.Add("http://127.0.0.1:9000");
-            quickCandidates.Add("http://localhost:9000");
-            quickCandidates.Add("http://192.168.0.31:9000");
-            quickCandidates.Add("http://192.168.1.31:9000");
-            if (!string.IsNullOrEmpty(localIp)) quickCandidates.Add("http://" + localIp + ":9000");
+            quickCandidates.Add("https://track.ektahr.com:2005");
+            quickCandidates.Add("http://127.0.0.1:2005");
+            quickCandidates.Add("http://localhost:2005");
+            quickCandidates.Add("http://192.168.0.31:2005");
+            quickCandidates.Add("http://192.168.1.31:2005");
+            if (!string.IsNullOrEmpty(localIp)) quickCandidates.Add("http://" + localIp + ":2005");
 
             foreach (string candidate in quickCandidates)
             {
@@ -400,7 +401,7 @@ namespace EktaDMAAgent
                 System.Threading.Tasks.Parallel.For(1, 255, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = 100 }, i =>
                 {
                     if (foundUrl != null) return;
-                    string target = "http://" + subnetPrefix + i + ":9000";
+                    string target = "http://" + subnetPrefix + i + ":2005";
                     if (PingHealthEndpointFast(target))
                     {
                         lock (lockObj)
@@ -435,28 +436,27 @@ namespace EktaDMAAgent
                     if (!string.IsNullOrEmpty(fileUrl))
                     {
                         if (!fileUrl.StartsWith("http://") && !fileUrl.StartsWith("https://")) fileUrl = "http://" + fileUrl;
-                        if (!fileUrl.Substring(fileUrl.IndexOf("//") + 2).Contains(":")) fileUrl = fileUrl + ":9000";
+                        if (!fileUrl.Substring(fileUrl.IndexOf("//") + 2).Contains(":")) fileUrl = fileUrl + ":2005";
                         candidateUrls.Add(fileUrl.TrimEnd('/'));
                     }
                 }
             }
             catch { }
 
-            // 2. Localhost & Loopback candidates
-            candidateUrls.Add("http://127.0.0.1:9000");
-            candidateUrls.Add("http://localhost:9000");
+            if (!string.IsNullOrEmpty(ServerHttpUrl) && !candidateUrls.Contains(ServerHttpUrl.TrimEnd('/'))) candidateUrls.Add(ServerHttpUrl.TrimEnd('/'));
+            candidateUrls.Add("https://track.ektahr.com:2005");
+            candidateUrls.Add("http://127.0.0.1:2005");
+            candidateUrls.Add("http://localhost:2005");
 
             if (!string.IsNullOrEmpty(userEnteredUrl) && !candidateUrls.Contains(userEnteredUrl.TrimEnd('/'))) candidateUrls.Add(userEnteredUrl.TrimEnd('/'));
 
-            // 3. Dynamic LAN Subnet Auto-Discovery
             string discoveredUrl = DiscoverActiveLanServerUrl();
             if (!string.IsNullOrEmpty(discoveredUrl) && !candidateUrls.Contains(discoveredUrl)) candidateUrls.Add(discoveredUrl);
 
-            if (!string.IsNullOrEmpty(ServerHttpUrl) && !candidateUrls.Contains(ServerHttpUrl.TrimEnd('/'))) candidateUrls.Add(ServerHttpUrl.TrimEnd('/'));
-            candidateUrls.Add("http://192.168.0.31:9000");
+            candidateUrls.Add("http://192.168.0.31:2005");
 
             string localIp = GetLocalIPAddress();
-            if (!string.IsNullOrEmpty(localIp)) candidateUrls.Add("http://" + localIp + ":9000");
+            if (!string.IsNullOrEmpty(localIp)) candidateUrls.Add("http://" + localIp + ":2005");
 
             foreach (string targetUrl in candidateUrls)
             {
@@ -842,7 +842,7 @@ namespace EktaDMAAgent
                         byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
 
                         string mainHttp = ServerWsUrl.Replace("ws://", "http://").Replace("wss://", "https://").TrimEnd('/') + "/api/v1/device/screenshot";
-                        string localHttp = "http://127.0.0.1:9000/api/v1/device/screenshot";
+                        string localHttp = "http://127.0.0.1:2005/api/v1/device/screenshot";
                         string[] endpoints = new string[] { mainHttp, localHttp };
 
                         for (int i = 0; i < endpoints.Length; i++)
