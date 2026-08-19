@@ -38,4 +38,18 @@ async function getScreenshots(req, res) {
   }
 }
 
-module.exports = { getAllDevices, postScreenshot, getScreenshots };
+async function downloadAgent(req, res) {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const agentPath = path.join(__dirname, '../../../agent/publish/EktaHR-Agent.exe');
+    if (fs.existsSync(agentPath)) {
+      return res.download(agentPath, 'EktaHR-Agent.exe');
+    }
+    res.status(404).json({ error: 'Agent binary not found' });
+  } catch (err) {
+    res.status(500).json({ error: 'Download failed' });
+  }
+}
+
+module.exports = { getAllDevices, postScreenshot, getScreenshots, downloadAgent };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Monitor, Eye, MousePointer, User, Wifi, RefreshCw, LayoutGrid, List, Search, Camera, X } from 'lucide-react';
+import { Monitor, Eye, MousePointer, User, Wifi, RefreshCw, LayoutGrid, List, Search, Camera, X, Download } from 'lucide-react';
 import { getServerBaseUrl } from '../config';
 
 export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
@@ -173,6 +173,28 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
               <span>Grid</span>
             </button>
           </div>
+
+          <a
+            href={`${getServerBaseUrl()}/api/v1/download/agent`}
+            download="EktaHR-Agent.exe"
+            style={{
+              padding: '7px 14px',
+              fontSize: '0.85rem',
+              background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+              color: '#ffffff',
+              textDecoration: 'none',
+              borderRadius: '8px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontWeight: 600,
+              boxShadow: '0 2px 8px rgba(245, 158, 11, 0.25)'
+            }}
+            title="Download Updated Unblurred EktaHR Agent"
+          >
+            <Download size={15} />
+            <span>Download Agent</span>
+          </a>
 
           <button className="glass-button outline" onClick={onRefresh} style={{ padding: '7px 14px', fontSize: '0.85rem' }}>
             <RefreshCw size={15} />

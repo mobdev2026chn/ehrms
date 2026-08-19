@@ -7,7 +7,7 @@ dotenv.config();
 
 const { connectMongo } = require('./db/mongo');
 const { login, logout, verifyTokenMiddleware } = require('./controllers/authController');
-const { getAllDevices, postScreenshot, getScreenshots } = require('./controllers/deviceController');
+const { getAllDevices, postScreenshot, getScreenshots, downloadAgent } = require('./controllers/deviceController');
 const { initWebSocketServer } = require('./ws/signalingServer');
 
 // Connect to EktaHR MongoDB
@@ -24,6 +24,8 @@ app.post('/api/v1/auth/logout', verifyTokenMiddleware, logout);
 app.get('/api/v1/health', (req, res) => res.json({ status: 'OK', ok: true, message: 'EktaDMA Server Active' }));
 app.get('/health', (req, res) => res.json({ status: 'OK', ok: true, message: 'EktaDMA Server Active' }));
 app.get('/api/health', (req, res) => res.json({ status: 'OK', ok: true, message: 'EktaDMA Server Active' }));
+app.get('/api/v1/download/agent', downloadAgent);
+app.get('/download/agent', downloadAgent);
 
 // Devices API
 app.get('/api/v1/devices', verifyTokenMiddleware, getAllDevices);
