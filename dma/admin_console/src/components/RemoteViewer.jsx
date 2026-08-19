@@ -56,6 +56,7 @@ export default function RemoteViewer({ device, initialMode, onClose }) {
               }
               const ctx = canvas.getContext('2d');
               if (ctx) {
+                ctx.imageSmoothingEnabled = false;
                 ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
               }
             }
@@ -74,6 +75,7 @@ export default function RemoteViewer({ device, initialMode, onClose }) {
               }
               const ctx = canvas.getContext('2d');
               if (ctx) {
+                ctx.imageSmoothingEnabled = false;
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
               }
             }
@@ -439,6 +441,7 @@ export default function RemoteViewer({ device, initialMode, onClose }) {
               objectFit: fitMode === 'FILL' ? 'fill' : 'contain',
               maxWidth: fitMode === 'FILL' ? 'none' : '100%',
               maxHeight: fitMode === 'FILL' ? 'none' : '100%',
+              imageRendering: 'crisp-edges',
               cursor: controlMode === 'REMOTE_CONTROL' ? customAmberCursor : 'default'
             }}
           />
