@@ -68,22 +68,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`=======================================================`);
 });
 
-// Multi-Port Listeners to ensure Nginx proxy (2005, 9000, 3000, 2000) never hits 502 Bad Gateway
-const fallbackPorts = [2005, 9000, 3000, 2000];
-for (const p of fallbackPorts) {
-  if (p != PORT) {
-    try {
-      const extraServer = http.createServer(app);
-      extraServer.on('error', (err) => {
-        // Silently swallow EADDRINUSE if another process uses port p
-      });
-      initWebSocketServer(extraServer);
-      extraServer.listen(p, '0.0.0.0', () => {
-        console.log(`[EktaDMA Multi-Port] Active on http://0.0.0.0:${p}`);
-      });
-    } catch (e) {}
-  }
-}
+
 
 // Zero-Conf UDP LAN Server Beacon for Instant Auto-Discovery
 try {
