@@ -226,6 +226,12 @@ async function getDevicesList(targetBusinessId) {
   let resolvedAdminObjIds = [];
   let resolvedAdminStrIds = [];
 
+  const isSuperAdminAccess = !targetBusinessId || 
+    targetBusinessId === 'all' || 
+    targetBusinessId === 'superadmin' || 
+    targetBusinessId === 'admin-super-001' || 
+    (typeof targetBusinessId === 'string' && targetBusinessId.toLowerCase().includes('super'));
+
   // 1. Gather all active connected streaming agents on port 9000
   for (const [id, dev] of liveDevices.entries()) {
     const cleanHost = (dev.hostname || id).toUpperCase();
@@ -241,12 +247,6 @@ async function getDevicesList(targetBusinessId) {
       const targetDb = mongoose.connection.useDb('DEV_HRMS');
       const adminsCol = targetDb.collection('admins');
       const staffsCol = targetDb.collection('staffs');
-
-      const isSuperAdminAccess = !targetBusinessId || 
-        targetBusinessId === 'all' || 
-        targetBusinessId === 'superadmin' || 
-        targetBusinessId === 'admin-super-001' || 
-        targetBusinessId.toLowerCase().includes('super');
 
       if (!isSuperAdminAccess && targetBusinessId && targetBusinessId !== 'default') {
         const cleanTarget = targetBusinessId.replace('admin-user-', '').trim();
