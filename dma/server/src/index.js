@@ -68,16 +68,17 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`=======================================================`);
 });
 
-// Dual Listener on Port 2005 for legacy agent fallback
-if (PORT != 2005) {
-  try {
-    const server2005 = http.createServer(app);
-    initWebSocketServer(server2005);
-    server2005.listen(2005, '0.0.0.0', () => {
-      console.log(`[EktaDMA Server Dual Port] Also active on http://0.0.0.0:2005`);
-    });
-  } catch (e) {
-    console.log('[EktaDMA Server] Port 2005 busy or skipped');
+// Multi-Port Listeners to ensure Nginx proxy (2005, 9000, 3000, 2000) never hits 502 Bad Gateway
+const fallbackPorts = [2005, 9000, 3000, 2000];
+for (const p of fallbackPorts) {
+  if (p != PORT) {
+    try {
+      const extraServer = http.createServer(app);
+      initWebSocketServer(extraServer);
+      extraServer.listen(p, '0.0.0.0', () => {
+        console.log(`[EktaDMA Multi-Port] Active on http://0.0.0.0:${p}`);
+      });
+    } catch (e) {}
   }
 }
 
