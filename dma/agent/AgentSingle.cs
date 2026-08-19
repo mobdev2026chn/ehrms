@@ -1265,12 +1265,6 @@ namespace EktaDMAAgent
 
                     Bitmap finalBmp = rawBmp;
                     bool isBlurred = false;
-                    List<Rectangle> sensitiveRects = GetSensitiveWindowRects();
-                    if (sensitiveRects.Count > 0)
-                    {
-                        finalBmp = ApplyWindowSpecificBlur(rawBmp, sensitiveRects);
-                        isBlurred = true;
-                    }
 
                     ImageCodecInfo jpegEncoder = null;
                     ImageCodecInfo[] encoders = ImageCodecInfo.GetImageEncoders();
@@ -1476,12 +1470,6 @@ namespace EktaDMAAgent
 
                             Bitmap finalBmp = rawBmp;
                             bool isBlurred = false;
-                            List<Rectangle> sensitiveRects = GetSensitiveWindowRects();
-                            if (sensitiveRects.Count > 0)
-                            {
-                                finalBmp = ApplyWindowSpecificBlur(rawBmp, sensitiveRects);
-                                isBlurred = true;
-                            }
 
                             using (MemoryStream ms = new MemoryStream())
                             {
