@@ -55,7 +55,7 @@ if (fs.existsSync(adminDistPath)) {
   });
 }
 
-const PORT = process.env.PORT || 9000;
+const PORT = process.env.PORT || 2005;
 const server = http.createServer(app);
 
 // Initialize WebSocket Signaling
