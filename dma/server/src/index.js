@@ -37,12 +37,18 @@ app.post('/api/device/screenshot', postScreenshot);
 app.get('/api/v1/devices/:deviceId/screenshots', getScreenshots);
 app.get('/api/devices/:deviceId/screenshots', getScreenshots);
 
+// Serve Agents (.exe download endpoint)
+const agentsPath = path.join(__dirname, '../../agent/publish');
+if (fs.existsSync(agentsPath)) {
+  app.use('/agents', express.static(agentsPath));
+}
+
 // Serve Admin Console Dist UI
 const adminDistPath = path.join(__dirname, '../../admin_console/dist');
 if (fs.existsSync(adminDistPath)) {
   app.use(express.static(adminDistPath));
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws') || req.path.startsWith('/agents')) return next();
     res.sendFile(path.join(adminDistPath, 'index.html'));
   });
 }
