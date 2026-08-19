@@ -439,11 +439,17 @@ namespace EktaDMAAgent
 
             if (!string.IsNullOrEmpty(ServerHttpUrl)) quickCandidates.Add(ServerHttpUrl);
             quickCandidates.Add("https://track.ektahr.com");
+            quickCandidates.Add("http://127.0.0.1:9000");
             quickCandidates.Add("http://127.0.0.1:2005");
+            quickCandidates.Add("http://localhost:9000");
             quickCandidates.Add("http://localhost:2005");
+            quickCandidates.Add("http://192.168.0.31:9000");
             quickCandidates.Add("http://192.168.0.31:2005");
-            quickCandidates.Add("http://192.168.1.31:2005");
-            if (!string.IsNullOrEmpty(localIp)) quickCandidates.Add("http://" + localIp + ":2005");
+            if (!string.IsNullOrEmpty(localIp))
+            {
+                quickCandidates.Add("http://" + localIp + ":9000");
+                quickCandidates.Add("http://" + localIp + ":2005");
+            }
 
             foreach (string candidate in quickCandidates)
             {

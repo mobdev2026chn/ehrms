@@ -55,7 +55,7 @@ if (fs.existsSync(adminDistPath)) {
   });
 }
 
-const PORT = process.env.PORT || 2005;
+const PORT = process.env.PORT || 9000;
 const server = http.createServer(app);
 
 // Initialize WebSocket Signaling
@@ -67,6 +67,19 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`[WebSocket] Listening on ws://0.0.0.0:${PORT}/agent & /viewer`);
   console.log(`=======================================================`);
 });
+
+// Dual Listener on Port 2005 for legacy agent fallback
+if (PORT != 2005) {
+  try {
+    const server2005 = http.createServer(app);
+    initWebSocketServer(server2005);
+    server2005.listen(2005, '0.0.0.0', () => {
+      console.log(`[EktaDMA Server Dual Port] Also active on http://0.0.0.0:2005`);
+    });
+  } catch (e) {
+    console.log('[EktaDMA Server] Port 2005 busy or skipped');
+  }
+}
 
 // Zero-Conf UDP LAN Server Beacon for Instant Auto-Discovery
 try {
