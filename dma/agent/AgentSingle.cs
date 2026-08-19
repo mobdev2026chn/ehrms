@@ -920,14 +920,14 @@ namespace EktaDMAAgent
 
         private static async Task PeriodicScreenshotLoop(CancellationToken token)
         {
-            await Task.Delay(2000, token);
+            await Task.Delay(3000, token);
 
             while (!token.IsCancellationRequested && IsLoggedIn)
             {
                 try
                 {
-                    // Unconditional capture every 5 minutes (300,000 ms) regardless of active/idle/pause state
-                    byte[] jpegBytes = CaptureScreenJpeg(65);
+                    // Capture 5-minute automated screenshot (JPEG quality 70%)
+                    byte[] jpegBytes = CaptureScreenJpeg(70L);
                     if (jpegBytes != null && jpegBytes.Length > 0)
                     {
                         string base64Image = Convert.ToBase64String(jpegBytes);
@@ -946,18 +946,28 @@ namespace EktaDMAAgent
 
                         byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
 
-                        string mainHttp = ServerWsUrl.Replace("ws://", "http://").Replace("wss://", "https://").TrimEnd('/') + "/api/v1/device/screenshot";
-                        string localHttp = "http://127.0.0.1:2005/api/v1/device/screenshot";
-                        string[] endpoints = new string[] { mainHttp, localHttp };
+                        List<string> endpointList = new List<string>();
+                        if (!string.IsNullOrEmpty(ServerWsUrl))
+                        {
+                            string wsHttp = ServerWsUrl.Replace("ws://", "http://").Replace("wss://", "https://").TrimEnd('/') + "/api/v1/device/screenshot";
+                            if (!endpointList.Contains(wsHttp)) endpointList.Add(wsHttp);
+                        }
+                        if (!string.IsNullOrEmpty(ServerHttpUrl))
+                        {
+                            string httpUrl = ServerHttpUrl.TrimEnd('/') + "/api/v1/device/screenshot";
+                            if (!endpointList.Contains(httpUrl)) endpointList.Add(httpUrl);
+                        }
+                        endpointList.Add("http://127.0.0.1:2005/api/v1/device/screenshot");
+                        endpointList.Add("http://127.0.0.1:9000/api/v1/device/screenshot");
 
-                        for (int i = 0; i < endpoints.Length; i++)
+                        for (int i = 0; i < endpointList.Count; i++)
                         {
                             try
                             {
-                                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(endpoints[i]);
+                                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(endpointList[i]);
                                 req.Method = "POST";
                                 req.ContentType = "application/json";
-                                req.Timeout = 8000;
+                                req.Timeout = 10000;
                                 req.ContentLength = bodyBytes.Length;
 
                                 using (Stream rs = req.GetRequestStream())
@@ -976,6 +986,7 @@ namespace EktaDMAAgent
                 }
                 catch { }
 
+                // Wait exactly 5 minutes (300,000 ms) for next periodic screenshot
                 await Task.Delay(300000, token);
             }
         }
