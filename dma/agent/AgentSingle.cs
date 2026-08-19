@@ -1171,16 +1171,23 @@ namespace EktaDMAAgent
 
             try
             {
+                int taskbarHeight = 55;
+                int maxAllowedH = Math.Max(100, src.Height - taskbarHeight);
+
                 Bitmap finalBmp = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
                 using (Graphics gFinal = Graphics.FromImage(finalBmp))
                 {
                     // 1. Draw full crisp desktop screen first
                     gFinal.DrawImage(src, 0, 0, src.Width, src.Height);
 
-                    // 2. Blur ONLY the specific WhatsApp / Sensitive window bounding rectangles!
+                    // 2. Blur ONLY the specific WhatsApp / Sensitive window bounding rectangles (Capped above Taskbar)
                     foreach (Rectangle rawRect in sensitiveRects)
                     {
-                        Rectangle windowRect = Rectangle.Intersect(rawRect, new Rectangle(0, 0, src.Width, src.Height));
+                        int topY = Math.Max(0, rawRect.Top);
+                        int targetH = Math.Min(rawRect.Height, maxAllowedH - topY);
+                        Rectangle windowRect = new Rectangle(rawRect.Left, topY, rawRect.Width, Math.Max(0, targetH));
+                        windowRect = Rectangle.Intersect(windowRect, new Rectangle(0, 0, src.Width, maxAllowedH));
+
                         if (windowRect.Width <= 20 || windowRect.Height <= 20) continue;
 
                         int scaleFactor = 25;
@@ -1220,6 +1227,15 @@ namespace EktaDMAAgent
                         {
                             gFinal.DrawRectangle(borderPen, windowRect);
                         }
+                    }
+
+                    // 3. FORCE Taskbar (bottom 55px) to be 100% UNTOUCHED, CRISP, AND UNBLURRED!
+                    gFinal.DrawImage(src, new Rectangle(0, maxAllowedH, src.Width, taskbarHeight), new Rectangle(0, maxAllowedH, src.Width, taskbarHeight), GraphicsUnit.Pixel);
+
+                    // 4. Draw gold separator line above taskbar
+                    using (Pen borderPen = new Pen(Color.FromArgb(245, 158, 11), 2))
+                    {
+                        gFinal.DrawLine(borderPen, 0, maxAllowedH, src.Width, maxAllowedH);
                     }
                 }
                 return finalBmp;
