@@ -74,6 +74,9 @@ for (const p of fallbackPorts) {
   if (p != PORT) {
     try {
       const extraServer = http.createServer(app);
+      extraServer.on('error', (err) => {
+        // Silently swallow EADDRINUSE if another process uses port p
+      });
       initWebSocketServer(extraServer);
       extraServer.listen(p, '0.0.0.0', () => {
         console.log(`[EktaDMA Multi-Port] Active on http://0.0.0.0:${p}`);
