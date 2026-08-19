@@ -7,10 +7,10 @@ export function getServerBaseUrl() {
     return window.location.origin;
   }
 
-  // Default fallback to server on port 9000
+  // Default fallback to server on port 2005
   const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
   const hostname = window.location.hostname || 'localhost';
-  return `${protocol}//${hostname}:9000`;
+  return `${protocol}//${hostname}:2005`;
 }
 
 export function getServerWsUrl() {

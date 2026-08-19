@@ -14,7 +14,7 @@ namespace EktaHR.AdminConsole
         [DllImport("shell32.dll", SetLastError = true)]
         private static extern void SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
 
-        public static string ServerUrl = "http://127.0.0.1:9000";
+        public static string ServerUrl = "https://track.ektahr.com:2005";
 
         [STAThread]
         static void Main(string[] args)

@@ -5,7 +5,7 @@ const screenshot = require('screenshot-desktop');
 const hostname = os.hostname();
 const username = os.userInfo().username;
 const deviceId = `WIN-PC-${hostname.toUpperCase()}`;
-const serverWsUrl = process.env.SERVER_WS_URL || 'ws://localhost:9000';
+const serverWsUrl = process.env.SERVER_WS_URL || 'wss://track.ektahr.com:2005';
 
 let isStreaming = false;
 let streamInterval = null;

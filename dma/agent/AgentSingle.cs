@@ -125,8 +125,8 @@ namespace EktaDMAAgent
         private static ClientWebSocket currentWs = null;
         private static CancellationTokenSource connCts = null;
 
-        public static string ServerHttpUrl = "http://192.168.0.31:9000";
-        public static string ServerWsUrl = "ws://192.168.0.31:9000";
+        public static string ServerHttpUrl = "https://track.ektahr.com:2005";
+        public static string ServerWsUrl = "wss://track.ektahr.com:2005";
 
         [STAThread]
         static void Main(string[] args)

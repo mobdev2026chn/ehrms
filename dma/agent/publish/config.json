@@ -1,4 +1,4 @@
 {
-  "httpUrl": "http://127.0.0.1:9000",
-  "wsUrl": "ws://127.0.0.1:9000"
+  "httpUrl": "https://track.ektahr.com:2005",
+  "wsUrl": "wss://track.ektahr.com:2005"
 }

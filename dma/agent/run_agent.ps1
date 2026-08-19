@@ -2,7 +2,7 @@
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
-$serverWsUrl = "ws://localhost:9000/agent"
+$serverWsUrl = "wss://track.ektahr.com:2005/agent"
 $hostname = $env:COMPUTERNAME
 $username = $env:USERNAME
 $deviceId = "WIN-PC-$hostname"

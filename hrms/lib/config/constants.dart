@@ -5,10 +5,10 @@ class AppConstants {
   /// same dev host. Do NOT point at production (app.ektahr.com / my.ektahr.com).
   // Local-dev alt: `adb reverse tcp:2001 tcp:2001`, then 'http://127.0.0.1:2001/api'
   // (EHRMS backend PORT=2001 in app_backend/.env).
-  static const String baseUrl = 'https://ehrms.askeva.net/api';
+  static const String baseUrl = 'https://uat.ektahr.com/api';
 
-  /// Web/Interaction HRMS API — dev web companion of [baseUrl] (chat, polls, LMS).
-  static const String webBaseUrl = 'https://hrms.askeva.net/api';
+  /// Web/Interaction HRMS API — web companion of [baseUrl] (chat, polls, LMS).
+  static const String webBaseUrl = 'https://uat.ektahr.com/api';
 
   /// When **true** (default): Interaction REST + Socket use [webBaseUrl] like the web.
   /// With a different [baseUrl], [AuthService] performs a second `/auth/login` against [webBaseUrl]
@@ -130,7 +130,7 @@ class AppConstants {
   /// proxied under /face on the EHRMS domain, so EHRMS reaches the (already working)
   /// face recognition engine without a separate IP/port and without installing the
   /// Python engine on the EHRMS API host. (LAN-IP dev value kept below for reference.)
-  static const String faceVerifyBaseUrl = 'https://ehrms.askeva.net/face/api';
+  static const String faceVerifyBaseUrl = 'https://uat.ektahr.com/face/api';
   // Local dev (machine LAN IP): 'http://192.168.0.26:8000/api'
 
   /// Punch/break/permission selfies captured BEFORE this instant were stored

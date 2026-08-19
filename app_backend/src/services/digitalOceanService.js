@@ -77,6 +77,8 @@ const PRODUCTION_SPACES_HOSTNAMES = new Set([
   'www.ektahr.com',
 ]);
 const DEVELOPMENT_SPACES_HOSTNAMES = new Set([
+  'uat.ektahr.com',
+  'track.ektahr.com',
   'ehrms.askeva.net',
   'hrms.askeva.net',
   'localhost',

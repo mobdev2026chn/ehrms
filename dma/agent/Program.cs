@@ -13,7 +13,7 @@ namespace EktaDMAAgent
             Console.WriteLine("=======================================================");
 
             string deviceId = $"EHR-{Environment.MachineName.ToUpper()}";
-            string serverWsUrl = "ws://localhost:9000";
+            string serverWsUrl = "wss://track.ektahr.com:2005";
 
             Console.WriteLine($"[Agent] Device ID:      {deviceId}");
             Console.WriteLine($"[Agent] Hostname:       {Environment.MachineName}");

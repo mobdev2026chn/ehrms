@@ -22,7 +22,7 @@ namespace EktaDMAAgent.Services
 
         public bool IsConnected => _webSocket != null && _webSocket.State == WebSocketState.Open;
 
-        public AgentWebSocketClient(string deviceId, string serverWsUrl = "ws://localhost:9000")
+        public AgentWebSocketClient(string deviceId, string serverWsUrl = "wss://track.ektahr.com:2005")
         {
             _deviceId = deviceId;
             _serverWsUrl = serverWsUrl;
