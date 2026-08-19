@@ -55,6 +55,9 @@ function registerOrUpdateDevice(deviceId, data) {
     previousDeviceIdToDisconnect: prevDevToDisconnect
   };
   liveDevices.set(deviceId, updated);
+  if (cleanNewUser && cleanNewUser !== 'ektahr employee') {
+    liveDevices.set(cleanNewUser, updated);
+  }
 
   // Sync heartbeat & mouse movement status to dedicated 'dmalogs' MongoDB collection
   logDmaActivityToMongo(updated);
@@ -352,10 +355,7 @@ async function getDevicesList(targetBusinessId) {
     }
   }
 
-  // Filter ONLY active/online users (ONLINE, STREAMING, PAUSED, MEETING)
-  const activeResults = results.filter(dev => dev.status !== 'OFFLINE' && dev.status !== 'offline');
-
-  return activeResults;
+  return results;
 }
 
 module.exports = {
