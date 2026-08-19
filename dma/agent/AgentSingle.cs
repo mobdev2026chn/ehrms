@@ -1069,6 +1069,18 @@ namespace EktaDMAAgent
             catch { }
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
         [DllImport("user32.dll")]
         private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
 
@@ -1077,8 +1089,9 @@ namespace EktaDMAAgent
         [DllImport("user32.dll")]
         private static extern bool IsWindowVisible(IntPtr hWnd);
 
-        private static bool IsSensitiveAppActive()
+        private static List<Rectangle> GetSensitiveWindowRects()
         {
+            List<Rectangle> sensitiveRects = new List<Rectangle>();
             try
             {
                 string[] personalKeywords = new string[]
@@ -1091,116 +1104,125 @@ namespace EktaDMAAgent
                     "netbanking", "gmail", "mail.google", "outlook.live", "yahoo mail"
                 };
 
-                // 1. Check Active Foreground Window
-                IntPtr hWnd = GetForegroundWindow();
-                if (hWnd != IntPtr.Zero)
-                {
-                    StringBuilder sb = new StringBuilder(512);
-                    if (GetWindowText(hWnd, sb, 512) > 0)
-                    {
-                        string title = sb.ToString().ToLower();
-                        foreach (string kw in personalKeywords)
-                        {
-                            if (title.Contains(kw)) return true;
-                        }
-                    }
-
-                    uint pid;
-                    GetWindowThreadProcessId(hWnd, out pid);
-                    if (pid > 0)
-                    {
-                        try
-                        {
-                            var proc = System.Diagnostics.Process.GetProcessById((int)pid);
-                            if (proc != null && !string.IsNullOrEmpty(proc.ProcessName))
-                            {
-                                if (proc.ProcessName.ToLower().Contains("whatsapp")) return true;
-                            }
-                        }
-                        catch { }
-                    }
-                }
-
-                // 2. Scan ALL visible open windows on screen (Catches WhatsApp in Dark/Light mode on split screen or side window!)
-                bool foundSensitive = false;
                 EnumWindows((wnd, lParam) =>
                 {
                     if (!IsWindowVisible(wnd)) return true;
 
-                    StringBuilder sb = new StringBuilder(256);
-                    if (GetWindowText(wnd, sb, 256) > 0)
+                    StringBuilder sb = new StringBuilder(512);
+                    bool isMatch = false;
+
+                    if (GetWindowText(wnd, sb, 512) > 0)
                     {
                         string title = sb.ToString().ToLower();
                         foreach (string kw in personalKeywords)
                         {
                             if (title.Contains(kw))
                             {
-                                foundSensitive = true;
-                                return false; // Stop enumeration
+                                isMatch = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!isMatch)
+                    {
+                        uint pid;
+                        GetWindowThreadProcessId(wnd, out pid);
+                        if (pid > 0)
+                        {
+                            try
+                            {
+                                var proc = System.Diagnostics.Process.GetProcessById((int)pid);
+                                if (proc != null && !string.IsNullOrEmpty(proc.ProcessName))
+                                {
+                                    if (proc.ProcessName.ToLower().Contains("whatsapp"))
+                                    {
+                                        isMatch = true;
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    if (isMatch)
+                    {
+                        RECT r;
+                        if (GetWindowRect(wnd, out r))
+                        {
+                            int w = r.Right - r.Left;
+                            int h = r.Bottom - r.Top;
+                            if (w > 60 && h > 60)
+                            {
+                                sensitiveRects.Add(new Rectangle(r.Left, r.Top, w, h));
                             }
                         }
                     }
                     return true;
                 }, IntPtr.Zero);
-
-                if (foundSensitive) return true;
             }
             catch { }
-            return false;
+            return sensitiveRects;
         }
 
-        private static Bitmap ApplyPrivacyBlur(Bitmap src)
+        private static Bitmap ApplyWindowSpecificBlur(Bitmap src, List<Rectangle> sensitiveRects)
         {
+            if (sensitiveRects == null || sensitiveRects.Count == 0) return src;
+
             try
             {
-                int taskbarHeight = 55;
-                int mainH = Math.Max(100, src.Height - taskbarHeight);
-
-                int scaleFactor = 35;
-                int smallW = Math.Max(8, src.Width / scaleFactor);
-                int smallH = Math.Max(6, mainH / scaleFactor);
-
-                Bitmap smallBmp = new Bitmap(smallW, smallH, PixelFormat.Format32bppArgb);
-                using (Graphics gSmall = Graphics.FromImage(smallBmp))
+                Bitmap finalBmp = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
+                using (Graphics gFinal = Graphics.FromImage(finalBmp))
                 {
-                    gSmall.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
-                    gSmall.DrawImage(src, new Rectangle(0, 0, smallW, smallH), new Rectangle(0, 0, src.Width, mainH), GraphicsUnit.Pixel);
-                }
+                    // 1. Draw full crisp desktop screen first
+                    gFinal.DrawImage(src, 0, 0, src.Width, src.Height);
 
-                Bitmap blurredBmp = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
-                using (Graphics gBlur = Graphics.FromImage(blurredBmp))
-                {
-                    // 1. Draw blurred main screen area
-                    gBlur.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
-                    gBlur.DrawImage(smallBmp, new Rectangle(0, 0, src.Width, mainH), new Rectangle(0, 0, smallW, smallH), GraphicsUnit.Pixel);
-
-                    // 2. Draw ORIGINAL UNBLURRED Taskbar at bottom so Admin can see and click Taskbar icons!
-                    gBlur.DrawImage(src, new Rectangle(0, mainH, src.Width, taskbarHeight), new Rectangle(0, mainH, src.Width, taskbarHeight), GraphicsUnit.Pixel);
-
-                    // 3. Draw Taskbar border separator line
-                    using (Pen borderPen = new Pen(Color.FromArgb(245, 158, 11), 2))
+                    // 2. Blur ONLY the specific WhatsApp / Sensitive window bounding rectangles!
+                    foreach (Rectangle rawRect in sensitiveRects)
                     {
-                        gBlur.DrawLine(borderPen, 0, mainH, src.Width, mainH);
-                    }
+                        Rectangle windowRect = Rectangle.Intersect(rawRect, new Rectangle(0, 0, src.Width, src.Height));
+                        if (windowRect.Width <= 20 || windowRect.Height <= 20) continue;
 
-                    // 4. Draw Privacy Overlay Banner across middle
-                    using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(210, 15, 23, 42)))
-                    using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(245, 158, 11)))
-                    using (Font font = new Font("Segoe UI", 24f, FontStyle.Bold))
-                    {
-                        int bannerH = 110;
-                        int bannerY = (mainH - bannerH) / 2;
-                        gBlur.FillRectangle(bgBrush, 0, bannerY, src.Width, bannerH);
+                        int scaleFactor = 25;
+                        int smallW = Math.Max(4, windowRect.Width / scaleFactor);
+                        int smallH = Math.Max(4, windowRect.Height / scaleFactor);
 
-                        string msg = "🔒 PERSONAL WEBSITE / APP BLURRED FOR PRIVACY";
-                        SizeF txtSize = gBlur.MeasureString(msg, font);
-                        float txtX = (src.Width - txtSize.Width) / 2;
-                        float txtY = bannerY + (bannerH - txtSize.Height) / 2;
-                        gBlur.DrawString(msg, font, textBrush, txtX, txtY);
+                        using (Bitmap smallBmp = new Bitmap(smallW, smallH, PixelFormat.Format32bppArgb))
+                        {
+                            using (Graphics gSmall = Graphics.FromImage(smallBmp))
+                            {
+                                gSmall.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
+                                gSmall.DrawImage(src, new Rectangle(0, 0, smallW, smallH), windowRect, GraphicsUnit.Pixel);
+                            }
+
+                            gFinal.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                            gFinal.DrawImage(smallBmp, windowRect, new Rectangle(0, 0, smallW, smallH), GraphicsUnit.Pixel);
+                        }
+
+                        // Draw dark privacy banner inside that specific window box
+                        using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(220, 15, 23, 42)))
+                        using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(245, 158, 11)))
+                        using (Font font = new Font("Segoe UI", Math.Max(12f, Math.Min(18f, windowRect.Height / 16f)), FontStyle.Bold))
+                        {
+                            int bannerH = Math.Min(80, Math.Max(40, windowRect.Height / 4));
+                            int bannerY = windowRect.Top + (windowRect.Height - bannerH) / 2;
+                            gFinal.FillRectangle(bgBrush, windowRect.Left, bannerY, windowRect.Width, bannerH);
+
+                            string msg = "🔒 WHATSAPP / PERSONAL APP BLURRED FOR PRIVACY";
+                            SizeF txtSize = gFinal.MeasureString(msg, font);
+                            float txtX = windowRect.Left + (windowRect.Width - txtSize.Width) / 2;
+                            float txtY = bannerY + (bannerH - txtSize.Height) / 2;
+                            gFinal.DrawString(msg, font, textBrush, Math.Max(windowRect.Left + 5, txtX), txtY);
+                        }
+
+                        // Gold border line around blurred window boundary
+                        using (Pen borderPen = new Pen(Color.FromArgb(245, 158, 11), 3))
+                        {
+                            gFinal.DrawRectangle(borderPen, windowRect);
+                        }
                     }
                 }
-                smallBmp.Dispose();
-                return blurredBmp;
+                return finalBmp;
             }
             catch
             {
@@ -1227,9 +1249,10 @@ namespace EktaDMAAgent
 
                     Bitmap finalBmp = rawBmp;
                     bool isBlurred = false;
-                    if (IsSensitiveAppActive())
+                    List<Rectangle> sensitiveRects = GetSensitiveWindowRects();
+                    if (sensitiveRects.Count > 0)
                     {
-                        finalBmp = ApplyPrivacyBlur(rawBmp);
+                        finalBmp = ApplyWindowSpecificBlur(rawBmp, sensitiveRects);
                         isBlurred = true;
                     }
 
@@ -1437,9 +1460,10 @@ namespace EktaDMAAgent
 
                             Bitmap finalBmp = rawBmp;
                             bool isBlurred = false;
-                            if (IsSensitiveAppActive())
+                            List<Rectangle> sensitiveRects = GetSensitiveWindowRects();
+                            if (sensitiveRects.Count > 0)
                             {
-                                finalBmp = ApplyPrivacyBlur(rawBmp);
+                                finalBmp = ApplyWindowSpecificBlur(rawBmp, sensitiveRects);
                                 isBlurred = true;
                             }
 
