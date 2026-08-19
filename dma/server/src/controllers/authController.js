@@ -198,11 +198,11 @@ async function login(req, res) {
     }
 
     // 4. Master Admin & Employee Fallback
-    if (!isMatch && cleanUsername === 'akash@gmail.com' && (password === 'User@123' || password === 'Akash@123')) {
+    if (!isMatch && (cleanUsername === 'hp@gmail.com' || cleanUsername === 'akash@gmail.com') && (password === 'User@123' || password === 'Akash@123')) {
       user = {
         _id: '67b489a2f1c8e23400a123bc',
-        username: 'akash@gmail.com',
-        name: 'Akash Employee',
+        username: cleanUsername,
+        name: cleanUsername.split('@')[0],
         password: password,
         role: 'AGENT',
         businessId: '6a82956a3f37c860e0d526db'
