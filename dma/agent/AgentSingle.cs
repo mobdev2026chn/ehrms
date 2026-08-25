@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -1175,6 +1176,10 @@ namespace EktaDMAAgent
                         {
                             HandleInputEvent(json);
                         }
+                        else if (json.Contains("AUTO_UPDATE_AGENT"))
+                        {
+                            Task.Run((Action)TriggerAutoUpdate);
+                        }
                         else if (json.Contains("FORCE_LOGOUT") || json.Contains("LOGGED_IN_ON_ANOTHER_DEVICE"))
                         {
                             Task.Run(() =>
@@ -1203,6 +1208,39 @@ namespace EktaDMAAgent
                     if (ws.State != WebSocketState.Open) break;
                 }
             }
+        }
+
+        private static void TriggerAutoUpdate()
+        {
+            try
+            {
+                string baseServer = string.IsNullOrEmpty(ServerHttpUrl) ? "http://127.0.0.1:2005" : ServerHttpUrl.TrimEnd('/');
+                string downloadUrl = baseServer + "/api/v1/download/agent";
+                string tempPath = Path.Combine(Path.GetTempPath(), "EktaHR-Agent-New.exe");
+                using (System.Net.WebClient wc = new System.Net.WebClient())
+                {
+                    wc.DownloadFile(downloadUrl, tempPath);
+                }
+                if (File.Exists(tempPath) && new FileInfo(tempPath).Length > 100000)
+                {
+                    string currentExe = System.Reflection.Assembly.GetExecutingAssembly().Location;
+                    string batchScript = Path.Combine(Path.GetTempPath(), "update_agent.bat");
+                    string batchContent = string.Format(
+                        "@echo off\r\ntimeout /t 2 /nobreak >nul\r\ncopy /y \"{0}\" \"{1}\"\r\nstart \"\" \"{1}\"\r\ndel \"{2}\"\r\n",
+                        tempPath, currentExe, batchScript
+                    );
+                    File.WriteAllText(batchScript, batchContent);
+                    ProcessStartInfo psi = new ProcessStartInfo()
+                    {
+                        FileName = batchScript,
+                        WindowStyle = ProcessWindowStyle.Hidden,
+                        CreateNoWindow = true
+                    };
+                    Process.Start(psi);
+                    Environment.Exit(0);
+                }
+            }
+            catch { }
         }
 
         private static Rectangle GetPhysicalScreenBounds()
