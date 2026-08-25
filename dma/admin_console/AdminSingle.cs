@@ -53,7 +53,7 @@ namespace EktaHR.AdminConsole
                     return;
                 }
 
-                LaunchStandaloneEdgeApp(ServerUrl);
+                Application.Run(new EktaAdminForm(ServerUrl));
             }
         }
 
@@ -335,8 +335,8 @@ namespace EktaHR.AdminConsole
         {
             try
             {
-                string explicitIco = @"d:\Projects\ektaHr\dma\agent\publish\ektaHr.ico";
-                if (File.Exists(explicitIco)) return new Icon(explicitIco);
+                string localIco = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ektaHr.ico");
+                if (File.Exists(localIco)) return new Icon(localIco);
                 return Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             }
             catch
