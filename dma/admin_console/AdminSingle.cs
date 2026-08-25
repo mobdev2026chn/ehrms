@@ -53,7 +53,7 @@ namespace EktaHR.AdminConsole
                     return;
                 }
 
-                Application.Run(new EktaAdminForm(ServerUrl));
+                LaunchStandaloneEdgeApp(ServerUrl);
             }
         }
 
