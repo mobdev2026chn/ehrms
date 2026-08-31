@@ -477,7 +477,12 @@ class RequestService {
       if (body is Map && body['success'] == true) {
         final data = body['data'];
         if (data is Map && data['requests'] != null) {
-          return {'success': true, 'data': data['requests']};
+          return {
+            'success': true,
+            'data': data,
+            'requests': data['requests'],
+            'pagination': data['pagination'],
+          };
         }
         return {'success': true, 'data': data ?? body};
       }
@@ -669,7 +674,12 @@ class RequestService {
       if (body is Map && body['success'] == true) {
         final data = body['data'];
         if (data is Map && data['requests'] != null) {
-          return {'success': true, 'data': data['requests']};
+          return {
+            'success': true,
+            'data': data,
+            'requests': data['requests'],
+            'pagination': data['pagination'],
+          };
         }
         return {'success': true, 'data': data ?? body};
       }
@@ -771,7 +781,12 @@ class RequestService {
       if (body is Map && body['success'] == true) {
         final data = body['data'];
         if (data is Map && data['requests'] != null) {
-          return {'success': true, 'data': data['requests']};
+          return {
+            'success': true,
+            'data': data,
+            'requests': data['requests'],
+            'pagination': data['pagination'],
+          };
         }
         return {'success': true, 'data': data ?? body};
       }
@@ -933,7 +948,12 @@ class RequestService {
       if (body != null && body['success'] == true) {
         final data = body['data'];
         if (data is Map && data['requests'] != null) {
-          return {'success': true, 'data': data['requests']};
+          return {
+            'success': true,
+            'data': data,
+            'requests': data['requests'],
+            'pagination': data['pagination'],
+          };
         }
         return {'success': true, 'data': data ?? body};
       }

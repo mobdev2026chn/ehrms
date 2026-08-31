@@ -1176,16 +1176,21 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
       if (result['success']) {
         setState(() {
           if (result['data'] is Map) {
-            _leaves = result['data']['requests'] ?? result['data']['leaves'] ?? [];
+            final raw = result['data']['requests'] ?? result['data']['leaves'] ?? [];
             final pagination = result['data']['pagination'];
             if (pagination != null) {
-              _totalPages = pagination['pages'] ?? 0;
+              _leaves = List<Map<String, dynamic>>.from(raw as List);
+              _totalPages = pagination['pages'] ?? 1;
               _currentPage = pagination['page'] ?? 1;
+            } else {
+              final all = List<Map<String, dynamic>>.from(raw as List);
+              _totalPages = (all.length / _itemsPerPage).ceil().clamp(1, 999);
+              _leaves = all.skip((_currentPage - 1) * _itemsPerPage).take(_itemsPerPage).toList();
             }
           } else if (result['data'] is List) {
-            _leaves = result['data'];
-            _totalPages = 1;
-            _currentPage = 1;
+            final all = List<Map<String, dynamic>>.from(result['data'] as List);
+            _totalPages = (all.length / _itemsPerPage).ceil().clamp(1, 999);
+            _leaves = all.skip((_currentPage - 1) * _itemsPerPage).take(_itemsPerPage).toList();
           }
           _isLoading = false;
         });

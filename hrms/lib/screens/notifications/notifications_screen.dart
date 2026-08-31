@@ -98,6 +98,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   String _searchQuery = '';
   String _statusFilter = 'All'; // 'All' | 'Unread' | 'Read'
   String _typeFilter = 'All Types'; // 'All Types' | 'Leave' | 'Permission' | 'Reimbursement' | 'Payslip'
+  int _displayedCount = 10;
 
   ModalRoute<void>? _route;
 
@@ -509,9 +510,44 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                         ],
                       ),
                     )
-                  else
-                    ..._filteredNotifications.map((item) => _buildNotificationCard(item)),
-                ],
+                  else ...[
+                    ..._filteredNotifications
+                        .take(_displayedCount)
+                        .map((item) => _buildNotificationCard(item)),
+                    if (_filteredNotifications.length > _displayedCount)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8, bottom: 16),
+                        child: Center(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _displayedCount += 10;
+                              });
+                            },
+                            icon: const Icon(Icons.expand_more_rounded, size: 18),
+                            label: Text(
+                              'Load More (${_filteredNotifications.length - _displayedCount} remaining)',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFEFAA1F),
+                              side: const BorderSide(color: Color(0xFFFDE68A)),
+                              backgroundColor: const Color(0xFFFFFBEB),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
               ),
             ),
     );
