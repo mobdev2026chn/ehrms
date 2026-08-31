@@ -1,6 +1,8 @@
-require('dotenv').config();
-const express = require('express');
 const path = require('path');
+const dotenv = require('dotenv');
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+dotenv.config({ path: path.resolve(__dirname, 'src', '.env') });
+const express = require('express');
 const connectDB = require('./src/config/db');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -63,8 +65,12 @@ console.log('[Server] Registering routes...');
 app.use('/api/auth', authRoutes);
 console.log('[Server] Auth routes registered at /api/auth');
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/staff/attendance', attendanceRoutes);
+app.use('/api/admin/staff/attendance', attendanceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/staff/dashboard', dashboardRoutes);
 app.use('/api/requests', requestRoutes);
+app.use('/api/staff/requests', requestRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/payrolls', payrollRoutes);
 // Web frontend RTK uses `/api/payroll` (singular); keep alias for parity.

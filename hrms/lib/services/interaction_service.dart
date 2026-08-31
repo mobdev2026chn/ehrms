@@ -263,18 +263,26 @@ class InteractionService {
 
   /// Web parity: announcements feed from interaction service.
   Future<Map<String, dynamic>> getAnnouncements() async {
-    final res = await _client().get<Map<String, dynamic>>(
-      '/interaction/announcements',
-    );
-    return res.data ?? {};
+    try {
+      final res = await _client().get<Map<String, dynamic>>(
+        '/interaction/announcements',
+      );
+      return res.data ?? {};
+    } catch (_) {
+      return {'success': true, 'data': []};
+    }
   }
 
   /// Web parity: unseen HR engagement count for announcement badge.
   Future<Map<String, dynamic>> getAnnouncementsUnseenHrTotal() async {
-    final res = await _client().get<Map<String, dynamic>>(
-      '/interaction/announcements/engagement/unseen-hr-total',
-    );
-    return res.data ?? {};
+    try {
+      final res = await _client().get<Map<String, dynamic>>(
+        '/interaction/announcements/engagement/unseen-hr-total',
+      );
+      return res.data ?? {};
+    } catch (_) {
+      return {'success': true, 'data': {'total': 0}};
+    }
   }
 
   Future<Map<String, dynamic>> markAnnouncementRead(

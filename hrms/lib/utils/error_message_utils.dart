@@ -119,20 +119,21 @@ class ErrorMessageUtils {
     if (data == null) return null;
     if (data is String) {
       final t = data.trim();
-      if (t.isNotEmpty && t.length < 500) return t;
+      if (_isTechnical(t)) return null;
+      if (t.isNotEmpty && t.length < 300) return t;
       return null;
     }
     if (data is Map) {
       final message = data['message'];
-      if (message is String && message.isNotEmpty) return message;
+      if (message is String && message.isNotEmpty && !_isTechnical(message)) return message;
       final error = data['error'];
-      if (error is String && error.isNotEmpty) return error;
+      if (error is String && error.isNotEmpty && !_isTechnical(error)) return error;
       if (error is Map) {
         final m = error['message'];
-        if (m is String && m.isNotEmpty) return m;
-        if (m != null) return m.toString();
+        if (m is String && m.isNotEmpty && !_isTechnical(m)) return m;
+        if (m != null && !_isTechnical(m.toString())) return m.toString();
       }
-      if (message != null) return message.toString();
+      if (message != null && !_isTechnical(message.toString())) return message.toString();
     }
     return null;
   }
@@ -149,6 +150,9 @@ class ErrorMessageUtils {
     if (code == 401) {
       return 'Session expired. Please log in again.';
     }
+    if (code == 404) {
+      return 'Records are currently unavailable.';
+    }
     if (code != null && code >= 500) {
       return 'Server error. Please try again later.';
     }
@@ -161,7 +165,7 @@ class ErrorMessageUtils {
       case DioExceptionType.receiveTimeout:
         return 'Request timed out. Please check your internet and try again.';
       case DioExceptionType.connectionError:
-        return 'Connection error7. Please check your internet and try again.';
+        return 'Connection error. Please check your internet and try again.';
       case DioExceptionType.badCertificate:
         return 'Secure connection failed. Please try again later.';
       case DioExceptionType.cancel:
@@ -189,7 +193,18 @@ class ErrorMessageUtils {
 
   static bool _isTechnical(String s) {
     final lower = s.toLowerCase();
-    return lower.contains('exception') ||
+    return lower.contains('<!doctype') ||
+        lower.contains('<html') ||
+        lower.contains('<head') ||
+        lower.contains('<body') ||
+        lower.contains('<pre') ||
+        lower.contains('<title') ||
+        lower.contains('</') ||
+        lower.contains('cannot get ') ||
+        lower.contains('cannot post ') ||
+        lower.contains('cannot put ') ||
+        lower.contains('cannot delete ') ||
+        lower.contains('exception') ||
         lower.contains('stack trace') ||
         (lower.contains('at ') && lower.contains('(')) ||
         lower.contains('ioexception') ||

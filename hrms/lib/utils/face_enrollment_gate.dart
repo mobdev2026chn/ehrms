@@ -1,51 +1,61 @@
 import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
-import '../config/constants.dart';
 import '../screens/profile/face_enroll_screen.dart';
 import '../services/auth_service.dart';
 
 /// Gate that ensures a user has registered their face ONCE before the face check on
 /// punch in / punch out / break. If not enrolled, it prompts and opens the enrollment
 /// screen; the action only continues after enrollment.
-///
-/// Fails OPEN: if face matching is disabled, or the status can't be determined
-/// (offline/server error), it returns true so attendance is never bricked — the
-/// server still validates at verify time.
 class FaceEnrollmentGate {
   static final AuthService _auth = AuthService();
 
-  /// Returns true if the user may proceed (already enrolled, just enrolled, gate
-  /// disabled, or status undeterminable). Returns false only when enrollment is
-  /// required and the user backed out without completing it.
+  /// Returns true if the user may proceed (already enrolled or just enrolled).
+  /// Prompts for registration whenever the face is not registered yet.
   static Future<bool> ensureEnrolled(
     BuildContext context, {
-    String actionLabel = 'punch',
+    String actionLabel = 'punch in/out',
   }) async {
-    if (!AppConstants.enableAttendanceFaceMatching) return true;
-
     final status = await _auth.faceEnrollStatus();
-    if (status['ok'] != true) return true; // couldn't determine → don't block
-    if (status['enrolled'] == true) return true;
+    // If the server confirms the user has already enrolled their face in MongoDB, proceed
+    if (status['ok'] == true && status['enrolled'] == true) return true;
     if (!context.mounted) return false;
 
+    // Face is not registered yet -> ask for registration
     final proceed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('Register your face'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.face_retouching_natural, color: AppColors.primary, size: 28),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Register Your Face',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
         content: Text(
-          'Before your first $actionLabel, please register your face once. '
-          'Your $actionLabel will be verified against it.',
+          'Your face is not registered yet. Please register your face once before $actionLabel so your attendance can be verified.',
+          style: const TextStyle(fontSize: 14, height: 1.4),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Not now'),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Register'),
+            icon: const Icon(Icons.camera_alt, size: 18),
+            label: const Text('Register Face'),
           ),
         ],
       ),

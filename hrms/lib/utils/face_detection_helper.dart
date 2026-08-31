@@ -6,6 +6,8 @@ import 'package:camerawesome/camerawesome_plugin.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:image/image.dart' as img;
+
 /// Result of face detection on an image.
 class FaceDetectionResult {
   final bool valid;
@@ -43,6 +45,12 @@ class FaceDetectionResult {
   /// (can't judge → don't block). True when core face landmarks are missing.
   final bool? occluded;
 
+  /// Whether the image is blurry (Laplacian variance below sharpness threshold).
+  final bool isBlurry;
+
+  /// Measured sharpness score (Laplacian variance).
+  final double? sharpnessScore;
+
   const FaceDetectionResult({
     required this.valid,
     required this.faceCount,
@@ -52,6 +60,8 @@ class FaceDetectionResult {
     this.eyesOpen,
     this.headYaw,
     this.occluded,
+    this.isBlurry = false,
+    this.sharpnessScore,
   });
 
   /// True when a face is present and clearly upside-down.
@@ -72,6 +82,9 @@ class FaceDetectionResult {
     }
     if (faceCount > 1) {
       return 'Multiple faces detected. Keep only your face in frame.';
+    }
+    if (isBlurry) {
+      return 'Your selfie is blurry. Please hold still in good lighting and capture a clear photo.';
     }
     // Occlusion (hand/finger/mask/object over the face) is rejected for BOTH
     // punch/break AND enrollment — an obstructed shot is unusable for matching and
@@ -215,6 +228,50 @@ class FaceDetectionHelper {
     return false;
   }
 
+  /// Laplacian variance threshold below which an image is considered blurry.
+  static const double kBlurThreshold = 45.0;
+
+  /// Fast Laplacian variance sharpness calculation over image pixels.
+  static double computeSharpness(Uint8List imageBytes) {
+    try {
+      final decoded = img.decodeImage(imageBytes);
+      if (decoded == null) return 100.0;
+      final gray = img.grayscale(decoded);
+      final w = gray.width;
+      final h = gray.height;
+      if (w < 10 || h < 10) return 100.0;
+
+      final startX = (w * 0.15).toInt();
+      final endX = (w * 0.85).toInt();
+      final startY = (h * 0.15).toInt();
+      final endY = (h * 0.85).toInt();
+
+      double sum = 0;
+      double sumSq = 0;
+      int count = 0;
+
+      for (int y = startY + 1; y < endY - 1; y += 2) {
+        for (int x = startX + 1; x < endX - 1; x += 2) {
+          final c = gray.getPixel(x, y).r;
+          final u = gray.getPixel(x, y - 1).r;
+          final d = gray.getPixel(x, y + 1).r;
+          final l = gray.getPixel(x - 1, y).r;
+          final r = gray.getPixel(x + 1, y).r;
+          final lap = (u + d + l + r - 4 * c).toDouble();
+          sum += lap;
+          sumSq += lap * lap;
+          count++;
+        }
+      }
+      if (count == 0) return 100.0;
+      final mean = sum / count;
+      final variance = (sumSq / count) - (mean * mean);
+      return variance;
+    } catch (_) {
+      return 100.0;
+    }
+  }
+
   /// Detects faces in [file]. Returns [FaceDetectionResult].
   /// [valid] is true only when exactly one face is found.
   static Future<FaceDetectionResult> detectFromFile(File file) async {
@@ -230,10 +287,20 @@ class FaceDetectionHelper {
       final inputImage = InputImage.fromFile(file);
       final faces = await _getDetector.processImage(inputImage);
 
+      double? sharpness;
+      bool isBlurry = false;
+      try {
+        final bytes = await file.readAsBytes();
+        sharpness = computeSharpness(bytes);
+        isBlurry = sharpness < kBlurThreshold;
+      } catch (_) {}
+
       if (faces.isEmpty) {
-        return const FaceDetectionResult(
+        return FaceDetectionResult(
           valid: false,
           faceCount: 0,
+          isBlurry: isBlurry,
+          sharpnessScore: sharpness,
           message: 'No face detected. Please ensure your face is clearly visible.',
         );
       }
@@ -257,6 +324,8 @@ class FaceDetectionHelper {
           eyesOpen: eyesOpen,
           headYaw: headYaw,
           occluded: occluded,
+          isBlurry: isBlurry,
+          sharpnessScore: sharpness,
         );
       }
 
@@ -268,6 +337,8 @@ class FaceDetectionHelper {
         eyesOpen: eyesOpen,
         headYaw: headYaw,
         occluded: occluded,
+        isBlurry: isBlurry,
+        sharpnessScore: sharpness,
       );
     } catch (e) {
       return FaceDetectionResult(

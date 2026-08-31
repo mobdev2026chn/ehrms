@@ -14,8 +14,8 @@ const {
     getFineCalculation
 } = require('../controllers/attendanceController');
 // Canonical face identity (1-to-many over Staff.faceEnrollEmbeddings) — shared by
-// the EHRMS app's anti buddy-punch guard and the face-app kiosk.
-const { verifyIdentity, identifyFace, kioskEnrolledList, kioskEmployeeDetail, kioskClearFace } = require('../controllers/authController');
+// both the EHRMS app (attendance guard) and the standalone face-app (kiosk).
+const { enrollFace, getFaceEnrollStatus, verifyIdentity, identifyFace, kioskEnrolledList, kioskEmployeeDetail, kioskClearFace } = require('../controllers/authController');
 
 // Shared-secret gate for the face-app KIOSK (not a logged-in staff). The kiosk
 // sends x-face-kiosk-secret; matched against FACE_KIOSK_SECRET. If the secret is
@@ -54,12 +54,18 @@ function optionalAttendanceSelfieMultipart(req, res, next) {
 
 // Apply rate limiting after authentication for all attendance routes
 router.post('/checkin', protect, attendanceLimiter, optionalAttendanceSelfieMultipart, checkIn);
+router.post('/punch-in', protect, attendanceLimiter, optionalAttendanceSelfieMultipart, checkIn);
 router.put('/checkout', protect, attendanceLimiter, optionalAttendanceSelfieMultipart, checkOut);
+router.post('/punch-out', protect, attendanceLimiter, optionalAttendanceSelfieMultipart, checkOut);
 router.get('/today', protect, attendanceLimiter, getTodayAttendance);
+router.get('/today-punch', protect, attendanceLimiter, getTodayAttendance);
 router.get('/employee/:employeeId', protect, attendanceLimiter, getEmployeeAttendance);
+router.get('/staff/:staffId', protect, attendanceLimiter, getMonthAttendance);
 router.get('/month', protect, attendanceLimiter, getMonthAttendance);
 router.get('/history', protect, attendanceLimiter, getAttendanceHistory);
 router.get('/fine-calculation', protect, attendanceLimiter, getFineCalculation);
+router.post('/enroll-face', protect, attendanceLimiter, enrollFace);
+router.get('/face-enroll-status', protect, attendanceLimiter, getFaceEnrollStatus);
 
 // 1-to-many face identity against the canonical Staff.faceEnrollEmbeddings store.
 router.post('/verify-identity', protect, attendanceLimiter, verifyIdentity); // EHRMS app guard (1-to-many self/buddy check)

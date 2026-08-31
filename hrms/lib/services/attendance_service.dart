@@ -11,6 +11,7 @@ import '../utils/attendance_selfie_compress.dart';
 import '../utils/error_message_utils.dart';
 import '../utils/punch_flow_log.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
 import 'web_hrms_api_dio.dart';
 
 class AttendanceService {
@@ -193,50 +194,57 @@ class AttendanceService {
       final jsonFields = <String, dynamic>{
         'latitude': lat,
         'longitude': lng,
+        'accuracy': 15.0,
+        'locationName': address,
         'address': address,
         'area': area,
         'city': city,
         'pincode': pincode,
         'movementType': movementType,
         'source': 'app',
-        // Backend is the single source of truth for fine: it recomputes late
-        // minutes from the punch instant using the business timezone, so the
-        // stored fine matches payroll/web. The device-local values below are
-        // sent for diagnostics/preview only and are ignored when forceAppFine
-        // is false. (Previously true => device-local time caused fine
-        // mismatches when device TZ differed from the business timezone.)
         'forceAppFine': false,
         'lateMinutes': lateMinutes,
         'earlyMinutes': earlyMinutes,
         'fineAmount': fineAmount,
         'punchInTime': punchInTime,
         'clientTime': punchInTime,
+        'device': 'Mobile App',
       };
       if (businessId != null && businessId.isNotEmpty) {
         jsonFields['businessId'] = businessId;
       }
 
-      final Response<Map<String, dynamic>> response;
-      if (selfiePayload != null && selfiePayload.isNotEmpty) {
-        final bytes = _selfieDataUrlToJpegBytes(selfiePayload);
-        final formMap = <String, dynamic>{
-          ..._stringifyPunchFormFields(jsonFields),
-          'selfie': MultipartFile.fromBytes(
-            bytes,
-            filename: 'attendance_selfie.jpg',
-          ),
-        };
+      Response<Map<String, dynamic>> response;
+      final bodyData = <String, dynamic>{...jsonFields, 'selfie': selfiePayload};
+
+      try {
         response = await _api.dio.post<Map<String, dynamic>>(
-          '/attendance/checkin',
-          data: FormData.fromMap(formMap),
+          '/staff/attendance/punch-in',
+          data: bodyData,
           options: _punchDioOptions(),
         );
-      } else {
-        response = await _api.dio.post<Map<String, dynamic>>(
-          '/attendance/checkin',
-          data: <String, dynamic>{...jsonFields, 'selfie': selfiePayload},
-          options: _punchDioOptions(),
-        );
+      } catch (punchErr) {
+        if (punchErr is DioException) {
+          final code = punchErr.response?.statusCode;
+          if (code == 413) {
+            final noSelfieData = Map<String, dynamic>.from(bodyData)..remove('selfie');
+            response = await _api.dio.post<Map<String, dynamic>>(
+              '/staff/attendance/punch-in',
+              data: noSelfieData,
+              options: _punchDioOptions(),
+            );
+          } else if (code == 404 || code == 405) {
+            response = await _api.dio.post<Map<String, dynamic>>(
+              '/attendance/checkin',
+              data: bodyData,
+              options: _punchDioOptions(),
+            );
+          } else {
+            rethrow;
+          }
+        } else {
+          rethrow;
+        }
       }
       final data = response.data;
       _logPermissionConsumption('checkIn', data);
@@ -318,24 +326,21 @@ class AttendanceService {
       final jsonFields = <String, dynamic>{
         'latitude': lat,
         'longitude': lng,
+        'accuracy': 15.0,
+        'locationName': address,
         'address': address,
         'area': area,
         'city': city,
         'pincode': pincode,
         'movementType': movementType,
         'source': 'app',
-        // Backend is the single source of truth for fine: it recomputes early
-        // minutes from the punch instant using the business timezone, so the
-        // stored fine matches payroll/web. The device-local values below are
-        // sent for diagnostics/preview only and are ignored when forceAppFine
-        // is false. (Previously true => device-local time caused fine
-        // mismatches when device TZ differed from the business timezone.)
         'forceAppFine': false,
         'lateMinutes': lateMinutes,
         'earlyMinutes': earlyMinutes,
         'fineAmount': fineAmount,
         'punchOutTime': punchOutTime,
         'clientTime': punchOutTime,
+        'device': 'Mobile App',
         if (businessId != null && businessId.isNotEmpty) 'businessId': businessId,
         if (appPerDayNetSalary != null && appPerDayNetSalary > 0)
           'appPerDayNetSalary': appPerDayNetSalary,
@@ -343,27 +348,37 @@ class AttendanceService {
           'appPerdayGrossSalary': appPerdayGrossSalary,
       };
 
-      final Response<Map<String, dynamic>> response;
-      if (selfiePayload != null && selfiePayload.isNotEmpty) {
-        final bytes = _selfieDataUrlToJpegBytes(selfiePayload);
-        final formMap = <String, dynamic>{
-          ..._stringifyPunchFormFields(jsonFields),
-          'selfie': MultipartFile.fromBytes(
-            bytes,
-            filename: 'attendance_selfie.jpg',
-          ),
-        };
-        response = await _api.dio.put<Map<String, dynamic>>(
-          '/attendance/checkout',
-          data: FormData.fromMap(formMap),
+      Response<Map<String, dynamic>> response;
+      final bodyData = <String, dynamic>{...jsonFields, 'selfie': selfiePayload};
+
+      try {
+        response = await _api.dio.post<Map<String, dynamic>>(
+          '/staff/attendance/punch-out',
+          data: bodyData,
           options: _punchDioOptions(),
         );
-      } else {
-        response = await _api.dio.put<Map<String, dynamic>>(
-          '/attendance/checkout',
-          data: <String, dynamic>{...jsonFields, 'selfie': selfiePayload},
-          options: _punchDioOptions(),
-        );
+      } catch (punchErr) {
+        if (punchErr is DioException) {
+          final code = punchErr.response?.statusCode;
+          if (code == 413) {
+            final noSelfieData = Map<String, dynamic>.from(bodyData)..remove('selfie');
+            response = await _api.dio.post<Map<String, dynamic>>(
+              '/staff/attendance/punch-out',
+              data: noSelfieData,
+              options: _punchDioOptions(),
+            );
+          } else if (code == 404 || code == 405) {
+            response = await _api.dio.put<Map<String, dynamic>>(
+              '/attendance/checkout',
+              data: bodyData,
+              options: _punchDioOptions(),
+            );
+          } else {
+            rethrow;
+          }
+        } else {
+          rethrow;
+        }
       }
       final data = response.data;
       _logPermissionConsumption('checkOut', data);
@@ -483,16 +498,71 @@ class AttendanceService {
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
-// Fetching today's attendance data for the current user
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        endpointPath,
-        queryParameters: {'date': nowStr},
-      );
-      final data = response.data ?? {};
 
+      // Primary: Web API Canonical endpoint /staff/attendance/today-punch
+      Response<dynamic>? response;
+      try {
+        response = await _api.dio.get<dynamic>('/staff/attendance/today-punch');
+      } catch (_) {
+        try {
+          response = await _api.dio.get<dynamic>(
+            '/attendance/today',
+            queryParameters: {'date': nowStr},
+          );
+        } catch (_) {
+          response = await _api.dio.get<dynamic>(
+            '/staff/attendance/today',
+            queryParameters: {'date': nowStr},
+          );
+        }
+      }
+
+      final dynamic raw = response?.data;
+      final Map<String, dynamic> rawMap =
+          raw is Map ? Map<String, dynamic>.from(raw) : {};
+      final dynamic innerData = rawMap['data'] ?? rawMap;
+      final Map<String, dynamic> data =
+          innerData is Map ? Map<String, dynamic>.from(innerData) : {};
+
+      // Normalize web today-punch fields to standard mobile app keys
+      final isPunchedIn = data['isPunchedIn'] == true;
+      final isPunchedOut = data['isPunchedOut'] == true;
+      data['checkedIn'] = isPunchedIn && !isPunchedOut;
+      data['hasPunchIn'] = isPunchedIn;
+      data['hasPunchOut'] = isPunchedOut;
+
+      final checkInTime = data['checkInTime'] ?? data['punchIn'];
+      final checkOutTime = data['checkOutTime'] ?? data['punchOut'];
+      if (checkInTime != null && checkInTime.toString().trim() != 'NA') {
+        data['punchIn'] = checkInTime;
+      }
+      if (checkOutTime != null && checkOutTime.toString().trim() != 'NA') {
+        data['punchOut'] = checkOutTime;
+      }
+
+      final isWeekOff = data['isWeekOff'] == true || data['isWeeklyOff'] == true;
+      final isHoliday = data['isHoliday'] == true;
+      data['isWeeklyOff'] = isWeekOff;
+      data['isWeekOff'] = isWeekOff;
+      data['isHoliday'] = isHoliday;
+
+      if (data['attendanceTemplate'] != null && data['template'] == null) {
+        data['template'] = data['attendanceTemplate'];
+      }
       if (data['template'] != null) {
         attendanceTemplate = data['template'];
       }
+
+      if (data['status'] == null || data['status'].toString().isEmpty) {
+        if (isWeekOff) {
+          data['status'] = 'Week Off';
+        } else if (isHoliday) {
+          data['status'] = 'Holiday';
+        } else if (isPunchedIn) {
+          data['status'] = 'Present';
+        }
+      }
+
       _cachedTodayAttendance = data;
       _lastTodayAttendanceFetch = DateTime.now();
       return {'success': true, 'data': data};
@@ -573,11 +643,19 @@ class AttendanceService {
       final deviceNow = DateTime.now();
       final clientTimeIso = deviceNow.toUtc().toIso8601String();
       final clientLocalTime = '${deviceNow.hour.toString().padLeft(2, '0')}:${deviceNow.minute.toString().padLeft(2, '0')}';
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/attendance/today',
-        queryParameters: {'date': date, 'clientTime': clientTimeIso, 'clientLocalTime': clientLocalTime},
-      );
-      final data = response.data ?? {};
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.get<dynamic>(
+          '/staff/attendance/today-punch',
+          queryParameters: {'date': date, 'clientTime': clientTimeIso, 'clientLocalTime': clientLocalTime},
+        );
+      } catch (_) {
+        response = await _api.dio.get<dynamic>(
+          '/attendance/today',
+          queryParameters: {'date': date, 'clientTime': clientTimeIso, 'clientLocalTime': clientLocalTime},
+        );
+      }
+      final data = response.data is Map ? Map<String, dynamic>.from(response.data as Map) : <String, dynamic>{};
       // Share cache with getTodayAttendance so throttle/cache hits can return this data.
       final now = DateTime.now();
       final todayStr =
@@ -842,13 +920,212 @@ class AttendanceService {
         final headers = await _getHeaders();
         final token = headers['Authorization']?.replaceFirst('Bearer ', '');
         if (token != null) _api.setAuthToken(token);
-        final response = await _api.dio.get<Map<String, dynamic>>(
-          '/attendance/month',
-          queryParameters: {'year': year, 'month': month},
-        );
-        data = response.data ?? {};
+
+        // 1. Resolve Staff ID from local session or profile API
+        final prefs = await SharedPreferences.getInstance();
+        String? staffId;
+        for (final key in ['user', 'staff', 'profile']) {
+          final s = prefs.getString(key);
+          if (s != null && s.isNotEmpty) {
+            try {
+              final u = jsonDecode(s);
+              if (u is Map) {
+                staffId = (u['id'] ?? u['_id'] ?? u['staffId'])?.toString();
+                if (staffId != null && staffId.isNotEmpty) break;
+              }
+            } catch (_) {}
+          }
+        }
+        if (staffId == null || staffId.isEmpty) {
+          try {
+            final prof = await AuthService().getProfile();
+            final pData = prof['data'];
+            if (pData is Map) {
+              staffId = (pData['id'] ?? pData['_id'] ?? pData['staffId'])?.toString();
+              if (staffId == null && pData['user'] is Map) {
+                staffId = (pData['user']['id'] ?? pData['user']['_id'] ?? pData['user']['staffId'])?.toString();
+              }
+              if (staffId == null && pData['staff'] is Map) {
+                staffId = (pData['staff']['id'] ?? pData['staff']['_id'] ?? pData['staff']['staffId'])?.toString();
+              }
+            }
+          } catch (_) {}
+        }
+
+        Response<dynamic>? response;
+        // 2. Primary: Canonical Web API endpoint
+        if (staffId != null && staffId.isNotEmpty) {
+          try {
+            response = await _api.dio.get<dynamic>(
+              '/admin/staff/attendance/staff/$staffId',
+              queryParameters: {'year': year, 'month': month},
+            );
+          } catch (_) {}
+        }
+
+        // 3. Fallbacks
+        if (response == null || response.statusCode != 200) {
+          try {
+            response = await _api.dio.get<dynamic>(
+              '/staff/attendance/month',
+              queryParameters: {'year': year, 'month': month},
+            );
+          } catch (_) {
+            response = await _api.dio.get<dynamic>(
+              '/attendance/month',
+              queryParameters: {'year': year, 'month': month},
+            );
+          }
+        }
+
+        data = response.data is Map ? Map<String, dynamic>.from(response.data as Map) : {};
+
+        // 4. Also fetch Shift Roster for shift details & week offs (Web Parity)
+        if (staffId != null && staffId.isNotEmpty) {
+          try {
+            final rosterRes = await _api.dio.get<dynamic>(
+              '/admin/staff/settings/shift-roster/staff/$staffId',
+              queryParameters: {'year': year, 'month': month},
+            );
+            if (rosterRes.data is Map && rosterRes.data['data'] != null) {
+              data['roster'] = rosterRes.data['data'];
+            }
+          } catch (_) {}
+        }
+
+        // 5. Also fetch Holiday Templates (Web Parity)
+        try {
+          final holRes = await _api.dio.get<dynamic>(
+            '/admin/staff/settings/Attendance/holidayTemplates',
+          );
+          if (holRes.data is Map && holRes.data['data'] != null) {
+            data['holidayTemplates'] = holRes.data['data'];
+          }
+        } catch (_) {}
       }
-      final attendanceData = data['data'] ?? data;
+
+      final dynamic rawPayload = data['data'] ?? data;
+      final Map<String, dynamic> rawData = rawPayload is Map ? Map<String, dynamic>.from(rawPayload) : {};
+
+      // 6. Normalize attendances array & day lists
+      final rawList = rawData['attendances'] ?? rawData['attendance'] ?? [];
+      final List<Map<String, dynamic>> normalizedList = [];
+      final List<String> presentDates = [];
+      final List<String> absentDates = [];
+      final List<String> halfDayDates = [];
+      final List<String> leaveDates = [];
+      final List<String> weekOffDates = [];
+      final List<Map<String, dynamic>> holidayList = [];
+
+      if (rawList is List) {
+        for (final item in rawList) {
+          if (item is! Map) continue;
+          final m = Map<String, dynamic>.from(item);
+          final rawDate = m['date']?.toString() ?? '';
+          String dateStr = '';
+          if (rawDate.isNotEmpty) {
+            try {
+              final parsed = DateTime.parse(rawDate).toLocal();
+              dateStr = '${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}';
+            } catch (_) {
+              if (rawDate.length >= 10) dateStr = rawDate.substring(0, 10);
+            }
+          }
+          final rawStatus = (m['status']?.toString() ?? '').toLowerCase().trim();
+          String status = 'Present';
+          if (rawStatus == 'present') {
+            status = 'Present';
+            if (dateStr.isNotEmpty) presentDates.add(dateStr);
+          } else if (rawStatus == 'half_day' || rawStatus == 'halfday' || rawStatus == 'half day') {
+            status = 'Half Day';
+            if (dateStr.isNotEmpty) halfDayDates.add(dateStr);
+          } else if (rawStatus == 'absent') {
+            status = 'Absent';
+            if (dateStr.isNotEmpty) absentDates.add(dateStr);
+          } else if (rawStatus == 'leave' || rawStatus == 'on_leave' || rawStatus == 'on leave') {
+            status = 'On Leave';
+            if (dateStr.isNotEmpty) leaveDates.add(dateStr);
+          } else if (rawStatus == 'week_off' || rawStatus == 'weekly_off' || rawStatus == 'week off' || rawStatus == 'weekly off') {
+            status = 'Week Off';
+            if (dateStr.isNotEmpty) weekOffDates.add(dateStr);
+          } else if (rawStatus == 'holiday') {
+            status = 'Holiday';
+          } else if (rawStatus == 'pending') {
+            status = 'Pending';
+          }
+
+          final presentDetails = m['presentDetails'] is Map ? m['presentDetails'] as Map : null;
+          final fineAdjustment = m['fineAdjustment'] is Map ? m['fineAdjustment'] as Map : null;
+          final overtimeAdjustment = m['overtimeAdjustment'] is Map ? m['overtimeAdjustment'] as Map : null;
+
+          final punchIn = presentDetails?['checkInTime'] ?? m['punchIn'] ?? m['checkIn'];
+          final punchOut = presentDetails?['checkOutTime'] ?? m['punchOut'] ?? m['checkOut'];
+          final workHours = presentDetails?['totalHours'] ?? m['workHours'] ?? m['workingHours'];
+          final fine = fineAdjustment?['totalFine'] ?? m['fine'];
+          final overtime = overtimeAdjustment?['amount'] ?? m['overtime'];
+
+          m['status'] = status;
+          m['date'] = dateStr.isNotEmpty ? dateStr : rawDate;
+          if (punchIn != null && punchIn != 'NA') m['punchIn'] = punchIn;
+          if (punchOut != null && punchOut != 'NA') m['punchOut'] = punchOut;
+          if (workHours != null) m['workHours'] = workHours;
+          if (fine != null) m['fine'] = fine;
+          if (overtime != null) m['overtime'] = overtime;
+
+          normalizedList.add(m);
+        }
+      }
+
+      // Populate week offs from roster if available
+      final rosterDays = data['roster']?['days'];
+      if (rosterDays is Map) {
+        rosterDays.forEach((k, v) {
+          if (v is Map && v['isOff'] == true && !weekOffDates.contains(k.toString())) {
+            weekOffDates.add(k.toString());
+          }
+        });
+      }
+
+      // Populate holidays from holiday templates
+      final templates = data['holidayTemplates']?['templates'];
+      if (templates is List) {
+        for (final t in templates) {
+          if (t is Map && t['holidays'] is List) {
+            for (final h in t['holidays']) {
+              if (h is Map && h['date'] != null) {
+                try {
+                  final hd = DateTime.parse(h['date'].toString()).toLocal();
+                  if (hd.year == year && hd.month == month) {
+                    holidayList.add({
+                      'date': h['date'],
+                      'name': h['name'] ?? 'Holiday',
+                    });
+                  }
+                } catch (_) {}
+              }
+            }
+          }
+        }
+      }
+
+      final Map<String, dynamic> attendanceData = Map<String, dynamic>.from(rawData);
+      attendanceData['attendance'] = normalizedList;
+      attendanceData['attendances'] = normalizedList;
+      attendanceData['presentDates'] = presentDates;
+      attendanceData['absentDates'] = absentDates;
+      attendanceData['halfDayDates'] = halfDayDates;
+      attendanceData['leaveDates'] = leaveDates;
+      attendanceData['weekOffDates'] = weekOffDates;
+      if (holidayList.isNotEmpty) attendanceData['holidays'] = holidayList;
+
+      attendanceData['presentCount'] = rawData['presentCount'] ?? presentDates.length;
+      attendanceData['absentCount'] = rawData['absentCount'] ?? absentDates.length;
+      attendanceData['halfDayCount'] = rawData['halfDayCount'] ?? halfDayDates.length;
+      attendanceData['leaveCount'] = rawData['leaveCount'] ?? leaveDates.length;
+      attendanceData['weeklyOffCount'] = rawData['weeklyOffCount'] ?? weekOffDates.length;
+      attendanceData['holidayCount'] = rawData['holidayCount'] ?? holidayList.length;
+      attendanceData['payableDays'] = rawData['payableDays'] ?? (presentDates.length + (halfDayDates.length * 0.5));
+
       cacheMap[cacheKey] = attendanceData;
       fetchMap[cacheKey] = DateTime.now();
       return {'success': true, 'data': attendanceData};
@@ -950,5 +1227,265 @@ class AttendanceService {
       msg = msg.substring(11);
     }
     return msg;
+  }
+
+  // ==========================================
+  // ADMIN / HR STAFF ATTENDANCE APIs (Web Parity)
+  // ==========================================
+
+  /// Fetch all staff attendance for a given date (e.g. '2026-08-28').
+  /// Web API: GET /admin/staff/attendance/all-staff?date=YYYY-MM-DD
+  Future<Map<String, dynamic>> getAllStaffAttendance(String date) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.get<dynamic>(
+        '/admin/staff/attendance/all-staff',
+        queryParameters: {'date': date},
+      );
+      final body = response.data;
+      if (body is Map && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? body};
+      }
+      return {'success': true, 'data': body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioErrorMessage(e) ?? _handleException(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Mark Present for a staff member (Admin action).
+  /// Web API: POST /admin/staff/attendance/present
+  Future<Map<String, dynamic>> markStaffPresent({
+    required String staffId,
+    required String date,
+    required String shiftId,
+    required String checkInTime,
+    String? checkOutTime,
+    String? device,
+    String? location,
+    bool? approved,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.post<dynamic>(
+        '/admin/staff/attendance/present',
+        data: {
+          'staffId': staffId,
+          'date': date,
+          'shiftId': shiftId,
+          'checkInTime': checkInTime,
+          if (checkOutTime != null) 'checkOutTime': checkOutTime,
+          if (device != null) 'device': device,
+          if (location != null) 'location': location,
+          if (approved != null) 'approved': approved,
+        },
+      );
+      final body = response.data;
+      clearCachesForRefresh();
+      return {'success': true, 'data': body?['data'] ?? body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioErrorMessage(e) ?? _handleException(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Mark Half Day for a staff member (Admin action).
+  /// Web API: POST /admin/staff/attendance/half-day
+  Future<Map<String, dynamic>> markStaffHalfDay({
+    required String staffId,
+    required String date,
+    String? shiftId,
+    required String checkInTime,
+    required String checkOutTime,
+    String? device,
+    String? location,
+    bool? approved,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.post<dynamic>(
+        '/admin/staff/attendance/half-day',
+        data: {
+          'staffId': staffId,
+          'date': date,
+          if (shiftId != null) 'shiftId': shiftId,
+          'checkInTime': checkInTime,
+          'checkOutTime': checkOutTime,
+          if (device != null) 'device': device,
+          if (location != null) 'location': location,
+          if (approved != null) 'approved': approved,
+        },
+      );
+      final body = response.data;
+      clearCachesForRefresh();
+      return {'success': true, 'data': body?['data'] ?? body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioErrorMessage(e) ?? _handleException(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Mark Absent for a staff member (Admin action).
+  /// Web API: POST /admin/staff/attendance/absent
+  Future<Map<String, dynamic>> markStaffAbsent({
+    required String staffId,
+    required String date,
+    String? remarks,
+    String? deductionStatus,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.post<dynamic>(
+        '/admin/staff/attendance/absent',
+        data: {
+          'staffId': staffId,
+          'date': date,
+          if (remarks != null) 'remarks': remarks,
+          if (deductionStatus != null) 'deductionStatus': deductionStatus,
+        },
+      );
+      final body = response.data;
+      clearCachesForRefresh();
+      return {'success': true, 'data': body?['data'] ?? body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioErrorMessage(e) ?? _handleException(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Mark Leave for a staff member (Admin action).
+  /// Web API: POST /admin/staff/attendance/leave
+  Future<Map<String, dynamic>> markStaffLeave({
+    required String staffId,
+    required String date,
+    required String leaveTypeId,
+    String? reason,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.post<dynamic>(
+        '/admin/staff/attendance/leave',
+        data: {
+          'staffId': staffId,
+          'date': date,
+          'leaveTypeId': leaveTypeId,
+          if (reason != null) 'reason': reason,
+        },
+      );
+      final body = response.data;
+      clearCachesForRefresh();
+      return {'success': true, 'data': body?['data'] ?? body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioErrorMessage(e) ?? _handleException(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Mark Week Off for a staff member (Admin action).
+  /// Web API: POST /admin/staff/attendance/week-off
+  Future<Map<String, dynamic>> markStaffWeekOff({
+    required String staffId,
+    required String date,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.post<dynamic>(
+        '/admin/staff/attendance/week-off',
+        data: {
+          'staffId': staffId,
+          'date': date,
+        },
+      );
+      final body = response.data;
+      clearCachesForRefresh();
+      return {'success': true, 'data': body?['data'] ?? body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioErrorMessage(e) ?? _handleException(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Update Fine Adjustment for a staff member (Admin action).
+  /// Web API: PUT /admin/staff/attendance/fine
+  Future<Map<String, dynamic>> updateFineAdjustment({
+    required String staffId,
+    required String date,
+    Map<String, dynamic>? lateFine,
+    Map<String, dynamic>? earlyExitFine,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.put<dynamic>(
+        '/admin/staff/attendance/fine',
+        data: {
+          'staffId': staffId,
+          'date': date,
+          if (lateFine != null) 'lateFine': lateFine,
+          if (earlyExitFine != null) 'earlyExitFine': earlyExitFine,
+        },
+      );
+      final body = response.data;
+      clearCachesForRefresh();
+      return {'success': true, 'data': body?['data'] ?? body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioErrorMessage(e) ?? _handleException(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Update Overtime Adjustment for a staff member (Admin action).
+  /// Web API: PUT /admin/staff/attendance/overtime
+  Future<Map<String, dynamic>> updateOvertimeAdjustment({
+    required String staffId,
+    required String date,
+    String? actualOvertime,
+    Map<String, dynamic>? updatedOvertime,
+    String? option,
+    double? amount,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final token = headers['Authorization']?.replaceFirst('Bearer ', '');
+      if (token != null) _api.setAuthToken(token);
+      final response = await _api.dio.put<dynamic>(
+        '/admin/staff/attendance/overtime',
+        data: {
+          'staffId': staffId,
+          'date': date,
+          if (actualOvertime != null) 'actualOvertime': actualOvertime,
+          if (updatedOvertime != null) 'updatedOvertime': updatedOvertime,
+          if (option != null) 'option': option,
+          if (amount != null) 'amount': amount,
+        },
+      );
+      final body = response.data;
+      clearCachesForRefresh();
+      return {'success': true, 'data': body?['data'] ?? body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioErrorMessage(e) ?? _handleException(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
   }
 }

@@ -6353,8 +6353,11 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: value,
+          value: items.toSet().contains(value)
+              ? value
+              : (items.isNotEmpty ? items.first : null),
           items: items
+              .toSet()
               .map(
                 (e) => DropdownMenuItem(
                   value: e,

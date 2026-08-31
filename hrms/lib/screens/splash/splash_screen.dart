@@ -9,6 +9,7 @@
 // If you'd rather not add the dependency, replace the GoogleFonts.bricolageGrotesque(...)
 // calls with TextStyle(fontFamily: 'YourBundledFont', ...).
 
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -21,6 +22,7 @@ import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../geo/live_tracking_screen.dart';
+import '../admin/dashboard/admin_dashboard_screen.dart';
 
 // Palette for the dark splash (matches the web design).
 const _ink = Color(0xFF121212);
@@ -261,7 +263,27 @@ class _SplashScreenState extends State<SplashScreen>
         );
         return;
       }
-      // User is logged in, navigate to Dashboard
+      // Check if logged in user is an Admin
+      final userStr = prefs.getString('user');
+      bool isAdmin = false;
+      if (userStr != null) {
+        try {
+          final uMap = jsonDecode(userStr);
+          final role = (uMap['role'] ?? uMap['staffType'] ?? uMap['type'] ?? '').toString().toLowerCase();
+          if (!role.contains('staff') && !role.contains('employee')) {
+            isAdmin = role.contains('admin') || role.contains('hr') || role.contains('super') || role.contains('manager') || role.isNotEmpty;
+          }
+        } catch (_) {}
+      }
+
+      if (isAdmin) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const AdminDashboardScreen()),
+        );
+        return;
+      }
+
+      // User is logged in as Employee, navigate to Employee Dashboard
       Navigator.of(
         context,
       ).pushReplacement(MaterialPageRoute(builder: (_) => DashboardScreen()));

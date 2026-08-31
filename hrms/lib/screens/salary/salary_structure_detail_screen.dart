@@ -10,6 +10,8 @@ import '../../services/salary_service.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../dashboard/dashboard_screen.dart';
 
+import '../../utils/swr_cache.dart';
+
 class SalaryStructureDetailScreen extends StatefulWidget {
   const SalaryStructureDetailScreen({super.key});
 
@@ -43,14 +45,28 @@ class _SalaryStructureDetailScreenState
   @override
   void initState() {
     super.initState();
-    _fetchAndCalculateSalary();
+    final cachedBundle = SwrCache.get<StaffSalaryBundle>('salary_structure_bundle');
+    final cachedStats = SwrCache.get<Map<String, dynamic>>('salary_stats_cache');
+    if (cachedBundle != null) {
+      _salaryInputs = SalaryStructureInputs.fromMap(cachedBundle.salary);
+      _salaryStructure = calculateSalaryStructure(_salaryInputs!);
+      if (cachedStats != null) {
+        _ctrlGross = _numOrNull(cachedStats['grossSalary']);
+        _ctrlNet = _numOrNull(cachedStats['netSalary']);
+        _ctrlCtc = _numOrNull(cachedStats['ctc']);
+      }
+      _isLoading = false;
+    }
+    _fetchAndCalculateSalary(silent: cachedBundle != null);
   }
 
-  Future<void> _fetchAndCalculateSalary() async {
-    setState(() {
-      _isLoading = true;
-      _error = '';
-    });
+  Future<void> _fetchAndCalculateSalary({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _error = '';
+      });
+    }
 
     try {
       // Pull the exact per-user salary structure from the API. getStaffSalaryBundle
@@ -58,23 +74,28 @@ class _SalaryStructureDetailScreenState
       // access flag, unlike the thin geo-only getStaffSalaryDetails().
       final bundle = await _salaryService.getStaffSalaryBundle();
       if (bundle == null) {
-        setState(() {
-          _error = 'Could not load salary details.';
-          _isLoading = false;
-        });
-        _showErrorDialog(_error);
+        if (!silent) {
+          setState(() {
+            _error = 'Could not load salary details.';
+            _isLoading = false;
+          });
+          _showErrorDialog(_error);
+        }
         return;
       }
       if (!bundle.salaryDetailsAccessEnabled) {
-        setState(() {
-          _error =
-              'Salary details are not enabled for your account. Please contact HR.';
-          _isLoading = false;
-        });
-        _showErrorDialog(_error);
+        if (!silent) {
+          setState(() {
+            _error =
+                'Salary details are not enabled for your account. Please contact HR.';
+            _isLoading = false;
+          });
+          _showErrorDialog(_error);
+        }
         return;
       }
 
+      SwrCache.set('salary_structure_bundle', bundle);
       final inputs = SalaryStructureInputs.fromMap(bundle.salary);
       final calculated = calculateSalaryStructure(inputs);
 
@@ -87,6 +108,7 @@ class _SalaryStructureDetailScreenState
         final data = statsEnv['data'];
         final stats = data is Map ? data['stats'] : null;
         if (stats is Map) {
+          SwrCache.set('salary_stats_cache', Map<String, dynamic>.from(stats));
           ctrlGross = _numOrNull(stats['grossSalary']);
           ctrlNet = _numOrNull(stats['netSalary']);
           ctrlCtc = _numOrNull(stats['ctc']);
@@ -95,20 +117,24 @@ class _SalaryStructureDetailScreenState
         // Non-fatal: fall back to the locally-calculated figures.
       }
 
+      if (!mounted) return;
       setState(() {
         _salaryInputs = inputs;
         _salaryStructure = calculated;
-        _ctrlGross = ctrlGross;
-        _ctrlNet = ctrlNet;
-        _ctrlCtc = ctrlCtc;
+        _ctrlGross = ctrlGross ?? _ctrlGross;
+        _ctrlNet = ctrlNet ?? _ctrlNet;
+        _ctrlCtc = ctrlCtc ?? _ctrlCtc;
         _isLoading = false;
       });
     } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
-      _showErrorDialog(_error);
+      if (!mounted) return;
+      if (!silent) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+        _showErrorDialog(_error);
+      }
     }
   }
 

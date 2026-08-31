@@ -132,7 +132,6 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/images/
-    - assets/fonts/
     - assets/ekta_logo.jpeg
 
   # Bundled Inter font (uses your assets/fonts files)

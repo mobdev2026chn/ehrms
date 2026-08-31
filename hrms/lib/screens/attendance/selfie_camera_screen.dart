@@ -30,7 +30,15 @@ img.Image _cropToFrame(img.Image im) {
   final ch = (h * 0.90).round();
   final x = ((w - cw) / 2).round();
   final y = ((h - ch) / 2).round();
-  return img.copyCrop(im, x: x, y: y, width: cw, height: ch);
+  var cropped = img.copyCrop(im, x: x, y: y, width: cw, height: ch);
+  if (cropped.width > 480 || cropped.height > 480) {
+    cropped = img.copyResize(
+      cropped,
+      width: cropped.width >= cropped.height ? 480 : null,
+      height: cropped.height > cropped.width ? 480 : null,
+    );
+  }
+  return cropped;
 }
 
 /// Crop the (already downscaled + correctly-rotated) selfie to the guide frame.
@@ -39,7 +47,7 @@ Uint8List cropSelfieOnly(Uint8List raw) {
     final decoded = img.decodeImage(raw);
     if (decoded == null) return raw;
     final cropped = _cropToFrame(decoded);
-    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+    return Uint8List.fromList(img.encodeJpg(cropped, quality: 65));
   } catch (_) {
     return raw;
   }
@@ -53,7 +61,7 @@ Uint8List rotate180AndCrop(Uint8List raw) {
     final decoded = img.decodeImage(raw);
     if (decoded == null) return raw;
     final cropped = _cropToFrame(img.copyRotate(decoded, angle: 180));
-    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+    return Uint8List.fromList(img.encodeJpg(cropped, quality: 65));
   } catch (_) {
     return raw;
   }
@@ -65,8 +73,15 @@ Uint8List flip180Only(Uint8List raw) {
   try {
     final decoded = img.decodeImage(raw);
     if (decoded == null) return raw;
-    return Uint8List.fromList(
-        img.encodeJpg(img.copyRotate(decoded, angle: 180), quality: 92));
+    var processed = img.copyRotate(decoded, angle: 180);
+    if (processed.width > 480 || processed.height > 480) {
+      processed = img.copyResize(
+        processed,
+        width: processed.width >= processed.height ? 480 : null,
+        height: processed.height > processed.width ? 480 : null,
+      );
+    }
+    return Uint8List.fromList(img.encodeJpg(processed, quality: 65));
   } catch (_) {
     return raw;
   }
@@ -305,9 +320,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       // run on this small image, so no reliance on native rotate semantics.
       final small = await FlutterImageCompress.compressWithFile(
         path,
-        minWidth: 1280,
-        minHeight: 1280,
-        quality: 90,
+        minWidth: 480,
+        minHeight: 480,
+        quality: 65,
       );
       final working = (small != null && small.isNotEmpty)
           ? small
@@ -1133,7 +1148,27 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(File(path)),
+                    onPressed: () async {
+                      try {
+                        final file = File(path);
+                        if (await file.exists()) {
+                          final bytes = await file.readAsBytes();
+                          final sharpness =
+                              FaceDetectionHelper.computeSharpness(bytes);
+                          if (sharpness < FaceDetectionHelper.kBlurThreshold) {
+                            if (!mounted) return;
+                            SnackBarUtils.showSnackBar(
+                              context,
+                              'Photo is blurry. Please tap Retake for a sharp, clear photo.',
+                              isError: true,
+                            );
+                            return;
+                          }
+                        }
+                      } catch (_) {}
+                      if (!mounted) return;
+                      Navigator.of(context).pop(File(path));
+                    },
                     icon: const Icon(Icons.check),
                     label: const Text('Confirm & Submit'),
                     style: FilledButton.styleFrom(

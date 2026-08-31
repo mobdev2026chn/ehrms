@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
+import 'error_message_utils.dart';
 import 'punch_flow_log.dart';
 
 class SnackBarUtils {
@@ -19,7 +20,16 @@ class SnackBarUtils {
     /// When set, included in punch trace log (see [punchFlowLog]).
     String? debugSource,
   }) {
-    final lower = message.toLowerCase();
+    final cleanMessage = isError
+        ? ErrorMessageUtils.sanitizeForDisplay(
+            message,
+            fallback: 'Something went wrong. Please try again.',
+          )
+        : (ErrorMessageUtils.isTechnicalMessage(message)
+            ? 'Operation completed.'
+            : message);
+
+    final lower = cleanMessage.toLowerCase();
     final traceLeaveOrPunch =
         lower.contains('leave') ||
         lower.contains('checkout') ||
@@ -28,7 +38,7 @@ class SnackBarUtils {
         lower.contains('punch') ||
         lower.contains('attendance');
     if (traceLeaveOrPunch || (debugSource != null && debugSource.isNotEmpty)) {
-      final preview = message.length > 160 ? '${message.substring(0, 160)}…' : message;
+      final preview = cleanMessage.length > 160 ? '${cleanMessage.substring(0, 160)}…' : cleanMessage;
       punchFlowLog(
         '[SnackBarUtils][trace] source=${debugSource ?? "(auto)"} isError=$isError msg=$preview',
       );
@@ -43,7 +53,7 @@ class SnackBarUtils {
 
     _currentEntry = OverlayEntry(
       builder: (context) => _TopSnackBarWidget(
-        message: message,
+        message: cleanMessage,
         backgroundColor: isError
             ? Colors.black
             : (backgroundColor ?? AppColors.primary),

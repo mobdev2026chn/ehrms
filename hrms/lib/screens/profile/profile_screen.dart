@@ -1,8 +1,10 @@
 // hrms/lib/screens/profile/profile_screen.dart
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -16,6 +18,7 @@ import '../../widgets/menu_icon_button.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/avatar_orientation.dart';
+import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../notifications/notifications_screen.dart';
@@ -58,6 +61,15 @@ class _ProfileScreenState extends State<ProfileScreen>
   /// Two font sizes for entire profile: heading and value
   static const double _profileHeadingSize = 14;
   static const double _profileValueSize = 13;
+
+  Map<String, dynamic> _formData = {};
+  final Map<String, bool> _editingSections = {
+    'personal': false,
+    'contact': false,
+    'address': false,
+    'bank': false,
+  };
+  bool _isSavingSection = false;
 
   @override
   void initState() {
@@ -114,6 +126,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           final data = result['data'];
           if (data is Map) {
             _userData = Map<String, dynamic>.from(data);
+            _formData = _mapDataToForm(_userData);
             // Update stored user with branchName so app drawer shows branch
             final branchName =
                 data['branchName']?.toString() ??
@@ -129,6 +142,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             }
           } else {
             _userData = null;
+            _formData = {};
           }
         } else {
           SnackBarUtils.showSnackBar(
@@ -354,49 +368,1050 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
+  Map<String, dynamic> _mapDataToForm(Map<String, dynamic>? data) {
+    if (data == null) return {};
+    final mapped = <String, dynamic>{};
+    final staffData = data['staffData'] is Map
+        ? Map<String, dynamic>.from(data['staffData'] as Map)
+        : <String, dynamic>{};
+    final profile = data['profile'] is Map
+        ? Map<String, dynamic>.from(data['profile'] as Map)
+        : <String, dynamic>{};
+
+    // Employee ID
+    mapped['employeeId'] = staffData['employeeId'] ??
+        profile['employeeId'] ??
+        data['employeeId'] ??
+        '';
+
+    // First & Last Name
+    final combinedName = (profile['name'] ?? staffData['name'] ?? data['name'] ?? '').toString().trim();
+    final nameParts = combinedName.isNotEmpty ? combinedName.split(' ') : <String>[];
+    mapped['firstName'] = staffData['firstName'] ??
+        profile['firstName'] ??
+        data['firstName'] ??
+        (nameParts.isNotEmpty ? nameParts.first : '');
+    mapped['lastName'] = staffData['lastName'] ??
+        profile['lastName'] ??
+        data['lastName'] ??
+        (nameParts.length > 1 ? nameParts.skip(1).join(' ') : '');
+
+    // DOB
+    final rawDob = staffData['dob'] ??
+        staffData['dateOfBirth'] ??
+        profile['dob'] ??
+        profile['dateOfBirth'] ??
+        data['dob'] ??
+        data['dateOfBirth'];
+    if (rawDob != null) {
+      try {
+        final parsed = DateTime.tryParse(rawDob.toString());
+        if (parsed != null) {
+          mapped['dob'] = DateFormat('yyyy-MM-dd').format(parsed);
+        } else {
+          mapped['dob'] = rawDob.toString();
+        }
+      } catch (_) {
+        mapped['dob'] = rawDob.toString();
+      }
+    } else {
+      mapped['dob'] = '';
+    }
+
+    // Gender, Blood Group, Father Name
+    mapped['gender'] = staffData['gender'] ?? profile['gender'] ?? data['gender'] ?? '';
+    mapped['bloodGroup'] = staffData['bloodGroup'] ?? profile['bloodGroup'] ?? data['bloodGroup'] ?? '';
+    mapped['fatherName'] = staffData['fatherName'] ?? profile['fatherName'] ?? data['fatherName'] ?? '';
+
+    // Marital Status & Spouse Name
+    final rawMarital = staffData['maritalStatus'] ?? profile['maritalStatus'] ?? data['maritalStatus'];
+    if (rawMarital is Map) {
+      mapped['maritalStatus'] = 'Married';
+      mapped['spouseName'] = rawMarital['spouseName'] ?? '';
+    } else if (rawMarital != null && rawMarital.toString().toLowerCase() == 'married') {
+      mapped['maritalStatus'] = 'Married';
+      mapped['spouseName'] = staffData['spouseName'] ?? profile['spouseName'] ?? data['spouseName'] ?? '';
+    } else {
+      mapped['maritalStatus'] = 'Single';
+      mapped['spouseName'] = '';
+    }
+
+    // Contact
+    mapped['contact'] = profile['email'] ?? staffData['email'] ?? data['email'] ?? data['contact'] ?? '';
+    mapped['phone'] = staffData['phone'] ??
+        staffData['phoneNumber'] ??
+        profile['phone'] ??
+        profile['phoneNumber'] ??
+        data['phone'] ??
+        '';
+    mapped['altPhone'] = staffData['altPhone'] ??
+        staffData['alternatePhoneNumber'] ??
+        profile['altPhone'] ??
+        data['altPhone'] ??
+        '';
+
+    // Current Address
+    final currAddr = staffData['currentAddress'] ?? data['currentAddress'];
+    if (currAddr is Map) {
+      mapped['currentAddress'] = currAddr['address'] ?? currAddr['line1'] ?? '';
+      mapped['currentCountry'] = currAddr['country'] ?? '';
+      mapped['currentState'] = currAddr['state'] ?? '';
+      mapped['currentPincode'] = currAddr['pincode'] ?? currAddr['postalCode'] ?? '';
+    } else {
+      mapped['currentAddress'] = staffData['address']?.toString() ?? data['address']?.toString() ?? '';
+      mapped['currentCountry'] = '';
+      mapped['currentState'] = '';
+      mapped['currentPincode'] = '';
+    }
+
+    // Permanent Address
+    final permAddr = staffData['permanentAddress'] ?? data['permanentAddress'];
+    if (permAddr is Map) {
+      mapped['permanentAddress'] = permAddr['address'] ?? permAddr['line1'] ?? '';
+      mapped['permanentCountry'] = permAddr['country'] ?? '';
+      mapped['permanentState'] = permAddr['state'] ?? '';
+      mapped['permanentPincode'] = permAddr['pincode'] ?? permAddr['postalCode'] ?? '';
+    } else {
+      mapped['permanentAddress'] = '';
+      mapped['permanentCountry'] = '';
+      mapped['permanentState'] = '';
+      mapped['permanentPincode'] = '';
+    }
+
+    // Disability
+    final phys = staffData['physicallyChallenged'] ?? data['physicallyChallenged'];
+    if (phys is Map) {
+      mapped['isPhysicallyChallenged'] = 'Yes';
+      mapped['disabilityType'] = phys['disabilityType'] ?? '';
+      mapped['disabilityPercentage'] = phys['disabilityPercentage']?.toString() ?? '';
+      mapped['disabilityCertNo'] = phys['certificateNumber'] ?? '';
+    } else if (phys != null && (phys.toString().toLowerCase() == 'yes' || phys == true)) {
+      mapped['isPhysicallyChallenged'] = 'Yes';
+      mapped['disabilityType'] = staffData['disabilityType'] ?? '';
+      mapped['disabilityPercentage'] = staffData['disabilityPercentage']?.toString() ?? '';
+      mapped['disabilityCertNo'] = staffData['disabilityCertNo'] ?? '';
+    } else {
+      mapped['isPhysicallyChallenged'] = 'No';
+      mapped['disabilityType'] = '';
+      mapped['disabilityPercentage'] = '';
+      mapped['disabilityCertNo'] = '';
+    }
+
+    // Role & Org Setup
+    mapped['department'] = staffData['department'] ?? data['department'] ?? '';
+    mapped['employmentType'] = staffData['employmentType'] ?? staffData['staffType'] ?? data['employmentType'] ?? 'Full Time';
+    mapped['joiningDate'] = _formatDateStr(staffData['joiningDate'] ?? data['joiningDate']);
+    mapped['onboardingDate'] = _formatDateStr(staffData['onboardingDate'] ?? data['onboardingDate']);
+    mapped['designation'] = staffData['designation'] ?? data['designation'] ?? '';
+    mapped['jobRole'] = staffData['jobRole'] ?? data['jobRole'] ?? '';
+
+    // Reporting Manager
+    final repMgr = staffData['reportingManager'] ?? data['reportingManager'];
+    if (repMgr is Map) {
+      final rmName = repMgr['name'] ?? '${repMgr['firstName'] ?? ''} ${repMgr['lastName'] ?? ''}'.trim();
+      final rmRole = repMgr['designation'] != null ? ' (${repMgr['designation']})' : '';
+      mapped['reportingManager'] = '$rmName$rmRole'.trim();
+    } else {
+      mapped['reportingManager'] = repMgr?.toString() ?? '';
+    }
+
+    // Branch
+    final br = staffData['branchId'] ?? data['branchId'] ?? staffData['branch'] ?? data['branch'];
+    if (br is Map) {
+      mapped['branch'] = br['branchName'] ?? br['name'] ?? br['_id'] ?? '';
+    } else {
+      mapped['branch'] = br?.toString() ?? '';
+    }
+
+    // Work Mode
+    mapped['workMode'] = staffData['workMode'] ?? data['workMode'] ?? 'WFH';
+
+    // WFH Location
+    final wfhLoc = staffData['wfhLocation'] ?? staffData['workFromHomeLocation'] ?? data['workFromHomeLocation'];
+    if (wfhLoc is Map) {
+      mapped['wfhLocation'] = wfhLoc['address'] ?? wfhLoc['name'] ?? '';
+      mapped['latitude'] = wfhLoc['latitude']?.toString() ?? '';
+      mapped['longitude'] = wfhLoc['longitude']?.toString() ?? '';
+      mapped['radius'] = wfhLoc['radius']?.toString() ?? '';
+    } else {
+      mapped['wfhLocation'] = staffData['wfhAddress'] ?? '';
+      String lat = staffData['latitude']?.toString() ?? '';
+      String lng = staffData['longitude']?.toString() ?? '';
+      if (lat.isEmpty && staffData['location'] is Map) {
+        final loc = staffData['location'] as Map;
+        final coords = loc['coordinates'];
+        if (coords is List && coords.length >= 2) {
+          lat = coords[1]?.toString() ?? '';
+          lng = coords[0]?.toString() ?? '';
+        }
+      }
+      mapped['latitude'] = lat;
+      mapped['longitude'] = lng;
+      mapped['radius'] = staffData['geofenceRadius']?.toString() ?? '';
+    }
+
+    // Bank Details
+    final bank = staffData['bankDetails'] ?? data['bankDetails'] ?? {};
+    mapped['pan'] = staffData['panNumber'] ?? bank['pan'] ?? data['panNumber'] ?? '';
+    mapped['aadhaar'] = staffData['aadhaarNumber'] ?? bank['aadhaar'] ?? data['aadhaarNumber'] ?? '';
+    mapped['bankName'] = bank['bankName'] ?? staffData['bankName'] ?? data['bankName'] ?? '';
+    mapped['accountHolderName'] = bank['accountHolderName'] ?? staffData['accountHolderName'] ?? data['accountHolderName'] ?? '';
+    mapped['accountNumber'] = bank['accountNumber'] ?? staffData['accountNumber'] ?? data['accountNumber'] ?? '';
+    mapped['ifscCode'] = bank['ifscCode'] ?? staffData['ifscCode'] ?? data['ifscCode'] ?? '';
+    mapped['bankBranch'] = bank['branchName'] ?? bank['bankBranch'] ?? staffData['bankBranch'] ?? data['bankBranch'] ?? '';
+    mapped['upiId'] = bank['upiId'] ?? staffData['upiId'] ?? data['upiId'] ?? '';
+
+    // Statutory
+    final empIds = staffData['employmentIds'] ?? data['employmentIds'] ?? {};
+    mapped['uanNumber'] = empIds['uan'] ?? staffData['uanNumber'] ?? data['uanNumber'] ?? '';
+    mapped['pfNumber'] = empIds['pf'] ?? staffData['pfNumber'] ?? data['pfNumber'] ?? '';
+    mapped['pfStartDate'] = _formatDateStr(staffData['pfStartDate'] ?? data['pfStartDate']);
+    mapped['esiNumber'] = empIds['esi'] ?? staffData['esiNumber'] ?? data['esiNumber'] ?? '';
+    mapped['esiStartDate'] = _formatDateStr(staffData['esiStartDate'] ?? data['esiStartDate']);
+
+    // Templates
+    mapped['salaryTemplate'] = _extractTemplateName(staffData['salaryTemplate'] ?? data['salaryTemplate']);
+    mapped['shiftTemplate'] = _extractTemplateName(staffData['shiftTemplate'] ?? data['shiftTemplate']);
+    mapped['leaveTemplate'] = _extractTemplateName(staffData['leaveTemplate'] ?? data['leaveTemplate']);
+    mapped['holidayTemplate'] = _extractTemplateName(staffData['holidayTemplate'] ?? data['holidayTemplate']);
+    mapped['permissionTemplate'] = _extractTemplateName(staffData['permissionTemplate'] ?? data['permissionTemplate']);
+    mapped['overtimeTemplate'] = _extractTemplateName(staffData['overtimeTemplate'] ?? data['overtimeTemplate']);
+    mapped['breakTemplate'] = _extractTemplateName(staffData['breakTemplate'] ?? data['breakTemplate']);
+    mapped['attendanceTemplate'] = _extractTemplateName(staffData['attendanceTemplate'] ?? data['attendanceTemplate']);
+    mapped['weeklyOffTemplate'] = _extractTemplateName(staffData['weeklyOffTemplate'] ?? data['weeklyOffTemplate']);
+    mapped['geofenceTemplate'] = _extractTemplateName(staffData['geofenceTemplate'] ?? data['geofenceTemplate']);
+
+    return mapped;
+  }
+
+  String _formatDateStr(dynamic raw) {
+    if (raw == null) return 'N/A';
+    try {
+      final str = raw.toString().trim();
+      if (str.isEmpty || str == 'N/A') return 'N/A';
+      final dt = DateTime.tryParse(str);
+      if (dt != null) {
+        return '${dt.month}/${dt.day}/${dt.year}';
+      }
+      return str;
+    } catch (_) {
+      return raw.toString();
+    }
+  }
+
+  String _extractTemplateName(dynamic val) {
+    if (val == null) return 'None (Not Assigned)';
+    if (val is Map) {
+      return val['templateName']?.toString() ??
+          val['name']?.toString() ??
+          val['title']?.toString() ??
+          val['_id']?.toString() ??
+          'None (Not Assigned)';
+    }
+    final s = val.toString().trim();
+    if (s.isEmpty) return 'None (Not Assigned)';
+    return s;
+  }
+
+  void _handleCancelEdit(String sectionKey) {
+    final original = _mapDataToForm(_userData);
+    setState(() {
+      _editingSections[sectionKey] = false;
+      _formData = original;
+    });
+  }
+
+  Future<void> _handleSaveSection(String sectionKey) async {
+    setState(() => _isSavingSection = true);
+    try {
+      final payload = <String, dynamic>{};
+      if (sectionKey == 'personal') {
+        final fn = _formData['firstName']?.toString().trim() ?? '';
+        final ln = _formData['lastName']?.toString().trim() ?? '';
+        if (fn.isEmpty || ln.isEmpty) {
+          SnackBarUtils.showSnackBar(context, 'First Name and Last Name are required.', isError: true);
+          setState(() => _isSavingSection = false);
+          return;
+        }
+        payload['firstName'] = fn;
+        payload['lastName'] = ln;
+        payload['dob'] = _formData['dob'];
+        payload['gender'] = _formData['gender'];
+        payload['bloodGroup'] = _formData['bloodGroup'];
+        payload['fatherName'] = _formData['fatherName'];
+        payload['maritalStatus'] = _formData['maritalStatus'];
+        payload['spouseName'] = _formData['spouseName'];
+      } else if (sectionKey == 'contact') {
+        final email = _formData['contact']?.toString().trim() ?? '';
+        final phone = _formData['phone']?.toString().trim() ?? '';
+        if (email.isEmpty || phone.isEmpty) {
+          SnackBarUtils.showSnackBar(context, 'Email and Phone Number are required.', isError: true);
+          setState(() => _isSavingSection = false);
+          return;
+        }
+        payload['contact'] = email;
+        payload['email'] = email;
+        payload['phone'] = phone;
+        payload['phoneNumber'] = phone;
+        payload['altPhone'] = _formData['altPhone'];
+        payload['alternatePhoneNumber'] = _formData['altPhone'];
+      } else if (sectionKey == 'address') {
+        payload['currentAddress'] = _formData['currentAddress'];
+        payload['currentCountry'] = _formData['currentCountry'];
+        payload['currentState'] = _formData['currentState'];
+        payload['currentPincode'] = _formData['currentPincode'];
+        payload['permanentAddress'] = _formData['permanentAddress'];
+        payload['permanentCountry'] = _formData['permanentCountry'];
+        payload['permanentState'] = _formData['permanentState'];
+        payload['permanentPincode'] = _formData['permanentPincode'];
+      } else if (sectionKey == 'bank') {
+        payload['pan'] = _formData['pan'];
+        payload['panNumber'] = _formData['pan'];
+        payload['aadhaar'] = _formData['aadhaar'];
+        payload['aadhaarNumber'] = _formData['aadhaar'];
+        payload['bankName'] = _formData['bankName'];
+        payload['accountHolderName'] = _formData['accountHolderName'];
+        payload['accountNumber'] = _formData['accountNumber'];
+        payload['ifscCode'] = _formData['ifscCode'];
+        payload['bankBranch'] = _formData['bankBranch'];
+        payload['branchName'] = _formData['bankBranch'];
+        payload['upiId'] = _formData['upiId'];
+      }
+
+      final res = await _authService.updateProfile(payload);
+      if (res['success'] == true) {
+        SnackBarUtils.showSnackBar(context, 'Profile section updated successfully.', isError: false);
+        setState(() {
+          _editingSections[sectionKey] = false;
+        });
+        await _refreshProfile();
+      } else {
+        SnackBarUtils.showSnackBar(context, res['message']?.toString() ?? 'Failed to update profile section.', isError: true);
+      }
+    } catch (e) {
+      SnackBarUtils.showSnackBar(context, 'Error saving profile: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isSavingSection = false);
+    }
+  }
+
+  Future<void> _handleImageUpload() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (picked == null) return;
+
+      final file = File(picked.path);
+      final bytes = await file.readAsBytes();
+      if (bytes.lengthInBytes > 2 * 1024 * 1024) {
+        if (mounted) {
+          SnackBarUtils.showSnackBar(context, 'Profile image size must be less than 2MB.', isError: true);
+        }
+        return;
+      }
+
+      final base64String = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
+      final res = await _authService.updateProfile({'profilePic': base64String});
+      if (res['success'] == true) {
+        if (mounted) {
+          SnackBarUtils.showSnackBar(context, 'Profile picture updated successfully.', isError: false);
+        }
+        await _refreshProfile();
+      } else {
+        // Fallback: try multipart photo upload
+        final res2 = await _authService.updateProfilePhoto(file);
+        if (res2['success'] == true) {
+          if (mounted) {
+            SnackBarUtils.showSnackBar(context, 'Profile picture updated successfully.', isError: false);
+          }
+          await _refreshProfile();
+        } else {
+          if (mounted) {
+            SnackBarUtils.showSnackBar(context, res['message']?.toString() ?? 'Failed to update profile picture.', isError: true);
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        SnackBarUtils.showSnackBar(context, 'Failed to upload profile picture: $e', isError: true);
+      }
+    }
+  }
+
+  Future<void> _pickDobDate() async {
+    final curr = DateTime.tryParse(_formData['dob']?.toString() ?? '') ?? DateTime(2000, 1, 1);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: curr,
+      firstDate: DateTime(1940),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() {
+        _formData['dob'] = DateFormat('yyyy-MM-dd').format(picked);
+      });
+    }
+  }
+
   Widget _buildPersonalInfoTab() {
     return RefreshIndicator(
       onRefresh: _refreshProfile,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.zero,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Full-bleed gradient header (avatar, name, EMP ID, status badge)
-            _buildHeaderCard(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
-              child: Column(
-                children: [
-                  // Joined / Location stat cards
-                  _buildStatCardsRow(),
-                  const SizedBox(height: 24),
-                  _buildGeneralInfoSection(),
-                  const SizedBox(height: 24),
-                  if (_fieldsForCategory('Profile Information').isNotEmpty) ...[
-                    _buildCardSection(
-                      icon: Icons.account_circle_outlined,
-                      title: 'Profile Information',
-                      content: _buildCustomFieldColumnForCard(
-                        _fieldsForCategory('Profile Information'),
-                      ),
+            // Header Title
+            const Text(
+              'My Profile',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF0F172A),
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Your personal and contact details, as recorded by your administrator',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Profile Hero Card
+            _buildWebProfileHeroCard(),
+            const SizedBox(height: 16),
+
+            // 1. Personal Information Card
+            _buildWebPersonalSection(),
+
+            // 2. Contact Details Card
+            _buildWebContactSection(),
+
+            // 3. Address Details Card
+            _buildWebAddressSection(),
+
+            // 4. Disability Information Card
+            _buildWebDisabilitySection(),
+
+            // 5. Role & Organization Setup Card
+            _buildWebRoleSection(),
+
+            // 6. Bank & Statutory Details Card
+            _buildWebBankSection(),
+
+            // 7. Policy & Template Configurations Card
+            _buildWebPolicySection(),
+
+            // Custom fields if any
+            if (_activeStaffCustomFields.isNotEmpty) ...[
+              _buildWebCustomFieldsSection(),
+            ],
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebProfileHeroCard() {
+    final fn = _formData['firstName']?.toString().trim() ?? '';
+    final ln = _formData['lastName']?.toString().trim() ?? '';
+    final fullName = ('$fn $ln').trim().isNotEmpty
+        ? ('$fn $ln').trim()
+        : (_profile?['name']?.toString() ?? 'Staff Member');
+    final initials = (fn.isNotEmpty ? fn[0] : (fullName.isNotEmpty ? fullName[0] : 'U')).toUpperCase() +
+        (ln.isNotEmpty ? ln[0] : '');
+    final empId = _formData['employeeId']?.toString() ?? _staffData?['employeeId'] ?? 'EMP-XXX';
+    final designation = (_formData['designation']?.toString() ?? _staffData?['designation'] ?? 'EMPLOYEE').toUpperCase();
+    final department = (_formData['department']?.toString() ?? _staffData?['department'] ?? 'DEPARTMENT').toUpperCase();
+
+    final photoUrl = _profile?['avatar'] ??
+        _profile?['photoUrl'] ??
+        _profile?['profilePic'] ??
+        _staffData?['avatar'] ??
+        _cachedAvatarUrl;
+    final photoUrlStr = photoUrl?.toString().trim();
+    final showPhoto = photoUrlStr != null &&
+        photoUrlStr.isNotEmpty &&
+        (photoUrlStr.startsWith('http://') || photoUrlStr.startsWith('https://')) &&
+        !_profileImageError;
+    if (showPhoto) _resolveAvatarFlip(photoUrlStr);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Circular Avatar with edit prompt
+          GestureDetector(
+            onTap: _handleImageUpload,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFFF8FAFC),
+                    border: Border.all(color: const Color(0xFFE2E8F0), width: 2),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: showPhoto
+                      ? RotatedBox(
+                          quarterTurns: _avatarNeedsFlip ? 2 : 0,
+                          child: CachedNetworkImage(
+                            imageUrl: photoUrlStr,
+                            fit: BoxFit.cover,
+                            errorWidget: (_, __, ___) {
+                              return Center(
+                                child: Text(
+                                  initials.isEmpty ? 'U' : initials,
+                                  style: const TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFFEFAA1F),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        )
+                      : Center(
+                          child: Text(
+                            initials.isEmpty ? 'U' : initials,
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFFEFAA1F),
+                            ),
+                          ),
+                        ),
+                ),
+                Positioned(
+                  bottom: -2,
+                  right: -2,
+                  child: Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEFAA1F),
+                      shape: BoxShape.circle,
                     ),
-                    const SizedBox(height: 24),
+                    child: const Icon(
+                      Icons.camera_alt_rounded,
+                      size: 13,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          // Name, Emp ID, Pill Tags
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  fullName,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F172A),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Emp ID: $empId',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    if (designation.isNotEmpty && designation != 'N/A')
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Text(
+                          designation,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF475569),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    if (department.isNotEmpty && department != 'N/A')
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Text(
+                          department,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF475569),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
                   ],
-                  _buildPersonalSection(),
-                  const SizedBox(height: 24),
-                  _buildEmploymentInfoSection(),
-                  const SizedBox(height: 24),
-                  _buildContactCard(),
-                  const SizedBox(height: 24),
-                  _buildAddressSection(),
-                  const SizedBox(height: 24),
-                  _buildIdQuickCards(),
-                  const SizedBox(height: 24),
-                  _buildDarkBankCard(),
-                  const SizedBox(height: 24),
-                  _buildIdentityAndBankSection(),
-                ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 1. Personal Information Section
+  Widget _buildWebPersonalSection() {
+    final isEditing = _editingSections['personal'] ?? false;
+    return _buildWebSectionCard(
+      title: 'Personal Information',
+      icon: Icons.person_outline_rounded,
+      sectionKey: 'personal',
+      isEditable: true,
+      children: [
+        _buildFieldRow(
+          _buildWebField(label: 'Employee ID', fieldKey: 'employeeId', isReadOnly: true),
+          _buildWebField(label: 'First Name', fieldKey: 'firstName', isEditing: isEditing),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Last Name', fieldKey: 'lastName', isEditing: isEditing),
+          isEditing
+              ? Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Date of Birth (DOB)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF334155),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      InkWell(
+                        onTap: _pickDobDate,
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFCBD5E1)),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                (_formData['dob']?.toString().trim().isNotEmpty == true)
+                                    ? _formData['dob'].toString()
+                                    : 'Select DOB',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: (_formData['dob']?.toString().trim().isNotEmpty == true)
+                                      ? const Color(0xFF0F172A)
+                                      : const Color(0xFF94A3B8),
+                                ),
+                              ),
+                              const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFF64748B)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : _buildWebField(label: 'Date of Birth (DOB)', fieldKey: 'dob', isEditing: false),
+        ),
+        _buildFieldRow(
+          _buildGenderDropdown(isEditing),
+          _buildWebField(label: 'Blood Group', fieldKey: 'bloodGroup', isEditing: isEditing),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: "Father's Name", fieldKey: 'fatherName', isEditing: isEditing),
+          _buildMaritalStatusDropdown(isEditing),
+        ),
+        if (_formData['maritalStatus'] == 'Married')
+          _buildWebField(label: 'Spouse Name', fieldKey: 'spouseName', isEditing: isEditing),
+      ],
+    );
+  }
+
+  // 2. Contact Details Section
+  Widget _buildWebContactSection() {
+    final isEditing = _editingSections['contact'] ?? false;
+    return _buildWebSectionCard(
+      title: 'Contact Details',
+      icon: Icons.shield_outlined,
+      sectionKey: 'contact',
+      isEditable: true,
+      children: [
+        _buildWebField(
+          label: 'Email ID',
+          fieldKey: 'contact',
+          isEditing: isEditing,
+          keyboardType: TextInputType.emailAddress,
+        ),
+        _buildFieldRow(
+          _buildWebField(
+            label: 'Phone Number',
+            fieldKey: 'phone',
+            isEditing: isEditing,
+            keyboardType: TextInputType.phone,
+          ),
+          _buildWebField(
+            label: 'Alternate Phone',
+            fieldKey: 'altPhone',
+            isEditing: isEditing,
+            keyboardType: TextInputType.phone,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // 3. Address Details Section
+  Widget _buildWebAddressSection() {
+    final isEditing = _editingSections['address'] ?? false;
+    return _buildWebSectionCard(
+      title: 'Address Details',
+      icon: Icons.location_on_outlined,
+      sectionKey: 'address',
+      isEditable: true,
+      children: [
+        _buildWebField(label: 'Current Address', fieldKey: 'currentAddress', isEditing: isEditing),
+        _buildFieldRow3(
+          _buildWebField(label: 'Country', fieldKey: 'currentCountry', isEditing: isEditing),
+          _buildWebField(label: 'State', fieldKey: 'currentState', isEditing: isEditing),
+          _buildWebField(label: 'Pincode', fieldKey: 'currentPincode', isEditing: isEditing),
+        ),
+        const SizedBox(height: 6),
+        _buildWebField(label: 'Permanent Address', fieldKey: 'permanentAddress', isEditing: isEditing),
+        _buildFieldRow3(
+          _buildWebField(label: 'Country', fieldKey: 'permanentCountry', isEditing: isEditing),
+          _buildWebField(label: 'State', fieldKey: 'permanentState', isEditing: isEditing),
+          _buildWebField(label: 'Pincode', fieldKey: 'permanentPincode', isEditing: isEditing),
+        ),
+      ],
+    );
+  }
+
+  // 4. Disability Information Section
+  Widget _buildWebDisabilitySection() {
+    final isPhysicallyChallenged = _formData['isPhysicallyChallenged'] == 'Yes';
+    return _buildWebSectionCard(
+      title: 'Disability Information',
+      icon: Icons.accessibility_new_rounded,
+      sectionKey: 'disability',
+      isEditable: false,
+      children: [
+        _buildWebField(label: 'Physically Challenged?', fieldKey: 'isPhysicallyChallenged', isEditing: false),
+        if (isPhysicallyChallenged) ...[
+          _buildFieldRow(
+            _buildWebField(label: 'Disability Type', fieldKey: 'disabilityType', isEditing: false),
+            _buildWebField(label: 'Disability Percentage', fieldKey: 'disabilityPercentage', isEditing: false),
+          ),
+          _buildWebField(label: 'Certificate Number', fieldKey: 'disabilityCertNo', isEditing: false),
+        ],
+      ],
+    );
+  }
+
+  // 5. Role & Organization Setup Section
+  Widget _buildWebRoleSection() {
+    return _buildWebSectionCard(
+      title: 'Role & Organization Setup',
+      icon: Icons.business_outlined,
+      sectionKey: 'role',
+      isEditable: false,
+      children: [
+        _buildFieldRow(
+          _buildWebField(label: 'Department', fieldKey: 'department', isEditing: false),
+          _buildWebField(label: 'Employment Type', fieldKey: 'employmentType', isEditing: false),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Joining Date', fieldKey: 'joiningDate', isEditing: false),
+          _buildWebField(label: 'Onboarding Date', fieldKey: 'onboardingDate', isEditing: false),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Designation', fieldKey: 'designation', isEditing: false),
+          _buildWebField(label: 'Job Role', fieldKey: 'jobRole', isEditing: false),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Reporting Manager', fieldKey: 'reportingManager', isEditing: false),
+          _buildWebField(label: 'Branch', fieldKey: 'branch', isEditing: false),
+        ),
+        _buildWebField(label: 'Work Mode', fieldKey: 'workMode', isEditing: false),
+        _buildWebField(label: 'Work From Home Location', fieldKey: 'wfhLocation', isEditing: false),
+        _buildFieldRow3(
+          _buildWebField(label: 'Latitude', fieldKey: 'latitude', isEditing: false),
+          _buildWebField(label: 'Longitude', fieldKey: 'longitude', isEditing: false),
+          _buildWebField(label: 'Radius (Meters)', fieldKey: 'radius', isEditing: false),
+        ),
+      ],
+    );
+  }
+
+  // 6. Bank & Statutory Details Section
+  Widget _buildWebBankSection() {
+    final isEditing = _editingSections['bank'] ?? false;
+    return _buildWebSectionCard(
+      title: 'Bank & Statutory Details',
+      icon: Icons.credit_card_outlined,
+      sectionKey: 'bank',
+      isEditable: true,
+      children: [
+        _buildFieldRow(
+          _buildWebField(label: 'PAN Number', fieldKey: 'pan', isEditing: isEditing),
+          _buildWebField(label: 'Aadhaar Number', fieldKey: 'aadhaar', isEditing: isEditing),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Bank Name', fieldKey: 'bankName', isEditing: isEditing),
+          _buildWebField(label: 'Account Holder Name', fieldKey: 'accountHolderName', isEditing: isEditing),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Account Number', fieldKey: 'accountNumber', isEditing: isEditing),
+          _buildWebField(label: 'IFSC Code', fieldKey: 'ifscCode', isEditing: isEditing),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Branch Name', fieldKey: 'bankBranch', isEditing: isEditing),
+          _buildWebField(label: 'UPI ID', fieldKey: 'upiId', isEditing: isEditing),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'UAN Number', fieldKey: 'uanNumber', isReadOnly: true),
+          _buildWebField(label: 'PF Number', fieldKey: 'pfNumber', isReadOnly: true),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'PF Start Date', fieldKey: 'pfStartDate', isReadOnly: true),
+          _buildWebField(label: 'ESI Number', fieldKey: 'esiNumber', isReadOnly: true),
+        ),
+        _buildWebField(label: 'ESI Start Date', fieldKey: 'esiStartDate', isReadOnly: true),
+      ],
+    );
+  }
+
+  // 7. Policy & Template Configurations Section
+  Widget _buildWebPolicySection() {
+    return _buildWebSectionCard(
+      title: 'Policy & Template Configurations',
+      icon: Icons.settings_outlined,
+      sectionKey: 'policy',
+      isEditable: false,
+      children: [
+        _buildFieldRow(
+          _buildWebField(label: 'Salary Template', fieldKey: 'salaryTemplate', isEditing: false),
+          _buildWebField(label: 'Shift Template', fieldKey: 'shiftTemplate', isEditing: false),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Leave Template', fieldKey: 'leaveTemplate', isEditing: false),
+          _buildWebField(label: 'Holiday Template', fieldKey: 'holidayTemplate', isEditing: false),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Permission Template', fieldKey: 'permissionTemplate', isEditing: false),
+          _buildWebField(label: 'Overtime Template', fieldKey: 'overtimeTemplate', isEditing: false),
+        ),
+        _buildFieldRow(
+          _buildWebField(label: 'Break Template', fieldKey: 'breakTemplate', isEditing: false),
+          _buildWebField(label: 'Attendance Template', fieldKey: 'attendanceTemplate', isEditing: false),
+        ),
+        _buildWebField(label: 'Weekly Off Template', fieldKey: 'weeklyOffTemplate', isEditing: false),
+        _buildWebField(label: 'Geofence Template', fieldKey: 'geofenceTemplate', isEditing: false),
+      ],
+    );
+  }
+
+  // Custom Fields Section
+  Widget _buildWebCustomFieldsSection() {
+    return _buildWebSectionCard(
+      title: 'Additional Information',
+      icon: Icons.info_outline_rounded,
+      sectionKey: 'custom',
+      isEditable: false,
+      children: [
+        _buildCustomFieldColumnForCard(_activeStaffCustomFields),
+      ],
+    );
+  }
+
+  // Generic Card Container with Left Amber Indicator
+  Widget _buildWebSectionCard({
+    required String title,
+    required IconData icon,
+    required String sectionKey,
+    bool isEditable = true,
+    required List<Widget> children,
+  }) {
+    final isEditing = _editingSections[sectionKey] ?? false;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Left Amber Accent Strip
+            Container(
+              width: 4,
+              color: const Color(0xFFEFAA1F),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Section Header
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(icon, size: 18, color: const Color(0xFFEFAA1F)),
+                            const SizedBox(width: 8),
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF1E293B),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (isEditable) ...[
+                          if (isEditing)
+                            Row(
+                              children: [
+                                TextButton.icon(
+                                  onPressed: _isSavingSection ? null : () => _handleCancelEdit(sectionKey),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    backgroundColor: const Color(0xFFF1F5F9),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                                  ),
+                                  icon: const Icon(Icons.close_rounded, size: 14, color: Color(0xFF64748B)),
+                                  label: const Text(
+                                    'Cancel',
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: _isSavingSection ? null : () => _handleSaveSection(sectionKey),
+                                  style: ElevatedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    backgroundColor: const Color(0xFFEFAA1F),
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                                  ),
+                                  icon: _isSavingSection
+                                      ? const SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                        )
+                                      : const Icon(Icons.check_rounded, size: 14, color: Colors.white),
+                                  label: Text(
+                                    _isSavingSection ? 'Saving...' : 'Save',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
+                                  ),
+                                ),
+                              ],
+                            )
+                          else
+                            InkWell(
+                              onTap: () => setState(() => _editingSections[sectionKey] = true),
+                              borderRadius: BorderRadius.circular(6),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF1F5F9),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.edit_outlined, size: 13, color: Color(0xFF475569)),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'Edit',
+                                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                    const SizedBox(height: 14),
+                    // Section Children
+                    ...children,
+                  ],
+                ),
               ),
             ),
           ],
@@ -405,181 +1420,234 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _buildHeaderCard() {
-    final name = _profile?['name'] ?? 'User';
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'U';
-    final empId = _staffData?['employeeId'] ?? 'EMP-XXXX';
-    final status = (_staffData?['status'] ?? 'Active').toString();
-    final photoUrl =
-        _profile?['avatar'] ??
-        _profile?['photoUrl'] ??
-        _profile?['profilePic'] ??
-        _staffData?['avatar'] ??
-        _cachedAvatarUrl;
-    final photoUrlStr = photoUrl?.toString().trim();
-    final showPhoto =
-        photoUrlStr != null &&
-        photoUrlStr.isNotEmpty &&
-        (photoUrlStr.startsWith('http://') ||
-            photoUrlStr.startsWith('https://')) &&
-        !_profileImageError;
-    if (showPhoto) _resolveAvatarFlip(photoUrlStr);
+  // Field box
+  Widget _buildWebField({
+    required String label,
+    required String fieldKey,
+    bool isEditing = false,
+    TextInputType keyboardType = TextInputType.text,
+    bool isReadOnly = false,
+    Widget? customInput,
+  }) {
+    final rawVal = _formData[fieldKey];
+    final displayVal = (rawVal == null || rawVal.toString().trim().isEmpty) ? 'N/A' : rawVal.toString().trim();
 
-    final statusUpper = status.toUpperCase();
-    final statusLabel =
-        statusUpper.contains('EMPLOYEE') ? statusUpper : '$statusUpper EMPLOYEE';
-
-    // Figma: warm peach gradient header, centered avatar + pencil edit button,
-    // name, EMP ID, status badge.
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Color(0xFFFCE6C5),
-            Color(0xFFF8EEE0),
-            AppColors.background,
-          ],
-          stops: [0.0, 0.55, 1.0],
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Avatar with white ring (view-only — tap to view full size).
-          // Natural-sized so the name column keeps the rest of the row.
-          GestureDetector(
-            onTap: showPhoto ? () => _showPhotoFullScreen(photoUrlStr) : null,
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 4),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 14,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
-              ),
-              child: RotatedBox(
-                quarterTurns: (showPhoto && _avatarNeedsFlip) ? 2 : 0,
-                child: CircleAvatar(
-                  radius: 42,
-                  backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-                  backgroundImage: showPhoto
-                      ? CachedNetworkImageProvider(photoUrlStr)
-                      : null,
-                  onBackgroundImageError: showPhoto
-                      ? (_, __) {
-                          if (mounted) {
-                            setState(() => _profileImageError = true);
-                          }
-                        }
-                      : null,
-                  child: showPhoto
-                      ? null
-                      : Text(initial,
-                          style: TextStyle(
-                              fontSize: 30,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primary)),
-                ),
-              ),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF334155),
             ),
           ),
-          const SizedBox(width: 16),
-          // Name / EMP ID / status — right of the avatar, centered
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Name — wraps up to 2 lines for long names before eliding
-                Text(name,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 8),
-                // EMP ID chip
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white),
+          const SizedBox(height: 6),
+          if (isEditing && !isReadOnly)
+            customInput ??
+                TextFormField(
+                  initialValue: rawVal?.toString() ?? '',
+                  keyboardType: keyboardType,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF0F172A),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.badge_outlined,
-                          size: 13, color: AppColors.textSecondary),
-                      const SizedBox(width: 5),
-                      Flexible(
-                        child: Text('EMP ID: $empId',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textSecondary,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 0.3),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                      ),
-                    ],
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                    ),
                   ),
+                  onChanged: (val) => _formData[fieldKey] = val,
+                )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Text(
+                displayVal,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: displayVal == 'N/A' || displayVal == 'None (Not Assigned)'
+                      ? const Color(0xFF94A3B8)
+                      : const Color(0xFF1E293B),
                 ),
-                const SizedBox(height: 10),
-                // Active Employee badge
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                        color: AppColors.primary.withValues(alpha: 0.25)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                              color: AppColors.primary,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color:
-                                      AppColors.primary.withValues(alpha: 0.5),
-                                  blurRadius: 4,
-                                  spreadRadius: 1,
-                                ),
-                              ])),
-                      const SizedBox(width: 7),
-                      Text(statusLabel,
-                          style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.primary,
-                              letterSpacing: 0.6)),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFieldRow(Widget left, Widget right) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: left),
+        const SizedBox(width: 10),
+        Expanded(child: right),
+      ],
+    );
+  }
+
+  Widget _buildFieldRow3(Widget left, Widget middle, Widget right) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: left),
+        const SizedBox(width: 8),
+        Expanded(child: middle),
+        const SizedBox(width: 8),
+        Expanded(child: right),
+      ],
+    );
+  }
+
+  Widget _buildGenderDropdown(bool isEditing) {
+    if (!isEditing) {
+      return _buildWebField(label: 'Gender', fieldKey: 'gender', isEditing: false);
+    }
+    final current = ['Male', 'Female', 'Other'].contains(_formData['gender']) ? _formData['gender'] : null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Gender',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF334155),
+            ),
+          ),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String>(
+            value: current,
+            hint: const Text('Select Gender', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+            items: const [
+              DropdownMenuItem(value: 'Male', child: Text('Male')),
+              DropdownMenuItem(value: 'Female', child: Text('Female')),
+              DropdownMenuItem(value: 'Other', child: Text('Other')),
+            ],
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+              ),
+            ),
+            onChanged: (val) {
+              if (val != null) setState(() => _formData['gender'] = val);
+            },
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildMaritalStatusDropdown(bool isEditing) {
+    if (!isEditing) {
+      return _buildWebField(label: 'Marital Status', fieldKey: 'maritalStatus', isEditing: false);
+    }
+    final current = ['Single', 'Married'].contains(_formData['maritalStatus']) ? _formData['maritalStatus'] : 'Single';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Marital Status',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF334155),
+            ),
+          ),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String>(
+            value: current,
+            items: const [
+              DropdownMenuItem(value: 'Single', child: Text('Single')),
+              DropdownMenuItem(value: 'Married', child: Text('Married')),
+            ],
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+              ),
+            ),
+            onChanged: (val) {
+              if (val != null) {
+                setState(() {
+                  _formData['maritalStatus'] = val;
+                  if (val == 'Single') _formData['spouseName'] = '';
+                });
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _maskBankAccount(String? account) {
+    if (account == null || account.trim().isEmpty) return 'N/A';
+    final a = account.trim();
+    if (a.length <= 4) return a;
+    return '**** **** ${a.substring(a.length - 4)}';
+  }
+
+  String _maskAadhaar(String? a) {
+    if (a == null || a.trim().isEmpty) return 'N/A';
+    final s = a.replaceAll(' ', '');
+    if (s.length <= 4) return a;
+    return 'XXXX XXXX ${s.substring(s.length - 4)}';
   }
 
   /// Figma "Joined" / "Location" stat cards row beneath the header.
@@ -1238,236 +2306,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  String _maskAadhaar(String? a) {
-    if (a == null || a.trim().isEmpty) return 'N/A';
-    final s = a.replaceAll(' ', '');
-    if (s.length <= 4) return a;
-    return 'XXXX XXXX ${s.substring(s.length - 4)}';
-  }
 
-  /// Figma dark gradient bank card with a VERIFIED badge.
-  Widget _buildDarkBankCard() {
-    final bank = _staffData?['bankDetails'];
-    final bankName =
-        (bank is Map ? bank['bankName']?.toString() : null)?.trim();
-    final account =
-        _maskBankAccount(bank is Map ? bank['accountNumber']?.toString() : null);
-    final ifsc =
-        (bank is Map ? bank['ifscCode']?.toString() : null)?.trim();
-    final accountHolderName =
-        (bank is Map ? bank['accountHolderName']?.toString() : null)?.trim();
-    final upiId =
-        (bank is Map ? bank['upiId']?.toString() : null)?.trim();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF2A2A2E), Color(0xFF1C1C1E)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'BANK DETAILS',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      bankName == null || bankName.isEmpty ? 'N/A' : bankName,
-                      style: TextStyle(
-                        color: AppColors.primary,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.account_balance,
-                    color: Colors.white, size: 22),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            'ACCOUNT NUMBER',
-            style: TextStyle(
-              color: Colors.white60,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            account,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 2,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Divider(color: Colors.white.withValues(alpha: 0.12), height: 1),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'IFSC CODE',
-                    style: TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    ifsc == null || ifsc.isEmpty ? 'N/A' : ifsc,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.verified, color: AppColors.primary, size: 14),
-                    const SizedBox(width: 4),
-                    Text(
-                      'VERIFIED',
-                      style: TextStyle(
-                        color: AppColors.primary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if ((accountHolderName != null && accountHolderName.isNotEmpty) ||
-              (upiId != null && upiId.isNotEmpty)) ...[
-            const SizedBox(height: 16),
-            Divider(color: Colors.white.withValues(alpha: 0.12), height: 1),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                if (accountHolderName != null && accountHolderName.isNotEmpty)
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'ACCOUNT HOLDER',
-                          style: TextStyle(
-                            color: Colors.white60,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          accountHolderName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (upiId != null && upiId.isNotEmpty)
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'UPI ID',
-                          style: TextStyle(
-                            color: Colors.white60,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          upiId,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  String _maskBankAccount(String? account) {
-    if (account == null || account.trim().isEmpty) return 'N/A';
-    final a = account.trim();
-    if (a.length <= 4) return a;
-    return '**** **** ${a.substring(a.length - 4)}';
-  }
 
   Widget _buildExpAndEduTab() {
     final education = _candidateData?['education'] as List? ?? [];

@@ -157,6 +157,47 @@ class SalaryService {
   final ApiClient _api = ApiClient();
   static const Duration _salaryRequestTimeout = Duration(seconds: 25);
 
+  /// Fetches the staff's salary structure from `/admin/staff/salary-structures/staff/:staffId`
+  /// exactly like the web dashboard (`Dashboard.tsx`).
+  Future<Map<String, dynamic>?> getSalaryStructure(String staffId) async {
+    if (staffId.trim().isEmpty) return null;
+    // 1. Try webHrmsApiDio
+    try {
+      final dio = webHrmsApiDio();
+      final response = await dio.get<Map<String, dynamic>>(
+        '/admin/staff/salary-structures/staff/$staffId',
+        options: Options(
+          sendTimeout: _salaryRequestTimeout,
+          receiveTimeout: _salaryRequestTimeout,
+        ),
+      );
+      final body = response.data;
+      if (body != null && body['success'] == true && body['data'] != null) {
+        return Map<String, dynamic>.from(body['data']);
+      }
+    } catch (e) {
+      _salaryLog('[SalaryService] getSalaryStructure webHrmsApiDio error: $e');
+    }
+
+    // 2. Fallback to main _api client
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.replaceAll('"', '');
+      if (token != null && token.isNotEmpty) _api.setAuthToken(token);
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/admin/staff/salary-structures/staff/$staffId',
+      );
+      final body = response.data;
+      if (body != null && body['success'] == true && body['data'] != null) {
+        return Map<String, dynamic>.from(body['data']);
+      }
+    } catch (e) {
+      _salaryLog('[SalaryService] getSalaryStructure _api.dio fallback error: $e');
+    }
+
+    return null;
+  }
+
   /// Last [getSalaryStats] outcome for logs: `web_hrms`, `geo_main`, `empty`, `error`.
   static String lastPayrollStatsHostUsed = '';
 

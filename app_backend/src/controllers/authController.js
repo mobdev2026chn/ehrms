@@ -269,10 +269,10 @@ const login = async (req, res) => {
             return res.status(401).json({ success: false, error: { message: 'User record not found' } });
         }
 
-        // Mobile app flows require a linked staff profile. Without it, downstream
-        // attendance/dashboard/protected endpoints will fail and the app may
-        // immediately force logout.
-        if (!staff) {
+        // Mobile app flows for regular employees require a linked staff profile.
+        // For Admin / Super Admin / HR / Manager roles (e.g. company owners), staff profile is optional.
+        const isAdminRole = user.role && ['admin', 'super admin', 'super_admin', 'superadmin', 'hr', 'senior hr', 'manager'].includes(user.role.toLowerCase().trim());
+        if (!staff && !isAdminRole) {
             return res.status(401).json({
                 success: false,
                 error: { message: 'Staff profile not found for this account. Please contact your administrator.' }
@@ -518,7 +518,8 @@ const googleLogin = async (req, res) => {
             return res.status(401).json({ success: false, error: { message: 'User not registered. Please sign up first.' } });
         }
 
-        if (!staff) {
+        const isAdminRole = user.role && ['admin', 'super admin', 'super_admin', 'superadmin', 'hr', 'senior hr', 'manager'].includes(user.role.toLowerCase().trim());
+        if (!staff && !isAdminRole) {
             return res.status(401).json({
                 success: false,
                 error: { message: 'Staff profile not found for this account. Please contact your administrator.' }
@@ -1849,12 +1850,23 @@ function toUserFriendlyEnrollMessage(raw) {
 const checkActive = async (req, res) => {
     try {
         const staffId = req.staff?._id;
-        if (!staffId) {
+        const userId = req.user?._id;
+        if (!staffId && !userId) {
             return res.status(401).json({ success: false, active: false });
         }
-        const staff = await Staff.findById(staffId).select('status').lean();
-        const active = staff && (staff.status || '').toString().toLowerCase() !== 'deactivated';
-        return res.json({ success: true, active: !!active });
+        if (staffId) {
+            const staff = await Staff.findById(staffId).select('status').lean();
+            if (staff) {
+                const active = (staff.status || '').toString().toLowerCase() !== 'deactivated';
+                return res.json({ success: true, active: !!active });
+            }
+        }
+        if (userId) {
+            const user = await User.findById(userId).select('isActive').lean();
+            const active = user ? user.isActive !== false : false;
+            return res.json({ success: true, active: !!active });
+        }
+        return res.status(401).json({ success: false, active: false });
     } catch (err) {
         console.error('[authController] checkActive:', err.message);
         return res.status(500).json({ success: false, active: false });

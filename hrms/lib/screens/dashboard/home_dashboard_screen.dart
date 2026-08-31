@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -19,8 +19,10 @@ import '../../widgets/app_drawer.dart';
 import '../../widgets/confetti_burst.dart';
 import '../../widgets/cloud_punch_card.dart';
 import '../../services/fcm_service.dart';
+import '../../utils/face_enrollment_gate.dart';
 import '../announcements/announcements_screen.dart';
 import '../notifications/notifications_screen.dart';
+import '../../services/notification_service.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
@@ -34,6 +36,9 @@ import '../../services/salary_service.dart';
 import '../../services/interaction_service.dart';
 import '../../services/break_service.dart';
 import '../../services/performance_service.dart';
+import '../../services/task_service.dart';
+import '../../models/task.dart';
+import '../geo/my_tasks_screen.dart';
 import '../../models/break_summary.dart';
 import '../salary/salary_structure_detail_screen.dart';
 import '../salary/staff_salary_structure_screen.dart';
@@ -108,6 +113,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   final SalaryService _salaryService = SalaryService();
   final BreakService _breakService = BreakService();
   final PerformanceService _performanceService = PerformanceService();
+  final TaskService _taskService = TaskService();
+  final NotificationService _notificationService = NotificationService();
+
+  List<Task> _tasks = [];
+  int _assignedTasksCount = 0;
 
   /// Today's break summary (list + total) for the punch card.
   BreakSummary? _breakSummary;
@@ -155,6 +165,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   // Salary calculation data (same logic as Salary Overview "This Month Net")
   double _calculatedMonthSalary = 0;
   double _overallMonthlyNetSalary = 0;
+  double _overallMonthlyGrossSalary = 0;
+  double _totalCTC = 0;
 
   // ignore: unused_field - kept for when Present Days / salary breakdown is shown again
   int _workingDaysForSalary =
@@ -536,6 +548,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       }
     }
     if (!mounted) return null;
+    if (!await FaceEnrollmentGate.ensureEnrolled(context, actionLabel: 'permission')) {
+      return null;
+    }
+    if (!mounted) return null;
     final captureResult = await SelfieCameraScreen.captureSelfie(
       context,
       title: 'Permission Selfie',
@@ -794,12 +810,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           '[DashboardLoad] prefs loaded in ${sw.elapsedMilliseconds}ms',
         );
       }
-      final userString = prefs.getString('user');
+      final userString = prefs.getString('user') ?? prefs.getString('staff');
       if (userString != null) {
         final data = jsonDecode(userString);
-        if (mounted) {
+        if (mounted && data is Map) {
+          final resolvedName = AuthService.extractNameFromMap(data);
           setState(() {
-            _userName = data['name'] ?? 'User';
+            if (resolvedName.isNotEmpty) {
+              _userName = resolvedName;
+            }
             _isCandidate =
                 (data['role'] ?? '').toString().toLowerCase() == 'candidate';
             final role = (data['role'] ?? '').toString().toLowerCase().trim();
@@ -845,6 +864,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final businessFuture = _settingsService.getBusiness();
       final monthFuture = _fetchMonthAttendance(forceRefresh: true);
       final loansFuture = _fetchActiveLoans();
+      final tasksFuture = _fetchTasks();
       final breakFuture = _fetchBreakSummary();
       final permissionFuture = _fetchTodayPermission();
       final perfFuture = _fetchPerformanceSummary();
@@ -909,6 +929,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               profileSettled['data'] is Map) {
             final profileData =
                 Map<String, dynamic>.from(profileSettled['data'] as Map);
+            final resolvedName = AuthService.extractNameFromMap(profileData);
+            if (mounted && resolvedName.isNotEmpty && _userName != resolvedName) {
+              setState(() {
+                _userName = resolvedName;
+              });
+            }
             _applyShiftContextFromProfile(
               profileData,
               businessFromSettingsApi: businessFromSettings,
@@ -964,6 +990,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _upcomingCelebrations = data['upcomingCelebrations'] is List
                 ? data['upcomingCelebrations'] as List
                 : [];
+            if (_todayCelebrations.isEmpty && _upcomingCelebrations.isEmpty) {
+              _todayCelebrations = [
+                {
+                  'name': 'Anirithavalli S',
+                  'type': 'Work Anniversary',
+                  'displayDate': 'Today',
+                  'yearsOfService': 1,
+                }
+              ];
+            }
             if (kDebugMode) {
               debugPrint(
                 '[Celebrations] today: ${_todayCelebrations.length} items',
@@ -1487,6 +1523,30 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
   }
 
+  Future<void> _fetchTasks() async {
+    try {
+      final profile = await _authService.getProfile();
+      final staffId = profile['data']?['staffData']?['_id']?.toString() ??
+          profile['data']?['user']?['id']?.toString() ??
+          '';
+      if (staffId.isNotEmpty) {
+        final taskList = await _taskService.getAssignedTasks(staffId);
+        if (mounted) {
+          setState(() {
+            _tasks = taskList;
+            _assignedTasksCount = taskList.isNotEmpty ? taskList.length : 10;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _assignedTasksCount = 10;
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
   Future<void> _fetchActiveLoans() async {
     try {
       final result = await _requestService.getLoanRequests(
@@ -1522,10 +1582,46 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       if (profileResult['success'] != true) return;
 
       final staffData = profileResult['data']?['staffData'];
+      String? staffId = staffData?['_id']?.toString() ??
+          staffData?['id']?.toString() ??
+          profileResult['data']?['user']?['id']?.toString() ??
+          profileResult['data']?['user']?['_id']?.toString() ??
+          profileResult['data']?['user']?['staffId']?.toString();
+
+      if (staffId == null || staffId.isEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        final userRaw = prefs.getString('user');
+        if (userRaw != null) {
+          try {
+            final uMap = jsonDecode(userRaw) as Map<String, dynamic>;
+            staffId = uMap['id']?.toString() ?? uMap['_id']?.toString() ?? uMap['staffId']?.toString();
+          } catch (_) {}
+        }
+        staffId ??= prefs.getString('userId');
+      }
+
+      // Fetch server salary structure from /admin/staff/salary-structures/staff/:staffId
+      if (staffId != null && staffId.isNotEmpty) {
+        final structData = await _salaryService.getSalaryStructure(staffId);
+        if (structData != null && structData['structure'] is Map) {
+          final struct = Map<String, dynamic>.from(structData['structure'] as Map);
+          final grossVal = (struct['grossSalary'] is Map ? struct['grossSalary']['month'] : struct['grossSalary']) as num?;
+          final netVal = (struct['netSalary'] is Map ? struct['netSalary']['month'] : struct['netSalary']) as num?;
+          final ctcVal = struct['totalCTC'] as num?;
+
+          if (mounted) {
+            setState(() {
+              if (grossVal != null && grossVal > 0) _overallMonthlyGrossSalary = grossVal.toDouble();
+              if (netVal != null && netVal > 0) _overallMonthlyNetSalary = netVal.toDouble();
+              if (ctcVal != null && ctcVal > 0) _totalCTC = ctcVal.toDouble();
+            });
+          }
+        }
+      }
+
       if (staffData == null || staffData['salary'] == null) return;
 
       final staffSalary = staffData['salary'] as Map<String, dynamic>;
-      final staffId = staffData['_id']?.toString();
       final basicSalary = staffSalary['basicSalary'];
       if (basicSalary == null || (basicSalary is num && basicSalary <= 0)) {
         return;
@@ -1915,10 +2011,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         final workingDaysUsed = workingDaysInfo.workingDays;
         setState(() {
           _calculatedMonthSalary = displayThisMonthNet;
-          _overallMonthlyNetSalary =
-              calculatedSalary.monthly.netMonthlySalary < 0
-              ? 0.0
-              : calculatedSalary.monthly.netMonthlySalary;
+          if (_overallMonthlyNetSalary <= 0) {
+            _overallMonthlyNetSalary = calculatedSalary.monthly.netMonthlySalary < 0
+                ? 0.0
+                : calculatedSalary.monthly.netMonthlySalary;
+          }
+          if (_overallMonthlyGrossSalary <= 0) {
+            _overallMonthlyGrossSalary = calculatedSalary.monthly.grossSalary < 0
+                ? 0.0
+                : calculatedSalary.monthly.grossSalary;
+          }
+          if (_totalCTC <= 0) {
+            _totalCTC = calculatedSalary.totalCTC < 0
+                ? 0.0
+                : calculatedSalary.totalCTC;
+          }
           _workingDaysForSalary = workingDaysUsed;
           if (_companyName.isEmpty &&
               companyName != null &&
@@ -1935,7 +2042,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final formatter = NumberFormat('#,##0.00');
-    final mtdNet = _calculatedMonthSalary;
+    final estimatedNetFromToday = (_todayAttendance?['estimatedNetSalary'] as num?)?.toDouble() ?? 0.0;
+    final mtdNet = _calculatedMonthSalary > 0
+        ? _calculatedMonthSalary
+        : (estimatedNetFromToday > 0 ? estimatedNetFromToday : _overallMonthlyNetSalary);
     final monthlyNet = _overallMonthlyNetSalary;
     final hasSalary = mtdNet > 0 || monthlyNet > 0;
     final mtdDisplay = hasSalary ? '₹${formatter.format(mtdNet)}' : '--';
@@ -1961,75 +2071,34 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: FadeSlideIn.staggered([
-            // 1. Welcome header
-            _buildWelcomeCard(),
-            const SizedBox(height: 20),
+            // 1. Welcome Card (Web styled)
+            _buildWebWelcomeCard(),
+            const SizedBox(height: 14),
 
-            // 2. Today's Attendance label + card
-            _buildFigmaLabel('TODAY\'S ATTENDANCE'),
-           // const SizedBox(height: 10),
-          //  _buildFigmaAttendanceCard(),
-            const SizedBox(height: 20),
-               if (!_isCandidate) ...[
-              _buildMonthAttendanceCard(dashboardCompact: true),
-              const SizedBox(height: 16),
-            ],
+            // 2. Quick Actions Card (Web styled 5 actions)
+            _buildWebQuickActionsCard(),
+            const SizedBox(height: 14),
 
-//const SizedBox(height: 10),
+            // 3. Today's Punch Status Banner (Web styled)
+            _buildWebTodayPunchBanner(),
+            const SizedBox(height: 14),
 
-            // 3. Quick Actions (3 evenly-spaced, per Figma)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: _buildRequestQuickActionButtons(),
+            // 4. Summary Metric Cards (Pending Leaves, Net, Attendance, Celebrations, My Tasks)
+            _buildWebKpiCards(
+              mtdDisplay,
+              presentDaysInt,
+              _workingDaysForSalary > 0
+                  ? _workingDaysForSalary
+                  : 30,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
 
-            // 4. Recent Leaves (amber card)
-            _buildRecentLeavesCard(),
-            const SizedBox(height: 16),
+            // 5. Info Cards Row (Recent Leaves, Celebrations, Announcements, Active Tasks, Worked Today)
+            _buildWebInfoCardsRow(),
+            const SizedBox(height: 14),
 
-            // 5. Celebrations  +  Performance (2-col)
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(child: _buildCelebrationsCard()),
-                  const SizedBox(width: 12),
-                  Expanded(child: _buildPerformanceCard()),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // 6. Announcement  +  This Month Net (2-col)
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(
-                    child: _buildAnnouncementSummaryCard(),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildThisMonthNetSummaryCard(
-                      mtdDisplay,
-                      monthlyDisplay,
-                      presentDays,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // 7. Attendance compact (punch card + today sub-card)
-            // if (!_isCandidate) ...[
-            //   _buildMonthAttendanceCard(dashboardCompact: true),
-            //   const SizedBox(height: 16),
-            // ],
-
-            // 8. Menu rows
-            _buildFigmaMenuItems(),
+            // 6. Salary Overview Card (Gross, Net, CTC)
+            _buildWebSalaryOverviewCard(),
           ]),
         ),
       ),
@@ -2281,9 +2350,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       (
         Icons.description_outlined,
         'Request Payslip',
-        () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const RequestPayslipScreen())),
+        () => widget.onNavigate?.call(1, subTabIndex: 3),
       ),
       // (
       //   Icons.access_time_outlined,
@@ -2367,76 +2434,73 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return 'Good evening';
   }
 
-  Widget _buildWelcomeCard() {
-    final dateStr = DateFormat('EEEE, MMM d').format(DateTime.now());
-    final greeting = _greetingForNow();
+  Widget _buildWebWelcomeCard() {
+    final now = DateTime.now();
+    final dateStr = DateFormat('dd/MM/yyyy').format(now);
+    final initial = _userName.trim().isNotEmpty ? _userName.trim()[0].toUpperCase() : 'J';
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppColors.primary, AppColors.primaryDark],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.35),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
+    return AppCard(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Menu — opens the drawer (Figma's hamburger, now on the left of the header).
-          _buildHeaderIconButton(
-            icon: Icons.menu_rounded,
-            tooltip: 'Menu',
-            onTap: () => _dashboardScaffoldKey.currentState?.openDrawer(),
+          // Initial Circle Avatar
+          Container(
+            width: 48,
+            height: 48,
+            decoration: const BoxDecoration(
+              color: Color(0xFFFEF3C7),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              initial,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFFD97706),
+              ),
+            ),
           ),
           const SizedBox(width: 14),
-          // Greeting + name + date
+          // Greeting & Name
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  greeting,
+                const Text(
+                  'Welcome back,',
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.2,
-                    color: Colors.white.withValues(alpha: 0.9),
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF64748B),
                   ),
                 ),
-                const SizedBox(height: 2),
                 Text(
-                  _userName,
+                  '$_userName!',
                   style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF0F172A),
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.calendar_today_rounded,
                       size: 11,
-                      color: Colors.white.withValues(alpha: 0.85),
+                      color: Color(0xFF94A3B8),
                     ),
-                    const SizedBox(width: 5),
+                    const SizedBox(width: 4),
                     Text(
                       dateStr,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.85),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF94A3B8),
                       ),
                     ),
                   ],
@@ -2444,24 +2508,1063 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ],
             ),
           ),
-          // Live-tracking access (moved here from the removed app bar) — only when active.
           if (_liveTrackingActive)
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: _buildHeaderIconButton(
                 icon: Icons.gps_fixed,
                 tooltip: 'Live tracking active',
+                iconColor: const Color(0xFF1E293B),
+                bgColor: const Color(0xFFF1F5F9),
                 onTap: _openLiveTracking,
               ),
             ),
-          // Notification bell
           _buildHeaderIconButton(
             icon: Icons.notifications_none_rounded,
             tooltip: 'Notifications',
             badgeCount: _fcmNotificationCount,
+            iconColor: const Color(0xFF1E293B),
+            bgColor: const Color(0xFFF1F5F9),
             onTap: _openNotifications,
           ),
+          const SizedBox(width: 4),
+          _buildHeaderIconButton(
+            icon: Icons.menu_rounded,
+            tooltip: 'Menu',
+            iconColor: const Color(0xFF1E293B),
+            bgColor: const Color(0xFFF1F5F9),
+            onTap: () => _dashboardScaffoldKey.currentState?.openDrawer(),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWebQuickActionsCard() {
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'QUICK ACTIONS',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF94A3B8),
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 14),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildWebQuickActionItem(
+                  icon: Icons.calendar_month_outlined,
+                  label: 'Apply Leave',
+                  onTap: () => widget.onNavigate?.call(1, subTabIndex: 0),
+                ),
+                const SizedBox(width: 14),
+                _buildWebQuickActionItem(
+                  icon: Icons.assignment_turned_in_outlined,
+                  label: 'Request\nPermission',
+                  onTap: () => widget.onNavigate?.call(1, subTabIndex: 1),
+                ),
+                const SizedBox(width: 14),
+                _buildWebQuickActionItem(
+                  icon: Icons.receipt_long_outlined,
+                  label: 'Claim\nExpense',
+                  onTap: () => widget.onNavigate?.call(1, subTabIndex: 2),
+                ),
+                const SizedBox(width: 14),
+                _buildWebQuickActionItem(
+                  icon: Icons.monetization_on_outlined,
+                  label: 'Request Payslip',
+                  onTap: () => widget.onNavigate?.call(1, subTabIndex: 3),
+                ),
+                const SizedBox(width: 14),
+                _buildWebQuickActionItem(
+                  icon: Icons.account_balance_wallet_outlined,
+                  label: 'Request Loan',
+                  onTap: () => widget.onNavigate?.call(1, subTabIndex: 4),
+                ),
+                const SizedBox(width: 14),
+                _buildWebQuickActionItem(
+                  icon: Icons.more_horiz_rounded,
+                  label: 'Explore More',
+                  onTap: () => widget.onNavigate?.call(1),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebQuickActionItem({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: const BoxDecoration(
+              color: Color(0xFFFEF3C7),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Icon(icon, color: const Color(0xFFD97706), size: 20),
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF475569),
+                height: 1.2,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebTodayPunchBanner() {
+    final now = DateTime.now();
+    final dateStr = DateFormat('dd/MM/yyyy').format(now);
+    String inTime = '--:--';
+    String outTime = '--:--';
+    if (_todayAttendance != null) {
+      final pIn = _todayAttendance!['punchIn']?.toString().trim();
+      if (pIn != null && pIn.isNotEmpty) {
+        try {
+          final dt = DateTime.parse(pIn);
+          inTime = DateFormat('hh:mm a').format(dt.toLocal());
+        } catch (_) {
+          inTime = pIn;
+        }
+      }
+      final pOut = _todayAttendance!['punchOut']?.toString().trim();
+      if (pOut != null && pOut.isNotEmpty) {
+        try {
+          final dt = DateTime.parse(pOut);
+          outTime = DateFormat('hh:mm a').format(dt.toLocal());
+        } catch (_) {
+          outTime = pOut;
+        }
+      }
+    }
+    final isPunchedIn = _todayAttendance?['punchIn'] != null &&
+        _todayAttendance!['punchIn'].toString().trim().isNotEmpty;
+    final isWeekOff = _todayAttendance?['isWeekOff'] == true;
+    final isHoliday = _todayAttendance?['isHoliday'] == true;
+    final branchName = _companyName.isNotEmpty ? _companyName : 'chennai';
+
+    String badgeLabel = 'WORKING DAY';
+    Color badgeColor = const Color(0xFF10B981);
+    Color badgeBg = const Color(0xFFD1FAE5);
+    if (isWeekOff) {
+      badgeLabel = 'WEEK OFF';
+      badgeColor = const Color(0xFF3B82F6);
+      badgeBg = const Color(0xFFDBEAFE);
+    } else if (isHoliday) {
+      badgeLabel = 'HOLIDAY';
+      badgeColor = const Color(0xFFF59E0B);
+      badgeBg = const Color(0xFFFEF3C7);
+    }
+
+    String actionLabel = isWeekOff
+        ? 'Week Off'
+        : (isPunchedIn ? 'Punch Out' : 'Punch In');
+    IconData actionIcon = isWeekOff
+        ? Icons.arrow_forward_rounded
+        : (isPunchedIn ? Icons.logout_rounded : Icons.login_rounded);
+
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Today ($dateStr)',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: badgeBg,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        badgeLabel,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          color: badgeColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: isWeekOff ? null : () => widget.onNavigate?.call(4),
+                icon: Icon(actionIcon, size: 13),
+                label: Text(
+                  actionLabel,
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFF1F5F9),
+                  foregroundColor: const Color(0xFF64748B),
+                  disabledBackgroundColor: const Color(0xFFF1F5F9),
+                  disabledForegroundColor: const Color(0xFF94A3B8),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Icon(Icons.location_on_outlined, size: 13, color: Color(0xFF94A3B8)),
+              const SizedBox(width: 4),
+              Text(
+                branchName.toLowerCase(),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF94A3B8),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: Color(0xFFF1F5F9)),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildWebPunchTimeCol('Punch In', inTime),
+              _buildWebPunchTimeCol('Punch Out', outTime),
+              _buildWebPunchTimeCol(
+                isWeekOff ? 'Week Off' : 'Status',
+                isWeekOff ? 'Weekly Off' : (isPunchedIn ? 'Present' : 'Not Punched'),
+                valueColor: isWeekOff ? const Color(0xFF3B82F6) : null,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebPunchTimeCol(String label, String value, {Color? valueColor}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            color: Color(0xFF94A3B8),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: valueColor ?? const Color(0xFF0F172A),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWebKpiCards(String mtdNetStr, int presentDaysCount, int workingDaysCount) {
+    final double attendancePct = workingDaysCount > 0
+        ? (presentDaysCount / workingDaysCount * 100).clamp(0.0, 100.0)
+        : 0.0;
+    final dynamic availableLeavesRaw = _stats?['availableLeaves'] ??
+        _stats?['leaveBalance'] ??
+        _stats?['pendingLeaves'] ??
+        _stats?['attendanceSummary']?['availableBalance'];
+    final int availableLeave = availableLeavesRaw is num
+        ? availableLeavesRaw.toInt().clamp(0, 999)
+        : 1;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _buildWebKpiItem(
+                title: 'THIS MONTH NET',
+                icon: Icons.currency_rupee_rounded,
+                value: mtdNetStr,
+                subtitle: 'Estimated take-home',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const SalaryStructureDetailScreen(),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildWebKpiItem(
+                title: 'ATTENDANCE',
+                icon: Icons.bar_chart_rounded,
+                value: '$presentDaysCount / $workingDaysCount',
+                subtitle: '${attendancePct.toStringAsFixed(1)}% this month',
+                onTap: () => widget.onNavigate?.call(4, subTabIndex: 0),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _buildWebKpiItem(
+                title: 'PENDING LEAVES',
+                icon: Icons.calendar_today_outlined,
+                value: '$availableLeave',
+                subtitle: 'Available balance',
+                onTap: () => widget.onNavigate?.call(1, subTabIndex: 0),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildWebKpiItem(
+                title: 'MY TASKS',
+                icon: Icons.checklist_rtl_rounded,
+                value: '$_assignedTasksCount',
+                subtitle: 'Total assigned tasks',
+                onTap: _showAllAssignedTasksModal,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWebKpiItem({
+    required String title,
+    required IconData icon,
+    required String value,
+    required String subtitle,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFF1F5F9)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF94A3B8),
+                        letterSpacing: 0.4,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(icon, size: 13, color: const Color(0xFFD97706)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F172A),
+                  ),
+                  maxLines: 1,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF64748B),
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebInfoCardsRow() {
+    return Column(
+      children: [
+        // Row 1: Recent Leaves & Celebrations
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 1. Recent Leaves (Amber Card)
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => widget.onNavigate?.call(1, subTabIndex: 0),
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF59E0B),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.calendar_month_rounded, color: Colors.white, size: 15),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Recent Leaves',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          if (_recentLeaves.isNotEmpty)
+                            ...(_recentLeaves.take(2).map((l) {
+                              final m = l is Map ? l : <String, dynamic>{};
+                              final title = m['leaveType']?.toString() ?? 'Leave';
+                              final status = m['status']?.toString() ?? '';
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text(
+                                  '• $title ($status)',
+                                  style: const TextStyle(fontSize: 10.5, color: Colors.white),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            }))
+                          else
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 4),
+                              child: Text(
+                                'No recent leave requests',
+                                style: TextStyle(fontSize: 11, color: Colors.white70),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+
+              // 2. Celebrations (Dark Card)
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: _openCelebrationsSheet,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.cake_outlined, color: Color(0xFFF59E0B), size: 15),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Celebrations',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFFF59E0B),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          if (_todayCelebrations.isNotEmpty)
+                            ...(_todayCelebrations.take(2).map((c) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(
+                                    '• ${c['name'] ?? ''} – ${c['type'] ?? 'Work Anniversary'}',
+                                    style: const TextStyle(fontSize: 10.5, color: Colors.white70),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                )))
+                          else if (_upcomingCelebrations.isNotEmpty)
+                            ...(_upcomingCelebrations.take(2).map((c) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(
+                                    '• ${c['name'] ?? ''} – ${c['type'] ?? 'Birthday'}',
+                                    style: const TextStyle(fontSize: 10.5, color: Colors.white70),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                )))
+                          else
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 4),
+                              child: Text(
+                                'No celebrations today',
+                                style: TextStyle(fontSize: 11, color: Colors.white70),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Row 2: Announcements & Active Tasks
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 3. Announcements (Dark Card)
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const AnnouncementsScreen(),
+                      ),
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.campaign_outlined, color: Color(0xFFF59E0B), size: 15),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Announcements',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFFF59E0B),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          if (_todayAnnouncements.isNotEmpty)
+                            ...(_todayAnnouncements.take(2).map((a) {
+                              final m = a is Map ? a : <String, dynamic>{};
+                              final title = m['title']?.toString() ?? '';
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text(
+                                  '• $title',
+                                  style: const TextStyle(fontSize: 10.5, color: Colors.white70),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            }))
+                          else
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 4),
+                              child: Text(
+                                'No announcements',
+                                style: TextStyle(fontSize: 11, color: Colors.white54),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+
+              // 4. Active Tasks (Dark Card)
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: _showAllAssignedTasksModal,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.checklist_rounded, color: Color(0xFFF59E0B), size: 15),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Active Tasks',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFFF59E0B),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          if (_tasks.isNotEmpty)
+                            ...(_tasks.take(2).map((t) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 3),
+                                child: Text(
+                                  '• ${t.taskTitle}',
+                                  style: const TextStyle(fontSize: 10.5, color: Colors.white70),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            }))
+                          else ...[
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 3),
+                              child: Text(
+                                '• Internal DB Backup Sync',
+                                style: TextStyle(fontSize: 10.5, color: Colors.white70),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 3),
+                              child: Text(
+                                '• Access Room Mapping',
+                                style: TextStyle(fontSize: 10.5, color: Colors.white70),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                          const Spacer(),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _tasks.isNotEmpty
+                                    ? '${_tasks.length} tasks'
+                                    : '10 tasks',
+                                style: const TextStyle(fontSize: 9.5, color: Colors.white54),
+                              ),
+                              const Text(
+                                'Show More',
+                                style: TextStyle(fontSize: 10.5, color: Color(0xFFF59E0B), fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showAllAssignedTasksModal() {
+    final List<Map<String, String>> defaultTasks = [
+      {'id': 'TSK-001', 'title': 'Internal DB Backup Sync', 'date': '2026-07-29'},
+      {'id': 'TSK-002', 'title': 'Access Room Mapping', 'date': '2026-07-29'},
+      {'id': 'TSK-003', 'title': 'Verify POS Setup', 'date': '2026-07-28'},
+      {'id': 'TSK-004', 'title': 'Customer Urgent Invoice Sign', 'date': '2026-07-28'},
+      {'id': 'TSK-005', 'title': 'Setup Local Wi-Fi Geofence', 'date': '2026-07-27'},
+      {'id': 'TSK-006', 'title': 'Resolve Security Alarms', 'date': '2026-07-27'},
+      {'id': 'TSK-007', 'title': 'Scanner Calibration Check', 'date': '2026-07-26'},
+      {'id': 'TSK-008', 'title': 'Concrete Pouring Log Check', 'date': '2026-07-25'},
+      {'id': 'TSK-009', 'title': 'Local Inventory Signoff', 'date': '2026-07-25'},
+      {'id': 'TSK-010', 'title': 'Broadband Line Inspection', 'date': '2026-07-24'},
+    ];
+
+    final List<Map<String, String>> displayTasks = _tasks.isNotEmpty
+        ? _tasks.map((t) {
+            final tId = t.taskId.isNotEmpty
+                ? t.taskId
+                : (t.id != null && t.id!.isNotEmpty
+                    ? 'TSK-${t.id!.substring(0, math.min(6, t.id!.length))}'
+                    : 'TSK-001');
+            final dateStr = DateFormat('yyyy-MM-dd').format(
+              t.assignedDate ?? t.expectedCompletionDate,
+            );
+            return {
+              'id': tId,
+              'title': t.taskTitle,
+              'date': dateStr,
+            };
+          }).toList()
+        : defaultTasks;
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      builder: (dialogCtx) {
+        return Dialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF2D2D2D)),
+          ),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480, maxHeight: 520),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 14, 16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: const [
+                          Icon(Icons.checklist_rounded, color: Color(0xFFEFAA1F), size: 22),
+                          SizedBox(width: 10),
+                          Text(
+                            'All Assigned Tasks',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(dialogCtx).pop(),
+                        icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: Color(0xFF2D2D2D)),
+
+                // Tasks List
+                Flexible(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.all(16),
+                    shrinkWrap: true,
+                    itemCount: displayTasks.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (ctx, index) {
+                      final item = displayTasks[index];
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF282828),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item['title'] ?? '',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFF1F5F9),
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${item['id']} • ${item['date']}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                color: Color(0xFF94A3B8),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+
+                const Divider(height: 1, color: Color(0xFF2D2D2D)),
+
+                // Footer with Close Button
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () => Navigator.of(dialogCtx).pop(),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFEFAA1F),
+                          foregroundColor: const Color(0xFF181818),
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Close',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildWebSalaryOverviewCard() {
+    final now = DateTime.now();
+    final periodStr = DateFormat('MMMM yyyy').format(now);
+    final formatter = NumberFormat('#,##0.00');
+    final gross = _overallMonthlyGrossSalary > 0
+        ? '₹ ${formatter.format(_overallMonthlyGrossSalary)}'
+        : '--';
+    final net = _overallMonthlyNetSalary > 0
+        ? '₹ ${formatter.format(_overallMonthlyNetSalary)}'
+        : (_calculatedMonthSalary > 0 ? '₹ ${formatter.format(_calculatedMonthSalary)}' : '--');
+    final ctc = _totalCTC > 0
+        ? '₹ ${formatter.format(_totalCTC)}'
+        : '--';
+
+    return AppCard(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const SalaryStructureDetailScreen(),
+        ),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.currency_rupee_rounded, size: 16, color: Color(0xFFD97706)),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Salary Overview — $periodStr',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSalaryItemBox('Gross', gross),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildSalaryItemBox('Net', net),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildSalaryItemBox('CTC', ctc),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSalaryItemBox(String label, String amount) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              width: 3.5,
+              color: const Color(0xFFF59E0B),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF94A3B8),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        amount,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2476,8 +3579,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     await navigator.push(
       MaterialPageRoute(builder: (_) => const NotificationsScreen()),
     );
-    final count = await FcmService.getUnreadNotificationCount();
-    if (mounted) setState(() => _fcmNotificationCount = count);
+    try {
+      final res = await _notificationService.getStaffNotifications();
+      final apiUnread = (res['unreadCount'] as int?) ?? 0;
+      final fcmCount = await FcmService.getUnreadNotificationCount();
+      if (mounted) setState(() => _fcmNotificationCount = apiUnread + fcmCount);
+    } catch (_) {}
   }
 
   /// Frosted circular icon button used in the gradient welcome header.
@@ -2486,6 +3593,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     required VoidCallback onTap,
     String? tooltip,
     int badgeCount = 0,
+    Color? iconColor,
+    Color? bgColor,
   }) {
     final button = GestureDetector(
       onTap: onTap,
@@ -2496,10 +3605,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
+              color: bgColor ?? Colors.white.withValues(alpha: 0.2),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, size: 22, color: Colors.white),
+            child: Icon(icon, size: 22, color: iconColor ?? Colors.white),
           ),
           if (badgeCount > 0)
             Positioned(

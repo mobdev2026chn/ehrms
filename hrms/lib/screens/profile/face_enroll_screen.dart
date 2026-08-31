@@ -51,9 +51,11 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
     });
     try {
       final bytes = await result.readAsBytes();
+      debugPrint('[FaceEnroll] raw camera bytes: ${bytes.length} (${(bytes.length / 1024).toStringAsFixed(1)} KB)');
       final dataUrl =
           await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
-      final res = await _authService.enrollFace([dataUrl]);
+      debugPrint('[FaceEnroll] compressed dataUrl length: ${dataUrl.length} chars (${(dataUrl.length / 1024).toStringAsFixed(1)} KB)');
+      final res = await _authService.enrollFace([dataUrl], imageFile: result);
       if (!mounted) return;
       final ok = res['success'] == true;
       SnackBarUtils.showSnackBar(

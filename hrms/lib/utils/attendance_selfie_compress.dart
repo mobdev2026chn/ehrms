@@ -10,21 +10,45 @@ import 'package:image/image.dart' as img;
 /// punch spinner never freezes the UI on a multi-MB selfie. The native
 /// [FlutterImageCompress] call already runs off the Dart isolate.
 class AttendanceSelfieCompress {
-  static const int _maxSide = 1280;
-  static const int _quality = 76;
-  static const int _skipBelowBytes = 8000;
+  static const int _maxSide = 200;
+  static const int _quality = 20;
+  static const int _skipBelowBytes = 2000;
 
-  /// Builds a COMPRESSED jpeg data URL from raw camera bytes, doing the base64
-  /// encode off the UI isolate. Use the returned payload for BOTH face
-  /// verification and the punch upload so the selfie is compressed once and the
-  /// (large) verify request is sent at the reduced size.
+  /// Hard ceiling: base64 payload must stay under this. If it doesn't, we
+  /// re-compress at rock-bottom quality. 100 KB b64 ≈ 75 KB raw JPEG.
+  static const int _maxBase64Length = 100000;
+
+  /// Builds a COMPRESSED jpeg data URL from raw camera bytes.
+  ///
+  /// Pipeline:
+  /// 1. Native platform compress (handles raw camera formats reliably)
+  /// 2. Dart image lib resize + re-encode (handles EXIF + exact pixel size)
+  /// 3. Hard-cap check — if still too big, crush at quality 5
   static Future<String> compressRawBytesToDataUrl(Uint8List rawBytes) async {
-    final upright = await compute<Uint8List, Uint8List>(
-      _bakeOrientationSync,
-      rawBytes,
-    );
-    final bytes = await _compressBytesOrSame(upright);
-    final b64 = await compute<List<int>, String>(base64Encode, bytes);
+    debugPrint('[SelfieCompress] input: ${rawBytes.length} bytes (${(rawBytes.length / 1024).toStringAsFixed(1)} KB)');
+
+    // ── Step 1: Native platform JPEG compress FIRST ──
+    // FlutterImageCompress handles raw camera formats (YUV, HEIF, etc.) that
+    // the Dart `image` package may fail on, returning the original multi-MB
+    // bytes. By running native compress first we guarantee a small JPEG.
+    var processed = await _nativeCompress(rawBytes, maxSide: _maxSide, quality: _quality);
+    debugPrint('[SelfieCompress] after native compress: ${processed.length} bytes');
+
+    // ── Step 2: Dart image lib — bake EXIF orientation + exact resize ──
+    processed = await compute<Uint8List, Uint8List>(_bakeOrientationSync, processed);
+    debugPrint('[SelfieCompress] after bakeOrientation: ${processed.length} bytes');
+
+    // ── Step 3: Encode to base64 ──
+    var b64 = await compute<List<int>, String>(base64Encode, processed);
+
+    // ── Step 4: Hard cap — if STILL too large, crush aggressively ──
+    if (b64.length > _maxBase64Length) {
+      debugPrint('[SelfieCompress] STILL too large (${b64.length} b64 chars), crushing at quality 5 / 120px...');
+      processed = await _nativeCompress(processed, maxSide: 120, quality: 5);
+      b64 = await compute<List<int>, String>(base64Encode, processed);
+    }
+
+    debugPrint('[SelfieCompress] FINAL: ${processed.length} bytes (~${(b64.length / 1024).toStringAsFixed(1)} KB b64)');
     return 'data:image/jpeg;base64,$b64';
   }
 
@@ -35,60 +59,60 @@ class AttendanceSelfieCompress {
       final comma = dataUrl.indexOf(',');
       final b64 = comma >= 0 ? dataUrl.substring(comma + 1) : dataUrl;
       final raw = await compute<String, Uint8List>(base64Decode, b64);
-      if (raw.length < _skipBelowBytes) return dataUrl;
-      final upright = await compute<Uint8List, Uint8List>(
-        _bakeOrientationSync,
-        raw,
-      );
-      final compressed = await _compressBytesOrSame(upright);
-      // Nothing changed (no rotation needed and no smaller compression) → keep original.
-      if (identical(upright, raw) && identical(compressed, upright)) {
-        return dataUrl;
-      }
-      final encoded = await compute<List<int>, String>(base64Encode, compressed);
+      if (raw.length < _skipBelowBytes && raw.length <= 50000) return dataUrl;
+      final compressed = await _nativeCompress(raw, maxSide: _maxSide, quality: _quality);
+      final oriented = await compute<Uint8List, Uint8List>(_bakeOrientationSync, compressed);
+      final encoded = await compute<List<int>, String>(base64Encode, oriented);
       return 'data:image/jpeg;base64,$encoded';
     } catch (_) {
       return dataUrl;
     }
   }
 
-  /// Bakes the EXIF orientation into the pixels and re-encodes as JPEG, so the
-  /// upright image survives EXIF stripping on the server. Cloudinary (and most
-  /// CDNs) drop EXIF, which otherwise leaves front-camera selfies rotated/upside
-  /// down even though they preview correctly on-device. Returns the SAME [raw]
-  /// instance when the orientation is already normal (or decoding fails) so the
-  /// caller can detect a no-op with [identical] and skip a needless re-encode.
-  /// Top-level/static + Uint8List arg so it can run under [compute].
+  /// Bakes the EXIF orientation into the pixels and re-encodes as a small JPEG.
+  /// If decoding fails, returns the input unchanged (the native step already
+  /// produced a valid JPEG, so this is safe).
   static Uint8List _bakeOrientationSync(Uint8List raw) {
     try {
       final decoded = img.decodeImage(raw);
       if (decoded == null) return raw;
+      var processed = decoded;
       final orientation = decoded.exif.imageIfd.orientation;
-      // 1 (or absent) means the pixels are already upright — no work needed.
-      if (orientation == null || orientation == 1) return raw;
-      final baked = img.bakeOrientation(decoded);
-      return Uint8List.fromList(img.encodeJpg(baked, quality: 92));
+      if (orientation != null && orientation != 1) {
+        processed = img.bakeOrientation(decoded);
+      }
+      if (processed.width > _maxSide || processed.height > _maxSide) {
+        processed = img.copyResize(
+          processed,
+          width: processed.width >= processed.height ? _maxSide : null,
+          height: processed.height > processed.width ? _maxSide : null,
+        );
+      }
+      return Uint8List.fromList(img.encodeJpg(processed, quality: _quality));
     } catch (_) {
+      // Already a valid JPEG from native compress — safe to return as-is.
       return raw;
     }
   }
 
-  /// Native (off-Dart-thread) jpeg compression. Returns the SAME [raw] instance
-  /// when compression is skipped or not worthwhile, so callers can detect a no-op
-  /// with [identical].
-  static Future<Uint8List> _compressBytesOrSame(Uint8List raw) async {
-    if (raw.length < _skipBelowBytes) return raw;
+  /// Native platform JPEG compression. This is the PRIMARY size reducer.
+  /// Unlike the Dart `image` package, FlutterImageCompress handles raw
+  /// camera formats (HEIF, YUV, etc.) reliably on Android/iOS.
+  static Future<Uint8List> _nativeCompress(Uint8List raw, {required int maxSide, required int quality}) async {
     try {
       final compressed = await FlutterImageCompress.compressWithList(
         raw,
-        minWidth: _maxSide,
-        minHeight: _maxSide,
-        quality: _quality,
+        minWidth: maxSide,
+        minHeight: maxSide,
+        quality: quality,
         format: CompressFormat.jpeg,
       );
-      if (compressed.isEmpty || compressed.length >= raw.length) return raw;
-      return compressed;
-    } catch (_) {
+      if (compressed.isNotEmpty) {
+        return compressed;
+      }
+      return raw;
+    } catch (e) {
+      debugPrint('[SelfieCompress] native compress failed: $e');
       return raw;
     }
   }

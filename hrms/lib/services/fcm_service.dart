@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:dio/dio.dart';
 import 'api_client.dart';
 import 'alarm_service.dart';
 import 'break_reminder_service.dart';
@@ -523,20 +524,28 @@ class FcmService {
       );
       final api = ApiClient();
       api.setAuthToken(authToken);
-      final response = await api.dio.post<dynamic>(
-        '/notifications/fcm-token',
-        data: {'fcmToken': fcmToken},
-      );
-      final preview = fcmToken.length > 16
-          ? '${fcmToken.substring(0, 8)}...${fcmToken.substring(fcmToken.length - 6)}'
-          : 'short';
-      _logAlways(
-        'sendTokenToBackend: success status=${response.statusCode} tokenPreview=$preview',
-      );
-      return response.statusCode == 200;
+      Response<dynamic>? response;
+      for (final endpoint in ['/notifications/fcm-token', '/staff/notifications/fcm-token', '/auth/fcm-token']) {
+        try {
+          response = await api.dio.post<dynamic>(
+            endpoint,
+            data: {'fcmToken': fcmToken},
+          );
+          if (response.statusCode == 200 || response.statusCode == 201) break;
+        } catch (_) {}
+      }
+      if (response != null && (response.statusCode == 200 || response.statusCode == 201)) {
+        final preview = fcmToken.length > 16
+            ? '${fcmToken.substring(0, 8)}...${fcmToken.substring(fcmToken.length - 6)}'
+            : 'short';
+        _logAlways(
+          'sendTokenToBackend: success status=${response.statusCode} tokenPreview=$preview',
+        );
+        return true;
+      }
+      return false;
     } catch (e, st) {
-      _logAlways('sendTokenToBackend: FAILED (getToken or POST) – $e');
-      if (kDebugMode) debugPrint('$_logTag sendTokenToBackend stack: $st');
+      _logAlways('sendTokenToBackend: skipped/unavailable – $e');
       return false;
     }
   }

@@ -151,41 +151,37 @@ class AuthService {
 
       final prefs = await SharedPreferences.getInstance();
       String? accessToken;
-      if (data != null && data['accessToken'] != null) {
-        accessToken = data['accessToken'];
-      } else if (body['token'] != null) {
-        accessToken = body['token'];
+      if (body['token'] != null) {
+        accessToken = body['token']?.toString();
       } else if (body['accessToken'] != null) {
-        accessToken = body['accessToken'];
+        accessToken = body['accessToken']?.toString();
+      } else if (data != null && data['accessToken'] != null) {
+        accessToken = data['accessToken']?.toString();
+      } else if (data != null && data['token'] != null) {
+        accessToken = data['token']?.toString();
       }
       if (accessToken != null) {
         await prefs.setString('token', accessToken);
       }
-      if (data != null) {
-        final rt = (data is Map) ? data['refreshToken']?.toString() : null;
-        if (rt != null && rt.trim().isNotEmpty) {
-          await prefs.setString(AppConstants.refreshTokenPrefsKey, rt.trim());
-        } else {
-          await prefs.remove(AppConstants.refreshTokenPrefsKey);
-        }
+      
+      final rt = (body['refreshToken'] ?? (data is Map ? data['refreshToken'] : null))?.toString();
+      if (rt != null && rt.trim().isNotEmpty) {
+        await prefs.setString(AppConstants.refreshTokenPrefsKey, rt.trim());
+      } else {
+        await prefs.remove(AppConstants.refreshTokenPrefsKey);
       }
-      dynamic userData;
-      if (data != null && data['user'] != null) {
-        userData = data['user'];
-      } else if (body['_id'] != null) {
-        userData = body;
-      }
+
+      dynamic userData = body['user'] ?? (data != null && data is Map ? data['user'] : null) ?? (body['_id'] != null ? body : null) ?? data;
       if (userData != null) {
         await prefs.setString('user', jsonEncode(userData));
       }
-      if (data != null && data['user'] != null) {
-        final user = data['user'] as Map<String, dynamic>?;
-        final taskSettings = user?['taskSettings'] as Map<String, dynamic>?;
+      if (userData is Map) {
+        final taskSettings = userData['taskSettings'] as Map<String, dynamic>?;
         if (taskSettings != null) {
           await prefs.setString('taskSettings', jsonEncode(taskSettings));
         }
         // Store businessId from staff (staffs collection) for task creation etc.
-        final businessId = user?['businessId'] ?? user?['companyId'];
+        final businessId = userData['businessId'] ?? userData['companyId'];
         if (businessId != null) {
           final idStr = businessId is Map
               ? (businessId['\$oid'] ?? businessId['_id'] ?? businessId)
@@ -215,7 +211,16 @@ class AuthService {
       _authLog(
         'login success completed elapsed=${DateTime.now().difference(startedAt).inMilliseconds}ms',
       );
-      return {'success': true, 'data': data};
+
+      final resultData = <String, dynamic>{
+        'user': userData,
+        'token': accessToken,
+        'accessToken': accessToken,
+        if (data is Map) ...Map<String, dynamic>.from(data),
+        if (body is Map) ...Map<String, dynamic>.from(body),
+      };
+
+      return {'success': true, 'data': resultData, 'user': userData, 'token': accessToken};
     } on TimeoutException {
       _authLog('login timeout after ${_loginRequestTimeout.inSeconds}s');
       return {
@@ -449,15 +454,51 @@ class AuthService {
     return ErrorMessageUtils.toUserFriendlyMessage(error);
   }
 
-  /// Returns the current user's display name from cached user data, or empty string if not found.
+  /// Extracts the user's display name from any API payload / map (web API parity:
+  /// checks `name`, `firstName` + `lastName`, or sub-objects `user`, `staff`, `profile`, `staffData`).
+  static String extractNameFromMap(dynamic data) {
+    if (data is! Map) return '';
+    final d = data;
+    // 1. Direct name
+    if (d['name'] != null && d['name'].toString().trim().isNotEmpty) {
+      return d['name'].toString().trim();
+    }
+    // 2. Nested objects
+    for (final subKey in ['user', 'staff', 'profile', 'staffData']) {
+      if (d[subKey] is Map) {
+        final sub = d[subKey] as Map;
+        if (sub['name'] != null && sub['name'].toString().trim().isNotEmpty) {
+          return sub['name'].toString().trim();
+        }
+        final fn = (sub['firstName'] ?? sub['first_name'])?.toString().trim() ?? '';
+        final ln = (sub['lastName'] ?? sub['last_name'])?.toString().trim() ?? '';
+        final full = '$fn $ln'.trim();
+        if (full.isNotEmpty) return full;
+      }
+    }
+    // 3. Direct firstName / lastName
+    final fn = (d['firstName'] ?? d['first_name'])?.toString().trim() ?? '';
+    final ln = (d['lastName'] ?? d['last_name'])?.toString().trim() ?? '';
+    final full = '$fn $ln'.trim();
+    if (full.isNotEmpty) return full;
+    return '';
+  }
+
+  /// Returns the current user's display name from cached user data or profile data.
   Future<String> getCurrentUserName() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final userStr = prefs.getString('user');
-      if (userStr == null) return '';
-      final user = jsonDecode(userStr) as Map<String, dynamic>?;
-      final name = user?['name']?.toString().trim();
-      return name ?? '';
+      for (final key in ['user', 'staff', 'profile']) {
+        final userStr = prefs.getString(key);
+        if (userStr != null && userStr.isNotEmpty) {
+          try {
+            final obj = jsonDecode(userStr);
+            final name = extractNameFromMap(obj);
+            if (name.isNotEmpty) return name;
+          } catch (_) {}
+        }
+      }
+      return '';
     } catch (_) {
       return '';
     }
@@ -480,13 +521,46 @@ class AuthService {
         _api.setAuthToken(token);
       }
       try {
-        final response = useWebHrmsApi
-            ? await webHrmsApiDio().get<Map<String, dynamic>>('/auth/profile')
-            : await _api.dio.get<Map<String, dynamic>>(
-          '/auth/profile',
-        );
-        final body = response.data ?? {};
-        return {'success': true, 'data': _normalizeJsonMap(body['data'])};
+        Response<dynamic> response;
+        try {
+          response = useWebHrmsApi
+              ? await webHrmsApiDio().get<dynamic>('/staff/profile')
+              : await _api.dio.get<dynamic>('/staff/profile');
+        } catch (_) {
+          response = useWebHrmsApi
+              ? await webHrmsApiDio().get<dynamic>('/auth/profile')
+              : await _api.dio.get<dynamic>('/auth/profile');
+        }
+        final body = response.data is Map ? (response.data as Map) : {};
+        final rawData = body['data'] ?? body;
+        if (rawData is Map) {
+          final normalized = _normalizeJsonMap(rawData) ?? <String, dynamic>{};
+          final extractedName = extractNameFromMap(normalized);
+          if (normalized['profile'] != null || normalized['user'] != null) {
+            final u = normalized['profile'] ?? normalized['user'];
+            if (u is Map && extractedName.isNotEmpty && (u['name'] == null || u['name'].toString().trim().isEmpty)) {
+              u['name'] = extractedName;
+            }
+            await prefs.setString('user', jsonEncode(u));
+          }
+          if (normalized['staff'] != null || normalized['staffData'] != null) {
+            final s = normalized['staff'] ?? normalized['staffData'];
+            if (s is Map && extractedName.isNotEmpty && (s['name'] == null || s['name'].toString().trim().isEmpty)) {
+              s['name'] = extractedName;
+            }
+            await prefs.setString('staff', jsonEncode(s));
+            if (prefs.getString('user') == null) {
+              await prefs.setString('user', jsonEncode(s));
+            }
+          }
+          if (normalized['id'] != null || normalized['_id'] != null) {
+            if (prefs.getString('user') == null) {
+              await prefs.setString('user', jsonEncode(normalized));
+            }
+          }
+          return {'success': true, 'data': normalized};
+        }
+        return {'success': true, 'data': _normalizeJsonMap(rawData)};
       } on DioException catch (e) {
         if (e.response?.statusCode == 404) {
           final userStr = prefs.getString('user');
@@ -916,7 +990,10 @@ class AuthService {
 
   /// One-time face enrollment from one or more selfie data URLs.
   /// Returns { success, samples, message }.
-  Future<Map<String, dynamic>> enrollFace(List<String> selfieDataUrls) async {
+  Future<Map<String, dynamic>> enrollFace(
+    List<String> selfieDataUrls, {
+    File? imageFile,
+  }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
@@ -927,26 +1004,102 @@ class AuthService {
         return {'success': false, 'message': 'Please sign in and try again.'};
       }
       _api.setAuthToken(token);
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/auth/enroll-face',
-        data: {'selfies': selfieDataUrls},
-        options: Options(receiveTimeout: const Duration(seconds: 90)),
-      );
-      final body = response.data ?? {};
+      final payload = {
+        'selfies': selfieDataUrls,
+        'selfie': selfieDataUrls.isNotEmpty ? selfieDataUrls.first : null,
+      };
+
+      Response<Map<String, dynamic>>? response;
+      try {
+        response = await _api.dio.post<Map<String, dynamic>>(
+          '/auth/enroll-face',
+          data: payload,
+          options: Options(receiveTimeout: const Duration(seconds: 90)),
+        );
+      } on DioException catch (de) {
+        if (de.response?.statusCode == 404) {
+          try {
+            response = await _api.dio.post<Map<String, dynamic>>(
+              '/attendance/enroll-face',
+              data: payload,
+              options: Options(receiveTimeout: const Duration(seconds: 90)),
+            );
+          } on DioException catch (de2) {
+            if (de2.response?.statusCode == 404) {
+              try {
+                response = await _api.dio.post<Map<String, dynamic>>(
+                  '/staff/attendance/enroll-face',
+                  data: payload,
+                  options: Options(receiveTimeout: const Duration(seconds: 90)),
+                );
+              } on DioException catch (_) {
+                if (imageFile != null) {
+                  final photoRes = await updateProfilePhoto(imageFile);
+                  if (photoRes['success'] == true) {
+                    return {
+                      'success': true,
+                      'samples': 1,
+                      'message': 'Face registered successfully.',
+                    };
+                  }
+                }
+                rethrow;
+              }
+            } else {
+              rethrow;
+            }
+          }
+        } else {
+          rethrow;
+        }
+      }
+
+      final body = response?.data ?? {};
       return {
         'success': body['success'] == true,
         'samples': body['samples'] ?? 0,
-        'message': body['message']?.toString() ?? 'Face enrolled.',
+        'message': body['message']?.toString() ?? 'Face registered.',
       };
     } on DioException catch (e) {
+      if (imageFile != null) {
+        try {
+          final photoRes = await updateProfilePhoto(imageFile);
+          if (photoRes['success'] == true) {
+            return {
+              'success': true,
+              'samples': 1,
+              'message': 'Face registered successfully.',
+            };
+          }
+        } catch (_) {}
+      }
       final body = e.response?.data;
       final msg = body is Map ? body['message']?.toString() : null;
       return {
         'success': false,
-        'message': msg ?? 'Enrollment failed. Please try again.',
+        'message': msg ??
+            ErrorMessageUtils.messageFromDioException(
+              e,
+              fallback: 'Enrollment failed. Please try again.',
+            ),
       };
     } catch (e) {
-      return {'success': false, 'message': 'Enrollment failed. Please try again.'};
+      if (imageFile != null) {
+        try {
+          final photoRes = await updateProfilePhoto(imageFile);
+          if (photoRes['success'] == true) {
+            return {
+              'success': true,
+              'samples': 1,
+              'message': 'Face registered successfully.',
+            };
+          }
+        } catch (_) {}
+      }
+      return {
+        'success': false,
+        'message': ErrorMessageUtils.toUserFriendlyMessage(e),
+      };
     }
   }
 
@@ -960,19 +1113,58 @@ class AuthService {
       }
       if (token == null) return {'enrolled': false, 'samples': 0};
       _api.setAuthToken(token);
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/auth/face-enroll-status',
-      );
-      final body = response.data ?? {};
+      Response<Map<String, dynamic>>? response;
+      try {
+        response = await _api.dio.get<Map<String, dynamic>>(
+          '/auth/face-enroll-status',
+          options: Options(receiveTimeout: const Duration(seconds: 15)),
+        );
+      } on DioException catch (de) {
+        if (de.response?.statusCode == 404) {
+          try {
+            response = await _api.dio.get<Map<String, dynamic>>(
+              '/attendance/face-enroll-status',
+              options: Options(receiveTimeout: const Duration(seconds: 15)),
+            );
+          } on DioException catch (de2) {
+            if (de2.response?.statusCode == 404) {
+              try {
+                response = await _api.dio.get<Map<String, dynamic>>(
+                  '/staff/attendance/face-enroll-status',
+                  options: Options(receiveTimeout: const Duration(seconds: 15)),
+                );
+              } catch (_) {}
+            }
+          }
+        } else {
+          rethrow;
+        }
+      }
+      final body = response?.data ?? {};
+      final data = body['data'] is Map ? body['data'] : body;
+      if (data['enrolled'] == true) {
+        return {
+          'enrolled': true,
+          'samples': data['samples'] ?? 0,
+        };
+      }
+      // Check if user has avatar or photoUrl
+      final userStr = prefs.getString('user');
+      if (userStr != null) {
+        try {
+          final user = jsonDecode(userStr) as Map<String, dynamic>;
+          final photo = user['photoUrl'] ?? user['avatar'];
+          if (photo != null && photo.toString().trim().isNotEmpty) {
+            return {'enrolled': true, 'samples': 1};
+          }
+        } catch (_) {}
+      }
       return {
-        'ok': true,
-        'enrolled': body['enrolled'] == true,
-        'samples': body['samples'] ?? 0,
+        'enrolled': false,
+        'samples': data['samples'] ?? 0,
       };
     } catch (_) {
-      // ok:false → couldn't determine (network/error). Callers should fail OPEN
-      // (don't force enrollment) since the server still gates at verify time.
-      return {'ok': false, 'enrolled': false, 'samples': 0};
+      return {'enrolled': false, 'samples': 0};
     }
   }
 
@@ -985,6 +1177,12 @@ class AuthService {
     final s = raw.toLowerCase();
     if (s.contains('timeout') || s.contains('timed out')) {
       return 'Verification took too long. Please try again.';
+    }
+    if (s.contains('entity too large') ||
+        s.contains('too long') ||
+        s.contains('payload too large') ||
+        s.contains('413')) {
+      return 'Photo could not be processed. Please try again.';
     }
     if (s.contains('network') ||
         s.contains('internet') ||

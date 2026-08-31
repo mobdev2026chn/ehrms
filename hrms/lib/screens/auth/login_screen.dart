@@ -3,6 +3,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../config/app_colors.dart';
 import '../../bloc/auth/auth_bloc.dart';
 import '../dashboard/dashboard_screen.dart';
+import '../admin/staff/admin_staff_list_screen.dart';
+import '../admin/dashboard/admin_dashboard_screen.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import 'forgot_password_screen.dart';
@@ -156,7 +158,7 @@ class _LoginScreenState extends State<LoginScreen>
     context.read<AuthBloc>().add(AuthLoginRequested(_2faEmail, _2faPassword));
   }
 
-  void _playSuccessAndNavigate(BuildContext context) {
+  void _playSuccessAndNavigate(BuildContext context, {bool isAdmin = false}) {
     setState(() => _showSuccessOverlay = true);
     _successController.forward(from: 0).then((_) {
       if (!mounted) return;
@@ -165,7 +167,8 @@ class _LoginScreenState extends State<LoginScreen>
         Navigator.pushReplacement(
           context,
           PageRouteBuilder(
-            pageBuilder: (_, __, ___) => DashboardScreen(),
+            pageBuilder: (_, __, ___) =>
+                isAdmin ? const AdminDashboardScreen() : DashboardScreen(),
             transitionDuration: const Duration(milliseconds: 500),
             transitionsBuilder: (_, animation, __, child) {
               return FadeTransition(
@@ -200,8 +203,16 @@ class _LoginScreenState extends State<LoginScreen>
       });
     } else if (state is AuthLoginSuccess) {
       setState(() => _show2FAInput = false);
-      final userData = state.data['user'] ?? state.data;
-      final role = (userData['role'] ?? '').toString().toLowerCase();
+      final data = state.data;
+      Map<String, dynamic>? userData;
+      if (data is Map) {
+        if (data['user'] is Map) {
+          userData = Map<String, dynamic>.from(data['user'] as Map);
+        } else {
+          userData = Map<String, dynamic>.from(data);
+        }
+      }
+      final role = (userData?['role'] ?? userData?['staffType'] ?? userData?['type'] ?? '').toString().toLowerCase();
       if (role == 'candidate') {
         context.read<AuthBloc>().add(const AuthLogoutRequested());
         SnackBarUtils.showSnackBar(
@@ -211,7 +222,9 @@ class _LoginScreenState extends State<LoginScreen>
         );
         return;
       }
-      _playSuccessAndNavigate(context);
+      final isStaffOrEmployee = role.contains('staff') || role.contains('employee');
+      final isAdmin = !isStaffOrEmployee && (role.contains('admin') || role.contains('hr') || role.contains('super') || role.contains('manager') || role.isNotEmpty);
+      _playSuccessAndNavigate(context, isAdmin: isAdmin);
     } else if (state is AuthFailure) {
       SnackBarUtils.showSnackBar(
         context,

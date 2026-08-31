@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:hrms/screens/holidays/holidays_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../bloc/auth/auth_bloc.dart';
 import '../config/app_colors.dart';
@@ -13,15 +12,28 @@ import '../services/presence_tracking_service.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
 import '../screens/settings/settings_screen.dart';
-import '../screens/assets/assets_listing_screen.dart';
+import '../screens/overtime/overtime_screen.dart';
 import '../screens/geo/my_tasks_screen.dart';
 import '../screens/profile/profile_screen.dart';
-import '../screens/performance/performance_module_screen.dart';
-import '../screens/announcements/announcements_screen.dart';
-import '../screens/grievance/grievance_shell_screen.dart';
-import '../screens/interaction/interaction_shell_screen.dart';
-import '../screens/lms/lms_shell_screen.dart';
-import '../screens/lms_admin/lms_admin_shell_screen.dart';
+import '../screens/admin/staff/admin_staff_list_screen.dart';
+import '../screens/admin/staff/admin_attendance_screen.dart';
+import '../screens/admin/staff/admin_overtime_screen.dart';
+import '../screens/admin/staff/admin_payroll_screen.dart';
+import '../screens/admin/approvals/admin_leave_approvals_screen.dart';
+import '../screens/admin/approvals/admin_permission_approvals_screen.dart';
+import '../screens/admin/approvals/admin_punch_approvals_screen.dart';
+import '../screens/admin/approvals/admin_fine_approvals_screen.dart';
+import '../screens/admin/approvals/admin_reimbursement_approvals_screen.dart';
+import '../screens/admin/approvals/admin_payslip_approvals_screen.dart';
+import '../screens/admin/dashboard/admin_dashboard_screen.dart';
+import '../screens/admin/recruitment/admin_job_openings_screen.dart';
+import '../screens/admin/recruitment/admin_candidates_screen.dart';
+import '../screens/admin/recruitment/admin_appointments_screen.dart';
+import '../screens/admin/recruitment/admin_interview_flow_screen.dart';
+import '../screens/admin/recruitment/admin_interview_rounds_screen.dart';
+import '../screens/admin/recruitment/admin_selected_rejected_screen.dart';
+import '../screens/admin/recruitment/admin_offer_letter_screen.dart';
+import '../screens/admin/recruitment/admin_verifications_screen.dart';
 
 class AppDrawer extends StatefulWidget {
   final int? currentIndex;
@@ -38,6 +50,18 @@ class _AppDrawerState extends State<AppDrawer> {
   // Whether the header avatar must be flipped 180° on display (legacy selfies were
   // stored upside-down). Detected from the image via ML Kit, same as the dashboard.
   bool _avatarNeedsFlip = false;
+  final Set<String> _expandedSections = {'staff'};
+  final Set<String> _expandedSubSections = {};
+
+  bool get _isAdmin {
+    final role = (_userData?['role'] ?? '').toString().toLowerCase();
+    final staffType = (_userData?['staffType'] ?? '').toString().toLowerCase();
+    return role == 'admin' ||
+        role == 'superadmin' ||
+        role == 'hr' ||
+        role == 'hr_admin' ||
+        staffType == 'admin';
+  }
 
   @override
   void initState() {
@@ -98,16 +122,6 @@ class _AppDrawerState extends State<AppDrawer> {
     setState(() => _avatarNeedsFlip = needsFlip);
   }
 
-  /// Admin-like roles that can access the LMS admin console.
-  bool get _isAdminLike {
-    final role = (_userData?['role'] ?? '').toString().toLowerCase().trim();
-    return role == 'admin' ||
-        role == 'super admin' ||
-        role == 'superadmin' ||
-        role == 'hr' ||
-        role == 'senior hr';
-  }
-
   void _navigateToTab(int index) {
     final callback = widget.onNavigateToIndex;
     Navigator.pop(context);
@@ -143,96 +157,573 @@ class _AppDrawerState extends State<AppDrawer> {
     );
   }
 
+  void _toggleSection(String section) {
+    setState(() {
+      if (_expandedSections.contains(section)) {
+        _expandedSections.remove(section);
+      } else {
+        _expandedSections.clear();
+        _expandedSections.add(section);
+      }
+    });
+  }
+
+  void _toggleSubSection(String subSection) {
+    setState(() {
+      if (_expandedSubSections.contains(subSection)) {
+        _expandedSubSections.remove(subSection);
+      } else {
+        _expandedSubSections.add(subSection);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isDarkAdmin = _isAdmin;
     return Drawer(
-      // Narrower than the Material default (304) so the drawer doesn't cover as
-      // much of the screen; capped to a fraction on small devices.
-      width: MediaQuery.of(context).size.width * 0.72,
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.white,
+      width: MediaQuery.of(context).size.width * 0.80,
+      backgroundColor: isDarkAdmin ? const Color(0xFF18181B) : Colors.white,
+      surfaceTintColor: Colors.transparent,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Amber Profile Header Card ─────────────────────────────
+            // ── Top Header Card ──
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: _buildHeaderCard(),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: isDarkAdmin ? _buildAdminHeaderCard() : _buildHeaderCard(),
             ),
-            const SizedBox(height: 8),
-            // ── Nav Label ────────────────────────────────────────────
+            const SizedBox(height: 4),
+
+            // ── Nav Items (Role Based Parity with Web App) ──
+            Expanded(
+              child: isDarkAdmin ? _buildAdminNavList() : _buildEmployeeNavList(),
+            ),
+
+            // ── Logout ──
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: _item(
+                Icons.logout_rounded,
+                'Logout',
+                () => _logout(context),
+                color: const Color(0xFFEF4444),
+                isDark: isDarkAdmin,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Dark-themed Admin Header matching web app sidebar header
+  Widget _buildAdminHeaderCard() {
+    final name = (_userData?['name'] ?? 'akash').toString();
+    final role = (_userData?['role'] ?? 'admin').toString();
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'A';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF27272A),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF3F3F46)),
+      ),
+      child: Row(
+        children: [
+          // Logo / Avatar
+          Container(
+            width: 36,
+            height: 36,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFEFAA1F), Color(0xFFD97706)],
+              ),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              initial,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      'ekta',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                      ),
+                    ),
+                    Text(
+                      'HR',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFFEFAA1F),
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  '$name • $role',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFFA1A1AA),
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF3F3F46),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.shield_outlined, size: 14, color: Color(0xFFEFAA1F)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Standard Employee Drawer List
+  Widget _buildEmployeeNavList() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+          child: Text(
+            'NAVIGATION',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textCaption,
+              letterSpacing: 1.2,
+            ),
+          ),
+        ),
+        _item(Icons.dashboard_rounded, 'Dashboard', () => _navigateToTab(0)),
+        _item(Icons.calendar_month_rounded, 'Attendance', () => _navigateToTab(4)),
+        _item(Icons.fact_check_rounded, 'Requests', () => _navigateToTab(1)),
+        _item(Icons.assignment_turned_in_rounded, 'GEOtasks', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
+        }),
+        _item(Icons.schedule_rounded, 'Overtime', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const OvertimeScreen()));
+        }),
+        const SizedBox(height: 8),
+        const Divider(height: 1, color: Color(0xFFE2E8F0)),
+        const SizedBox(height: 8),
+        _item(Icons.person_outline_rounded, 'Profile', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const ProfileScreen(dashboardTabIndex: 3)));
+        }),
+        _item(Icons.settings_outlined, 'Settings', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const SettingsScreen()));
+        }),
+      ],
+    );
+  }
+
+  /// Web App Parity Admin Drawer Navigation (Dark Theme with Solid Amber Highlight)
+  Widget _buildAdminNavList() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      children: [
+        // ── SECTION: RECRUITMENT ──
+        _buildAdminCategory(
+          title: 'Recruitment',
+          icon: Icons.work_outline_rounded,
+          isExpanded: _expandedSections.contains('recruitment'),
+          onToggle: () => _toggleSection('recruitment'),
+          children: [
+            _adminSubItem(Icons.list_alt_rounded, 'Job Openings', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminJobOpeningsScreen()),
+              );
+            }, isSelected: true),
+            _adminSubItem(Icons.people_outline_rounded, 'Candidates', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminCandidatesScreen()),
+              );
+            }),
+            _adminSubItem(Icons.calendar_today_outlined, 'Appointments', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminAppointmentsScreen()),
+              );
+            }),
+            _adminSubCategory(
+              title: 'Interview Process',
+              icon: Icons.account_tree_outlined,
+              isExpanded: _expandedSubSections.contains('interview_process'),
+              onToggle: () => _toggleSubSection('interview_process'),
+              children: [
+                _adminSubItem(Icons.circle_outlined, 'Interview Flow', () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AdminInterviewFlowScreen()),
+                  );
+                }, isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Rounds', () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AdminInterviewRoundsScreen()),
+                  );
+                }, isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Selected / Rejected', () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AdminSelectedRejectedScreen()),
+                  );
+                }, isNested: true),
+              ],
+            ),
+            _adminSubItem(Icons.mail_outline_rounded, 'Offer Letter', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminOfferLetterScreen()),
+              );
+            }),
+            _adminSubItem(Icons.verified_user_outlined, 'Verifications', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminVerificationsScreen()),
+              );
+            }),
+          ],
+        ),
+
+        const SizedBox(height: 6),
+
+        // ── SECTION: STAFF ──
+        _buildAdminCategory(
+          title: 'Staff',
+          icon: Icons.groups_rounded,
+          isExpanded: _expandedSections.contains('staff'),
+          onToggle: () => _toggleSection('staff'),
+          children: [
+            _adminSubItem(Icons.dashboard_outlined, 'Dashboard', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminDashboardScreen()),
+              );
+            }),
+            _adminSubItem(
+              Icons.badge_outlined,
+              'Staff List',
+              () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminStaffListScreen()),
+                );
+              },
+            ),
+            _adminSubItem(Icons.calendar_month_outlined, 'Attendance', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminAttendanceScreen()),
+              );
+            }),
+            _adminSubItem(Icons.schedule_rounded, 'Overtime', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminOvertimeScreen()),
+              );
+            }),
+            _adminSubItem(Icons.payments_outlined, 'Payroll', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminPayrollScreen()),
+              );
+            }),
+            _adminSubCategory(
+              title: 'Approvals',
+              icon: Icons.assignment_turned_in_outlined,
+              isExpanded: _expandedSubSections.contains('approvals'),
+              onToggle: () => _toggleSubSection('approvals'),
+              children: [
+                _adminSubItem(Icons.circle_outlined, 'Leave', () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminLeaveApprovalsScreen()));
+                }, isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Permission', () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminPermissionApprovalsScreen()));
+                }, isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Punch', () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminPunchApprovalsScreen()));
+                }, isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Fine', () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminFineApprovalsScreen()));
+                }, isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Reimbursement', () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminReimbursementApprovalsScreen()));
+                }, isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Payslip Requests', () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminPayslipApprovalsScreen()));
+                }, isNested: true),
+              ],
+            ),
+            _adminSubCategory(
+              title: 'Settings',
+              icon: Icons.settings_outlined,
+              isExpanded: _expandedSubSections.contains('staff_settings'),
+              onToggle: () => _toggleSubSection('staff_settings'),
+              children: [
+                _adminSubItem(Icons.circle_outlined, 'Attendance Templates', () => Navigator.pop(context), isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Holiday Templates', () => Navigator.pop(context), isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Leave Templates', () => Navigator.pop(context), isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Shift Templates', () => Navigator.pop(context), isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Weekly Off Templates', () => Navigator.pop(context), isNested: true),
+              ],
+            ),
+            _adminSubItem(Icons.notifications_outlined, 'Notifications', () => Navigator.pop(context)),
+          ],
+        ),
+
+        const SizedBox(height: 6),
+
+        // ── SECTION: HRMS GEO ──
+        _buildAdminCategory(
+          title: 'HRMS GEO',
+          icon: Icons.public_rounded,
+          isExpanded: _expandedSections.contains('geo'),
+          onToggle: () => _toggleSection('geo'),
+          children: [
+            _adminSubItem(Icons.dashboard_outlined, 'Dashboard', () => Navigator.pop(context)),
+            _adminSubItem(Icons.storefront_outlined, 'Customer', () => Navigator.pop(context)),
+            _adminSubItem(Icons.currency_rupee_rounded, 'Travel Allowance', () => Navigator.pop(context)),
+            _adminSubItem(Icons.task_alt_rounded, 'Tasks', () {
+              Navigator.pop(context);
+              Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
+            }),
+            _adminSubItem(Icons.explore_outlined, 'Tracking', () => Navigator.pop(context)),
+            _adminSubItem(Icons.tune_rounded, 'Settings', () => Navigator.pop(context)),
+          ],
+        ),
+
+        const SizedBox(height: 12),
+        const Divider(height: 1, color: Color(0xFF27272A)),
+        const SizedBox(height: 8),
+
+        _item(
+          Icons.person_outline_rounded,
+          'Profile',
+          () {
+            Navigator.pop(context);
+            Future.microtask(() => _push(const ProfileScreen(dashboardTabIndex: 3)));
+          },
+          isDark: true,
+        ),
+        _item(
+          Icons.settings_outlined,
+          'App Settings',
+          () {
+            Navigator.pop(context);
+            Future.microtask(() => _push(const SettingsScreen()));
+          },
+          isDark: true,
+        ),
+      ],
+    );
+  }
+
+  /// Solid Amber Active Group Header matching Web Screenshots
+  Widget _buildAdminCategory({
+    required String title,
+    required IconData icon,
+    required bool isExpanded,
+    required VoidCallback onToggle,
+    required List<Widget> children,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: isExpanded ? const Color(0xFFEFAA1F) : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 19,
+                  color: isExpanded ? Colors.black : const Color(0xFFA1A1AA),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: isExpanded ? FontWeight.w900 : FontWeight.w600,
+                      color: isExpanded ? Colors.black : const Color(0xFFF4F4F5),
+                    ),
+                  ),
+                ),
+                Icon(
+                  isExpanded ? Icons.keyboard_arrow_down_rounded : Icons.chevron_right_rounded,
+                  size: 19,
+                  color: isExpanded ? Colors.black : const Color(0xFF71717A),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (isExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 12, top: 4, bottom: 6),
+            child: Column(children: children),
+          ),
+      ],
+    );
+  }
+
+  Widget _adminSubCategory({
+    required String title,
+    required IconData icon,
+    required bool isExpanded,
+    required VoidCallback onToggle,
+    required List<Widget> children,
+  }) {
+    return Column(
+      children: [
+        InkWell(
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              children: [
+                Icon(icon, size: 16, color: const Color(0xFFA1A1AA)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFFD4D4D8)),
+                  ),
+                ),
+                Icon(
+                  isExpanded ? Icons.keyboard_arrow_down_rounded : Icons.chevron_right_rounded,
+                  size: 16,
+                  color: const Color(0xFF71717A),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (isExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 14),
+            child: Column(children: children),
+          ),
+      ],
+    );
+  }
+
+  Widget _adminSubItem(IconData icon, String title, VoidCallback onTap, {bool isSelected = false, bool isNested = false}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: isNested ? 6 : 8),
+        margin: const EdgeInsets.symmetric(vertical: 1.5),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFEFAA1F).withValues(alpha: 0.20) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: isSelected ? Border.all(color: const Color(0xFFEFAA1F).withValues(alpha: 0.40)) : null,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: isNested ? 7 : 16,
+              color: isSelected ? const Color(0xFFEFAA1F) : const Color(0xFFA1A1AA),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
               child: Text(
-                'NAVIGATION',
+                title,
                 style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textCaption,
-                  letterSpacing: 1.2,
+                  fontSize: isNested ? 12 : 13,
+                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                  color: isSelected ? const Color(0xFFEFAA1F) : const Color(0xFFE4E4E7),
                 ),
               ),
             ),
-            // ── Nav Items ────────────────────────────────────────────
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _item(IconData icon, String title, VoidCallback onTap, {Color? color, bool isDark = false}) {
+    final fg = color ?? (isDark ? const Color(0xFFE4E4E7) : AppColors.textPrimary);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: fg),
+            const SizedBox(width: 14),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                children: [
-                  _item(Icons.person_outline, 'Profile', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const ProfileScreen(dashboardTabIndex: 3)));
-                  }),
-                  _item(Icons.calendar_today_outlined, 'Attendance', () => _navigateToTab(4)),
-                  _item(Icons.inventory_2_outlined, 'My Assets', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const AssetsListingScreen()));
-                  }),
-                  _item(Icons.trending_up_outlined, 'Performance', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const PerformanceModuleScreen()));
-                  }),
-                    _item(Icons.umbrella_outlined, 'Holidays', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const HolidaysScreen()));
-                  }),
-                  _item(Icons.assignment_outlined, 'Tasks', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
-                  }),
-                  _item(Icons.share_outlined, 'Interaction', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const InteractionShellScreen()));
-                  }),
-                  _item(Icons.campaign_outlined, 'Announcements', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const AnnouncementsScreen()));
-                  }),
-                  _item(Icons.warning_amber_outlined, 'Grievance', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const GrievanceShellScreen()));
-                  }),
-              //     _item(Icons.school_outlined, 'My Learning', () {
-              //       Navigator.pop(context);
-              //       Future.microtask(() => _push(const LmsShellScreen()));
-              //     }),
-              //  //   if (_isAdminLike)
-              //       _item(Icons.admin_panel_settings_outlined, 'LMS Admin', () {
-              //         Navigator.pop(context);
-              //         Future.microtask(() => _push(const LmsAdminShellScreen()));
-              //       }),
-                  _item(Icons.settings_outlined, 'Settings', () {
-                    Navigator.pop(context);
-                    Future.microtask(() => _push(const SettingsScreen()));
-                  }),
-                ],
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w500,
+                  color: fg,
+                ),
               ),
-            ),
-            // ── Logout ───────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
-              child: _item(Icons.logout_rounded, 'Logout', () => _logout(context),
-                  color: AppColors.error),
             ),
           ],
         ),
@@ -242,7 +733,8 @@ class _AppDrawerState extends State<AppDrawer> {
 
   /// Amber rounded header card matching Figma exactly.
   Widget _buildHeaderCard() {
-    final name     = _userData?['name']      ?? 'Employee';
+    final extractedName = AuthService.extractNameFromMap(_userData);
+    final name = extractedName.isNotEmpty ? extractedName : (_userData?['name'] ?? 'Employee');
     // Show the staff type (Intern / Full Time / …); fall back to role when the
     // staffType hasn't been backfilled yet (older cached sessions).
     final staffType = _userData?['staffType']?.toString().trim() ?? '';
@@ -427,33 +919,6 @@ class _AppDrawerState extends State<AppDrawer> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _item(IconData icon, String title, VoidCallback onTap, {Color? color}) {
-    final fg = color ?? AppColors.textPrimary;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: fg),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: fg,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

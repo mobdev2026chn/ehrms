@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,43 +20,140 @@ class RequestService {
     if (token != null && token.isNotEmpty) _api.setAuthToken(token);
   }
 
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? token = prefs.getString('token');
+    if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
+      token = token.replaceAll('"', '');
+    }
+    return token;
+  }
+
+  String get baseUrl => _api.dio.options.baseUrl;
+
   // --- DASHBOARD ---
 
   Future<Map<String, dynamic>> getDashboardData() async {
     try {
       await _setToken();
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/dashboard/employee',
-      );
-      final body = response.data;
-      if (body != null && body['success'] == true) {
-        return {'success': true, 'data': body['data']};
+
+      // Attempt /staff/dashboard first
+      try {
+        final response = await _api.dio.get<dynamic>('/staff/dashboard');
+        final body = response.data;
+        if (body != null && body['success'] == true && body['data'] != null) {
+          final d = body['data'];
+          if (d is Map && (d['stats'] != null || d['attendance'] != null)) {
+            return {'success': true, 'data': d};
+          }
+        }
+      } catch (_) {}
+
+      // Fallback: Aggregate directly using web APIs (Web HRMS Parity)
+      final prefs = await SharedPreferences.getInstance();
+      String? staffId;
+      for (final key in ['user', 'staff', 'profile']) {
+        final s = prefs.getString(key);
+        if (s != null && s.isNotEmpty) {
+          try {
+            final u = jsonDecode(s);
+            if (u is Map) {
+              staffId = (u['id'] ?? u['_id'] ?? u['staffId'])?.toString();
+              if (staffId != null && staffId.isNotEmpty) break;
+            }
+          } catch (_) {}
+        }
       }
-      return {
-        'success': false,
-        'message': body?['message'] ?? 'Error fetching data',
+
+      final now = DateTime.now();
+      final year = now.year;
+      final month = now.month;
+
+      // 1. Today Punch (Canonical Web API)
+      Map<String, dynamic> todayPunch = {};
+      try {
+        final res = await _api.dio.get<dynamic>('/staff/attendance/today-punch');
+        if (res.data is Map && res.data['data'] is Map) {
+          todayPunch = Map<String, dynamic>.from(res.data['data'] as Map);
+        }
+      } catch (_) {}
+
+      // 2. Leave Types / Balances
+      num totalAvailableBalance = 0;
+      try {
+        final res = await _api.dio.get<dynamic>('/admin/staff/settings/Leave/types');
+        final list = res.data?['data']?['leaveTypes'] ?? res.data?['data'] ?? [];
+        if (list is List) {
+          for (final lt in list) {
+            if (lt is Map && lt['availableBalance'] != null) {
+              totalAvailableBalance += (lt['availableBalance'] as num);
+            }
+          }
+        }
+      } catch (_) {}
+
+      // 3. Month Attendance
+      Map<String, dynamic> monthAttendance = {};
+      if (staffId != null && staffId.isNotEmpty) {
+        try {
+          final res = await _api.dio.get<dynamic>(
+            '/admin/staff/attendance/staff/$staffId',
+            queryParameters: {'year': year, 'month': month},
+          );
+          if (res.data is Map && res.data['data'] is Map) {
+            monthAttendance = Map<String, dynamic>.from(res.data['data'] as Map);
+          }
+        } catch (_) {}
+      }
+
+      // 4. Recent Leaves
+      List<dynamic> recentLeaves = [];
+      try {
+        final res = await _api.dio.get<dynamic>('/staff/requests/leave/my-requests');
+        final list = res.data?['data']?['requests'] ?? res.data?['data'] ?? [];
+        if (list is List) {
+          recentLeaves = list;
+        }
+      } catch (_) {}
+
+      final presentDays = todayPunch['presentDays'] ?? monthAttendance['presentCount'] ?? 0;
+      final totalWorkingDays = todayPunch['totalWorkingDays'] ?? monthAttendance['totalWorkingDays'] ?? 30;
+      final estimatedNetSalary = (todayPunch['estimatedNetSalary'] as num?)?.toDouble() ?? 0.0;
+
+      final stats = {
+        'attendanceSummary': {
+          'presentDays': presentDays,
+          'totalWorkingDays': totalWorkingDays,
+          'paidLeaveDays': monthAttendance['paidLeaveCount'] ?? 0,
+        },
+        'attendance': {
+          'present': presentDays,
+          'absent': monthAttendance['absentCount'] ?? 0,
+          'totalWorkingDays': totalWorkingDays,
+        },
+        'leaves': {
+          'availableBalance': totalAvailableBalance,
+          'pending': recentLeaves.where((e) => e is Map && e['status'] == 'Pending').length,
+          'approved': recentLeaves.where((e) => e is Map && e['status'] == 'Approved').length,
+        },
+        'attendanceToday': todayPunch,
+        'salary': {
+          'estimatedNetSalary': estimatedNetSalary,
+        },
       };
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 404) {
-        return {
-          'success': true,
-          'data': {
-            'attendance': {
-              'present': 0,
-              'absent': 0,
-              'late': 0,
-              'totalWorkingDays': 0,
-            },
-            'leaves': {'pending': 0, 'approved': 0, 'rejected': 0},
-            'loans': {'active': 0, 'pending': 0, 'total': 0},
-            'reimbursements': {'pending': 0, 'approved': 0},
-            'payslips': [],
-          },
-        };
-      }
-      return {'success': false, 'message': _dioMessage(e)};
+
+      return {
+        'success': true,
+        'data': {
+          'stats': stats,
+          'recentLeaves': recentLeaves,
+          'todayAnnouncements': [],
+          'todayCelebrations': [],
+          'upcomingCelebrations': [],
+        },
+      };
     } catch (e) {
-      return {'success': false, 'message': _handleException(e)};
+      return {'success': false, 'message': e.toString()};
     }
   }
 
@@ -105,12 +203,38 @@ class RequestService {
         q['month'] = month;
         q['year'] = year;
       }
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/requests/leave-types',
-        queryParameters: q,
-      );
-      final body = response.data;
-      return {'success': true, 'data': body?['data'] ?? body};
+      Response<dynamic>? response;
+      try {
+        response = await _api.dio.get<dynamic>(
+          '/staff/requests/leave/types',
+          queryParameters: q,
+        );
+      } catch (_) {
+        try {
+          response = await _api.dio.get<dynamic>(
+            '/admin/staff/settings/Leave/types',
+          );
+        } catch (_) {
+          response = await _api.dio.get<dynamic>(
+            '/requests/leave-types',
+            queryParameters: q,
+          );
+        }
+      }
+      final body = response?.data;
+      List<dynamic> list = [];
+      if (body is List) {
+        list = body;
+      } else if (body is Map) {
+        final d = body['data'] ?? body;
+        if (d is List) {
+          list = d;
+        } else if (d is Map) {
+          final rawTypes = d['leaveTypes'] ?? d['types'] ?? d['balances'] ?? [];
+          if (rawTypes is List) list = rawTypes;
+        }
+      }
+      return {'success': true, 'data': list};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
@@ -125,14 +249,40 @@ class RequestService {
   Future<Map<String, dynamic>> getLeaveTypesForApply() async {
     try {
       await _setToken();
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/requests/leave-types/for-apply',
-      );
-      final body = response.data;
+      Response<dynamic>? response;
+      try {
+        response = await _api.dio.get<dynamic>('/staff/requests/leave/types');
+      } catch (_) {
+        try {
+          response = await _api.dio.get<dynamic>('/admin/staff/settings/Leave/types');
+        } catch (_) {
+          try {
+            response = await _api.dio.get<dynamic>('/requests/leave-types/for-apply');
+          } catch (_) {
+            response = await _api.dio.get<dynamic>('/requests/leave-types');
+          }
+        }
+      }
+      final body = response?.data;
+      List<dynamic> list = [];
+      bool halfDay = true;
+      if (body is List) {
+        list = body;
+      } else if (body is Map) {
+        if (body['halfDayEnabled'] != null) halfDay = body['halfDayEnabled'] == true;
+        final d = body['data'] ?? body;
+        if (d is List) {
+          list = d;
+        } else if (d is Map) {
+          if (d['halfDayEnabled'] != null) halfDay = d['halfDayEnabled'] == true;
+          final rawTypes = d['leaveTypes'] ?? d['types'] ?? d['balances'] ?? [];
+          if (rawTypes is List) list = rawTypes;
+        }
+      }
       return {
         'success': true,
-        'data': body?['data'] ?? body,
-        'halfDayEnabled': body?['halfDayEnabled'] == true,
+        'data': list,
+        'halfDayEnabled': halfDay,
       };
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
@@ -259,16 +409,24 @@ class RequestService {
   Future<Map<String, dynamic>> applyLeave(Map<String, dynamic> data) async {
     try {
       await _setToken();
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/requests/leave',
-        data: data,
-      );
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.post<dynamic>(
+          '/staff/requests/leave/apply',
+          data: data,
+        );
+      } catch (_) {
+        response = await _api.dio.post<dynamic>(
+          '/requests/leave',
+          data: data,
+        );
+      }
       final body = response.data;
       if (body == null) {
         return {'success': false, 'message': 'Invalid response'};
       }
       var responseData = body;
-      if (body.containsKey('data') && body['data'] is Map) {
+      if (body is Map && body.containsKey('data') && body['data'] is Map) {
         final d = body['data'] as Map;
         if (d.containsKey('leave')) {
           responseData = d['leave'] as Map<String, dynamic>;
@@ -302,16 +460,53 @@ class RequestService {
         if (startDate != null) 'startDate': startDate.toIso8601String(),
         if (endDate != null) 'endDate': endDate.toIso8601String(),
       };
-      final response = await _api.dio.get<dynamic>(
-        '/requests/leave',
-        queryParameters: q,
-      );
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.get<dynamic>(
+          '/staff/requests/leave/my-requests',
+          queryParameters: q,
+        );
+      } catch (_) {
+        response = await _api.dio.get<dynamic>(
+          '/requests/leave',
+          queryParameters: q,
+        );
+      }
       final body = response.data;
       if (body is List) return {'success': true, 'data': body};
       if (body is Map && body['success'] == true) {
-        return {'success': true, 'data': body['data'] ?? body};
+        final data = body['data'];
+        if (data is Map && data['requests'] != null) {
+          return {'success': true, 'data': data['requests']};
+        }
+        return {'success': true, 'data': data ?? body};
       }
-      return {'success': true, 'data': body};
+      return {'success': true, 'data': body is Map && body['data'] != null ? body['data'] : []};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  Future<Map<String, dynamic>> cancelLeaveRequest(String requestId) async {
+    try {
+      await _setToken();
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.post<dynamic>(
+          '/staff/requests/leave/cancel/$requestId',
+        );
+      } catch (_) {
+        response = await _api.dio.patch<dynamic>(
+          '/requests/leave/$requestId/cancel',
+        );
+      }
+      final body = response.data;
+      if (body != null && (body['success'] == true || response.statusCode == 200)) {
+        return {'success': true, 'message': body['message'] ?? 'Leave cancelled'};
+      }
+      return {'success': false, 'message': body?['message'] ?? 'Failed to cancel leave'};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
@@ -406,23 +601,29 @@ class RequestService {
           'X-Storage-Environment=${headers['X-Storage-Environment'] ?? headers['x-storage-environment']}',
         );
       }
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/requests/expense',
-        data: data,
-      );
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.post<dynamic>(
+          '/staff/requests/expense/apply',
+          data: data,
+        );
+      } catch (_) {
+        response = await _api.dio.post<dynamic>(
+          '/requests/expense',
+          data: data,
+        );
+      }
       final body = response.data;
       if (body == null) {
         return {'success': false, 'message': 'Invalid response'};
       }
       var responseData = body;
-      if (body.containsKey('data') && body['data'] is Map) {
+      if (body is Map && body.containsKey('data') && body['data'] is Map) {
         final d = body['data'] as Map;
-        responseData = d['reimbursement'] ?? d;
-        if (kDebugMode && responseData is Map) {
-          final proofs = responseData['proofFiles'];
-          if (proofs is List && proofs.isNotEmpty) {
-            debugPrint('[ExpenseUpload] proofFileUrl=${proofs.first}');
-          }
+        if (d.containsKey('reimbursement')) {
+          responseData = d['reimbursement'] as Map<String, dynamic>;
+        } else {
+          responseData = Map<String, dynamic>.from(d);
         }
       }
       return {'success': true, 'data': responseData};
@@ -451,15 +652,28 @@ class RequestService {
         if (startDate != null) 'startDate': startDate.toIso8601String(),
         if (endDate != null) 'endDate': endDate.toIso8601String(),
       };
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/requests/expense',
-        queryParameters: q,
-      );
-      final body = response.data;
-      if (body != null && body['success'] == true) {
-        return {'success': true, 'data': body['data'] ?? body};
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.get<dynamic>(
+          '/staff/requests/expense/my-requests',
+          queryParameters: q,
+        );
+      } catch (_) {
+        response = await _api.dio.get<dynamic>(
+          '/requests/expense',
+          queryParameters: q,
+        );
       }
-      return {'success': true, 'data': body};
+      final body = response.data;
+      if (body is List) return {'success': true, 'data': body};
+      if (body is Map && body['success'] == true) {
+        final data = body['data'];
+        if (data is Map && data['requests'] != null) {
+          return {'success': true, 'data': data['requests']};
+        }
+        return {'success': true, 'data': data ?? body};
+      }
+      return {'success': true, 'data': body is Map && body['data'] != null ? body['data'] : []};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
@@ -493,10 +707,18 @@ class RequestService {
   Future<Map<String, dynamic>> requestPayslip(Map<String, dynamic> data) async {
     try {
       await _setToken();
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/requests/payslip',
-        data: data,
-      );
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.post<dynamic>(
+          '/staff/requests/payslip/apply',
+          data: data,
+        );
+      } catch (_) {
+        response = await _api.dio.post<dynamic>(
+          '/requests/payslip',
+          data: data,
+        );
+      }
       final body = response.data;
       if (body != null &&
           (body['success'] == true || response.statusCode == 201)) {
@@ -532,15 +754,78 @@ class RequestService {
         if (startDate != null) 'startDate': startDate.toIso8601String(),
         if (endDate != null) 'endDate': endDate.toIso8601String(),
       };
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/requests/payslip',
-        queryParameters: q,
-      );
-      final body = response.data;
-      if (body != null && body['success'] == true) {
-        return {'success': true, 'data': body['data'] ?? body};
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.get<dynamic>(
+          '/staff/requests/payslip/my-requests',
+          queryParameters: q,
+        );
+      } catch (_) {
+        response = await _api.dio.get<dynamic>(
+          '/requests/payslip',
+          queryParameters: q,
+        );
       }
-      return {'success': true, 'data': body};
+      final body = response.data;
+      if (body is List) return {'success': true, 'data': body};
+      if (body is Map && body['success'] == true) {
+        final data = body['data'];
+        if (data is Map && data['requests'] != null) {
+          return {'success': true, 'data': data['requests']};
+        }
+        return {'success': true, 'data': data ?? body};
+      }
+      return {'success': true, 'data': body is Map && body['data'] != null ? body['data'] : []};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  Future<Map<String, dynamic>> cancelExpenseRequest(String requestId) async {
+    try {
+      await _setToken();
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.post<dynamic>(
+          '/staff/requests/expense/cancel/$requestId',
+        );
+      } catch (_) {
+        response = await _api.dio.patch<dynamic>(
+          '/requests/expense/$requestId/cancel',
+        );
+      }
+      final body = response.data;
+      if (body != null && (body['success'] == true || response.statusCode == 200)) {
+        return {'success': true, 'message': body['message'] ?? 'Expense request cancelled'};
+      }
+      return {'success': false, 'message': body?['message'] ?? 'Failed to cancel expense'};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  Future<Map<String, dynamic>> cancelPayslipRequest(String requestId) async {
+    try {
+      await _setToken();
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.post<dynamic>(
+          '/staff/requests/payslip/cancel/$requestId',
+        );
+      } catch (_) {
+        response = await _api.dio.patch<dynamic>(
+          '/requests/payslip/$requestId/cancel',
+        );
+      }
+      final body = response.data;
+      if (body != null && (body['success'] == true || response.statusCode == 200)) {
+        return {'success': true, 'message': body['message'] ?? 'Payslip request cancelled'};
+      }
+      return {'success': false, 'message': body?['message'] ?? 'Failed to cancel payslip request'};
     } on DioException catch (e) {
       return {'success': false, 'message': _dioMessage(e)};
     } catch (e) {
@@ -625,19 +910,34 @@ class RequestService {
         'year': year ?? now.year,
         if (status != null && status != 'All Status') 'status': status,
       };
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/requests/permission',
-        queryParameters: q,
-      );
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.get<dynamic>(
+          '/staff/requests/permission/my-requests',
+          queryParameters: q,
+        );
+      } catch (_) {
+        response = await _api.dio.get<dynamic>(
+          '/requests/permission',
+          queryParameters: q,
+        );
+      }
       final body = response.data;
       punchFlowLog(
         '[Permission][App][getPermissionRequests] status=${response.statusCode} '
         'query=$q raw=$body',
       );
-      if (body != null && body['success'] == true) {
-        return {'success': true, 'data': body['data'] ?? body};
+      if (body is List) {
+        return {'success': true, 'data': body};
       }
-      return {'success': true, 'data': body};
+      if (body != null && body['success'] == true) {
+        final data = body['data'];
+        if (data is Map && data['requests'] != null) {
+          return {'success': true, 'data': data['requests']};
+        }
+        return {'success': true, 'data': data ?? body};
+      }
+      return {'success': true, 'data': body is Map && body['data'] != null ? body['data'] : []};
     } on DioException catch (e) {
       punchFlowLog(
         '[Permission][App][getPermissionRequests] DioException '
@@ -657,34 +957,59 @@ class RequestService {
     required String type,
     required int requestedMinutes,
     required String reason,
+    int? lateHours,
+    int? lateMinutes,
+    int? earlyHours,
+    int? earlyMinutes,
     String? fromTime,
     String? toTime,
+    String? permTypeWeb,
   }) async {
     try {
       await _setToken();
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/requests/permission',
-        data: {
-          'date': DateTime(date.year, date.month, date.day).toIso8601String(),
-          'type': type,
-          'requestedMinutes': requestedMinutes,
-          'reason': reason,
-          if (fromTime != null && fromTime.isNotEmpty) 'fromTime': fromTime,
-          if (toTime != null && toTime.isNotEmpty) 'toTime': toTime,
-        },
-      );
+      final lH = lateHours ?? (type == 'Late' ? requestedMinutes ~/ 60 : 0);
+      final lM = lateMinutes ?? (type == 'Late' ? requestedMinutes % 60 : 0);
+      final eH = earlyHours ?? (type == 'Early' ? requestedMinutes ~/ 60 : 0);
+      final eM = earlyMinutes ?? (type == 'Early' ? requestedMinutes % 60 : 0);
+      final wireType = permTypeWeb ?? (type == 'lateArrival' ? 'Late' : (type == 'earlyExit' ? 'Early' : (type == 'both' ? 'Custom' : type)));
+
+      final dateStr =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final reqData = {
+        'date': dateStr,
+        'type': wireType,
+        'lateHours': lH,
+        'lateMinutes': lM,
+        'earlyHours': eH,
+        'earlyMinutes': eM,
+        'durationMins': requestedMinutes,
+        'requestedMinutes': requestedMinutes,
+        'reason': reason,
+        if (fromTime != null && fromTime.isNotEmpty) 'fromTime': fromTime,
+        if (toTime != null && toTime.isNotEmpty) 'toTime': toTime,
+      };
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.post<dynamic>(
+          '/staff/requests/permission/apply',
+          data: reqData,
+        );
+      } catch (_) {
+        response = await _api.dio.post<dynamic>(
+          '/requests/permission',
+          data: reqData,
+        );
+      }
       final body = response.data;
       punchFlowLog(
         '[Permission][App][createPermissionRequest] status=${response.statusCode} '
         'date=${date.toIso8601String()} type=$type requestedMinutes=$requestedMinutes '
         'raw=$body',
       );
-      if (body != null && body['success'] == true) {
+      if (body != null && (body['success'] == true || response.statusCode == 201)) {
         return {
           'success': true,
           'data': body['data'] ?? body,
-          // Exact policy notice when the permission time will be fined (disabled /
-          // no-allowance / will-be-processed-with-fine). null when normally allowed.
           'notice': body['notice'],
         };
       }
@@ -709,9 +1034,16 @@ class RequestService {
   Future<Map<String, dynamic>> cancelPermissionRequest(String requestId) async {
     try {
       await _setToken();
-      final response = await _api.dio.patch<Map<String, dynamic>>(
-        '/requests/permission/$requestId/cancel',
-      );
+      Response<dynamic> response;
+      try {
+        response = await _api.dio.post<dynamic>(
+          '/staff/requests/permission/cancel/$requestId',
+        );
+      } catch (_) {
+        response = await _api.dio.patch<dynamic>(
+          '/requests/permission/$requestId/cancel',
+        );
+      }
       final body = response.data;
       punchFlowLog(
         '[Permission][App][cancelPermissionRequest] status=${response.statusCode} '
@@ -794,25 +1126,30 @@ class RequestService {
         'year': year ?? now.year,
       };
 
-      Map<String, dynamic>? balanceBody;
-      String sourceEndpoint = '/permissions/balance';
+      Response<dynamic>? res;
+      String sourceEndpoint = '/staff/requests/permission/my-quota';
       try {
         // Web parity: primary endpoint.
-        final res = await _api.dio.get<Map<String, dynamic>>(
-          '/permissions/balance',
-          queryParameters: q,
+        res = await _api.dio.get<dynamic>(
+          '/staff/requests/permission/my-quota',
         );
-        balanceBody = res.data;
-      } on DioException {
-        // Fallback for older backend route.
-        sourceEndpoint = '/requests/permission/balance';
-        final res = await _api.dio.get<Map<String, dynamic>>(
-          '/requests/permission/balance',
-          queryParameters: q,
-        );
-        balanceBody = res.data;
+      } catch (_) {
+        try {
+          sourceEndpoint = '/permissions/balance';
+          res = await _api.dio.get<dynamic>(
+            '/permissions/balance',
+            queryParameters: q,
+          );
+        } catch (_) {
+          sourceEndpoint = '/requests/permission/balance';
+          res = await _api.dio.get<dynamic>(
+            '/requests/permission/balance',
+            queryParameters: q,
+          );
+        }
       }
 
+      final balanceBody = res?.data;
       if (balanceBody == null || balanceBody['success'] != true) {
         return {'success': false, 'message': 'Failed to load permission balance'};
       }
@@ -821,23 +1158,26 @@ class RequestService {
           ? Map<String, dynamic>.from(balanceBody['data'] as Map)
           : <String, dynamic>{};
 
-      num quota = (dataMap['monthlyQuotaMinutes'] as num?) ?? 0;
-      num consumed = (dataMap['consumedMinutes'] as num?) ?? 0;
-      num remaining = (dataMap['remainingMinutes'] as num?) ?? 0;
-      num pending = (dataMap['pendingMinutes'] as num?) ?? 0;
+      num quota = (dataMap['monthlyQuotaMinutes'] ?? dataMap['monthlyQuotaMins']) as num? ?? 0;
+      if (quota == 0 && dataMap['template'] is Map) {
+        final t = dataMap['template'] as Map;
+        quota = ((t['hours'] as num?) ?? 0) * 60 + ((t['minutes'] as num?) ?? 0);
+      }
+      num consumed = (dataMap['consumedMinutes'] ?? dataMap['usedMins']) as num? ?? 0;
+      num remaining = (dataMap['remainingMinutes'] ?? dataMap['remainingMins']) as num? ?? 0;
+      num pending = (dataMap['pendingMinutes'] ?? dataMap['pendingMins']) as num? ?? 0;
 
-      if (remaining <= 0 && quota > 0) remaining = (quota - consumed).clamp(0, quota);
+      if (remaining <= 0 && quota > 0 && consumed < quota) {
+        remaining = (quota - consumed).clamp(0, quota);
+      }
 
       dataMap['monthlyQuotaMinutes'] = quota;
       dataMap['consumedMinutes'] = consumed;
       dataMap['remainingMinutes'] = remaining;
       dataMap['pendingMinutes'] = pending;
-      // Default to configured=true when the backend omits the flag (older builds) so the
-      // request flow is never blocked by a missing field; disabled defaults to enabled.
-      dataMap['configured'] =
-          dataMap.containsKey('configured') ? dataMap['configured'] == true : true;
-      dataMap['enabled'] =
-          dataMap.containsKey('enabled') ? dataMap['enabled'] == true : true;
+      // Default to configured=true when the backend omits the flag
+      dataMap['configured'] = true;
+      dataMap['enabled'] = true;
 
       punchFlowLog(
         '[PermissionBalance][App] source=$sourceEndpoint '
@@ -911,6 +1251,62 @@ class RequestService {
       );
     } catch (_) {
       // Intentionally silent — admin notification is best-effort.
+    }
+  }
+
+  // --- OVERTIME (Web Parity) ---
+
+  /// Fetch employee's overtime requests & summary from web API:
+  /// GET /staff/requests/overtime/my-requests?month=YYYY-MM&status=...
+  Future<Map<String, dynamic>> getMyOvertimeRequests({
+    String? month,
+    String? status,
+    String? date,
+  }) async {
+    try {
+      await _setToken();
+      final q = <String, dynamic>{
+        if (month != null && month.isNotEmpty) 'month': month,
+        if (status != null && status != 'All') 'status': status,
+        if (date != null && date.isNotEmpty) 'date': date,
+      };
+      final response = await _api.dio.get<dynamic>(
+        '/staff/requests/overtime/my-requests',
+        queryParameters: q,
+      );
+      final body = response.data;
+      if (body is Map && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? body};
+      }
+      return {'success': true, 'data': body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
+    }
+  }
+
+  /// Respond to an overtime request (Accept / Reject) from web API:
+  /// POST /staff/requests/overtime/respond/:id
+  Future<Map<String, dynamic>> respondToOvertime({
+    required String id,
+    required String action, // 'Accepted' | 'Rejected'
+  }) async {
+    try {
+      await _setToken();
+      final response = await _api.dio.post<dynamic>(
+        '/staff/requests/overtime/respond/$id',
+        data: {'action': action},
+      );
+      final body = response.data;
+      if (body is Map && body['success'] == true) {
+        return {'success': true, 'data': body['data'] ?? body};
+      }
+      return {'success': true, 'data': body};
+    } on DioException catch (e) {
+      return {'success': false, 'message': _dioMessage(e)};
+    } catch (e) {
+      return {'success': false, 'message': _handleException(e)};
     }
   }
 

@@ -9,6 +9,7 @@ import '../../services/auth_service.dart';
 import 'announcement_detail_screen.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../../utils/swr_cache.dart';
 
 class AnnouncementsScreen extends StatefulWidget {
   const AnnouncementsScreen({super.key});
@@ -26,14 +27,21 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadAnnouncements();
+    final cached = SwrCache.get<List<dynamic>>('announcements_list_cache');
+    if (cached != null && cached.isNotEmpty) {
+      _announcements = cached;
+      _isLoading = false;
+    }
+    _loadAnnouncements(silent: cached != null && cached.isNotEmpty);
   }
 
-  Future<void> _loadAnnouncements() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+  Future<void> _loadAnnouncements({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
     try {
       final result = await InteractionService.instance.getAnnouncements();
       final unseen = await InteractionService.instance
@@ -66,6 +74,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
           }
           return true;
         }).toList();
+        SwrCache.set('announcements_list_cache', filtered);
         setState(() {
           _announcements = filtered;
           _unseenEngagementTotal = unseenTotal;

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:intl/intl.dart';
 import 'dart:io';
@@ -15,6 +15,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:dio/dio.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import '../../config/app_colors.dart';
 import '../../config/app_text_styles.dart';
@@ -332,20 +333,29 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
 
-  /// Tab specs in display order. Index maps 1:1 to the [TabBarView] children.
-  static const List<_RequestTabSpec> _tabSpecs = [
+  /// Toggle to hide/show the Loan tab. Set to false to hide the Loan tab.
+  static const bool _showLoanTab = false;
+
+  /// All tab specs.
+  static const List<_RequestTabSpec> _allTabSpecs = [
     _RequestTabSpec('Leave', Icons.event_available_rounded),
     _RequestTabSpec('Permission', Icons.fact_check_outlined),
     _RequestTabSpec('Expense', Icons.receipt_long_rounded),
+    _RequestTabSpec('Payslip', Icons.description_outlined),
     _RequestTabSpec('Loan', Icons.account_balance_wallet_rounded),
   ];
+
+  /// Tab specs in display order. Index maps 1:1 to the [TabBarView] children.
+  static List<_RequestTabSpec> get _tabSpecs =>
+      _showLoanTab ? _allTabSpecs : _allTabSpecs.where((t) => t.label != 'Loan').toList();
 
   // Keys let the app-bar filter button and the create FAB drive whichever tab
   // is currently visible (each tab exposes toggleFilters / show…Dialog).
   final GlobalKey<_LeaveRequestsTabState> _leaveKey = GlobalKey();
-  final GlobalKey<_LoanRequestsTabState> _loanKey = GlobalKey();
-  final GlobalKey<_ExpenseRequestsTabState> _expenseKey = GlobalKey();
   final GlobalKey<_PermissionRequestsTabState> _permissionKey = GlobalKey();
+  final GlobalKey<_ExpenseRequestsTabState> _expenseKey = GlobalKey();
+  final GlobalKey<_PayslipRequestsTabState> _payslipKey = GlobalKey();
+  final GlobalKey<_LoanRequestsTabState> _loanKey = GlobalKey();
 
   @override
   void initState() {
@@ -378,11 +388,23 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
   @override
   void didUpdateWidget(MyRequestsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // The screen is no longer recreated on a sub-tab change (stable key in the
-    // dashboard), so honor an externally-requested tab (deep link / drawer) by
-    // jumping the controller. When the change is just the echo of an in-screen
-    // tap, the controller is already on [target] and animateTo is a no-op.
-    if (widget.initialTabIndex != oldWidget.initialTabIndex) {
+    if (_tabController.length != _tabSpecs.length) {
+      _tabController.dispose();
+      final initial = widget.initialTabIndex
+          .clamp(0, _tabSpecs.length - 1)
+          .toInt();
+      _tabController = TabController(
+        length: _tabSpecs.length,
+        vsync: this,
+        initialIndex: initial,
+      );
+      _tabController.addListener(() {
+        setState(() {});
+        if (!_tabController.indexIsChanging) {
+          widget.onTabIndexChanged?.call(_tabController.index);
+        }
+      });
+    } else if (widget.initialTabIndex != oldWidget.initialTabIndex) {
       final target = widget.initialTabIndex
           .clamp(0, _tabSpecs.length - 1)
           .toInt();
@@ -408,7 +430,10 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
         _expenseKey.currentState?.refresh();
         break;
       case 3:
-        _loanKey.currentState?.refresh();
+        _payslipKey.currentState?.refresh();
+        break;
+      case 4:
+        if (_showLoanTab) _loanKey.currentState?.refresh();
         break;
     }
   }
@@ -426,7 +451,10 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
         _expenseKey.currentState?.toggleFilters();
         break;
       case 3:
-        _loanKey.currentState?.toggleFilters();
+        _payslipKey.currentState?.toggleFilters();
+        break;
+      case 4:
+        if (_showLoanTab) _loanKey.currentState?.toggleFilters();
         break;
     }
   }
@@ -462,13 +490,8 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
         children: [
           _buildTabStrip(),
           Expanded(
-            // IndexedStack (not TabBarView) builds all four tabs up front, so
-            // each one fetches its data at screen open and switching between
-            // them is instant — no per-tab loading spinner. Tab taps drive the
-            // visible index via the TabController listener above.
-            child: IndexedStack(
-              index: _tabController.index,
-              sizing: StackFit.expand,
+            child: TabBarView(
+              controller: _tabController,
               children: [
                 LeaveRequestsTab(
                   key: _leaveKey,
@@ -482,10 +505,14 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
                   key: _expenseKey,
                   isVisible: () => _tabController.index == 2,
                 ),
-                LoanRequestsTab(
-                  key: _loanKey,
-                  isVisible: () => _tabController.index == 3,
+                PayslipRequestsTab(
+                  key: _payslipKey,
                 ),
+                if (_showLoanTab)
+                  LoanRequestsTab(
+                    key: _loanKey,
+                    isVisible: () => _tabController.index == 4,
+                  ),
               ],
             ),
           ),
@@ -494,38 +521,35 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
     );
   }
 
-  /// The Figma-style top tab strip: four equal segments, icon over label,
-  /// the active segment filled with a soft amber pill.
+  /// The top tab strip: five equal segments occupying the full screen width.
   Widget _buildTabStrip() {
     return Container(
       color: AppColors.background,
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
       child: TabBar(
         controller: _tabController,
         isScrollable: false,
         indicatorSize: TabBarIndicatorSize.tab,
-        indicatorPadding: const EdgeInsets.all(4),
+        indicatorPadding: const EdgeInsets.all(3),
         indicator: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.15),
+          color: AppColors.primary.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(12),
         ),
         dividerColor: Colors.transparent,
         labelColor: AppColors.primary,
         unselectedLabelColor: AppColors.textSecondary,
-        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        labelStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
         unselectedLabelStyle: const TextStyle(
-          fontSize: 12,
+          fontSize: 11.5,
           fontWeight: FontWeight.w600,
         ),
-        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+        labelPadding: const EdgeInsets.symmetric(horizontal: 2),
         tabs: _tabSpecs
             .map(
               (t) => Tab(
-                height: 58,
-                iconMargin: const EdgeInsets.only(bottom: 4),
-                icon: Icon(t.icon, size: 22),
-                // Scale the label down to fit its segment so longer labels
-                // (e.g. "Permission") are never clipped.
+                height: 56,
+                iconMargin: const EdgeInsets.only(bottom: 3),
+                icon: Icon(t.icon, size: 20),
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(t.label, maxLines: 1),
@@ -1020,10 +1044,9 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
   String _selectedStatus = 'All Status';
   final List<String> _statusOptions = [
     'All Status',
-    'Pending',
     'Approved',
+    'Pending',
     'Rejected',
-    'Cancelled',
   ];
   Timer? _debounce;
   final TextEditingController _searchController = TextEditingController();
@@ -1033,11 +1056,57 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
   final int _itemsPerPage = 5;
   int _totalPages = 0;
   bool _showFilters = false;
+  bool _isTableView = false;
 
   void toggleFilters() {
     setState(() {
       _showFilters = !_showFilters;
     });
+  }
+
+  Future<void> _cancelLeave(Map<String, dynamic> leave) async {
+    final leaveId = leave['_id']?.toString() ?? leave['id']?.toString();
+    if (leaveId == null || leaveId.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Cancel Leave Request', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+        content: const Text('Are you sure you want to cancel this leave request?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w700)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Yes, Cancel', style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final res = await _requestService.cancelLeaveRequest(leaveId);
+    if (!mounted) return;
+    if (res['success'] == true) {
+      SnackBarUtils.showSnackBar(context, res['message'] ?? 'Leave request cancelled');
+      _fetchLeaves();
+    } else {
+      SnackBarUtils.showSnackBar(
+        context,
+        res['message'] ?? 'Failed to cancel leave request',
+        isError: true,
+      );
+    }
   }
 
   void refresh() {
@@ -1107,7 +1176,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
       if (result['success']) {
         setState(() {
           if (result['data'] is Map) {
-            _leaves = result['data']['leaves'] ?? [];
+            _leaves = result['data']['requests'] ?? result['data']['leaves'] ?? [];
             final pagination = result['data']['pagination'];
             if (pagination != null) {
               _totalPages = pagination['pages'] ?? 0;
@@ -1252,7 +1321,6 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
       ),
     );
   }
-
   Widget _detailRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1263,7 +1331,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
             width: 100,
             child: Text(
               '$label:',
-              style: TextStyle(
+              style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Colors.black,
               ),
@@ -1275,335 +1343,909 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     );
   }
 
-  Widget _buildLeaveCard(Map<String, dynamic> leave) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final start = DateFormat(
-      'MMM dd, yyyy',
-    ).format(DateTime.parse(leave['startDate']).toLocal());
-    final end = DateFormat(
-      'MMM dd, yyyy',
-    ).format(DateTime.parse(leave['endDate']).toLocal());
-    final appliedDate = DateFormat(
-      'MMM dd, yyyy',
-    ).format(DateTime.parse(leave['createdAt']));
-    final approver = leave['approvedBy'];
-    final rejector = leave['rejectedBy'];
-    final isRejectedLeave = leave['status'] == 'Rejected';
-    final approvedBy = approver != null
-        ? (approver is Map ? approver['name'] : 'System')
-        : '-';
-    final rejectedBy = rejector != null
-        ? (rejector is Map ? rejector['name'] : 'System')
-        : (isRejectedLeave && approver != null ? approvedBy : '-');
+  static String _trimBalanceNum(num n) {
+    if (n == n.roundToDouble()) return n.toInt().toString();
+    return n.toStringAsFixed(1);
+  }
 
-    Color statusColor = Colors.grey;
-    if (leave['status'] == 'Approved') {
-      statusColor = AppColors.success;
-    } else if (leave['status'] == 'Rejected') {
-      statusColor = AppColors.error;
-    } else if (leave['status'] == 'Pending') {
-      statusColor = AppColors.warning;
-    }
+  Widget _buildWebLeaveTopSection() {
+        int approvedCount = 0;
+        int rejectedCount = 0;
+        int pendingCount = 0;
+        for (final l in _leaves) {
+          final s = l['status']?.toString();
+          if (s == 'Approved') {
+            approvedCount++;
+          } else if (s == 'Rejected') {
+            rejectedCount++;
+          } else if (s == 'Pending') {
+            pendingCount++;
+          }
+        }
+        final totalRequests = _leaves.length;
 
-    return InkWell(
-      onTap: () => _showLeaveDetails(leave),
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0F000000),
-              blurRadius: 10,
-              offset: Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              // Icon
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceDark,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.calendar_today,
-                  color: Colors.white,
-                  size: 28,
-                ),
+        num totalAvailableLeaves = 0;
+        for (final b in _leaveBalances) {
+          if (b is Map) {
+            final total = (b['allocated'] as num? ?? 0) + (b['carryForwardBalance'] as num? ?? 0);
+            final used = (b['takenCount'] as num? ?? b['used'] as num? ?? 0);
+            final avail = b['remaining'] as num? ?? b['availableBalance'] as num? ?? (total > used ? total - used : 0);
+            totalAvailableLeaves += avail;
+          }
+        }
+
+        return Column(
+          children: [
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFF1F5F9)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x08000000),
+                    blurRadius: 10,
+                    offset: Offset(0, 2),
+                  ),
+                ],
               ),
-              const SizedBox(width: 16),
-              // Content
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Leave Type and Status
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            leave['leaveType'] ?? 'Leave',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(7),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFFBEB),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                Icons.calendar_month_outlined,
+                                color: Color(0xFFEFAA1F),
+                                size: 18,
+                              ),
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Leave Entitlements & Balances',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: Color(0xFF0F172A),
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    'leaves',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF94A3B8),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFFFDE68A)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'Available: ',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF92400E),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFEFAA1F),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Text(
+                                _trimBalanceNum(totalAvailableLeaves),
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    decoration: const BoxDecoration(
+                      border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+                    ),
+                    child: Row(
+                      children: const [
+                        Expanded(
+                          flex: 4,
+                          child: Text(
+                            'TYPE',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF94A3B8),
+                              letterSpacing: 0.5,
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
+                        Expanded(
+                          flex: 2,
                           child: Text(
-                            leave['status'] ?? '',
+                            'ALLOCATED',
+                            textAlign: TextAlign.center,
                             style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: statusColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF94A3B8),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            'USED',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF94A3B8),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            'AVAILABLE',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF94A3B8),
+                              letterSpacing: 0.5,
                             ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    // Details
-                    _buildCardDetailRow(
-                      Icons.date_range,
-                      'Dates',
-                      '$start - $end',
-                    ),
-                    const SizedBox(height: 4),
-                    _buildCardDetailRow(
-                      Icons.event,
-                      'Days',
-                      _isHalfDayLeaveRecord(leave)
-                          ? '${leave['days']} (${_halfDaySessionLabel(leave)})'
-                          : '${leave['days']}',
-                    ),
-                    const SizedBox(height: 4),
-                    _buildCardDetailRow(
-                      Icons.access_time,
-                      'Applied',
-                      appliedDate,
-                    ),
-                    if (isRejectedLeave && rejectedBy != '-') ...[
-                      const SizedBox(height: 4),
-                      _buildCardDetailRow(
-                        Icons.person_off_outlined,
-                        'Rejected By',
-                        rejectedBy,
+                  ),
+                  if (_leaveBalances.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: Text(
+                          'No leave balances found',
+                          style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+                        ),
                       ),
-                    ] else if (!isRejectedLeave && approvedBy != '-') ...[
-                      const SizedBox(height: 4),
-                      _buildCardDetailRow(
-                        Icons.person,
-                        'Approved By',
-                        approvedBy,
+                    )
+                  else
+                    ..._leaveBalances.map((b) {
+                      final name = (b['leaveType'] ?? b['name'] ?? 'Leave').toString();
+                      final initial = name.isNotEmpty ? name[0].toUpperCase() : 'L';
+                      final total = (b['allocated'] as num? ?? 0) + (b['carryForwardBalance'] as num? ?? 0);
+                      final used = (b['takenCount'] as num? ?? b['used'] as num? ?? 0);
+                      final avail = b['remaining'] as num? ?? b['availableBalance'] as num? ?? (total > used ? total - used : 0);
+                      final isCasual = name.toLowerCase().contains('casual');
+                      final badgeBg = isCasual ? const Color(0xFFECFDF5) : const Color(0xFFFFFBEB);
+                      final badgeColor = isCasual ? const Color(0xFF047857) : const Color(0xFFD97706);
+
+                      return Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: const BoxDecoration(
+                          border: Border(bottom: BorderSide(color: Color(0xFFF8FAFC))),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 4,
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 22,
+                                    height: 22,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: badgeBg,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      initial,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w900,
+                                        color: badgeColor,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          name,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                            color: Color(0xFF1E293B),
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const Text(
+                                          'Paid • Carry Forward',
+                                          style: TextStyle(
+                                            fontSize: 9.5,
+                                            color: Color(0xFF94A3B8),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                _trimBalanceNum(total),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF1E293B),
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                _trimBalanceNum(used),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 3,
+                              child: Text(
+                                '${_trimBalanceNum(avail)} day(s)',
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFFEFAA1F),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                ],
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFF1F5F9)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x08000000),
+                    blurRadius: 10,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.mail_outline_rounded,
+                          color: Color(0xFFEFAA1F),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'Total Requests',
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Container(
+                        width: 58,
+                        height: 58,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: const Color(0xFFEFAA1F), width: 3),
+                          color: Colors.white,
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '$totalRequests',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFFEFAA1F),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Approved',
+                                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                ),
+                                Text(
+                                  '$approvedCount',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF10B981)),
+                                ),
+                              ],
+                            ),
+                            const Divider(height: 10, color: Color(0xFFF1F5F9)),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Rejected',
+                                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                ),
+                                Text(
+                                  '$rejectedCount',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFFF43F5E)),
+                                ),
+                              ],
+                            ),
+                            const Divider(height: 10, color: Color(0xFFF1F5F9)),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Pending',
+                                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                ),
+                                Text(
+                                  '$pendingCount',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFFEFAA1F)),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      '$totalRequests request(s) total',
+                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      }
+
+      Widget _buildControlBar() {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Leave Requests',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F172A),
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.all(3),
+                    child: Row(
+                      children: [
+                        InkWell(
+                          onTap: () => setState(() => _isTableView = false),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: !_isTableView ? Colors.white : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: !_isTableView
+                                  ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
+                                  : null,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.grid_view_rounded,
+                                  size: 14,
+                                  color: !_isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Cards',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        InkWell(
+                          onTap: () => setState(() => _isTableView = true),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: _isTableView ? Colors.white : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: _isTableView
+                                  ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
+                                  : null,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.table_rows_rounded,
+                                  size: 14,
+                                  color: _isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Table',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 38,
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search...',
+                          hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                          prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          filled: true,
+                          fillColor: Colors.white,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                          ),
+                        ),
+                        onChanged: (val) {
+                          if (_debounce?.isActive ?? false) _debounce!.cancel();
+                          _debounce = Timer(const Duration(milliseconds: 400), () {
+                            _fetchLeaves();
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    height: 38,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
+                        icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
+                        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                        items: _statusOptions
+                            .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                            .toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _selectedStatus = val);
+                            _fetchLeaves();
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }
+
+      Widget _buildLeaveCard(Map<String, dynamic> leave) {
+        final start = DateFormat('MMM dd, yyyy').format(DateTime.parse(leave['startDate']).toLocal());
+        final end = DateFormat('MMM dd, yyyy').format(DateTime.parse(leave['endDate']).toLocal());
+        final status = leave['status']?.toString() ?? 'Pending';
+        final isPending = status.toLowerCase() == 'pending';
+        final isApproved = status.toLowerCase() == 'approved';
+        final isRejected = status.toLowerCase() == 'rejected';
+
+        final Color statusBg = isApproved
+            ? const Color(0xFFECFDF5)
+            : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
+        final Color statusBorder = isApproved
+            ? const Color(0xFFA7F3D0)
+            : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
+        final Color statusText = isApproved
+            ? const Color(0xFF059669)
+            : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+
+        final leaveType = leave['leaveType']?.toString() ?? 'Leave';
+        final days = leave['days']?.toString() ?? '1';
+        final reason = leave['reason']?.toString() ?? '';
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFF1F5F9)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x08000000),
+                blurRadius: 8,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => _showLeaveDetails(leave),
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.all(14.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 28,
+                                height: 28,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFFBEB),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.calendar_today_outlined,
+                                  size: 15,
+                                  color: Color(0xFFEFAA1F),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _isHalfDayLeaveRecord(leave) ? '$leaveType (Half Day)' : leaveType,
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: statusBg,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: statusBorder),
+                          ),
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: statusText,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 18, color: Color(0xFFF1F5F9)),
+                    Row(
+                      children: [
+                        const Icon(Icons.date_range_outlined, size: 14, color: Color(0xFF94A3B8)),
+                        const SizedBox(width: 6),
+                        Text(
+                          '$start ➔ $end',
+                          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '$days Day(s)',
+                            style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF475569)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (reason.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Reason: $reason',
+                        style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                    if (isPending) ...[
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _cancelLeave(leave),
+                          icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
+                          label: const Text(
+                            'Cancel',
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFFFECACA)),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            minimumSize: Size.zero,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
                       ),
                     ],
                   ],
                 ),
               ),
-            ],
+            ),
           ),
-        ),
-      ),
-    );
-  }
+        );
+      }
 
-  Widget _buildCardDetailRow(IconData icon, String label, String value) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
-        const SizedBox(width: 6),
-        Text(
-          '$label: ',
-          style: TextStyle(
-            fontSize: 12,
-            color: colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBalanceCard(dynamic balance) {
-    final colorScheme = Theme.of(context).colorScheme;
+  Widget _buildLeaveTableView() {
     return Container(
-      width: 140, // Slightly wider for longer text
-      margin: const EdgeInsets.only(right: 12),
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 8,
-      ), // Reduced vertical padding
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.divider),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x0F000000),
-            blurRadius: 10,
-            offset: Offset(0, 3),
+            color: Color(0x08000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
           ),
         ],
       ),
-      child: _buildBalanceCardBody(balance, colorScheme),
-    );
-  }
-
-  /// Card content. When the assigned leave template configures an allocation for
-  /// this type (`allocated` present), show the remaining balance prominently with
-  /// the entitlement and usage breakdown. Otherwise (uncapped, e.g. Unpaid Leave),
-  /// fall back to showing days taken.
-  Widget _buildBalanceCardBody(dynamic balance, ColorScheme colorScheme) {
-    final num? allocated = balance is Map && balance['allocated'] is num
-        ? balance['allocated'] as num
-        : null;
-    final pending = _balancePendingCount(balance);
-
-    final header = Text(
-      balance['type'] ?? 'Leave',
-      style: TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.bold,
-        color: colorScheme.onSurfaceVariant,
-      ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
-
-    if (allocated == null) {
-      // Uncapped type — no template allocation to show.
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          header,
-          const SizedBox(height: 2),
-          Text(
-            _trimBalanceNum(balance['takenCount']),
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.primary,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+            headingTextStyle: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF94A3B8),
+              letterSpacing: 0.5,
             ),
-          ),
-          Text(
-            'Leaves Taken',
-            style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
-          ),
-          if (pending > 0) ...[
-            const SizedBox(height: 4),
-            Text(
-              '${_trimBalanceNum(balance['pendingCount'])} pending',
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-                color: AppColors.warning,
-              ),
+            dataTextStyle: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF1E293B),
             ),
-          ],
-        ],
-      );
-    }
-
-    // Prefer the backend-computed remaining; fall back to allocated − taken − pending.
-    final num remaining = balance['remaining'] is num
-        ? balance['remaining'] as num
-        : (allocated -
-                  ((balance['takenCount'] is num)
-                      ? balance['takenCount'] as num
-                      : 0) -
-                  pending)
-              .clamp(0, allocated);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        header,
-        const SizedBox(height: 2),
-        RichText(
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          text: TextSpan(
-            children: [
-              TextSpan(
-                text: _trimBalanceNum(remaining),
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
-                ),
-              ),
-              TextSpan(
-                text: ' / ${_trimBalanceNum(allocated)}',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
+            columns: const [
+              DataColumn(label: Text('LEAVE TYPE')),
+              DataColumn(label: Text('START DATE')),
+              DataColumn(label: Text('END DATE')),
+              DataColumn(label: Text('DAYS')),
+              DataColumn(label: Text('STATUS')),
+              DataColumn(label: Text('REASON')),
+              DataColumn(label: Text('ACTION')),
             ],
+            rows: _leaves.map((leave) {
+              final start = DateFormat('MMM dd, yyyy').format(DateTime.parse(leave['startDate']).toLocal());
+              final end = DateFormat('MMM dd, yyyy').format(DateTime.parse(leave['endDate']).toLocal());
+              final status = leave['status']?.toString() ?? 'Pending';
+              final isPending = status.toLowerCase() == 'pending';
+              final isApproved = status.toLowerCase() == 'approved';
+              final isRejected = status.toLowerCase() == 'rejected';
+
+              final Color statusBg = isApproved
+                  ? const Color(0xFFECFDF5)
+                  : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
+              final Color statusBorder = isApproved
+                  ? const Color(0xFFA7F3D0)
+                  : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
+              final Color statusText = isApproved
+                  ? const Color(0xFF059669)
+                  : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+
+              final leaveType = leave['leaveType']?.toString() ?? 'Leave';
+              final days = leave['days']?.toString() ?? '1';
+              final reason = leave['reason']?.toString() ?? '-';
+
+              return DataRow(
+                cells: [
+                  DataCell(
+                    Text(
+                      _isHalfDayLeaveRecord(leave) ? '$leaveType (Half Day)' : leaveType,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  DataCell(Text(start)),
+                  DataCell(Text(end)),
+                  DataCell(Text(days, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: statusBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: statusBorder),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: statusText,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: Text(reason, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                  DataCell(
+                    isPending
+                        ? OutlinedButton(
+                            onPressed: () => _cancelLeave(leave),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFFFECACA)),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              minimumSize: Size.zero,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.cancel_outlined, size: 12, color: Color(0xFFDC2626)),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Cancel',
+                                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                ),
+                              ],
+                            ),
+                          )
+                        : const Text('-', style: TextStyle(color: Color(0xFF94A3B8))),
+                  ),
+                ],
+              );
+            }).toList(),
           ),
         ),
-        Text(
-          'Available',
-          style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          '${_trimBalanceNum(balance['takenCount'])} taken'
-          '${pending > 0 ? ' • ${_trimBalanceNum(balance['pendingCount'])} pending' : ''}',
-          style: TextStyle(
-            fontSize: 9,
-            fontWeight: FontWeight.w600,
-            color: pending > 0 ? AppColors.warning : colorScheme.onSurfaceVariant,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
+      ),
     );
-  }
-
-  /// Pending leave days for this type (0 if absent). Per-user value from the DB.
-  double _balancePendingCount(dynamic balance) {
-    final v = balance is Map ? balance['pendingCount'] : null;
-    return v is num ? v.toDouble() : 0.0;
-  }
-
-  /// Trim a numeric count for display: "2" not "2.0", "0.5" kept as-is.
-  String _trimBalanceNum(dynamic v) {
-    final n = v is num ? v.toDouble() : 0.0;
-    if (n == n.roundToDouble()) return n.toInt().toString();
-    return n.toString();
   }
 
   @override
@@ -1620,184 +2262,63 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                // Leave Balance Summary
-                if (!_isLoadingBalances && _leaveBalances.isNotEmpty)
-                  Container(
-                    height: 110, // Increased from 100
-                    margin: const EdgeInsets.only(top: 12, bottom: 4),
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _leaveBalances.length,
-                      itemBuilder: (context, index) {
-                        final balance = _leaveBalances[index];
-                        return _buildBalanceCard(balance);
-                      },
-                    ),
-                  ),
-                // Controls Column
-                if (_showFilters)
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search Leave...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                        color: AppColors.primary,
-                        width: 2,
-                      ),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 0,
-                    ),
-                  ),
-                  onChanged: (val) {
-                    if (_debounce?.isActive ?? false) _debounce!.cancel();
-                    _debounce = Timer(const Duration(milliseconds: 500), () {
-                      _fetchLeaves();
-                    });
-                  },
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _selectedStatus,
-                            isExpanded: true,
-                            items: _statusOptions
-                                .map(
-                                  (e) => DropdownMenuItem(
-                                    value: e,
-                                    child: Text(e),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (val) {
-                              if (val != null) {
-                                setState(() => _selectedStatus = val);
-                                _fetchLeaves();
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    InkWell(
-                      onTap: _pickDate,
-                      child: Container(
-                        height: 48,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.calendar_today,
-                              color: Colors.grey[600],
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _startDate == null || _endDate == null
-                                  ? 'Select date'
-                                  : _isSameCalendarDay(_startDate!, _endDate!)
-                                  ? DateFormat(
-                                      'MMM dd, yyyy',
-                                    ).format(_startDate!)
-                                  : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
-                              style: TextStyle(color: Colors.black),
-                            ),
-                            if (_startDate != null && _endDate != null)
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 16),
-                                onPressed: _clearDateFilter,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+                // Top Balances & Summary Section
+                _buildWebLeaveTopSection(),
 
-                // List Body — loader / empty / items scroll with the header.
+                // Search & Filter & View Mode Switcher
+                _buildControlBar(),
+
+                // Body: Loader / Empty / Cards / Table
                 if (_isLoading)
                   SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.5,
+                    height: MediaQuery.of(context).size.height * 0.35,
                     child: const Center(child: AppTabLoader()),
                   )
                 else if (_leaves.isEmpty)
                   SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.5,
+                    height: MediaQuery.of(context).size.height * 0.35,
                     child: Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryLight,
+                            padding: const EdgeInsets.all(18),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFFFFBEB),
                               shape: BoxShape.circle,
                             ),
-                            child: Icon(
+                            child: const Icon(
                               Icons.calendar_today_outlined,
-                              size: 44,
-                              color: AppColors.primary,
+                              size: 40,
+                              color: Color(0xFFEFAA1F),
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          Text(
+                          const SizedBox(height: 14),
+                          const Text(
                             'No leave requests found',
-                            style: AppTextStyles.headingSmall.copyWith(
-                              color: AppColors.textSecondary,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF64748B),
                             ),
                           ),
                         ],
                       ),
                     ),
                   )
+                else if (_isTableView)
+                  _buildLeaveTableView()
                 else
                   Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                     child: Column(
                       children: [
                         for (int i = 0; i < _leaves.length; i++)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 12.0),
-                            child: FadeSlideIn(
-                              delay: Duration(
-                                milliseconds: (i * 45).clamp(0, 270),
-                              ),
-                              child: _buildLeaveCard(_leaves[i]),
+                          FadeSlideIn(
+                            delay: Duration(
+                              milliseconds: (i * 40).clamp(0, 240),
                             ),
+                            child: _buildLeaveCard(_leaves[i]),
                           ),
                       ],
                     ),
@@ -1807,8 +2328,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
           ),
         ),
 
-        // Bottom action bar: page numbers (only when multi-page) on the left
-        // and the Apply Leave button on the right (pinned footer).
+        // Bottom action bar: page numbers & Apply Leave button
         _PaginationBar(
           currentPage: _currentPage,
           totalPages: _totalPages,
@@ -1826,6 +2346,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
 
 class ApplyLeaveDialog extends StatefulWidget {
   final VoidCallback onSuccess;
+
   const ApplyLeaveDialog({super.key, required this.onSuccess});
 
   @override
@@ -1836,1373 +2357,1164 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
   final _formKey = GlobalKey<FormState>();
   final RequestService _requestService = RequestService();
   final AuthService _authService = AuthService();
-  final AttendanceService _attendanceService = AttendanceService();
 
-  String? _leaveType;
-  // Leave duration: Full Day / First Half / Second Half. Half-day applies to ANY
-  // leave type and is only offered when the staff's shift enables it
-  // (_halfDayEnabled).
-  _LeaveDuration _duration = _LeaveDuration.full;
-  bool _halfDayEnabled = false;
-  List<dynamic> _allowedTypes = [];
-  // Employee gender (e.g. "Male"/"Female"), used to gate Maternity/Paternity
-  // leave. Empty when unknown — in that case no gender restriction is applied.
-  String _gender = '';
+  List<Map<String, dynamic>> _leaveTypeOptions = [];
+  Map<String, dynamic>? _assignedTemplate;
+  String? _selectedLeaveTypeName;
+  bool _isHalfDay = false;
+  String _halfDaySession = '1st Half'; // '1st Half' | '2nd Half'
   DateTime? _startDate;
   DateTime? _endDate;
-  bool _isOneDay = true;
   final TextEditingController _reasonController = TextEditingController();
-  bool _isSubmitting = false;
+  String? _errorMessage;
   bool _isLoadingTypes = true;
-  double _totalAllowed = 0.0;
-  double _usedLeaveDays = 0.0;
-  double _pendingLeaveDays = 0.0;
-  // Per-type used/pending days for the balance month, keyed by leave-type match
-  // key (see _leaveTypeKey). Each leave type draws down its OWN monthly
-  // allocation, so balance/entitlement are scoped to the selected type — not a
-  // shared pool (mirrors the backend getAvailableLeavePoolForType).
-  Map<String, double> _usedByType = {};
-  Map<String, double> _pendingByType = {};
-  HolidayOffConfig _offConfig = HolidayOffConfig.empty;
-  bool _showLimitWarning = false;
-  String _limitWarningMsg = '';
-  // Today's shift start time ("HH:mm", 24h). Used with _shiftEndTime to derive
-  // the shift mid-point that splits the first and second half of the day. Falls
-  // back to the codebase-wide default shift start when the template is unknown.
-  String _shiftStartTime = '09:30';
-  // Today's shift end time ("HH:mm", 24h). Once this passes, the working day is
-  // over and same-day leave no longer makes sense — today gets blocked. Falls
-  // back to the codebase-wide default shift end when the template is unknown.
-  String _shiftEndTime = '18:30';
+  bool _isSubmitting = false;
 
-  /// True when the selected duration is a half-day (First or Second Half).
-  bool get _isHalf => _duration != _LeaveDuration.full;
-
-  /// Backend session value for the selected half-day: '1' (first) / '2' (second),
-  /// or null for a full-day leave.
-  String? get _session => _duration == _LeaveDuration.firstHalf
-      ? '1'
-      : _duration == _LeaveDuration.secondHalf
-          ? '2'
-          : null;
+  List<Map<String, dynamic>> _holidays = [];
+  List<dynamic> _existingRequests = [];
 
   @override
   void initState() {
     super.initState();
-    _fetchLeaveTypes();
-    _fetchLeaveBalance();
-    _loadOffConfig();
-    _loadShiftCutoff();
-  }
-
-  Future<void> _loadOffConfig() async {
-    final config = await loadHolidayOffConfig();
-    if (mounted) setState(() => _offConfig = config);
-  }
-
-  /// Loads today's shift end time so same-day leave can be blocked once the
-  /// working day is over. Best-effort: keeps the default end on any failure.
-  Future<void> _loadShiftCutoff() async {
-    try {
-      final now = DateTime.now();
-      final dateStr =
-          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      final att = await _attendanceService.getAttendanceByDate(dateStr);
-      final body = att['data'] as Map<String, dynamic>?;
-      final template = body?['template'] as Map?;
-      final start = template?['shiftStartTime']?.toString().trim();
-      final end = template?['shiftEndTime']?.toString().trim();
-      if (!mounted) return;
-      setState(() {
-        if (start != null && start.isNotEmpty) _shiftStartTime = start;
-        if (end != null && end.isNotEmpty) _shiftEndTime = end;
-      });
-    } catch (_) {
-      // Best-effort; keep the default shift end.
-    }
-  }
-
-  /// Parses an "HH:mm" string into today's DateTime, falling back to
-  /// [defH]:[defM] when the value is missing or malformed.
-  DateTime _timeToday(String hhmm, {required int defH, required int defM}) {
-    final now = DateTime.now();
-    var h = defH;
-    var m = defM;
-    final parts = hhmm.split(':');
-    if (parts.length >= 2) {
-      h = int.tryParse(parts[0].trim()) ?? h;
-      m = int.tryParse(parts[1].trim()) ?? m;
-    }
-    return DateTime(now.year, now.month, now.day, h, m);
-  }
-
-  /// Today's same-day leave cutoff: today's date at the shift end time. After
-  /// this instant the working day is over, so today can no longer be chosen.
-  DateTime _todayCutoff() =>
-      _timeToday(_shiftEndTime, defH: 18, defM: 30);
-
-  /// Today's shift mid-point — the instant that splits the first half (shift
-  /// start → mid) from the second half (mid → shift end). Once it passes, the
-  /// first half of today's shift is over.
-  DateTime _shiftMidpoint() {
-    final start = _timeToday(_shiftStartTime, defH: 9, defM: 30);
-    final end = _todayCutoff();
-    // Guard against a malformed window (end ≤ start): fall back to start so the
-    // mid-point never lands before the shift begins.
-    if (!end.isAfter(start)) return start;
-    return start.add(Duration(
-      milliseconds: end.difference(start).inMilliseconds ~/ 2,
-    ));
-  }
-
-  /// True once today's working day has ended — same-day leave is no longer
-  /// allowed and the leave must start tomorrow or later.
-  bool get _isTodayClosed => DateTime.now().isAfter(_todayCutoff());
-
-  /// True when [day] is today.
-  bool _isToday(DateTime day) {
-    final now = DateTime.now();
-    return day.year == now.year &&
-        day.month == now.month &&
-        day.day == now.day;
-  }
-
-  /// True when [day] is today and the working day has already ended.
-  bool _isClosedToday(DateTime day) => _isToday(day) && _isTodayClosed;
-
-  /// True when [day] is today and the shift mid-point has already passed — the
-  /// first half of the shift is over, so First-Half leave can no longer be
-  /// applied for today (time-based on the shift window).
-  bool _isFirstHalfClosed(DateTime day) =>
-      _isToday(day) && DateTime.now().isAfter(_shiftMidpoint());
-
-  /// True when [day] is today and the shift has ended — the second half is over,
-  /// so Second-Half leave can no longer be applied for today. (Once the whole
-  /// day is closed the second half is necessarily over.)
-  bool _isSecondHalfClosed(DateTime day) => _isClosedToday(day);
-
-  /// True when the given half-day [duration] can no longer be applied for [day]
-  /// because that half of the shift has already elapsed today.
-  bool _isDurationClosed(_LeaveDuration duration, DateTime day) {
-    if (duration == _LeaveDuration.firstHalf) return _isFirstHalfClosed(day);
-    if (duration == _LeaveDuration.secondHalf) return _isSecondHalfClosed(day);
-    return false;
+    _loadInitialData();
   }
 
   @override
   void dispose() {
-    SnackBarUtils.dismiss();
     _reasonController.dispose();
     super.dispose();
   }
 
-  /// The month the leave balance is scoped to: the selected leave's start month,
-  /// or the current month before a date is picked. The template allocation is a
-  /// monthly quota that resets each month, so a next-month application must be
-  /// validated against next month's fresh quota — not this month's usage.
-  DateTime get _balanceMonth => _startDate ?? DateTime.now();
-
-  Future<void> _fetchLeaveBalance() async {
-    final month = _balanceMonth;
-    final result = await _requestService.getLeaveBalance(forMonth: month);
-    if (!mounted || result['success'] != true) return;
-
-    final total = (result['totalAllowed'] as num?)?.toDouble() ?? 0.0;
-
-    // Always load the employee's own leave records so we can show per-type
-    // allocated/used/pending (the records endpoint works on every backend).
-    final usage = await _computeLeaveUsageFromRecords(forMonth: month);
-
-    // Prefer backend-computed overall totals when present; otherwise use the
-    // totals derived from the records.
-    final beUsed = (result['usedDays'] as num?)?.toDouble();
-    final bePending = (result['pendingLeaveDays'] as num?)?.toDouble();
-
-    if (!mounted) return;
-    setState(() {
-      _totalAllowed = total;
-      _usedLeaveDays = beUsed ?? usage.$1;
-      _pendingLeaveDays = bePending ?? usage.$2;
-      // Now that per-type usage is known, drop any capped type that has become
-      // fully consumed for this month and keep the selection on a valid type.
-      _reconcileSelectedType();
-    });
-  }
-
-  /// Normalizes a leave-type name to a match key (mirrors the backend):
-  /// lowercase, drop the word "leave", strip spaces. "Casual Leave" -> "casual".
-  String _leaveTypeKey(String? s) {
-    final t = (s ?? '').toLowerCase().trim();
-    return t.replaceAll(RegExp(r'\bleave\b'), '').replaceAll(RegExp(r'\s+'), '');
-  }
-
-  /// Allocated days for [type] from the staff's leave template (null = no fixed
-  /// allocation, e.g. Unpaid Leave). Sourced from getLeaveTypesForApply.
-  ///
-  /// Half Day is special: the backend sends it as `{type:'Half Day', days:0.5}`
-  /// where `days` is the per-request duration of a half-day leave, NOT an annual
-  /// allocation. Half Day draws from the same shared pool as every other type
-  /// (see backend getAvailableLeavePool), so treat it as having no specific
-  /// allocation and let the entitlement card fall back to the overall pool
-  /// total. Returning 0.5 here would mislabel the pool as "0.5 allocated days".
-  double? _allocatedForType(String? type) {
-    if (_isHalfDayLeave(type)) return null;
-    final key = _leaveTypeKey(type);
-    for (final e in _allowedTypes) {
-      if (e is Map && _leaveTypeKey(e['type'] as String?) == key) {
-        final d = e['days'];
-        return d is num ? d.toDouble() : null;
-      }
-    }
-    return null;
-  }
-
-  /// Loads this employee's Approved (used) and Pending leave days for the target
-  /// month ([forMonth], defaulting to the current month) from their own records,
-  /// returning the overall (usedDays, pendingDays). The template allocation is a
-  /// monthly quota that resets each month, so usage is scoped to that month to
-  /// match the backend balance (see getLeaveBalance). Only a fallback — the
-  /// backend normally supplies these totals directly.
-  Future<(double, double)> _computeLeaveUsageFromRecords({
-    DateTime? forMonth,
-  }) async {
-    final base = forMonth ?? DateTime.now();
-    final monthStart = DateTime(base.year, base.month, 1);
-    final monthEnd = DateTime(base.year, base.month + 1, 0, 23, 59, 59);
-
-    double daysOf(dynamic l) {
-      final d = (l is Map) ? l['days'] : null;
-      return d is num ? d.toDouble() : double.tryParse(d?.toString() ?? '') ?? 0;
-    }
-
-    List<dynamic> listOf(Map<String, dynamic> res) {
-      final data = res['data'];
-      return data is Map
-          ? (data['leaves'] as List? ?? [])
-          : (data is List ? data : []);
-    }
-
-    double used = 0;
-    double pending = 0;
-    // Per-type tallies for the month so the entitlement/balance can be scoped to
-    // the selected leave type (each type has its own monthly allocation).
-    final usedByType = <String, double>{};
-    final pendingByType = <String, double>{};
-    String typeKeyOf(dynamic l) =>
-        _leaveTypeKey((l is Map ? l['leaveType'] : null)?.toString());
-    try {
-      final approved = await _requestService.getLeaveRequests(
-        status: 'Approved',
-        startDate: monthStart,
-        endDate: monthEnd,
-        page: 1,
-        limit: 500,
-      );
-      if (approved['success'] == true) {
-        for (final l in listOf(approved)) {
-          final d = daysOf(l);
-          used += d;
-          usedByType[typeKeyOf(l)] = (usedByType[typeKeyOf(l)] ?? 0) + d;
-        }
-      }
-
-      // Pending requests overlapping the current month commit against this
-      // month's allocation (same monthly window as approved usage).
-      final pend = await _requestService.getLeaveRequests(
-        status: 'Pending',
-        startDate: monthStart,
-        endDate: monthEnd,
-        page: 1,
-        limit: 500,
-      );
-      if (pend['success'] == true) {
-        for (final l in listOf(pend)) {
-          final d = daysOf(l);
-          pending += d;
-          pendingByType[typeKeyOf(l)] = (pendingByType[typeKeyOf(l)] ?? 0) + d;
-        }
-      }
-    } catch (_) {
-      // Best-effort; leave totals at 0 on failure.
-    }
-    _usedByType = usedByType;
-    _pendingByType = pendingByType;
-    return (used, pending);
-  }
-
-  /// Approved days already taken for the selected leave type in the balance
-  /// month (0 when none / no type selected).
-  double get _usedForSelectedType => _usedByType[_leaveTypeKey(_leaveType)] ?? 0.0;
-
-  /// Still-pending days for the selected leave type in the balance month.
-  double get _pendingForSelectedType =>
-      _pendingByType[_leaveTypeKey(_leaveType)] ?? 0.0;
-
-  /// Gender-restricted leave types: Maternity is female-only, Paternity is
-  /// male-only. Returns false only when the employee's gender is positively
-  /// known to be the wrong one; an unknown/empty gender is permissive so we
-  /// never wrongly block a legitimate applicant.
-  bool _isTypeAllowedForGender(String? type) {
-    final g = _gender.toLowerCase().trim();
-    final isFemale = g.startsWith('f');
-    final isMale = g.startsWith('m');
-    switch (_leaveTypeKey(type)) {
-      case 'maternity':
-        return !isMale; // female or unknown
-      case 'paternity':
-        return !isFemale; // male or unknown
-      default:
-        return true;
-    }
-  }
-
-  /// Loads the employee's gender from their profile so Maternity/Paternity
-  /// leave can be gated. Best-effort: leaves [_gender] empty on failure.
-  Future<void> _loadGender() async {
-    try {
-      final result = await _authService.getProfile();
-      if (result['success'] == true) {
-        final data = result['data'];
-        final staff = data is Map ? data['staffData'] : null;
-        final g = staff is Map ? staff['gender'] : null;
-        _gender = g?.toString() ?? '';
-      }
-    } catch (_) {
-      // Best-effort; leave _gender empty (no restriction) on failure.
-    }
-  }
-
-  Future<void> _fetchLeaveTypes() async {
-    // Gender must be known before filtering the types so Maternity/Paternity
-    // are gated from the start (and the default selection is a valid type).
-    await _loadGender();
-    final result = await _requestService.getLeaveTypesForApply();
+  Future<void> _loadInitialData() async {
+    setState(() => _isLoadingTypes = true);
+    await Future.wait([
+      _fetchLeaveTypesAndBalances(),
+      _fetchHolidaysAndProfile(),
+      _fetchExistingRequests(),
+    ]);
     if (mounted) {
-      if (result['success']) {
-        // Half-day is a duration now, not a type — drop any legacy 'Half Day'
-        // entry the backend might still send, and gate Maternity/Paternity by
-        // gender.
-        final raw = List<dynamic>.from(result['data'] as List? ?? [])
-            .where((e) {
-              final type = e is Map ? e['type'] as String? : null;
-              if (_isHalfDayLeave(type)) return false;
-              return _isTypeAllowedForGender(type);
-            })
-            .toList();
-        setState(() {
-          _allowedTypes = raw;
-          // The shift gates half-day via halfDaySettings.enabled; the backend
-          // reports it so the form can offer First/Second Half on any type.
-          _halfDayEnabled = result['halfDayEnabled'] == true;
-          // Default to a type that still has balance (skip fully-consumed
-          // capped types). Balances may not have loaded yet, in which case
-          // capped types still read as available and are reconciled again once
-          // the balance arrives (see _fetchLeaveBalance).
-          _reconcileSelectedType();
-          _isLoadingTypes = false;
+      setState(() => _isLoadingTypes = false);
+    }
+  }
+
+  Future<void> _fetchLeaveTypesAndBalances() async {
+    try {
+      final res = await _requestService.getLeaveTypesForApply();
+      if (res['success'] == true) {
+        final list = List<dynamic>.from(res['data'] as List? ?? []);
+        final template = res['leaveTemplate'] as Map<String, dynamic>?;
+        if (template != null) {
+          _assignedTemplate = template;
+        }
+
+        final options = <Map<String, dynamic>>[];
+        for (final item in list) {
+          if (item is Map) {
+            final name = (item['name'] ?? item['type'] ?? '').toString().trim();
+            if (name.isEmpty || name.toLowerCase() == 'half day') continue;
+            final type = (item['type'] ?? 'paid').toString().toLowerCase();
+            final num? avail = item['availableBalance'] as num? ?? item['days'] as num?;
+            final num? alloc = item['allocated'] as num? ?? item['days'] as num?;
+            final num? used = item['used'] as num?;
+
+            options.add({
+              'label': name,
+              'value': name,
+              'badge': name.isNotEmpty ? name[0].toUpperCase() : 'L',
+              'badgeBg': type == 'paid'
+                  ? const Color(0xFFECFDF5)
+                  : (type == 'unpaid' ? const Color(0xFFFAF5FF) : const Color(0xFFFFFBEB)),
+              'badgeText': type == 'paid'
+                  ? const Color(0xFF059669)
+                  : (type == 'unpaid' ? const Color(0xFF9333EA) : const Color(0xFFD97706)),
+              'balance': avail?.toDouble() ?? 0.0,
+              'allocated': alloc?.toDouble(),
+              'used': used?.toDouble() ?? 0.0,
+              'isUnpaid': type == 'unpaid',
+              'isPredefinedUnpaid': false,
+              'subtext': '${avail ?? 0} day(s) available ($type)',
+            });
+          }
+        }
+
+        // Always add the standard Unpaid option as in Web App
+        options.add({
+          'label': 'Unpaid',
+          'value': 'Unpaid',
+          'badge': 'U',
+          'badgeBg': const Color(0xFFFAF5FF),
+          'badgeText': const Color(0xFF9333EA),
+          'balance': null,
+          'allocated': null,
+          'used': null,
+          'isUnpaid': true,
+          'isPredefinedUnpaid': true,
+          'subtext': 'Loss of Pay (Unpaid)',
         });
-      } else {
-        setState(() => _isLoadingTypes = false);
+
+        _leaveTypeOptions = options;
+        if (_leaveTypeOptions.isNotEmpty && _selectedLeaveTypeName == null) {
+          _selectedLeaveTypeName = _leaveTypeOptions.first['value'] as String;
+        }
       }
-    }
+    } catch (_) {}
   }
 
-  int get _days {
-    if (_startDate == null) return 0;
-    if (_isHalf) return 0; // 0.5 on backend
-    if (_isOneDay) return 1;
-    if (_endDate == null) return 1;
-    // Count only working days: week-offs and holidays (per the assigned template)
-    // that fall between the from/to dates are not deducted from the leave balance.
-    // Mirrors the backend, which recomputes the deduction from working days only.
-    var count = 0;
-    var d = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
-    final end = DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
-    while (!d.isAfter(end)) {
-      if (!_offConfig.isDisabled(d)) count++;
-      d = d.add(const Duration(days: 1));
-    }
-    return count;
+  Future<void> _fetchHolidaysAndProfile() async {
+    try {
+      final res = await _authService.getProfile();
+      if (res['success'] == true) {
+        final data = res['data'] as Map<String, dynamic>?;
+        final template = data?['holidayTemplate'] as Map<String, dynamic>? ??
+            data?['staffData']?['holidayTemplate'] as Map<String, dynamic>?;
+        final hols = template?['holidays'] as List? ?? [];
+        _holidays = hols.map((h) => Map<String, dynamic>.from(h as Map)).toList();
+      }
+    } catch (_) {}
   }
 
-  Future<void> _pickDate(bool isStart) async {
-    final today = DateTime(
-      DateTime.now().year,
-      DateTime.now().month,
-      DateTime.now().day,
+  Future<void> _fetchExistingRequests() async {
+    try {
+      final res = await _requestService.getLeaveRequests(page: 1, limit: 100);
+      if (res['success'] == true) {
+        if (res['data'] is Map) {
+          _existingRequests = res['data']['requests'] ?? [];
+        } else if (res['data'] is List) {
+          _existingRequests = res['data'];
+        }
+      }
+    } catch (_) {}
+  }
+
+  Map<String, dynamic>? get _selectedOption {
+    if (_selectedLeaveTypeName == null) return null;
+    return _leaveTypeOptions.firstWhere(
+      (o) => o['value'] == _selectedLeaveTypeName,
+      orElse: () => _leaveTypeOptions.isNotEmpty ? _leaveTypeOptions.first : {},
     );
-    // Once today's working day is over, the earliest selectable day is tomorrow.
-    final earliest = _isTodayClosed ? today.add(const Duration(days: 1)) : today;
-    final candidate = (isStart ? _startDate : _endDate) ?? earliest;
-    final initial = _offConfig.firstSelectableOnOrAfter(
-      candidate.isBefore(earliest) ? earliest : candidate,
-    );
-    final picked = await showDatePicker(
+  }
+
+  Future<void> _pickDateFor(bool isStart) async {
+    final DateTime initial = (isStart ? _startDate : _endDate) ?? DateTime.now();
+    final DateTime? picked = await _showWebStyledDatePicker(
       context: context,
       initialDate: initial,
-      firstDate: earliest,
-      lastDate: DateTime(2030, 12, 31),
-      selectableDayPredicate: (day) =>
-          !_offConfig.isDisabled(day) && !_isClosedToday(day),
+      firstDate: DateTime.now().subtract(const Duration(days: 30)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
     );
-    if (picked == null || !mounted) return;
-    // Picking today after the relevant half has elapsed makes the selected
-    // half-day invalid — fall back to Full Day and tell the user why.
-    final resetHalf =
-        isStart && _isHalf && _isDurationClosed(_duration, picked);
-    final resetMsg = resetHalf
-        ? (_duration == _LeaveDuration.firstHalf
-            ? 'The first half of today\'s shift is over — switched to Full Day. '
-                'Apply First-Half leave before the shift mid-point.'
-            : 'Today\'s shift has ended — switched to Full Day.')
-        : null;
-    setState(() {
-      _showLimitWarning = false;
-      if (resetHalf) _duration = _LeaveDuration.full;
-      if (isStart) {
-        _startDate = picked;
-        if (_isOneDay || _isHalf) {
-          _endDate = picked;
-        } else if (_endDate != null && _endDate!.isBefore(picked)) {
-          _endDate = picked;
-        }
-      } else {
-        _endDate = picked;
-        if (_startDate != null && picked.isBefore(_startDate!)) {
+
+    if (picked != null) {
+      setState(() {
+        _errorMessage = null;
+        if (_isHalfDay) {
           _startDate = picked;
-        }
-      }
-    });
-    if (resetMsg != null && mounted) {
-      SnackBarUtils.showSnackBar(context, resetMsg, isError: true);
-    }
-    // The chosen start date may fall in a different month than was last loaded;
-    // refresh the balance so the entitlement card and limit warning reflect that
-    // month's quota (usage resets monthly — see _balanceMonth).
-    if (isStart) unawaited(_fetchLeaveBalance());
-  }
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_leaveType == null || _leaveType!.isEmpty) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'No leave type with remaining balance is available to apply.',
-        isError: true,
-      );
-      return;
-    }
-    if (_startDate == null) {
-      SnackBarUtils.showSnackBar(context, 'Please select date');
-      return;
-    }
-    final today = DateTime(
-      DateTime.now().year,
-      DateTime.now().month,
-      DateTime.now().day,
-    );
-    if (_startDate!.isBefore(today)) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Cannot select past dates. Please select today or future dates.',
-        isError: true,
-      );
-      return;
-    }
-    // Same-day cutoff: once today's working day has ended, a leave that starts
-    // today no longer makes sense — require it to start tomorrow or later.
-    if (_isClosedToday(_startDate!)) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'The working day has already ended. You can apply leave from tomorrow onwards.',
-        isError: true,
-      );
-      return;
-    }
-    // Time-based half-day gate: once today's shift mid-point has passed the
-    // first half is over, and once the shift ends the second half is over — so
-    // a same-day half whose part of the shift has elapsed can't be applied.
-    if (_isHalf && _isDurationClosed(_duration, _startDate!)) {
-      SnackBarUtils.showSnackBar(
-        context,
-        _duration == _LeaveDuration.firstHalf
-            ? 'The first half of today\'s shift is over (mid-point '
-                '${_formatTime12h(_shiftMidpoint())} has passed). Apply '
-                'First-Half leave before the mid-point.'
-            : 'Today\'s shift has ended, so Second-Half leave can no longer '
-                'be applied. You can apply from tomorrow onwards.',
-        isError: true,
-      );
-      return;
-    }
-    final effectiveEnd = _isOneDay || _isHalf ? _startDate! : _endDate;
-    if (!_isOneDay &&
-        !_isHalf &&
-        (effectiveEnd == null || effectiveEnd.isBefore(today))) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'End date cannot be in the past.',
-        isError: true,
-      );
-      return;
-    }
-    if (!_isOneDay && _endDate != null && _endDate!.isBefore(_startDate!)) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'End date must be on or after start date.',
-        isError: true,
-      );
-      return;
-    }
-    if (_isHalf && !_isOneDay && _endDate != null && _endDate != _startDate) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Half-day leave allows only one date.',
-        isError: true,
-      );
-      return;
-    }
-    // Safety net: Maternity is female-only, Paternity is male-only. The
-    // dropdown already hides the mismatched type, but re-check on submit in
-    // case gender loaded late or the list was stale.
-    if (!_isTypeAllowedForGender(_leaveType)) {
-      final isMaternity = _leaveTypeKey(_leaveType) == 'maternity';
-      SnackBarUtils.showSnackBar(
-        context,
-        isMaternity
-            ? 'Maternity Leave is available only for female employees.'
-            : 'Paternity Leave is available only for male employees.',
-        isError: true,
-      );
-      return;
-    }
-
-    final daysValue = _isHalf ? 0.5 : _days;
-    final requestedDays = _isHalf ? 0.5 : _days.toDouble();
-    final rangeEnd = effectiveEnd ?? _startDate!;
-
-    // Unpaid Leave: no balance validation
-    final isUnpaidLeave =
-        _leaveType != null &&
-        _leaveType!.toLowerCase().replaceAll(RegExp(r'\s+'), '') ==
-            'unpaidleave';
-    if (!isUnpaidLeave) {
-      await _fetchLeaveBalance();
-      if (!mounted) return;
-      // Effective available = approved balance minus any still-pending requests.
-      final effectiveAvailable = _effectiveAvailableLeaves;
-      final pendingNote = _pendingLeaveDays > 0
-          ? ' (${_trimNum(_pendingLeaveDays)} day${_pendingLeaveDays != 1 ? "s" : ""} pending approval)'
-          : '';
-      if (effectiveAvailable <= 0) {
-        final msg =
-            'Leave balance exhausted$pendingNote. Requesting '
-            '${_trimNum(requestedDays)} day${requestedDays != 1 ? "s" : ""} '
-            'may result in a fine/salary deduction.';
-        setState(() {
-          _showLimitWarning = true;
-          _limitWarningMsg = msg;
-        });
-        unawaited(
-          FcmService.showLimitExceededLocalNotification(
-            type: 'leave',
-            message: msg,
-          ),
-        );
-        unawaited(
-          _requestService.notifyAdminLimitExceeded(
-            type: 'leave',
-            requested: requestedDays,
-            limit: 0,
-          ),
-        );
-        return;
-      }
-      if (effectiveAvailable == 0.5) {
-        if (!_isHalf) {
-          final msg =
-              'Only 0.5 days remaining$pendingNote. Requesting '
-              '${_trimNum(requestedDays)} day${requestedDays != 1 ? "s" : ""} '
-              'may result in a fine/salary deduction.';
-          setState(() {
-            _showLimitWarning = true;
-            _limitWarningMsg = msg;
-          });
-          unawaited(
-            FcmService.showLimitExceededLocalNotification(
-              type: 'leave',
-              message: msg,
-            ),
-          );
-          unawaited(
-            _requestService.notifyAdminLimitExceeded(
-              type: 'leave',
-              requested: requestedDays,
-              limit: 0.5,
-            ),
-          );
-          return;
-        }
-      } else if (requestedDays > effectiveAvailable) {
-        final excess = requestedDays - effectiveAvailable;
-        final msg =
-            'Insufficient balance$pendingNote. Requested ${_trimNum(requestedDays)} '
-            'day${requestedDays != 1 ? "s" : ""}, only '
-            '${_trimNum(effectiveAvailable)} available. '
-            '${_trimNum(excess)} excess day${excess != 1 ? "s" : ""} '
-            'may be deducted as a fine.';
-        setState(() {
-          _showLimitWarning = true;
-          _limitWarningMsg = msg;
-        });
-        unawaited(
-          FcmService.showLimitExceededLocalNotification(
-            type: 'leave',
-            message: msg,
-          ),
-        );
-        unawaited(
-          _requestService.notifyAdminLimitExceeded(
-            type: 'leave',
-            requested: requestedDays,
-            limit: effectiveAvailable,
-          ),
-        );
-        return;
-      }
-    }
-
-    // Backend checks "leave already applied" and returns a single error message.
-    // leaveType stays the real type (Casual/Sick/…); the half-day is conveyed via
-    // session + halfDaySession so the backend records it as 0.5 of that type.
-    final payload = {
-      'leaveType': _leaveType,
-      'startDate': _startDate!.toIso8601String(),
-      'endDate': rangeEnd.toIso8601String(),
-      'days': daysValue,
-      'reason': _reasonController.text,
-      'session': _isHalf ? _session : null,
-      if (_isHalf)
-        'halfDaySession':
-            _session == '1' ? 'First Half Day' : 'Second Half Day',
-    };
-
-    setState(() => _isSubmitting = true);
-    final result = await _requestService.applyLeave(payload);
-    setState(() => _isSubmitting = false);
-
-    if (mounted) {
-      if (result['success']) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!context.mounted) return;
-          final overlay = Navigator.of(context, rootNavigator: true).overlay;
-          Navigator.of(context).pop();
-          widget.onSuccess();
-          if (overlay != null && overlay.context.mounted) {
-            showRequestSubmittedSuccessDialog(overlay.context);
+          _endDate = picked;
+        } else if (isStart) {
+          _startDate = picked;
+          if (_endDate == null || _endDate!.isBefore(picked)) {
+            _endDate = picked;
           }
-        });
-      } else {
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            result['message']?.toString(),
-            fallback: 'Failed to submit leave',
-          ),
-          isError: true,
-        );
-      }
+        } else {
+          _endDate = picked;
+          if (_startDate == null || picked.isBefore(_startDate!)) {
+            _startDate = picked;
+          }
+        }
+      });
     }
   }
 
-  /// Shows an integer when whole (14), else one decimal (13.5).
-  String _trimNum(num v) {
-    final d = v.toDouble();
-    return d == d.roundToDouble() ? d.toInt().toString() : d.toStringAsFixed(1);
-  }
+  Future<DateTime?> _showWebStyledDatePicker({
+    required BuildContext context,
+    required DateTime initialDate,
+    required DateTime firstDate,
+    required DateTime lastDate,
+  }) async {
+    DateTime navDate = DateTime(initialDate.year, initialDate.month, 1);
+    DateTime? selectedDate = initialDate;
 
-  bool get _isUnpaidLeave =>
-      _leaveType != null &&
-      _leaveType!.toLowerCase().replaceAll(RegExp(r'\s+'), '') == 'unpaidleave';
+    return showDialog<DateTime>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            final daysInMonth = DateTime(navDate.year, navDate.month + 1, 0).day;
+            final firstWeekday = DateTime(navDate.year, navDate.month, 1).weekday % 7; // 0=Sun, 1=Mon...
 
-  /// Balance available for the selected leave type: its own remaining after
-  /// approved + pending days of that same type (see _selectedTypeRemaining).
-  /// Each type has its own monthly allocation, so this is NOT a shared pool.
-  double get _effectiveAvailableLeaves => _selectedTypeRemaining;
-
-  /// Combined allocated days across ALL leave types in the staff's template
-  /// (sum of every type's `days`). Half Day is excluded (its 0.5 is a
-  /// per-request duration, not an allocation) and types without a fixed
-  /// allocation (e.g. Unpaid Leave, days == null) contribute nothing.
-  double get _totalAllocatedAllTypes {
-    double sum = 0;
-    for (final e in _allowedTypes) {
-      if (e is! Map) continue;
-      final type = e['type'] as String?;
-      if (_isHalfDayLeave(type)) continue;
-      final d = e['days'];
-      if (d is num) sum += d.toDouble();
-    }
-    return sum;
-  }
-
-  /// Remaining balance for the selected leave type this month: its own
-  /// allocation minus approved (taken) and pending days of that SAME type.
-  /// Types without a fixed allocation (e.g. Unpaid Leave, or a configured type
-  /// carrying no `days`) fall back to the overall pool remaining. Clamped >= 0.
-  double get _selectedTypeRemaining => _remainingForType(_leaveType);
-
-  /// Remaining balance for [type] this month: its own allocation minus approved
-  /// (taken) and pending days of that SAME type. Types without a fixed
-  /// allocation (e.g. Unpaid Leave) fall back to the overall pool remaining.
-  /// Clamped >= 0.
-  double _remainingForType(String? type) {
-    final allocated = _allocatedForType(type);
-    if (allocated == null) {
-      final pool = _totalAllowed - _usedLeaveDays - _pendingLeaveDays;
-      return pool > 0 ? pool : 0.0;
-    }
-    final key = _leaveTypeKey(type);
-    final rem =
-        allocated - (_usedByType[key] ?? 0.0) - (_pendingByType[key] ?? 0.0);
-    return rem > 0 ? rem : 0.0;
-  }
-
-  /// Leave types the member can pick right now. A capped type whose monthly
-  /// balance is fully consumed (approved + pending >= its allocation) is dropped
-  /// so it can't be selected with no balance left. Uncapped types (e.g. Unpaid
-  /// Leave, which carry no fixed allocation) always remain selectable.
-  List<dynamic> get _selectableTypes => _allowedTypes.where((e) {
-        final type = e is Map ? e['type'] as String? : null;
-        if (_allocatedForType(type) == null) return true; // uncapped
-        return _remainingForType(type) > 0;
-      }).toList();
-
-  /// Keeps [_leaveType] pointing at a still-selectable type after the types or
-  /// balances change; falls back to the first selectable type (or null when the
-  /// member has exhausted every capped type). Call inside setState.
-  void _reconcileSelectedType() {
-    final values = _selectableTypes
-        .map((e) => e is Map ? e['type'] as String? : null)
-        .toList();
-    if (_leaveType != null && values.contains(_leaveType)) return;
-    _leaveType = values.isNotEmpty ? values.first : null;
-  }
-
-  Widget _buildLimitWarningBanner(String message) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.orange.shade50,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.orange.shade400),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            Icons.warning_amber_rounded,
-            size: 20,
-            color: Colors.orange.shade700,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Leave Limit Exceeded',
-                  style: TextStyle(
-                    color: Colors.orange.shade800,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  message,
-                  style: TextStyle(
-                    color: Colors.orange.shade800,
-                    fontSize: 12.5,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Your admin has been notified.',
-                  style: TextStyle(
-                    color: Colors.orange.shade700,
-                    fontSize: 11.5,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Uppercase caption above each section (Figma "New Request").
-  Widget _sectionLabel(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        text.toUpperCase(),
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.6,
-          color: AppColors.textPrimary,
-        ),
-      ),
-    );
-  }
-
-  /// Amber "Leave Entitlement" hero - scoped to the SELECTED leave type: the
-  /// headline shows that type's remaining balance (allocation minus taken and
-  /// pending), with the allocated/taken/pending breakdown in the sub-line. A
-  /// type with no fixed allocation (e.g. Unpaid Leave) falls back to the overall
-  /// pool.
-  Widget _buildEntitlementCard() {
-    final double? allocatedType = _allocatedForType(_leaveType);
-    final bool hasFixed = allocatedType != null && allocatedType > 0;
-    // Allocation, used and pending are per-selected-type when the type carries a
-    // fixed allocation; otherwise fall back to the combined pool / overall usage.
-    final double total = hasFixed
-        ? allocatedType
-        : (_totalAllocatedAllTypes > 0 ? _totalAllocatedAllTypes : _totalAllowed);
-    final double usedType = hasFixed ? _usedForSelectedType : _usedLeaveDays;
-    final double pendingType =
-        hasFixed ? _pendingForSelectedType : _pendingLeaveDays;
-    // Headline = remaining for this type (allocation minus taken and pending).
-    final double entitlement = _selectedTypeRemaining;
-    final usedClamped = usedType > total ? total : usedType;
-    final progress = total > 0 ? (usedClamped / total).clamp(0.0, 1.0) : 0.0;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 14,
-            offset: Offset(0, 5),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -16,
-              top: -24,
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24),
               child: Container(
-                width: 80,
-                height: 80,
+                width: 320,
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryLight,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'LEAVE ENTITLEMENT',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.6,
-                    color: AppColors.textCaption,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _isUnpaidLeave
-                      ? 'Unpaid Leave'
-                      : '${_trimNum(entitlement)} Days Remaining',
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: LinearProgressIndicator(
-                    value: _isUnpaidLeave ? 0 : progress,
-                    minHeight: 8,
-                    backgroundColor: AppColors.divider,
-                    valueColor: AlwaysStoppedAnimation(AppColors.primary),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _isUnpaidLeave
-                      ? 'No balance limit applies to unpaid leave.'
-                      : pendingType > 0
-                      ? 'Used ${_trimNum(usedClamped)} of ${_trimNum(total)} allocated days · ${_trimNum(pendingType)} pending approval.'
-                      : 'You have used ${_trimNum(usedClamped)} of ${_trimNum(total)} allocated days.',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Grey filled Leave Type dropdown card (Figma).
-  Widget _buildLeaveTypeDropdown() {
-    final selectable = _selectableTypes;
-    final values = selectable
-        .map((e) => e is Map ? e['type'] as String? ?? '' : '')
-        .toList();
-    // Guard against a transient frame where the prior selection is no longer in
-    // the (balance-filtered) item list — the underlying DropdownButton asserts
-    // the value matches exactly one item.
-    final selected = values.contains(_leaveType) ? _leaveType : null;
-    return DropdownButtonFormField<String>(
-      initialValue: selected,
-      isExpanded: true,
-      icon: const Icon(Icons.keyboard_arrow_down_rounded),
-      style: const TextStyle(
-        fontSize: 15,
-        fontWeight: FontWeight.w600,
-        color: AppColors.textPrimary,
-      ),
-      decoration: InputDecoration(
-        filled: true,
-        fillColor: AppColors.inputFill,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: AppColors.primary, width: 1.5),
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
-        ),
-      ),
-      items: selectable.map((e) {
-        final type = e['type'] as String? ?? '';
-        return DropdownMenuItem<String>(
-          value: type,
-          child: Text(type),
-        );
-      }).toList(),
-      onChanged: (val) {
-        setState(() {
-          _leaveType = val!;
-        });
-      },
-    );
-  }
-
-  /// Single grey date card with a "From"/"To"/"Date" caption (Figma).
-  Widget _buildDateCard({
-    required String label,
-    required DateTime? date,
-    required VoidCallback? onTap,
-    bool enabled = true,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _sectionLabel(label),
-        Opacity(
-          opacity: enabled ? 1 : 0.55,
-          child: InkWell(
-            onTap: enabled ? onTap : null,
-            borderRadius: BorderRadius.circular(14),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-              decoration: BoxDecoration(
-                color: AppColors.inputFill,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.calendar_today,
-                    size: 18,
-                    color: AppColors.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      date != null
-                          ? DateFormat('MMM dd, yyyy').format(date)
-                          : 'Select',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: date != null
-                            ? AppColors.textPrimary
-                            : AppColors.textCaption,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x25000000),
+                      blurRadius: 24,
+                      offset: Offset(0, 10),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Build a single duration choice chip (Full Day / First Half / Second Half).
-  /// When [disabled] (that half of today's shift has already elapsed) the chip
-  /// is greyed out and tapping it explains why instead of selecting it.
-  Widget _durationChip(
-    String label,
-    _LeaveDuration value, {
-    bool disabled = false,
-    String? disabledReason,
-  }) {
-    return ChoiceChip(
-      label: Text(label),
-      selected: _duration == value,
-      onSelected: (_) {
-        if (disabled) {
-          if (disabledReason != null) {
-            SnackBarUtils.showSnackBar(context, disabledReason, isError: true);
-          }
-          return;
-        }
-        setState(() {
-          _duration = value;
-          // Half-day is always a single date — collapse any range.
-          if (_isHalf) {
-            _isOneDay = true;
-            if (_startDate != null) _endDate = _startDate;
-          }
-        });
-      },
-      selectedColor: AppColors.primary.withValues(alpha: 0.3),
-      disabledColor: AppColors.inputFill,
-      labelStyle: disabled
-          ? const TextStyle(color: AppColors.textCaption)
-          : null,
-    );
-  }
-
-  /// Leave duration selector — lets the employee take any leave type as a Full
-  /// Day, First Half, or Second Half. Only shown when the shift enables half-day.
-  ///
-  /// When the selected date is today, a half whose part of the shift has already
-  /// elapsed (first half past the mid-point, second half past shift end) is
-  /// disabled — you can't apply leave for time that's already gone.
-  Widget _buildDurationSelector() {
-    final day = _startDate ?? DateTime.now();
-    final firstClosed = _isFirstHalfClosed(day);
-    final secondClosed = _isSecondHalfClosed(day);
-    final midLabel = _formatTime12h(_shiftMidpoint());
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _sectionLabel('Duration'),
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              _durationChip('Full Day', _LeaveDuration.full),
-              _durationChip(
-                'First Half',
-                _LeaveDuration.firstHalf,
-                disabled: firstClosed,
-                disabledReason:
-                    'The first half of today\'s shift is over (mid-point '
-                    '$midLabel has passed). First-Half leave can be applied '
-                    'before the mid-point only.',
-              ),
-              _durationChip(
-                'Second Half',
-                _LeaveDuration.secondHalf,
-                disabled: secondClosed,
-                disabledReason:
-                    'Today\'s shift has ended, so Second-Half leave can no '
-                    'longer be applied. You can apply from tomorrow onwards.',
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Formats a DateTime as a short 12-hour clock label (e.g. "2:15 PM").
-  String _formatTime12h(DateTime t) => DateFormat('h:mm a').format(t);
-
-  @override
-  Widget build(BuildContext context) {
-    final isSingle = _isOneDay || _isHalf;
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.9,
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          children: [
-            // Header - back arrow + "New Request"
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 14, 16, 6),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios, size: 24),
-                    color: AppColors.textPrimary,
-                  ),
-                  const Text(
-                    'New Request',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 6, 20, 20),
+                  ],
+                ),
                 child: Column(
-                  crossAxisAlignment:CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Leave Entitlement hero
-                   _buildEntitlementCard(),
-                    const SizedBox(height: 14),
-                    if (_showLimitWarning)
-                      _buildLimitWarningBanner(_limitWarningMsg),
-                    if (!_showLimitWarning) const SizedBox(height: 10),
-                    const SizedBox(height: 20),
-
-                    // Leave duration (Full / First Half / Second Half) — applies
-                    // to every leave type when the shift enables half-day.
-                    if (_halfDayEnabled) _buildDurationSelector(),
-
-                    // Single-day toggle (hidden for half-day, which is always single)
-                    if (!_isHalf)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: Row(
-                          children: [
-                            const Text(
-                              'Single day',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.textPrimary,
-                              ),
-                            ),
-                            const Spacer(),
-                            Switch(
-                              value: _isOneDay,
-                              onChanged: (v) {
-                                setState(() {
-                                  _isOneDay = v;
-                                  if (_isOneDay && _startDate != null) {
-                                    _endDate = _startDate;
-                                  }
-                                });
-                              },
-                              activeThumbColor: AppColors.primary,
-                            ),
-                          ],
+                    // Header Month & Navigation
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left_rounded, size: 22, color: Color(0xFF64748B)),
+                          onPressed: () {
+                            setDialogState(() {
+                              navDate = DateTime(navDate.year, navDate.month - 1, 1);
+                            });
+                          },
                         ),
-                      ),
-
-                    // Date selection: a single "Date" picker for one-day / half-day
-                    // leave, or a "From"/"To" range for multi-day leave.
-                    if (isSingle)
-                      _buildDateCard(
-                        label: 'Date',
-                        date: _startDate,
-                        onTap: () => _pickDate(true),
-                      )
-                    else
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: _buildDateCard(
-                              label: 'From',
-                              date: _startDate,
-                              onTap: () => _pickDate(true),
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: _buildDateCard(
-                              label: 'To',
-                              date: _endDate,
-                              onTap: () => _pickDate(false),
-                            ),
-                          ),
-                        ],
-                      ),
-                                          const SizedBox(height: 20),
-
-                    if (_startDate != null)
-                      // Padding(
-                      //   padding: const EdgeInsets.only(top: 10),
-                      //   child: Text(
-                      //     _isUnpaidLeave
-                      //         ? (_isHalf
-                      //               ? 'Total: 0.5 day · No balance limit'
-                      //               : 'Total: $_days day${_days == 1 ? '' : 's'} · No balance limit')
-                      //         : _isHalf
-                      //         ? 'Total: 0.5 day - ${_trimNum(_selectedTypeRemaining)} days remaining'
-                      //         : 'Total: $_days day${_days == 1 ? '' : 's'} - ${_trimNum(_selectedTypeRemaining)} days remaining',
-                      //     style: TextStyle(
-                      //       color: AppColors.primary,
-                      //       fontWeight: FontWeight.bold,
-                      //       fontSize: 13,
-                      //     ),
-                      //   ),
-                      // ),
-
-                   // const SizedBox(height: 22),
-
-                    const SizedBox(height: 20),
-                    // Leave Type
-                    _sectionLabel('Leave Type'),
-                    if (_isLoadingTypes)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        child: Center(child: AppTabLoader()),
-                      )
-                    else if (_allowedTypes.isEmpty)
-                      const Text(
-                        'No leave types available. Please contact HR to assign a leave template.',
-                        style: TextStyle(color: AppColors.error),
-                      )
-                    else if (_selectableTypes.isEmpty)
-                      Text(
-                        'You have used your full leave allocation for '
-                        '${DateFormat('MMMM').format(_balanceMonth)}. '
-                        'No leave type has balance remaining this month.',
-                        style: const TextStyle(color: AppColors.error),
-                      )
-                    else
-                      _buildLeaveTypeDropdown(),
-                    const SizedBox(height: 20),
-
-                    // Reason for Leave
-                    _sectionLabel('Reason for Leave'),
-                    TextFormField(
-                      controller: _reasonController,
-                      maxLines: 4,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.textPrimary,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: 'Briefly describe your reason...',
-                        hintStyle: const TextStyle(
-                          color: AppColors.textCaption,
-                        ),
-                        filled: true,
-                        fillColor: AppColors.inputFill,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide(
-                            color: AppColors.primary,
-                            width: 1.5,
+                        Text(
+                          DateFormat('MMMM yyyy').format(navDate),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF0F172A),
                           ),
                         ),
-                        contentPadding: const EdgeInsets.all(16),
-                      ),
-                      validator: (val) => val == null || val.isEmpty
-                          ? 'Reason is required'
-                          : null,
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0xFF64748B)),
+                          onPressed: () {
+                            setDialogState(() {
+                              navDate = DateTime(navDate.year, navDate.month + 1, 1);
+                            });
+                          },
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 28),
-
-                    // Submit Request
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isSubmitting ? null : _submit,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                        ),
-                        child: _isSubmitting
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    'Submit Request',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  SizedBox(width: 8),
-                                  Icon(Icons.send_rounded, size: 18),
-                                ],
-                              ),
+                    const Divider(color: Color(0xFFF1F5F9), height: 16),
+                    // Weekday headers
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: const [
+                        Text('SU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('MO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('WE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TH', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('FR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    // Days Grid
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: firstWeekday + daysInMonth,
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 7,
+                        mainAxisSpacing: 6,
+                        crossAxisSpacing: 6,
                       ),
+                      itemBuilder: (c, index) {
+                        if (index < firstWeekday) {
+                          return const SizedBox.shrink();
+                        }
+                        final dayNumber = index - firstWeekday + 1;
+                        final currentDay = DateTime(navDate.year, navDate.month, dayNumber);
+                        final isSelected = selectedDate != null &&
+                            selectedDate!.year == currentDay.year &&
+                            selectedDate!.month == currentDay.month &&
+                            selectedDate!.day == currentDay.day;
+
+                        return InkWell(
+                          onTap: () {
+                            Navigator.pop(ctx, currentDay);
+                          },
+                          borderRadius: BorderRadius.circular(100),
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: isSelected ? const Color(0xFFEFAA1F) : Colors.transparent,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              '$dayNumber',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                                color: isSelected ? Colors.white : const Color(0xFF1E293B),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
               ),
-            ),
-          ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showLeaveTypePicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Text(
+                  'Select Leave Type',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _leaveTypeOptions.length,
+                  separatorBuilder: (_, __) => const Divider(color: Color(0xFFF1F5F9), height: 1),
+                  itemBuilder: (ctx, index) {
+                    final opt = _leaveTypeOptions[index];
+                    final isSelected = opt['value'] == _selectedLeaveTypeName;
+                    final isPredefinedUnpaid = opt['isPredefinedUnpaid'] == true;
+                    final num? bal = opt['balance'] as num?;
+
+                    return ListTile(
+                      onTap: () {
+                        setState(() {
+                          _selectedLeaveTypeName = opt['value'] as String;
+                          _errorMessage = null;
+                        });
+                        Navigator.pop(sheetCtx);
+                      },
+                      leading: Container(
+                        width: 32,
+                        height: 32,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: opt['badgeBg'] as Color? ?? const Color(0xFFFFF7ED),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          opt['badge'] as String? ?? 'L',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: opt['badgeText'] as Color? ?? const Color(0xFFEFAA1F),
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        opt['label'] as String? ?? '',
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: isSelected ? const Color(0xFFEFAA1F) : const Color(0xFF0F172A),
+                        ),
+                      ),
+                      subtitle: opt['subtext'] != null
+                          ? Text(
+                              opt['subtext'] as String,
+                              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+                            )
+                          : null,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (!isPredefinedUnpaid && bal != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: bal > 0 ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: bal > 0 ? const Color(0xFFA7F3D0) : const Color(0xFFFECACA),
+                                ),
+                              ),
+                              child: Text(
+                                '${bal.toInt()} Left',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: bal > 0 ? const Color(0xFF059669) : const Color(0xFFDC2626),
+                                ),
+                              ),
+                            ),
+                          if (isSelected) ...[
+                            const SizedBox(width: 8),
+                            const Icon(Icons.check_circle_rounded, color: Color(0xFFEFAA1F), size: 18),
+                          ],
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _handleApplyLeaveSubmit() async {
+    setState(() => _errorMessage = null);
+
+    if (_selectedLeaveTypeName == null || _selectedLeaveTypeName!.isEmpty) {
+      setState(() => _errorMessage = 'Please select a leave type');
+      return;
+    }
+
+    if (_startDate == null) {
+      setState(() => _errorMessage = 'Please select start date');
+      return;
+    }
+
+    if (!_isHalfDay && _endDate == null) {
+      setState(() => _errorMessage = 'Please select end date');
+      return;
+    }
+
+    final start = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+    final end = _isHalfDay
+        ? start
+        : DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
+
+    if (start.isAfter(end)) {
+      setState(() => _errorMessage = 'Start date cannot be after end date');
+      return;
+    }
+
+    if (_reasonController.text.trim().isEmpty) {
+      setState(() => _errorMessage = 'Please enter a reason for your leave');
+      return;
+    }
+
+    final double duration = _isHalfDay
+        ? 0.5
+        : (end.difference(start).inDays + 1).toDouble();
+
+    // Check Balance (only for paid leave)
+    final opt = _selectedOption;
+    if (opt != null && opt['isPredefinedUnpaid'] != true) {
+      final double avail = (opt['balance'] as num?)?.toDouble() ?? 0.0;
+      if (duration > avail) {
+        setState(() {
+          _errorMessage = 'Insufficient leave balance. You only have ${avail.toInt()} day(s) available.';
+        });
+        return;
+      }
+    }
+
+    // Check Overlap with Holidays
+    final List<String> selectedDateStrings = [];
+    DateTime cur = start;
+    while (!cur.isAfter(end)) {
+      selectedDateStrings.add(DateFormat('yyyy-MM-dd').format(cur));
+      cur = cur.add(const Duration(days: 1));
+    }
+
+    final matchedHolidays = _holidays.where((h) {
+      final rawDate = h['date']?.toString() ?? '';
+      String hKey = '';
+      if (rawDate.length >= 10) {
+        hKey = rawDate.substring(0, 10);
+      }
+      return selectedDateStrings.contains(hKey);
+    }).toList();
+
+    if (matchedHolidays.isNotEmpty) {
+      final names = matchedHolidays.map((h) => h['name']?.toString() ?? 'Holiday').join(', ');
+      setState(() => _errorMessage = 'Cannot apply for leave on a holiday: $names');
+      return;
+    }
+
+    // Check Overlap with existing Approved Requests
+    final hasOverlap = _existingRequests.any((req) {
+      if (req is! Map) return false;
+      final status = (req['status'] ?? '').toString();
+      if (status != 'Approved') return false;
+      final sStr = (req['startDate'] ?? '').toString();
+      final eStr = (req['endDate'] ?? '').toString();
+      if (sStr.length < 10 || eStr.length < 10) return false;
+      final exStart = sStr.substring(0, 10);
+      final exEnd = eStr.substring(0, 10);
+      final reqStartStr = DateFormat('yyyy-MM-dd').format(start);
+      final reqEndStr = DateFormat('yyyy-MM-dd').format(end);
+
+      return reqStartStr.compareTo(exEnd) <= 0 && exStart.compareTo(reqEndStr) <= 0;
+    });
+
+    if (hasOverlap) {
+      setState(() => _errorMessage = 'You already have an approved leave request on these date(s).');
+      return;
+    }
+
+    // Prepare Web App Parity Payload
+    final startDateStr = DateFormat('yyyy-MM-dd').format(start);
+    final endDateStr = DateFormat('yyyy-MM-dd').format(end);
+
+    final payload = <String, dynamic>{
+      'leaveTypeName': _selectedLeaveTypeName,
+      'startDate': startDateStr,
+      'endDate': endDateStr,
+      'duration': duration,
+      'reason': _reasonController.text.trim(),
+      'isHalfDay': _isHalfDay,
+      if (_isHalfDay) 'halfDaySession': _halfDaySession,
+      // Compatibility keys for standard backend routes
+      'leaveType': _selectedLeaveTypeName,
+      'days': duration,
+      if (_isHalfDay) 'session': _halfDaySession == '1st Half' ? '1' : '2',
+    };
+
+    setState(() => _isSubmitting = true);
+    final res = await _requestService.applyLeave(payload);
+    setState(() => _isSubmitting = false);
+
+    if (!mounted) return;
+
+    if (res['success'] == true) {
+      Navigator.pop(context);
+      widget.onSuccess();
+      showRequestSubmittedSuccessDialog(context);
+    } else {
+      setState(() {
+        _errorMessage = ErrorMessageUtils.sanitizeForDisplay(
+          res['message']?.toString(),
+          fallback: 'Failed to submit leave request. Please check balance.',
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final opt = _selectedOption;
+    final isPaid = opt != null && opt['isPredefinedUnpaid'] != true;
+    final num? bal = opt?['balance'] as num?;
+    final num? alloc = opt?['allocated'] as num?;
+    final num? used = opt?['used'] as num?;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.description_rounded,
+                          size: 20,
+                          color: Color(0xFFEFAA1F),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Apply for Leave',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          Text(
+                            _assignedTemplate?['name']?.toString() ?? 'leaves',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF94A3B8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const Divider(color: Color(0xFFF1F5F9), height: 24),
+
+              // Error banner if any
+              if (_errorMessage != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFECACA)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () => setState(() => _errorMessage = null),
+                        child: const Icon(Icons.close, size: 14, color: Color(0xFFDC2626)),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
+              // Leave Type Label & Half Day Toggle
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'LEAVE TYPE',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF64748B),
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  // Half Day Pill Button
+                  InkWell(
+                    onTap: () {
+                      setState(() {
+                        _isHalfDay = !_isHalfDay;
+                        if (_isHalfDay && _startDate != null) {
+                          _endDate = _startDate;
+                        }
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(100),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _isHalfDay ? const Color(0xFFFFFBEB) : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(100),
+                        border: Border.all(
+                          color: _isHalfDay ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: _isHalfDay ? const Color(0xFFEFAA1F) : const Color(0xFF94A3B8),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Half Day',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: _isHalfDay ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // Custom Dropdown Trigger
+              InkWell(
+                onTap: _isLoadingTypes ? null : _showLeaveTypePicker,
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Row(
+                    children: [
+                      if (opt != null)
+                        Container(
+                          width: 28,
+                          height: 28,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: opt['badgeBg'] as Color? ?? const Color(0xFFFFF7ED),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            opt['badge'] as String? ?? 'L',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w900,
+                              color: opt['badgeText'] as Color? ?? const Color(0xFFEFAA1F),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              opt?['label'] as String? ?? (_isLoadingTypes ? 'Loading leave types...' : 'Select Leave Type'),
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            if (opt?['subtext'] != null)
+                              Text(
+                                opt!['subtext'] as String,
+                                style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (isPaid && bal != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFFDE68A)),
+                          ),
+                          child: Text(
+                            '${bal.toInt()} Left',
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFFD97706),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B), size: 18),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Selected Leave Balance card (when paid)
+              if (isPaid && bal != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFFDE68A)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            'Available Balance: ',
+                            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+                          ),
+                          Text(
+                            '${bal.toInt()} Left',
+                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, color: Color(0xFFD97706)),
+                          ),
+                        ],
+                      ),
+                      if (alloc != null)
+                        Text(
+                          'Allocated: ${alloc.toInt()} • Used: ${(used ?? 0).toInt()}',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B)),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // Half Day Session Selector (1st Half / 2nd Half)
+              if (_isHalfDay) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'SELECT HALF',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF64748B),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => setState(() => _halfDaySession = '1st Half'),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          decoration: BoxDecoration(
+                            color: _halfDaySession == '1st Half' ? const Color(0xFFEFAA1F) : const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: _halfDaySession == '1st Half' ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 6,
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  color: _halfDaySession == '1st Half' ? Colors.white : const Color(0xFF94A3B8),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '1st Half',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: _halfDaySession == '1st Half' ? Colors.white : const Color(0xFF1E293B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => setState(() => _halfDaySession = '2nd Half'),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          decoration: BoxDecoration(
+                            color: _halfDaySession == '2nd Half' ? const Color(0xFFEFAA1F) : const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: _halfDaySession == '2nd Half' ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 6,
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  color: _halfDaySession == '2nd Half' ? Colors.white : const Color(0xFF94A3B8),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '2nd Half',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: _halfDaySession == '2nd Half' ? Colors.white : const Color(0xFF1E293B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 16),
+
+              // Date Pickers (Single date for Half Day, Start & End for full day)
+              if (_isHalfDay) ...[
+                const Text(
+                  'SELECT DATE *',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF64748B),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () => _pickDateFor(true),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFFEFAA1F)),
+                            const SizedBox(width: 8),
+                            Text(
+                              _startDate != null ? DateFormat('MMM dd, yyyy').format(_startDate!) : 'Select Date',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
+                                color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
+                      ],
+                    ),
+                  ),
+                ),
+              ] else ...[
+                Row(
+                  children: [
+                    // Start Date
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'START DATE *',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF64748B),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          InkWell(
+                            onTap: () => _pickDateFor(true),
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFFEFAA1F)),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        _startDate != null ? DateFormat('MMM dd, yyyy').format(_startDate!) : 'Select Date',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
+                                          color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // End Date
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'END DATE *',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF64748B),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          InkWell(
+                            onTap: () => _pickDateFor(false),
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFFEFAA1F)),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        _endDate != null ? DateFormat('MMM dd, yyyy').format(_endDate!) : 'Select Date',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: _endDate != null ? FontWeight.w800 : FontWeight.w500,
+                                          color: _endDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 16),
+
+              // Reason
+              const Text(
+                'REASON',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF64748B),
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _reasonController,
+                maxLines: 3,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                decoration: InputDecoration(
+                  hintText: 'State the reason for your leave request...',
+                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                  ),
+                  contentPadding: const EdgeInsets.all(14),
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Action buttons (Cancel & Submit Request)
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFE2E8F0)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _isSubmitting ? null : _handleApplyLeaveSubmit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFEFAA1F),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Text(
+                              'Submit Request',
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -3666,9 +3978,12 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<String>(
-                            value: _selectedStatus,
+                            value: _statusOptions.contains(_selectedStatus)
+                                ? _selectedStatus
+                                : _statusOptions.first,
                             isExpanded: true,
                             items: _statusOptions
+                                .toSet()
                                 .map(
                                   (e) => DropdownMenuItem(
                                     value: e,
@@ -4175,7 +4490,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
           // Loan Type
           _fieldLabel('Loan Type'),
           DropdownButtonFormField<String>(
-            initialValue: _loanType,
+            value: _loanType,
             icon: const Icon(Icons.keyboard_arrow_down),
             items: _loanTypes
                 .map(
@@ -4527,8 +4842,9 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
     'All Status',
     'Pending',
     'Approved',
-    'Rejected',
     'Paid',
+    'Rejected',
+    'Cancelled',
   ];
 
   // All-time totals for the hero card - independent of the paginated/filtered
@@ -4544,6 +4860,54 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
   int _totalPages = 0;
   final TextEditingController _searchController = TextEditingController();
   bool _showFilters = false;
+  bool _isTableView = false;
+
+  Future<void> _cancelExpense(Map<String, dynamic> expense) async {
+    final id = expense['_id']?.toString() ?? expense['id']?.toString();
+    if (id == null || id.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Cancel Expense Claim?'),
+        content: const Text('Are you sure you want to cancel this reimbursement request?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Cancel Request'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final res = await _requestService.cancelExpenseRequest(id);
+      if (res['success'] == true) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Expense claim cancelled successfully',
+          isError: false,
+        );
+        _fetchExpenses();
+        _fetchExpenseSummary();
+      } else {
+        SnackBarUtils.showSnackBar(
+          context,
+          res['message']?.toString() ?? 'Failed to cancel claim',
+          isError: true,
+        );
+      }
+    }
+  }
 
   void toggleFilters() {
     setState(() {
@@ -4653,7 +5017,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
       if (result['success']) {
         setState(() {
           if (result['data'] is Map) {
-            _expenses = result['data']['reimbursements'] ?? [];
+            _expenses = result['data']['requests'] ??
+                result['data']['reimbursements'] ??
+                result['data']['expenses'] ??
+                [];
             final pagination = result['data']['pagination'];
             if (pagination != null) {
               _totalPages = pagination['pages'] ?? 0;
@@ -4967,135 +5334,437 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
     );
   }
 
-  /// "Recent Claims" header + amber "View All" link (clears filters â†’ all claims).
-  Widget _buildRecentHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text('Recent Claims', style: AppTextStyles.headingSmall),
-        InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () {
-            setState(() {
-              _selectedStatus = 'All Status';
-              _startDate = null;
-              _endDate = null;
-              _currentPage = 1;
-            });
-            _fetchExpenses();
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-            child: Text(
-              'View All',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primary,
+  Widget _buildExpenseControlBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Reimbursement Claims',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF0F172A),
+                  letterSpacing: -0.3,
+                ),
               ),
-            ),
+              // Card / Table View Mode Toggle
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.all(3),
+                child: Row(
+                  children: [
+                    InkWell(
+                      onTap: () => setState(() => _isTableView = false),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: !_isTableView ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: !_isTableView
+                              ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
+                              : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.grid_view_rounded,
+                              size: 14,
+                              color: !_isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Cards',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => setState(() => _isTableView = true),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _isTableView ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: _isTableView
+                              ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
+                              : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.table_rows_rounded,
+                              size: 14,
+                              color: _isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Table',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ),
-      ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              // Search input
+              Expanded(
+                child: SizedBox(
+                  height: 38,
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search...',
+                      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                      prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                      ),
+                    ),
+                    onSubmitted: (_) => _fetchExpenses(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Status dropdown
+              Container(
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
+                    icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                    items: _statusOptions
+                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                        .toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => _selectedStatus = val);
+                        _fetchExpenses();
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildExpenseCard(Map<String, dynamic> expense) {
-    final date = DateFormat(
-      'MMM dd, yyyy',
-    ).format(DateTime.parse(expense['date']));
-    final type = (expense['type'] ?? expense['expenseType'] ?? 'Expense')
-        .toString();
+    final date = DateFormat('MMM dd, yyyy').format(DateTime.parse(expense['date']));
+    final type = (expense['type'] ?? expense['expenseType'] ?? 'Expense').toString();
     final status = (expense['status'] ?? '').toString();
+    final isPending = status.toLowerCase() == 'pending';
+    final isApproved = status.toLowerCase() == 'approved' || status.toLowerCase() == 'paid';
+    final isRejected = status.toLowerCase() == 'rejected';
 
-    Color statusColor = AppColors.warning;
-    if (status == 'Approved' || status == 'Paid') {
-      statusColor = AppColors.success;
-    } else if (status == 'Rejected') {
-      statusColor = AppColors.error;
-    } else if (status == 'Pending') {
-      statusColor = AppColors.warning;
-    }
+    final Color statusBg = isApproved
+        ? const Color(0xFFECFDF5)
+        : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
+    final Color statusBorder = isApproved
+        ? const Color(0xFFA7F3D0)
+        : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
+    final Color statusText = isApproved
+        ? const Color(0xFF059669)
+        : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
 
-    final colorScheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: () => _showExpenseDetails(expense),
-      borderRadius: BorderRadius.circular(16),
-      child: AppCard(
-        radius: 16,
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            // Amber category icon tile
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                _expenseIcon(type),
-                color: AppColors.primary,
-                size: 22,
-              ),
-            ),
-            const SizedBox(width: 14),
-            // Title + date
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    type,
-                    style: AppTextStyles.bodyLarge.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: colorScheme.onSurface,
+    final desc = (expense['description'] ?? '').toString().trim();
+    final amount = _formatAmount(expense['amount']);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showExpenseDetails(expense),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(14.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(_expenseIcon(type), color: const Color(0xFFEFAA1F), size: 18),
+                        ),
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              type,
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            Text(
+                              date,
+                              style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    maxLines: 1,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          amount,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: statusBg,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: statusBorder),
+                          ),
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: statusText,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                if (desc.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    desc,
+                    style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 3),
-                  Text(date, style: AppTextStyles.bodySmall),
                 ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Amount + status pill
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '${_formatAmount(expense['amount'])}',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                if (status.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      status.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        color: statusColor,
+                if (isPending) ...[
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _cancelExpense(expense),
+                      icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
+                      label: const Text(
+                        'Cancel',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFFECACA)),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        minimumSize: Size.zero,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
                     ),
                   ),
+                ],
               ],
             ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExpenseTableView() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+            headingTextStyle: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF94A3B8),
+              letterSpacing: 0.5,
+            ),
+            dataTextStyle: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF1E293B),
+            ),
+            columns: const [
+              DataColumn(label: Text('TYPE')),
+              DataColumn(label: Text('AMOUNT')),
+              DataColumn(label: Text('DATE')),
+              DataColumn(label: Text('DESCRIPTION')),
+              DataColumn(label: Text('STATUS')),
+              DataColumn(label: Text('ACTION')),
+            ],
+            rows: _expenses.map((expense) {
+              final raw = expense is Map<String, dynamic> ? expense : Map<String, dynamic>.from(expense as Map);
+              final date = DateFormat('MMM dd, yyyy').format(DateTime.parse(raw['date']));
+              final type = (raw['type'] ?? raw['expenseType'] ?? 'Expense').toString();
+              final status = (raw['status'] ?? '').toString();
+              final isPending = status.toLowerCase() == 'pending';
+              final isApproved = status.toLowerCase() == 'approved' || status.toLowerCase() == 'paid';
+              final isRejected = status.toLowerCase() == 'rejected';
+
+              final Color statusBg = isApproved
+                  ? const Color(0xFFECFDF5)
+                  : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
+              final Color statusBorder = isApproved
+                  ? const Color(0xFFA7F3D0)
+                  : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
+              final Color statusText = isApproved
+                  ? const Color(0xFF059669)
+                  : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+
+              final desc = (raw['description'] ?? '-').toString().trim();
+              final amount = _formatAmount(raw['amount']);
+
+              return DataRow(
+                cells: [
+                  DataCell(Text(type, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(Text(amount, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(Text(date)),
+                  DataCell(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: Text(desc, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: statusBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: statusBorder),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: statusText,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    isPending
+                        ? OutlinedButton(
+                            onPressed: () => _cancelExpense(raw),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFFFECACA)),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              minimumSize: Size.zero,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.cancel_outlined, size: 12, color: Color(0xFFDC2626)),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Cancel',
+                                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                ),
+                              ],
+                            ),
+                          )
+                        : const Text('-', style: TextStyle(color: Color(0xFF94A3B8))),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
         ),
       ),
     );
@@ -5113,9 +5782,6 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
   @override
   Widget build(BuildContext context) {
     super.build(context); // keep-alive
-    // The whole tab is one scroll view so the hero, filters and list scroll
-    // together — previously only the inner list scrolled, so with filters open
-    // the upper section was cramped and unscrollable on small screens.
     return Column(
       children: [
         Expanded(
@@ -5127,187 +5793,66 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                // Figma "Expense Claims": amber summary hero + create button + header
+                // Top Hero Card
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                  child: Column(
-                    children: [
-                      FadeSlideIn(child: _buildClaimHero()),
-                      // const SizedBox(height: 14),
-                      // FadeSlideIn(
-                      // delay: const Duration(milliseconds: 60),
-                      //  child: _buildCreateButton(),
-                      // ),
-                      const SizedBox(height: 18),
-                      _buildRecentHeader(),
-                    ],
-                  ),
+                  child: FadeSlideIn(child: _buildClaimHero()),
                 ),
-                // Controls Column
-                if (_showFilters)
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: _searchController,
-                          decoration: InputDecoration(
-                            hintText: 'Search Type, Description...',
-                            prefixIcon: const Icon(Icons.search),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: AppColors.primary),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: AppColors.primary),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(
-                                color: AppColors.primary,
-                                width: 2,
-                              ),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 0,
-                            ),
-                          ),
-                          onSubmitted: (_) => _fetchExpenses(),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: AppColors.primary),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                ),
-                                child: DropdownButtonHideUnderline(
-                                  child: DropdownButton<String>(
-                                    value: _selectedStatus,
-                                    isExpanded: true,
-                                    items: _statusOptions
-                                        .map(
-                                          (e) => DropdownMenuItem(
-                                            value: e,
-                                            child: Text(e),
-                                          ),
-                                        )
-                                        .toList(),
-                                    onChanged: (val) {
-                                      if (val != null) {
-                                        setState(() => _selectedStatus = val);
-                                        _fetchExpenses();
-                                      }
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            // Date Filter Button
-                            InkWell(
-                              onTap: _pickDate,
-                              child: Container(
-                                height: 48,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: AppColors.primary),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.calendar_today,
-                                      color: Colors.grey[600],
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      _startDate == null || _endDate == null
-                                          ? 'Date'
-                                          : _isSameCalendarDay(
-                                              _startDate!,
-                                              _endDate!,
-                                            )
-                                          ? DateFormat(
-                                              'MMM dd, yyyy',
-                                            ).format(_startDate!)
-                                          : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
-                                      style: TextStyle(color: Colors.black),
-                                    ),
-                                    if (_startDate != null)
-                                      IconButton(
-                                        icon: const Icon(Icons.close, size: 16),
-                                        onPressed: () {
-                                          setState(() {
-                                            _startDate = null;
-                                            _endDate = null;
-                                          });
-                                          _fetchExpenses();
-                                        },
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
 
-                // List Content
-                // While (re)loading after a query change show the loader and
-                // reveal the list only once loaded, so stale results never flash.
+                // Control Bar with Dual View Mode Switcher
+                _buildExpenseControlBar(),
+
+                // List / Table Content
                 if (_isLoading)
                   SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.4,
+                    height: MediaQuery.of(context).size.height * 0.35,
                     child: const Center(child: AppTabLoader()),
                   )
                 else if (_expenses.isEmpty)
                   SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.4,
+                    height: MediaQuery.of(context).size.height * 0.35,
                     child: Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(
-                            Icons.receipt_outlined,
-                            size: 64,
-                            color: Colors.grey[400],
+                          Container(
+                            padding: const EdgeInsets.all(18),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFFFFBEB),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.receipt_long_rounded,
+                              size: 40,
+                              color: Color(0xFFEFAA1F),
+                            ),
                           ),
-                          const SizedBox(height: 16),
-                          Text(
+                          const SizedBox(height: 14),
+                          const Text(
                             'No expense requests found',
-                            style: TextStyle(fontSize: 16, color: Colors.black),
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF64748B),
+                            ),
                           ),
                         ],
                       ),
                     ),
                   )
+                else if (_isTableView)
+                  _buildExpenseTableView()
                 else
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                     child: Column(
                       children: [
                         for (int i = 0; i < _expenses.length; i++)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 12.0),
-                            child: FadeSlideIn(
-                              delay: Duration(
-                                milliseconds: (i * 45).clamp(0, 270),
-                              ),
-                              child: _buildExpenseCard(_expenses[i]),
+                          FadeSlideIn(
+                            delay: Duration(
+                              milliseconds: (i * 40).clamp(0, 240),
                             ),
+                            child: _buildExpenseCard(_expenses[i]),
                           ),
                       ],
                     ),
@@ -5316,8 +5861,8 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
             ),
           ),
         ),
-        // Bottom action bar: page numbers (only when multi-page) on the left
-        // and the Claim Expense button on the right.
+
+        // Bottom action bar: page numbers & Claim Expense button
         _PaginationBar(
           currentPage: _currentPage,
           totalPages: _totalPages,
@@ -5348,19 +5893,40 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
   String _expenseType = 'Travel';
   final TextEditingController _amountController = TextEditingController();
   DateTime? _date;
-  final TextEditingController _descriptionController =
-      TextEditingController(); // Description
-  File? _selectedFile; // Add File variable
+  final TextEditingController _descriptionController = TextEditingController();
+  File? _selectedFile;
+  String? _errorMessage;
   bool _isSubmitting = false;
 
-  /// Presents a chooser so the user can either capture a receipt with the
-  /// device camera or pick an existing JPG/PNG/PDF from storage.
+  final List<String> _expenseTypeOptions = const [
+    'Travel',
+    'Food',
+    'Meals',
+    'Office Supplies',
+    'Client Entertainment',
+    'Other',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _date = DateTime.now();
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
   Future<void> _pickFile() async {
+    setState(() => _errorMessage = null);
     final source = await showModalBottomSheet<_ProofSource>(
       context: context,
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (sheetContext) {
         return SafeArea(
@@ -5372,31 +5938,46 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
+                  color: const Color(0xFFE2E8F0),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 8),
-              ListTile(
-                leading: Icon(
-                  Icons.camera_alt_rounded,
-                  color: AppColors.primary,
+              const SizedBox(height: 12),
+              const Text(
+                'Upload Proof Image',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF0F172A),
                 ),
-                title: const Text('Take Photo'),
-                onTap: () =>
-                    Navigator.pop(sheetContext, _ProofSource.camera),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.camera_alt_rounded, color: Color(0xFFEFAA1F), size: 20),
+                ),
+                title: const Text('Take Photo', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                onTap: () => Navigator.pop(sheetContext, _ProofSource.camera),
               ),
               ListTile(
-                leading: Icon(
-                  Icons.photo_library_rounded,
-                  color: AppColors.primary,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.photo_library_rounded, color: Color(0xFFEFAA1F), size: 20),
                 ),
-                title: const Text('Choose from Files'),
-                subtitle: const Text('JPG, PNG, or PDF'),
-                onTap: () =>
-                    Navigator.pop(sheetContext, _ProofSource.files),
+                title: const Text('Choose from Gallery / Files', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                subtitle: const Text('JPG, JPEG, PNG, WEBP (Max 5MB)', style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
+                onTap: () => Navigator.pop(sheetContext, _ProofSource.files),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
             ],
           ),
         );
@@ -5411,475 +5992,691 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
     }
   }
 
-  /// Captures a receipt photo with the device camera.
   Future<void> _pickFromCamera() async {
     try {
       final picked = await ImagePicker().pickImage(
         source: ImageSource.camera,
         preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 80,
+        imageQuality: 85,
         maxWidth: 1600,
       );
       if (picked != null) {
-        setState(() {
-          _selectedFile = File(picked.path);
-        });
+        final f = File(picked.path);
+        final len = await f.length();
+        if (len > 5 * 1024 * 1024) {
+          setState(() => _errorMessage = 'File size must not exceed 5MB.');
+          return;
+        }
+        setState(() => _selectedFile = f);
       }
     } catch (e) {
-      if (mounted) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'Unable to capture photo. Please check camera permissions.',
-          isError: true,
-        );
-      }
+      setState(() => _errorMessage = 'Unable to capture photo. Please check permissions.');
     }
   }
 
-  /// Picks an existing JPG/PNG/PDF receipt from device storage.
   Future<void> _pickFromFiles() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
-    );
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+      );
 
-    if (result != null) {
-      if (result.files.single.path != null) {
-        setState(() {
-          _selectedFile = File(result.files.single.path!);
-        });
+      if (result != null && result.files.single.path != null) {
+        final f = File(result.files.single.path!);
+        final len = await f.length();
+        if (len > 5 * 1024 * 1024) {
+          setState(() => _errorMessage = 'File size must not exceed 5MB.');
+          return;
+        }
+        setState(() => _selectedFile = f);
       }
+    } catch (e) {
+      setState(() => _errorMessage = 'Failed to select file.');
     }
   }
 
   Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final initial = _date != null && !_date!.isAfter(today) ? _date! : now;
-    final picked = await showDatePicker(
+    final DateTime initial = _date ?? DateTime.now();
+    final DateTime? picked = await _showWebStyledDatePicker(
       context: context,
       initialDate: initial,
       firstDate: DateTime(2020),
-      lastDate: today,
+      lastDate: DateTime.now().add(const Duration(days: 365)),
     );
+
     if (picked != null) {
-      setState(() => _date = picked);
+      setState(() {
+        _date = picked;
+        _errorMessage = null;
+      });
     }
   }
 
-  /// Compress image file to reduce payload and avoid 413 Payload Too Large.
-  static const int _maxProofImageWidth = 1200;
-  static const int _proofImageQuality = 85;
+  Future<DateTime?> _showWebStyledDatePicker({
+    required BuildContext context,
+    required DateTime initialDate,
+    required DateTime firstDate,
+    required DateTime lastDate,
+  }) async {
+    DateTime navDate = DateTime(initialDate.year, initialDate.month, 1);
+    DateTime? selectedDate = initialDate;
 
-  Future<List<int>> _compressImageFile(File file) async {
-    final path = file.path.toLowerCase();
-    final isImage =
-        path.endsWith('.jpg') ||
-        path.endsWith('.jpeg') ||
-        path.endsWith('.png') ||
-        path.endsWith('.webp');
-    if (!isImage) {
-      return await file.readAsBytes();
-    }
-    // Bake EXIF orientation into the pixels FIRST so the stored proof is upright
-    // everywhere (compression strips EXIF, and neither Flutter nor a stripped
-    // copy would otherwise render the rotation). bakeBytes returns the same
-    // instance when no rotation is needed, so PNGs keep their original encoding.
-    final original = await file.readAsBytes();
-    final upright = await ImageOrientation.bakeBytes(original);
-    final rotated = !identical(upright, original);
-    final result = await FlutterImageCompress.compressWithList(
-      upright,
-      minWidth: _maxProofImageWidth,
-      minHeight: _maxProofImageWidth,
-      quality: _proofImageQuality,
-      // A rotated image was re-encoded to JPEG by the bake step.
-      format: (path.endsWith('.png') && !rotated)
-          ? CompressFormat.png
-          : CompressFormat.jpeg,
+    return showDialog<DateTime>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            final daysInMonth = DateTime(navDate.year, navDate.month + 1, 0).day;
+            final firstWeekday = DateTime(navDate.year, navDate.month, 1).weekday % 7;
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Container(
+                width: 320,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x25000000),
+                      blurRadius: 24,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Header Month & Navigation
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left_rounded, size: 22, color: Color(0xFF64748B)),
+                          onPressed: () {
+                            setDialogState(() {
+                              navDate = DateTime(navDate.year, navDate.month - 1, 1);
+                            });
+                          },
+                        ),
+                        Text(
+                          DateFormat('MMMM yyyy').format(navDate),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0xFF64748B)),
+                          onPressed: () {
+                            setDialogState(() {
+                              navDate = DateTime(navDate.year, navDate.month + 1, 1);
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const Divider(color: Color(0xFFF1F5F9), height: 16),
+                    // Weekday headers
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: const [
+                        Text('SU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('MO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('WE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TH', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('FR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    // Days Grid
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: firstWeekday + daysInMonth,
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 7,
+                        mainAxisSpacing: 6,
+                        crossAxisSpacing: 6,
+                      ),
+                      itemBuilder: (c, index) {
+                        if (index < firstWeekday) {
+                          return const SizedBox.shrink();
+                        }
+                        final dayNumber = index - firstWeekday + 1;
+                        final currentDay = DateTime(navDate.year, navDate.month, dayNumber);
+                        final isSelected = selectedDate != null &&
+                            selectedDate!.year == currentDay.year &&
+                            selectedDate!.month == currentDay.month &&
+                            selectedDate!.day == currentDay.day;
+
+                        return InkWell(
+                          onTap: () => Navigator.pop(ctx, currentDay),
+                          borderRadius: BorderRadius.circular(100),
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: isSelected ? const Color(0xFFEFAA1F) : Colors.transparent,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              '$dayNumber',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                                color: isSelected ? Colors.white : const Color(0xFF1E293B),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
-    if (result.isEmpty) {
-      return upright;
-    }
-    return result;
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_date == null) {
-      SnackBarUtils.showSnackBar(context, 'Please select a date');
-      return;
-    }
-    final today = DateTime(
-      DateTime.now().year,
-      DateTime.now().month,
-      DateTime.now().day,
-    );
-    if (_date!.isAfter(today)) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Expense date cannot be in the future. Please select today or a past date.',
-        isError: true,
-      );
+    setState(() => _errorMessage = null);
+
+    final amtStr = _amountController.text.trim();
+    final amt = double.tryParse(amtStr);
+    if (amt == null || amt <= 0) {
+      setState(() => _errorMessage = 'Please enter a valid amount greater than 0.');
       return;
     }
 
-    if (_selectedFile == null) {
-      SnackBarUtils.showSnackBar(context, 'Please upload a proof document');
+    if (_date == null) {
+      setState(() => _errorMessage = 'Please select a date.');
+      return;
+    }
+
+    if (_descriptionController.text.trim().isEmpty) {
+      setState(() => _errorMessage = 'Please enter a description.');
       return;
     }
 
     setState(() => _isSubmitting = true);
 
-    // Process file if exists: compress images to avoid 413 Payload Too Large
-    List<String> proofFiles = [];
+    String base64Proof = '';
     if (_selectedFile != null) {
-      final path = _selectedFile!.path.toLowerCase();
-      final isPdf = path.endsWith('.pdf');
-      const maxProofBytes = 5 * 1024 * 1024; // 5 MB max for PDF
-
-      if (isPdf) {
-        final length = await _selectedFile!.length();
-        if (length > maxProofBytes) {
-          if (mounted) {
-            setState(() => _isSubmitting = false);
-            SnackBarUtils.showSnackBar(
-              context,
-              'Proof file is too large. Please use a file under 5 MB.',
-              isError: true,
-            );
-          }
-          return;
-        }
+      try {
         final bytes = await _selectedFile!.readAsBytes();
-        final base64String = base64Encode(bytes);
-        proofFiles.add('data:application/pdf;base64,$base64String');
-      } else {
-        // Image: compress to reduce payload and avoid 413
-        final bytes = await _compressImageFile(_selectedFile!);
-        final base64String = base64Encode(bytes);
+        final ext = _selectedFile!.path.split('.').last.toLowerCase();
         String mime = 'image/jpeg';
-        if (path.endsWith('.png')) mime = 'image/png';
-        proofFiles.add('data:$mime;base64,$base64String');
+        if (ext == 'png') mime = 'image/png';
+        if (ext == 'webp') mime = 'image/webp';
+        base64Proof = 'data:$mime;base64,${base64Encode(bytes)}';
+      } catch (e) {
+        setState(() {
+          _isSubmitting = false;
+          _errorMessage = 'Failed to process proof image file.';
+        });
+        return;
       }
     }
 
-    final result = await _requestService.applyExpense({
+    final formattedDate = DateFormat('MMM dd, yyyy').format(_date!);
+    final isoDate = _date!.toIso8601String();
+
+    final payload = <String, dynamic>{
       'type': _expenseType,
-      'amount': double.tryParse(_amountController.text) ?? 0,
-      'date': _date!.toIso8601String(),
-      'description': _descriptionController.text,
-      'proofFiles': proofFiles,
-    });
+      'amount': amt,
+      'date': isoDate,
+      'displayDate': formattedDate,
+      'description': _descriptionController.text.trim(),
+      'proofFile': base64Proof,
+      if (base64Proof.isNotEmpty) 'proofFiles': [base64Proof],
+    };
+
+    final result = await _requestService.applyExpense(payload);
+    if (!mounted) return;
     setState(() => _isSubmitting = false);
 
-    if (mounted) {
-      if (result['success']) {
-        final overlay = Navigator.of(context, rootNavigator: true).overlay;
-        widget.onSuccess();
-        Navigator.pop(context);
-        if (overlay != null && overlay.context.mounted) {
-          showRequestSubmittedSuccessDialog(overlay.context);
-        }
-      } else {
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.sanitizeForDisplay(
-            result['message']?.toString(),
-            fallback: 'Failed to submit expense claim',
-          ),
-          isError: true,
+    if (result['success'] == true) {
+      Navigator.pop(context);
+      widget.onSuccess();
+      showRequestSubmittedSuccessDialog(context);
+    } else {
+      setState(() {
+        _errorMessage = ErrorMessageUtils.sanitizeForDisplay(
+          result['message']?.toString(),
+          fallback: 'Failed to submit reimbursement claim.',
         );
-      }
+      });
     }
-  }
-
-  // ── Reference (Apply Leave / Request Loan) styling helpers ────────────────
-  Widget _sectionLabel(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        text.toUpperCase(),
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.6,
-          color: AppColors.textPrimary,
-        ),
-      ),
-    );
-  }
-
-  /// Grey filled, borderless field decoration (amber focus) — matches the
-  /// Apply Leave reason field / Request Loan inputs.
-  InputDecoration _fieldDecoration({String? hint}) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(color: AppColors.textCaption),
-      filled: true,
-      fillColor: AppColors.inputFill,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
-      ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-    );
-  }
-
-  /// Grey date card with a calendar icon — matches Apply Leave's date cards.
-  Widget _buildDateField({
-    required DateTime? date,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-        decoration: BoxDecoration(
-          color: AppColors.inputFill,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.calendar_today, size: 18, color: AppColors.primary),
-            const SizedBox(width: 10),
-            Text(
-              date == null
-                  ? 'dd-mm-yyyy'
-                  : DateFormat('dd-MM-yyyy').format(date),
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: date == null
-                    ? AppColors.textCaption
-                    : AppColors.textPrimary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Figma dashed "Upload Receipt" dropzone â†’ existing `_pickFile`.
-  Widget _buildUploadZone() {
-    final hasFile = _selectedFile != null;
-    return InkWell(
-      onTap: _pickFile,
-      borderRadius: BorderRadius.circular(16),
-      child: CustomPaint(
-        painter: _DashedRRectPainter(
-          color: hasFile ? AppColors.primary : Colors.grey.shade400,
-        ),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-          child: Column(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  hasFile
-                      ? Icons.check_circle_rounded
-                      : Icons.cloud_upload_rounded,
-                  color: AppColors.primary,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                hasFile
-                    ? _selectedFile!.path.split(RegExp(r'[/\\]')).last
-                    : 'Upload Receipt',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                hasFile
-                    ? 'Tap to replace'
-                    : 'Take a photo or select a JPG, PNG, or PDF',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.9,
       decoration: const BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       child: Form(
         key: _formKey,
-        child: Column(
-          children: [
-            // Header — back arrow + title
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 14, 16, 6),
-              child: Row(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios, size: 24),
-                    color: AppColors.textPrimary,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'Claim Expense',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Submit a new expense claim',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF94A3B8),
+                        ),
+                      ),
+                    ],
                   ),
-                  const Text(
-                    'New Expense Claim',
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                    onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const Divider(color: Color(0xFFF1F5F9), height: 24),
+
+              // Error banner if any
+              if (_errorMessage != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFECACA)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () => setState(() => _errorMessage = null),
+                        child: const Icon(Icons.close, size: 14, color: Color(0xFFDC2626)),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
+              // Expense Type
+              const Text(
+                'Expense Type',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF334155),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _expenseType,
+                    isExpanded: true,
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                    items: _expenseTypeOptions
+                        .map((type) => DropdownMenuItem(value: type, child: Text(type)))
+                        .toList(),
+                    onChanged: _isSubmitting
+                        ? null
+                        : (val) {
+                            if (val != null) setState(() => _expenseType = val);
+                          },
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Amount (₹)
+              const Text(
+                'Amount (₹)',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF334155),
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _amountController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                enabled: !_isSubmitting,
+                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                decoration: InputDecoration(
+                  hintText: 'Enter expense amount',
+                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Date *
+              Row(
+                children: const [
+                  Text(
+                    'Date',
                     style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF334155),
+                    ),
+                  ),
+                  SizedBox(width: 3),
+                  Text('*', style: TextStyle(color: Color(0xFFEF4444), fontSize: 12, fontWeight: FontWeight.w700)),
+                ],
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: _isSubmitting ? null : _pickDate,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _date != null ? DateFormat('MM/dd/yyyy').format(_date!) : 'mm/dd/yyyy',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: _date != null ? FontWeight.w600 : FontWeight.w500,
+                          color: _date != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                        ),
+                      ),
+                      const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFF64748B)),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Description *
+              Row(
+                children: const [
+                  Text(
+                    'Description',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF334155),
+                    ),
+                  ),
+                  SizedBox(width: 3),
+                  Text('*', style: TextStyle(color: Color(0xFFEF4444), fontSize: 12, fontWeight: FontWeight.w700)),
+                ],
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _descriptionController,
+                maxLines: 3,
+                enabled: !_isSubmitting,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                decoration: InputDecoration(
+                  hintText: 'e.g., Client meeting travel, Team lunch, Conference accommodation',
+                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  contentPadding: const EdgeInsets.all(12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Briefly describe the expense so approvers can verify your claim.',
+                style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Proof Document (Image)
+              const Text(
+                'Proof Document (Image)',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF334155),
+                ),
+              ),
+              const SizedBox(height: 6),
+
+              if (_selectedFile != null) ...[
+                // Selected file view with preview & change/remove buttons
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0FDF4),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFBBF7D0)),
+                  ),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(
+                          _selectedFile!,
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                          errorBuilder: (c, o, s) => Container(
+                            width: 50,
+                            height: 50,
+                            color: const Color(0xFFE2E8F0),
+                            child: const Icon(Icons.insert_drive_file_outlined, color: Color(0xFF64748B)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _selectedFile!.path.split(RegExp(r'[/\\]')).last,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF15803D)),
+                            ),
+                            const SizedBox(height: 2),
+                            const Text(
+                              'Click "Change" or "Remove" to update.',
+                              style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        children: [
+                          InkWell(
+                            onTap: _isSubmitting ? null : _pickFile,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Text('Change', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF475569))),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          InkWell(
+                            onTap: _isSubmitting ? null : () => setState(() => _selectedFile = null),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF2F2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Text('Remove', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFDC2626))),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ] else ...[
+                // Dashed Upload box matching Web App
+                InkWell(
+                  onTap: _isSubmitting ? null : _pickFile,
+                  borderRadius: BorderRadius.circular(14),
+                  child: CustomPaint(
+                    painter: const _DashedRRectPainter(color: Color(0xFFCBD5E1)),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Icon(Icons.file_upload_outlined, size: 24, color: Color(0xFF94A3B8)),
+                          SizedBox(height: 6),
+                          Text(
+                            'Upload Proof Image',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Upload receipt or bill image (JPG, JPEG, PNG, WEBP. Max 5MB).',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+
+              // Action Buttons
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFE2E8F0)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _isSubmitting ? null : _submit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFEFAA1F),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Text(
+                              'Submit Claim',
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                            ),
                     ),
                   ),
                 ],
               ),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 6, 20, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Upload Receipt dropzone
-                    _buildUploadZone(),
-                    const SizedBox(height: 24),
-
-                    // Category
-                    _sectionLabel('Category'),
-                    DropdownButtonFormField<String>(
-                      initialValue: _expenseType,
-                      isExpanded: true,
-                      icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                      items: ['Travel', 'Food', 'Accommodation', 'Other']
-                          .map(
-                            (e) => DropdownMenuItem(value: e, child: Text(e)),
-                          )
-                          .toList(),
-                      onChanged: (val) => setState(() => _expenseType = val!),
-                      decoration: _fieldDecoration(),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Amount
-                    _sectionLabel('Amount'),
-                    TextFormField(
-                      controller: _amountController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.textPrimary,
-                      ),
-                      decoration: _fieldDecoration(
-                        hint: 'Enter expense amount',
-                      ),
-                      validator: (val) => val == null || val.isEmpty
-                          ? 'Amount is required'
-                          : null,
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Date
-                    _sectionLabel('Date'),
-                    _buildDateField(date: _date, onTap: _pickDate),
-                    const SizedBox(height: 20),
-
-                    // Description
-                    _sectionLabel('Description'),
-                    TextFormField(
-                      controller: _descriptionController,
-                      maxLines: 4,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.textPrimary,
-                      ),
-                      decoration: _fieldDecoration(
-                        hint: 'Enter expense description',
-                      ),
-                      validator: (val) => val == null || val.isEmpty
-                          ? 'Description is required'
-                          : null,
-                    ),
-                    const SizedBox(height: 28),
-
-                    // Submit
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isSubmitting ? null : _submit,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                        ),
-                        child: _isSubmitting
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    'Submit Claim',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  SizedBox(width: 8),
-                                  Icon(Icons.send_rounded, size: 18),
-                                ],
-                              ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -5948,6 +6745,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   List<dynamic> _requests = [];
   bool _isLoading = true;
   bool _showFilters = false;
+  bool _isTableView = false;
   String _selectedStatus = 'All Status';
   final List<String> _statusOptions = const [
     'All Status',
@@ -5958,6 +6756,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   ];
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
   Map<String, dynamic>? _balance;
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _debounce;
 
   // Cached today's punch session, used to surface the out-of-session gating
   // message as a tap-tooltip on the Request Permission button (parity with the
@@ -5979,6 +6779,13 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     setState(() {
       _showFilters = !_showFilters;
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _debounce?.cancel();
+    super.dispose();
   }
 
   void refresh() {
@@ -6017,7 +6824,13 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     if (result['success'] == true) {
       final data = result['data'];
       setState(() {
-        _requests = data is Map ? (data['permissions'] ?? []) : [];
+        if (data is Map) {
+          _requests = data['requests'] ?? data['permissions'] ?? [];
+        } else if (data is List) {
+          _requests = data;
+        } else {
+          _requests = [];
+        }
         // Reset to page 1 only on an explicit (query-changing) load; a quiet
         // background refresh keeps the user on their current page.
         if (showLoader) _currentPage = 1;
@@ -6400,37 +7213,704 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     );
   }
 
+  Widget _buildWebPermissionBalanceCard(double quota, double consumed, double balance, bool hasBalance, String monthLabel) {
+    String formatMinutes(double min) {
+      final total = min < 0 ? 0 : min.round();
+      final hrs = total ~/ 60;
+      final mins = total % 60;
+      if (hrs > 0 && mins > 0) return '$hrs hr $mins mins';
+      if (hrs > 0) return '$hrs hrs';
+      return '$mins mins';
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 10,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.schedule_rounded,
+                        color: Color(0xFFEFAA1F),
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Permission Balance',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              InkWell(
+                onTap: _pickMonth,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.calendar_month_outlined, size: 13, color: Color(0xFF64748B)),
+                      const SizedBox(width: 4),
+                      Text(
+                        monthLabel,
+                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // 3 Columns: MONTHLY QUOTA, CONSUMED / PENDING, REMAINING
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'MONTHLY QUOTA',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF94A3B8),
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      formatMinutes(hasBalance ? quota : 0),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Container(width: 1, height: 32, color: const Color(0xFFF1F5F9)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'CONSUMED / PENDING',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF94A3B8),
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      formatMinutes(hasBalance ? consumed : 0),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Container(width: 1, height: 32, color: const Color(0xFFF1F5F9)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'REMAINING',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF94A3B8),
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      formatMinutes(hasBalance ? balance : 0),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPermissionControlBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Permission Requests',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF0F172A),
+                  letterSpacing: -0.3,
+                ),
+              ),
+              // Card / Table View Mode Toggle
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.all(3),
+                child: Row(
+                  children: [
+                    InkWell(
+                      onTap: () => setState(() => _isTableView = false),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: !_isTableView ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: !_isTableView
+                              ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
+                              : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.grid_view_rounded,
+                              size: 14,
+                              color: !_isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Cards',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => setState(() => _isTableView = true),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _isTableView ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: _isTableView
+                              ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
+                              : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.table_rows_rounded,
+                              size: 14,
+                              color: _isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Table',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              // Search input
+              Expanded(
+                child: SizedBox(
+                  height: 38,
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search...',
+                      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                      prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                      ),
+                    ),
+                    onChanged: (val) {
+                      if (_debounce?.isActive ?? false) _debounce!.cancel();
+                      _debounce = Timer(const Duration(milliseconds: 400), () {
+                        _fetchRequests();
+                      });
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Status dropdown
+              Container(
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
+                    icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                    items: _statusOptions
+                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                        .toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => _selectedStatus = val);
+                        _fetchRequests();
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPermissionCard(Map<String, dynamic> req) {
+    final status = (req['status'] ?? '').toString();
+    final isPending = status == 'Pending';
+    final isApproved = status == 'Approved';
+    final isRejected = status == 'Rejected';
+
+    final Color statusBg = isApproved
+        ? const Color(0xFFECFDF5)
+        : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
+    final Color statusBorder = isApproved
+        ? const Color(0xFFA7F3D0)
+        : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
+    final Color statusText = isApproved
+        ? const Color(0xFF059669)
+        : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+
+    final type = _fmtType(req['type']?.toString());
+    final isEarly = type.toLowerCase().contains('early');
+    final isLate = type.toLowerCase().contains('late');
+    final Color typeBg = isEarly
+        ? const Color(0xFFEFF6FF)
+        : (isLate ? const Color(0xFFFFF7ED) : const Color(0xFFFAF5FF));
+    final Color typeBorder = isEarly
+        ? const Color(0xFFBFDBFE)
+        : (isLate ? const Color(0xFFFED7AA) : const Color(0xFFE9D5FF));
+    final Color typeText = isEarly
+        ? const Color(0xFF1D4ED8)
+        : (isLate ? const Color(0xFFC2410C) : const Color(0xFF7E22CE));
+
+    final dateStr = _fmtDate(req['date']);
+    final requestedMinutes = req['requestedMinutes'] ?? 0;
+    final durationStr = '$type: ${requestedMinutes >= 60 ? '${requestedMinutes ~/ 60} hr' : ''}${requestedMinutes % 60 > 0 ? ' ${requestedMinutes % 60} mins' : ''}'.trim();
+    final reason = (req['reason'] ?? '').toString().trim();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showPermissionDetails(req),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(14.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top Row: Date & Type Pill + Status Pill
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          dateStr,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: typeBg,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: typeBorder),
+                          ),
+                          child: Text(
+                            type,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                              color: typeText,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: statusBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: statusBorder),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: statusText,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(height: 18, color: Color(0xFFF1F5F9)),
+
+                // Duration Row
+                Row(
+                  children: [
+                    const Icon(Icons.timelapse_rounded, size: 14, color: Color(0xFF94A3B8)),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Requested: $durationStr',
+                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                    ),
+                  ],
+                ),
+
+                if (reason.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Reason: $reason',
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+
+                // Cancel Button if Pending
+                if (isPending) ...[
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _cancelRequest(req['_id'].toString()),
+                      icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
+                      label: const Text(
+                        'Cancel',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFFECACA)),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        minimumSize: Size.zero,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPermissionTableView(List<dynamic> pagedRequests) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+            headingTextStyle: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF94A3B8),
+              letterSpacing: 0.5,
+            ),
+            dataTextStyle: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF1E293B),
+            ),
+            columns: const [
+              DataColumn(label: Text('DATE')),
+              DataColumn(label: Text('TYPE')),
+              DataColumn(label: Text('REQUESTED DURATION')),
+              DataColumn(label: Text('STATUS')),
+              DataColumn(label: Text('REASON')),
+              DataColumn(label: Text('ACTION')),
+            ],
+            rows: pagedRequests.map((raw) {
+              final req = raw is Map<String, dynamic> ? raw : Map<String, dynamic>.from(raw as Map);
+              final status = (req['status'] ?? '').toString();
+              final isPending = status == 'Pending';
+              final isApproved = status == 'Approved';
+              final isRejected = status == 'Rejected';
+
+              final Color statusBg = isApproved
+                  ? const Color(0xFFECFDF5)
+                  : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
+              final Color statusBorder = isApproved
+                  ? const Color(0xFFA7F3D0)
+                  : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
+              final Color statusText = isApproved
+                  ? const Color(0xFF059669)
+                  : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+
+              final type = _fmtType(req['type']?.toString());
+              final isEarly = type.toLowerCase().contains('early');
+              final isLate = type.toLowerCase().contains('late');
+              final Color typeBg = isEarly
+                  ? const Color(0xFFEFF6FF)
+                  : (isLate ? const Color(0xFFFFF7ED) : const Color(0xFFFAF5FF));
+              final Color typeBorder = isEarly
+                  ? const Color(0xFFBFDBFE)
+                  : (isLate ? const Color(0xFFFED7AA) : const Color(0xFFE9D5FF));
+              final Color typeText = isEarly
+                  ? const Color(0xFF1D4ED8)
+                  : (isLate ? const Color(0xFFC2410C) : const Color(0xFF7E22CE));
+
+              final dateStr = _fmtDate(req['date']);
+              final requestedMinutes = req['requestedMinutes'] ?? 0;
+              final durationStr = '$type: ${requestedMinutes >= 60 ? '${requestedMinutes ~/ 60} hr' : ''}${requestedMinutes % 60 > 0 ? ' ${requestedMinutes % 60} mins' : ''}'.trim();
+              final reason = (req['reason'] ?? '-').toString().trim();
+
+              return DataRow(
+                cells: [
+                  DataCell(Text(dateStr, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: typeBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: typeBorder),
+                      ),
+                      child: Text(
+                        type,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: typeText,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(Text(durationStr)),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: statusBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: statusBorder),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: statusText,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: Text(reason, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                  DataCell(
+                    isPending
+                        ? OutlinedButton(
+                            onPressed: () => _cancelRequest(req['_id'].toString()),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFFFECACA)),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              minimumSize: Size.zero,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.cancel_outlined, size: 12, color: Color(0xFFDC2626)),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Cancel',
+                                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                ),
+                              ],
+                            ),
+                          )
+                        : const Text('-', style: TextStyle(color: Color(0xFF94A3B8))),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context); // keep-alive
-    final theme = Theme.of(context);
     final monthLabel = DateFormat('MMMM yyyy').format(_selectedMonth);
     final quota = (_balance?['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
     final consumed = (_balance?['consumedMinutes'] as num?)?.toDouble() ?? 0;
-    // Treat missing flags as configured/enabled so older backends are not blocked.
     final configured = _balance == null || _balance?['configured'] != false;
     final enabled = _balance == null || _balance?['enabled'] != false;
-    // Hours line is whole hours; minutes line is the leftover minutes (total % 60)
-    // so the two read as a single "Hh Mm" value (e.g. 90 -> "1 h / 30 min").
-    // Showing total minutes on the second line (e.g. "60 h / 3600 min") looked
-    // like the two figures disagreed.
-    String hoursAndMinutes(double minutes) {
-      final total = minutes < 0 ? 0 : minutes.round();
-      final hrs = total ~/ 60;
-      final mins = total % 60;
-      return '$hrs h\n$mins min';
-    }
+    final bool hasBalance = configured && enabled && quota > 0;
+    final double balance = (quota - consumed) < 0 ? 0 : (quota - consumed);
 
-    // Client-side paging: the backend returns the whole month at once.
-    final totalPages = _requests.isEmpty
-        ? 1
-        : (_requests.length / _itemsPerPage).ceil();
+    final filtered = _requests.where((r) {
+      if (_selectedStatus != 'All Status') {
+        if (r['status'] != _selectedStatus) return false;
+      }
+      final q = _searchController.text.trim().toLowerCase();
+      if (q.isNotEmpty) {
+        final reason = (r['reason'] ?? '').toString().toLowerCase();
+        final type = (r['type'] ?? '').toString().toLowerCase();
+        if (!reason.contains(q) && !type.contains(q)) return false;
+      }
+      return true;
+    }).toList();
+
+    // Client-side paging
+    final totalPages = filtered.isEmpty ? 1 : (filtered.length / _itemsPerPage).ceil();
     final safePage = _currentPage.clamp(1, totalPages);
     final pageStart = (safePage - 1) * _itemsPerPage;
-    final pagedRequests = _requests
-        .skip(pageStart)
-        .take(_itemsPerPage)
-        .toList();
+    final pagedRequests = filtered.skip(pageStart).take(_itemsPerPage).toList();
 
     return Column(
       children: [
@@ -6442,235 +7922,71 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
             },
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(12),
               children: [
-                Card(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Permission Balance ($monthLabel)',
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
+                // Top Web-styled Permission Balance Card
+                _buildWebPermissionBalanceCard(quota, consumed, balance, hasBalance, monthLabel),
+
+                // Controls & Dual View Switcher Bar
+                _buildPermissionControlBar(),
+
+                // Body: Loader / Empty / Cards / Table
+                if (_isLoading)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.35,
+                    child: const Center(child: AppTabLoader()),
+                  )
+                else if (filtered.isEmpty)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.35,
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(18),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFFFFBEB),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.schedule_rounded,
+                              size: 40,
+                              color: Color(0xFFEFAA1F),
                             ),
                           ),
-                        ),
-                        TextButton.icon(
-                          onPressed: _pickMonth,
-                          icon: const Icon(Icons.calendar_month),
-                          label: const Text('Month'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                // Balance figures: always show the three cards. When Permission is
-                // configured, enabled, and has a quota, show the real figures;
-                // otherwise (disabled/unconfigured/no-quota) show 0 values so the
-                // layout stays consistent and a policy notice explains the state.
-                Builder(
-                  builder: (context) {
-                    final bool hasBalance =
-                        configured && enabled && quota > 0;
-                    // Balance = allocated minus what has actually been used.
-                    // Used reflects the real consumed total and may exceed the
-                    // monthly allocation (overshoot), so clamp the remaining
-                    // balance at 0 rather than showing a negative figure.
-                    final double balance = (quota - consumed) < 0
-                        ? 0
-                        : (quota - consumed);
-                    return IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _balanceTile(
-                            'Monthly Allocated',
-                            hoursAndMinutes(hasBalance ? quota : 0),
-                          ),
-                          const SizedBox(width: 8),
-                          _balanceTile(
-                            'Used',
-                            hoursAndMinutes(hasBalance ? consumed : 0),
-                          ),
-                          const SizedBox(width: 8),
-                          _balanceTile(
-                            'Balance',
-                            hoursAndMinutes(hasBalance ? balance : 0),
+                          const SizedBox(height: 14),
+                          const Text(
+                            'No permission requests found',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF64748B),
+                            ),
                           ),
                         ],
                       ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                // Policy-state notices — show the appropriate message based on
-                // configured / enabled / quota state.
-                if (!configured)
-                  _permissionNotice(
-                    icon: Icons.info_outline,
-                    color: Colors.orange,
-                    message:
-                        'Permission is not configured for your shift. Contact HR.\n'
-                        'Any permission request will be processed as Fine.',
-                  ),
-                if (!configured) const SizedBox(height: 12),
-                if (configured && !enabled) ...[
-                  _permissionNotice(
-                    icon: Icons.info_outline,
-                    color: Colors.orange,
-                    message: quota > 0
-                        ? 'Permission is disabled for your shift. Contact HR to enable.\n'
-                              'Any permission request will be processed as Fine.'
-                        : 'Permission is not configured for your shift. Contact HR.\n'
-                              'Any permission request will be processed as Fine.',
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (configured && enabled && quota <= 0) ...[
-                  _permissionNotice(
-                    icon: Icons.info_outline,
-                    color: Colors.blue,
-                    message:
-                        'Permission is not configured for your shift. Contact HR.\n'
-                        'Any permission request will be processed as Fine.',
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (_showFilters)
-                  Card(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: DropdownButtonFormField<String>(
-                        value: _selectedStatus,
-                        items: _statusOptions
-                            .map(
-                              (s) => DropdownMenuItem(value: s, child: Text(s)),
-                            )
-                            .toList(),
-                        decoration: const InputDecoration(labelText: 'Status'),
-                        onChanged: (v) async {
-                          if (v == null) return;
-                          setState(() => _selectedStatus = v);
-                          await _fetchRequests();
-                        },
-                      ),
-                    ),
-                  ),
-                if (_showFilters) const SizedBox(height: 12),
-                // While (re)loading after a query change show the loader and
-                // reveal the list only once loaded, so stale results never flash.
-                if (_isLoading)
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: AppTabLoader(),
                     ),
                   )
-                else if (_requests.isEmpty)
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text('No permission requests found'),
-                    ),
-                  )
+                else if (_isTableView)
+                  _buildPermissionTableView(pagedRequests)
                 else
-                  ...pagedRequests.map((raw) {
-                    final req = raw is Map<String, dynamic>
-                        ? raw
-                        : Map<String, dynamic>.from(raw as Map);
-                    final status = (req['status'] ?? '').toString();
-                    final isPending = status == 'Pending';
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        onTap: () => _showPermissionDetails(req),
-                        child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    _fmtDate(req['date']),
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _statusColor(
-                                      status,
-                                    ).withOpacity(0.12),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    status,
-                                    style: TextStyle(
-                                      color: _statusColor(status),
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text('Type: ${_fmtType(req['type']?.toString())}'),
-                            Text(
-                              'Requested Minutes: ${req['requestedMinutes'] ?? 0}',
-                            ),
-                            if ((req['reason'] ?? '')
-                                .toString()
-                                .trim()
-                                .isNotEmpty) ...[
-                              const SizedBox(height: 4),
-                              Text('Reason: ${req['reason']}'),
-                            ],
-                            const SizedBox(height: 4),
-                            Text('Applied: ${_fmtDate(req['createdAt'])}'),
-                            if (isPending) ...[
-                              const SizedBox(height: 10),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: OutlinedButton.icon(
-                                  onPressed: () =>
-                                      _cancelRequest(req['_id'].toString()),
-                                  icon: const Icon(Icons.cancel_outlined),
-                                  label: const Text('Cancel'),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      ),
-                    );
-                  }),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                    child: Column(
+                      children: [
+                        for (final raw in pagedRequests)
+                          _buildPermissionCard(
+                            raw is Map<String, dynamic> ? raw : Map<String, dynamic>.from(raw as Map),
+                          ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
         ),
-        // Bottom action bar: page numbers (only when multi-page) on the left
-        // and the Request Permission button on the right.
+
+        // Bottom action bar: page numbers & Request Permission button
         _PaginationBar(
           currentPage: safePage,
           totalPages: totalPages,
@@ -6847,1098 +8163,846 @@ class RequestPermissionDialog extends StatefulWidget {
 class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   final _formKey = GlobalKey<FormState>();
   final RequestService _requestService = RequestService();
-  final AttendanceService _attendanceService = AttendanceService();
-  DateTime _date = DateTime.now();
-  String _type = 'lateArrival';
-  // Planned out/in window — only used for the 'both' (custom-time) type.
-  TimeOfDay? _fromTime;
-  TimeOfDay? _toTime;
-  final TextEditingController _minutesController = TextEditingController();
-  final TextEditingController _reasonController = TextEditingController();
-  bool _isSubmitting = false;
-  HolidayOffConfig _offConfig = HolidayOffConfig.empty;
-  // Permission configuration. Defaults keep the form usable until config loads.
-  // Not-configured is no longer a gate — it is allowed and processed as Fine
-  // (parity with break), so only `enabled` / quota drive the fine wording.
-  bool _enabled = true;
-  double _quotaMinutes = 0;
-  double _consumedMinutes = 0;
-  double _pendingMinutes = 0;
-  bool _showLimitWarning = false;
-  String _limitWarningMsg = '';
 
-  // Per-user fine context (DB fine settings + this staff's salary/shift). Used to
-  // preview the late/early fine that an over-quota or disabled permission incurs.
-  Map<String, dynamic>? _fineCalculation;
-  double? _netPerDaySalary;
-  double _shiftHours = 9.0; // Fallback: default 09:30–18:30 shift.
-  // Today's punch state. Permission can only be applied during an ACTIVE work
-  // session: after punch-in and before punch-out. Null until attendance loads
-  // (fail open — the backend re-checks and is authoritative).
-  bool? _punchedInToday;
-  bool? _punchedOutToday;
+  DateTime? _permDate;
+  String _permType = 'Late'; // 'Late' | 'Early' | 'Custom'
+  final TextEditingController _lateHoursController = TextEditingController();
+  final TextEditingController _lateMinutesController = TextEditingController();
+  final TextEditingController _earlyHoursController = TextEditingController();
+  final TextEditingController _earlyMinutesController = TextEditingController();
+  final TextEditingController _reasonController = TextEditingController();
+
+  String? _errorMessage;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
-    _loadOffConfig();
-    _loadPermissionConfig();
-    _loadFineContext();
-    // Live-refresh the fine estimate as the user edits the requested minutes.
-    _minutesController.addListener(_onMinutesChanged);
-  }
-
-  void _onMinutesChanged() {
-    if (mounted) setState(() {});
-  }
-
-  /// Loads the DB fine rules, this user's per-day salary and shift hours so the
-  /// form can estimate the fine for over-quota / disabled-permission minutes.
-  Future<void> _loadFineContext() async {
-    Map<String, dynamic>? fineConfig;
-    try {
-      final fineResult = await _attendanceService.getFineCalculation();
-      if (fineResult['success'] == true) {
-        fineConfig = fineResult['data'] as Map<String, dynamic>?;
-      }
-    } catch (_) {}
-
-    double? net;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      net = prefs.getDouble(kAppNetPerDaySalaryPrefsKey);
-      if (net == null || net <= 0) {
-        final gross = prefs.getDouble(kAppGrossPerDaySalaryPrefsKey);
-        if (gross != null && gross > 0) net = gross;
-      }
-    } catch (_) {}
-
-    double shiftHours = _shiftHours;
-    bool? punchedIn;
-    bool? punchedOut;
-    try {
-      final now = DateTime.now();
-      final dateStr =
-          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      final att = await _attendanceService.getAttendanceByDate(dateStr);
-      final body = att['data'] as Map<String, dynamic>?;
-      final template = body?['template'] as Map?;
-      final start = template?['shiftStartTime']?.toString().trim();
-      final end = template?['shiftEndTime']?.toString().trim();
-      if (start != null && start.isNotEmpty && end != null && end.isNotEmpty) {
-        final h = calculateShiftHours(start, end);
-        if (h > 0) shiftHours = h;
-      }
-      // Derive today's punch state so the form can gate apply on an active
-      // session (after punch-in, before punch-out). /attendance/today returns
-      // authoritative top-level hasPunchIn/hasPunchOut flags; fall back to the
-      // attendance record's punch timestamps under `data`.
-      if (att['success'] == true && body != null) {
-        final record = body['data'] is Map ? body['data'] as Map : null;
-        punchedIn = body['hasPunchIn'] == true ||
-            hasParsablePunchDateTime(record?['punchIn']);
-        punchedOut = body['hasPunchOut'] == true ||
-            hasParsablePunchDateTime(record?['punchOut']);
-      }
-    } catch (_) {}
-
-    if (!mounted) return;
-    setState(() {
-      _fineCalculation = fineConfig;
-      _netPerDaySalary = net;
-      _shiftHours = shiftHours;
-      _punchedInToday = punchedIn;
-      _punchedOutToday = punchedOut;
-      // Today's attendance is closed once punched out — today is no longer a
-      // valid permission date, so move the selection to the next selectable
-      // working day (a future-dated request can still be applied).
-      final earliest = _earliestPermissionDate();
-      if (_date.isBefore(earliest)) {
-        _date = earliest;
-      }
-      // Punch state just resolved — if a now-stale type is no longer offered
-      // (e.g. Late Arrival after punch-in, or Early Exit before punch-in),
-      // coerce it to the first valid type so the dropdown value stays valid.
-      if (!_isTypeAllowed(_type)) {
-        _type = _firstAllowedType();
-      }
-    });
-  }
-
-
-  /// Whether the requested [_date] is a future calendar day.
-  bool _isFutureDate() {
+    // Default to tomorrow as per Web App validation
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final d = DateTime(_date.year, _date.month, _date.day);
-    return d.isAfter(today);
-  }
-
-  /// Late Arrival applies to the START of the day. For TODAY it is offered until
-  /// you punch in — once punched in you have already arrived, so it no longer
-  /// applies (and after punch-out the day is closed). Future dates allow it
-  /// freely (no punch logic).
-  bool _lateArrivalAllowed() {
-    if (_isFutureDate()) return true;
-    if (_punchedInToday == true) return false; // today, already arrived
-    if (_punchedOutToday == true) return false; // today, attendance closed
-    return true; // today before punch-in, or state still loading (fail open)
-  }
-
-  /// Early Exit applies to LEAVING. For TODAY it is offered until you punch out
-  /// — once punched out you have already left, so it no longer applies. Allowed
-  /// before punch-in and during an active session. Future dates allow it freely.
-  bool _earlyExitAllowed() {
-    if (_isFutureDate()) return true;
-    if (_punchedOutToday == true) return false; // today, already left
-    return true; // today before punch-in / active session, or loading
-  }
-
-  /// Custom (out/in window) is allowed for any FUTURE date and for TODAY until
-  /// the day is closed (punched out).
-  bool _customAllowed() {
-    if (_isFutureDate()) return true;
-    if (_punchedOutToday == true) return false; // today, attendance closed
-    return true; // today before punch-in / active session, or loading
-  }
-
-  /// Whether the given permission [type] is selectable in the current
-  /// date + punch context.
-  bool _isTypeAllowed(String type) {
-    switch (type) {
-      case 'lateArrival':
-        return _lateArrivalAllowed();
-      case 'earlyExit':
-        return _earlyExitAllowed();
-      case 'both':
-        return _customAllowed();
-      default:
-        return false;
-    }
-  }
-
-  /// The first permission type selectable in the current context — used to
-  /// coerce a now-invalid `_type` to a valid one so the dropdown value always
-  /// matches one of its items (e.g. Late Arrival drops out after punch-in).
-  String _firstAllowedType() {
-    if (_lateArrivalAllowed()) return 'lateArrival';
-    if (_earlyExitAllowed()) return 'earlyExit';
-    if (_customAllowed()) return 'both';
-    return 'lateArrival'; // safe fallback (shouldn't happen for a selectable date)
-  }
-
-  /// Note shown under the type dropdown when not every permission type is
-  /// available for the selected date + punch context. Null on a future date
-  /// (all types available) or while the punch state is still loading.
-  String? _permissionTypeRestrictionNote() {
-    if (_isFutureDate()) return null; // future: all types available
-    if (_punchedOutToday == true) {
-      return 'Today\'s attendance is closed. Apply your permission for a '
-          'future date.';
-    }
-    if (_punchedInToday == true) {
-      return 'After punching in, Late Arrival no longer applies for today. '
-          'Apply Early Exit or Custom, or plan Late Arrival for a future date.';
-    }
-    return null; // before punch-in (all types) or state still loading
-  }
-
-  /// Validates the selected permission type against the date + punch context,
-  /// per the permission matrix. Returns an error message to show, or null when
-  /// the request may proceed.
-  String? _permissionEligibilityError() {
-    // After punch-out today the day is closed (the date picker also bars today,
-    // but guard here too). A future-dated request is unaffected.
-    if (!_isFutureDate() && _punchedOutToday == true) {
-      return 'Attendance is closed for today. Permission can no longer be applied.';
-    }
-    if (_isTypeAllowed(_type)) return null;
-    // The only remaining type restriction is Late Arrival once you've punched in.
-    if (_type == 'lateArrival') {
-      return 'Late Arrival permission can only be applied before punching in, '
-          'or planned for a future date.';
-    }
-    return 'This permission type cannot be applied for the selected date.';
-  }
-
-  /// Maps the selected permission type to the fine-rule action key.
-  String get _fineActionType {
-    switch (_type) {
-      case 'lateArrival':
-        return 'lateArrival';
-      case 'earlyExit':
-        return 'earlyExit';
-      default:
-        return 'both';
-    }
-  }
-
-  /// Estimated fine (₹) for [minutes] of the selected permission type, using the
-  /// DB fine rules + this user's per-day salary. Returns 0 when salary is unknown.
-  double _estimateFine(int minutes) {
-    final net = _netPerDaySalary;
-    if (net == null || net <= 0 || minutes <= 0) return 0.0;
-    return estimateRuleBasedFine(
-      fineCalculation: _fineCalculation,
-      actionApplyToType: _fineActionType,
-      minutes: minutes,
-      netPerDaySalary: net,
-      shiftHours: _shiftHours,
-    );
-  }
-
-  Future<void> _loadPermissionConfig() async {
-    final result = await _requestService.getPermissionBalance(
-      month: _date.month,
-      year: _date.year,
-    );
-    if (!mounted) return;
-    final data = result['data'];
-    if (result['success'] == true && data is Map) {
-      setState(() {
-        _enabled = data['enabled'] != false;
-        _quotaMinutes = (data['monthlyQuotaMinutes'] as num?)?.toDouble() ?? 0;
-        _consumedMinutes = (data['consumedMinutes'] as num?)?.toDouble() ?? 0;
-        _pendingMinutes = (data['pendingMinutes'] as num?)?.toDouble() ?? 0;
-      });
-    }
-  }
-
-  Future<void> _loadOffConfig() async {
-    final config = await loadHolidayOffConfig();
-    if (!mounted) return;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    setState(() {
-      _offConfig = config;
-      // If the current default date is a holiday/week-off, move to the next working day.
-      final current = _date.isBefore(today) ? today : _date;
-      if (config.isDisabled(current)) {
-        _date = config.firstSelectableOnOrAfter(current);
-      }
-    });
+    _permDate = DateTime(now.year, now.month, now.day + 1);
   }
 
   @override
   void dispose() {
-    _minutesController.removeListener(_onMinutesChanged);
-    _minutesController.dispose();
+    _lateHoursController.dispose();
+    _lateMinutesController.dispose();
+    _earlyHoursController.dispose();
+    _earlyMinutesController.dispose();
     _reasonController.dispose();
     super.dispose();
   }
 
-  /// Earliest date the member may request a permission for. Normally today, but
-  /// once today's attendance is closed (already punched out) today is no longer
-  /// applicable, so the floor moves to the next selectable working day — closed
-  /// days only support a Late Arrival planned for a future date. Holidays and
-  /// week-offs are skipped.
-  DateTime _earliestPermissionDate() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final floor = _punchedOutToday == true
-        ? today.add(const Duration(days: 1)) // today closed → future only
-        : today;
-    return _offConfig.firstSelectableOnOrAfter(floor);
-  }
-
   Future<void> _pickDate() async {
-    final now = DateTime.now();
-    // Selection floor: today, or the next working day once today is closed.
-    final earliest = _earliestPermissionDate();
-    final base = _date.isBefore(earliest) ? earliest : _date;
-    final initial = _offConfig.firstSelectableOnOrAfter(base);
-    final picked = await showDatePicker(
+    final DateTime initial = _permDate ?? DateTime.now().add(const Duration(days: 1));
+    final DateTime? picked = await _showWebStyledDatePicker(
       context: context,
       initialDate: initial,
-      firstDate: earliest,
-      lastDate: DateTime(now.year + 1, 12, 31),
-      selectableDayPredicate: (day) => !_offConfig.isDisabled(day),
+      firstDate: DateTime.now().subtract(const Duration(days: 30)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
     );
+
     if (picked != null) {
       setState(() {
-        _date = DateTime(picked.year, picked.month, picked.day);
-        _showLimitWarning = false;
-        // Drop a now-invalid type selection so the dropdown value stays in sync
-        // with its available items (e.g. Late Arrival drops out after punch-in).
-        if (!_isTypeAllowed(_type)) {
-          _type = _firstAllowedType();
-        }
+        _permDate = picked;
+        _errorMessage = null;
       });
     }
   }
 
-  /// 24h "HH:mm" wire format expected by the backend.
-  String _formatTimeHHmm(TimeOfDay t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+  Future<DateTime?> _showWebStyledDatePicker({
+    required BuildContext context,
+    required DateTime initialDate,
+    required DateTime firstDate,
+    required DateTime lastDate,
+  }) async {
+    DateTime navDate = DateTime(initialDate.year, initialDate.month, 1);
+    DateTime? selectedDate = initialDate;
 
-  Future<void> _pickTime({required bool isFrom}) async {
-    final picked = await showTimePicker(
+    return showDialog<DateTime>(
       context: context,
-      initialTime: (isFrom ? _fromTime : _toTime) ?? TimeOfDay.now(),
-    );
-    if (picked != null) {
-      setState(() {
-        if (isFrom) {
-          _fromTime = picked;
-        } else {
-          _toTime = picked;
-        }
-        _syncMinutesFromWindow();
-      });
-    }
-  }
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            final daysInMonth = DateTime(navDate.year, navDate.month + 1, 0).day;
+            final firstWeekday = DateTime(navDate.year, navDate.month, 1).weekday % 7; // 0=Sun, 1=Mon...
 
-  /// The From/To window is authoritative for 'both': total minutes (To − From)
-  /// drive the quota/fine, so auto-fill Requested Minutes from the picked window.
-  void _syncMinutesFromWindow() {
-    final from = _fromTime;
-    final to = _toTime;
-    if (from == null || to == null) return;
-    final minutes = (to.hour * 60 + to.minute) - (from.hour * 60 + from.minute);
-    if (minutes > 0) {
-      _minutesController.text = minutes.toString();
-    }
-  }
-
-  /// Grey tappable card showing a selected time (or a hint) — matches the date card.
-  Widget _buildTimeField({
-    required TimeOfDay? value,
-    required String hint,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-        decoration: BoxDecoration(
-          color: AppColors.inputFill,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.schedule, size: 18, color: AppColors.primary),
-            const SizedBox(width: 10),
-            Text(
-              value != null ? value.format(context) : hint,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: value != null
-                    ? AppColors.textPrimary
-                    : AppColors.textCaption,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPermissionLimitBanner(String message) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.orange.shade50,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.orange.shade400),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            Icons.warning_amber_rounded,
-            size: 20,
-            color: Colors.orange.shade700,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Permission Quota Exceeded',
-                  style: TextStyle(
-                    color: Colors.orange.shade800,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  message,
-                  style: TextStyle(
-                    color: Colors.orange.shade800,
-                    fontSize: 12.5,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Your admin has been notified. Request is still submitted.',
-                  style: TextStyle(
-                    color: Colors.orange.shade700,
-                    fontSize: 11.5,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// The minutes that would actually be fined for the current input, plus a
-  /// human label for why. Returns (0, '') when no fine applies.
-  ({int minutes, String basis}) _finedMinutesForInput() {
-    final requested = int.tryParse(_minutesController.text.trim()) ?? 0;
-    if (requested <= 0) return (minutes: 0, basis: '');
-
-    // Any non-normal scenario — entire request is fine: S2 (enabled, no quota),
-    // S3 (disabled, has quota), S4 (disabled, no quota).
-    if (!(_enabled && _quotaMinutes > 0)) {
-      return (
-        minutes: requested,
-        basis: (!_enabled && _quotaMinutes > 0)
-            ? 'disabled — all as fine'
-            : 'not configured — all as fine',
-      );
-    }
-
-    final effectiveRemaining =
-        (_quotaMinutes - _consumedMinutes - _pendingMinutes).clamp(
-          0.0,
-          _quotaMinutes,
-        );
-    if (_quotaMinutes > 0 && requested > effectiveRemaining) {
-      final excess = requested - effectiveRemaining.toInt();
-      return (minutes: excess, basis: '$excess min over your monthly quota');
-    }
-    return (minutes: 0, basis: '');
-  }
-
-  /// Formats a minute count as "Xh Ym", omitting zero parts (e.g. 90 -> "1h 30m").
-  String _formatMinutesAsHm(int minutes) {
-    final m = minutes < 0 ? 0 : minutes;
-    final h = m ~/ 60;
-    final rem = m % 60;
-    if (h > 0 && rem > 0) return '${h}h ${rem}m';
-    if (h > 0) return '${h}h';
-    return '${rem}m';
-  }
-
-  /// Tooltip message describing how the requested duration will be split
-  /// between permission and fine, based on the remaining monthly quota.
-  /// - Partial overflow (some quota left): "[allowed] will be considered as
-  ///   permission and the remaining [excess] will be applied as a fine."
-  /// - Quota already exhausted: the full requested duration is counted as fine.
-  String? _permissionFineSplitMessage() {
-    final requested = int.tryParse(_minutesController.text.trim()) ?? 0;
-    if (requested <= 0) return null;
-
-    // Disabled with quota > 0 — all as fine (Scenario 3).
-    if (!_enabled && _quotaMinutes > 0) {
-      return 'Permission is disabled for your shift. Contact HR to enable.\n'
-          'The requested duration (${_formatMinutesAsHm(requested)}) will be processed as Fine.';
-    }
-
-    // Enabled but no quota configured — entire amount is fine (Scenario 2).
-    if (_quotaMinutes <= 0) {
-      return 'Permission is not configured for your shift. Contact HR.\n'
-          'The requested duration (${_formatMinutesAsHm(requested)}) will be processed as Fine.';
-    }
-
-    final effectiveRemaining =
-        (_quotaMinutes - _consumedMinutes - _pendingMinutes)
-            .clamp(0.0, _quotaMinutes)
-            .toInt();
-
-    if (effectiveRemaining <= 0) {
-      return 'Your available permission limit has been exceeded. '
-          'The full requested duration (${_formatMinutesAsHm(requested)}) will be counted as a fine.';
-    }
-
-    if (requested > effectiveRemaining) {
-      final finePart = requested - effectiveRemaining;
-      return '${_formatMinutesAsHm(effectiveRemaining)} will be considered as permission and '
-          'the remaining ${_formatMinutesAsHm(finePart)} will be applied as a fine.';
-    }
-
-    return null;
-  }
-
-  /// Info tooltip showing the permission/fine split for the current input.
-  /// Hidden when the request fits fully within the remaining quota.
-  Widget _buildPermissionFineSplitNotice() {
-    final msg = _permissionFineSplitMessage();
-    if (msg == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.orange.shade50,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.orange.shade300),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.info_outline, size: 18, color: Colors.orange.shade700),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                msg,
-                style: TextStyle(
-                  color: Colors.orange.shade800,
-                  fontSize: 12.5,
-                  height: 1.35,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Orange info banner showing the estimated fine for the current input. Hidden
-  /// when no fine applies or the per-day salary is not yet known.
-  Widget _buildFineEstimate() {
-    final fined = _finedMinutesForInput();
-    if (fined.minutes <= 0) return const SizedBox.shrink();
-    if (_netPerDaySalary == null || _netPerDaySalary! <= 0) {
-      return const SizedBox.shrink();
-    }
-    final fine = _estimateFine(fined.minutes);
-    if (fine <= 0) return const SizedBox.shrink();
-
-    final formatted = NumberFormat('#,##0.00').format(fine);
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.orange.shade50,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.orange.shade300),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.info_outline, size: 18, color: Colors.orange.shade700),
-            const SizedBox(width: 10),
-            Expanded(
-              child: RichText(
-                text: TextSpan(
-                  style: TextStyle(
-                    color: Colors.orange.shade800,
-                    fontSize: 12.5,
-                    height: 1.35,
-                  ),
-                  children: [
-                    const TextSpan(text: 'Estimated fine: '),
-                    TextSpan(
-                      text: '₹$formatted',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Container(
+                width: 320,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x25000000),
+                      blurRadius: 24,
+                      offset: Offset(0, 10),
                     ),
-                    TextSpan(text: '  (${fined.basis}).'),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Header Month & Navigation
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left_rounded, size: 22, color: Color(0xFF64748B)),
+                          onPressed: () {
+                            setDialogState(() {
+                              navDate = DateTime(navDate.year, navDate.month - 1, 1);
+                            });
+                          },
+                        ),
+                        Text(
+                          DateFormat('MMMM yyyy').format(navDate),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0xFF64748B)),
+                          onPressed: () {
+                            setDialogState(() {
+                              navDate = DateTime(navDate.year, navDate.month + 1, 1);
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const Divider(color: Color(0xFFF1F5F9), height: 16),
+                    // Weekday headers
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: const [
+                        Text('SU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('MO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('WE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TH', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('FR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    // Days Grid
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: firstWeekday + daysInMonth,
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 7,
+                        mainAxisSpacing: 6,
+                        crossAxisSpacing: 6,
+                      ),
+                      itemBuilder: (c, index) {
+                        if (index < firstWeekday) {
+                          return const SizedBox.shrink();
+                        }
+                        final dayNumber = index - firstWeekday + 1;
+                        final currentDay = DateTime(navDate.year, navDate.month, dayNumber);
+                        final isSelected = selectedDate != null &&
+                            selectedDate!.year == currentDay.year &&
+                            selectedDate!.month == currentDay.month &&
+                            selectedDate!.day == currentDay.day;
+
+                        return InkWell(
+                          onTap: () {
+                            Navigator.pop(ctx, currentDay);
+                          },
+                          borderRadius: BorderRadius.circular(100),
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: isSelected ? const Color(0xFFEFAA1F) : Colors.transparent,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              '$dayNumber',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                                color: isSelected ? Colors.white : const Color(0xFF1E293B),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
+            );
+          },
+        );
+      },
     );
   }
 
-  Future<void> _submit() async {
-    // Not-configured no longer blocks: the request is allowed and processed as
-    // Fine (parity with the break flow). The `_quotaMinutes <= 0` branch below
-    // shows the fine warning and lets the employee confirm before submitting.
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> _handleRequestPermissionSubmit() async {
+    setState(() => _errorMessage = null);
 
-    final minutes = int.tryParse(_minutesController.text.trim());
-    final reason = _reasonController.text.trim();
-    if (minutes == null || minutes <= 0) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Requested minutes must be greater than 0',
-        isError: true,
-      );
-      return;
-    }
-    if (reason.isEmpty) {
-      SnackBarUtils.showSnackBar(context, 'Reason is required', isError: true);
-      return;
-    }
-    // 'both' captures a planned out/in window; require both ends.
-    if (_type == 'both' && (_fromTime == null || _toTime == null)) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Select both From and To time',
-        isError: true,
-      );
+    if (_permDate == null) {
+      setState(() => _errorMessage = 'Please select a date');
       return;
     }
 
-    // Gate the apply on the permission matrix: future dates allow any type (no
-    // punch logic); today allows all types before punch-in, blocks Late Arrival
-    // once punched in (already arrived), and blocks Early Exit once punched out
-    // (already left) — after punch-out the day is closed and the date picker
-    // moves selection to a future day. No past-hours/window restriction (all
-    // scenarios allowed). When the attendance state is still unknown (null) we
-    // fail open — the backend re-checks and is authoritative.
-    final eligibilityError = _permissionEligibilityError();
-    if (eligibilityError != null) {
-      SnackBarUtils.showSnackBar(context, eligibilityError, isError: true);
+    if (_reasonController.text.trim().isEmpty) {
+      setState(() => _errorMessage = 'Please enter reason for permission request');
       return;
     }
 
-    // Disabled with quota > 0 → entire amount is fine (warn then allow, Scenario 3).
-    if (!_enabled && _quotaMinutes > 0) {
-      final fineText = () {
-        final f = _estimateFine(minutes);
-        return f > 0
-            ? ' Estimated fine: ₹${NumberFormat('#,##0.00').format(f)}.'
-            : '';
-      }();
-      final msg =
-          'Permission is disabled for your shift. Contact HR to enable.\n'
-          'The requested duration (${_formatMinutesAsHm(minutes)}) '
-          'will be processed as Fine.$fineText';
-      if (!_showLimitWarning) {
-        setState(() {
-          _showLimitWarning = true;
-          _limitWarningMsg = msg;
-        });
-        return;
-      }
-      // User acknowledged the banner — fall through to submit.
+    final lH = int.tryParse(_lateHoursController.text.trim()) ?? 0;
+    final lM = int.tryParse(_lateMinutesController.text.trim()) ?? 0;
+    final eH = int.tryParse(_earlyHoursController.text.trim()) ?? 0;
+    final eM = int.tryParse(_earlyMinutesController.text.trim()) ?? 0;
+
+    int totalDuration = 0;
+    if (_permType == 'Late') {
+      totalDuration = lH * 60 + lM;
+    } else if (_permType == 'Early') {
+      totalDuration = eH * 60 + eM;
+    } else if (_permType == 'Custom') {
+      totalDuration = (lH * 60 + lM) + (eH * 60 + eM);
     }
 
-    // No quota configured → entire amount is fine (warn then allow). Covers S2
-    // (enabled, no quota) and S4 (disabled, no quota); S3 (disabled + quota) is
-    // handled by the disabled branch above.
-    if (_quotaMinutes <= 0) {
-      final fineText = () {
-        final f = _estimateFine(minutes);
-        return f > 0
-            ? ' Estimated fine: ₹${NumberFormat('#,##0.00').format(f)}.'
-            : '';
-      }();
-      final msg =
-          'Permission is not configured for your shift. Contact HR.\n'
-          'The requested duration (${_formatMinutesAsHm(minutes)}) '
-          'will be processed as Fine.$fineText';
-      if (!_showLimitWarning) {
-        setState(() {
-          _showLimitWarning = true;
-          _limitWarningMsg = msg;
-        });
-        return;
-      }
-      // User acknowledged the banner — fall through to submit.
+    if (totalDuration <= 0) {
+      setState(() => _errorMessage = 'Please enter a valid duration greater than 0 minutes.');
+      return;
     }
 
-    // Effective remaining = quota - consumed - pending (pending minutes may still be deducted).
-    final effectiveRemaining =
-        (_quotaMinutes - _consumedMinutes - _pendingMinutes).clamp(
-          0.0,
-          _quotaMinutes,
-        );
-    if (_quotaMinutes > 0 && minutes > effectiveRemaining) {
-      final remainingInt = effectiveRemaining.toInt();
-      final excess = minutes - remainingInt;
-      final estimatedFine = _estimateFine(excess);
-      final fineText = estimatedFine > 0
-          ? ' Estimated fine: ₹${NumberFormat('#,##0.00').format(estimatedFine)}.'
-          : '';
-      final msg = remainingInt <= 0
-          ? 'Your available permission limit has been exceeded. '
-                'The full requested duration (${_formatMinutesAsHm(minutes)}) '
-                'will be counted as a fine.$fineText'
-          : '${_formatMinutesAsHm(remainingInt)} will be considered as '
-                'permission and the remaining ${_formatMinutesAsHm(excess)} '
-                'will be applied as a fine.$fineText';
-      setState(() {
-        _showLimitWarning = true;
-        _limitWarningMsg = msg;
-      });
-      unawaited(
-        FcmService.showLimitExceededLocalNotification(
-          type: 'permission',
-          message: msg,
-        ),
-      );
-      unawaited(
-        _requestService.notifyAdminLimitExceeded(
-          type: 'permission',
-          requested: minutes,
-          limit: effectiveRemaining,
-        ),
-      );
-      // Do not return — permission over-quota is submittable.
-    }
+    // Backend payload matching web app
+    final payload = <String, dynamic>{
+      'type': _permType, // 'Late' | 'Early' | 'Custom'
+      'date': DateFormat('yyyy-MM-dd').format(_permDate!),
+      'lateHours': lH,
+      'lateMinutes': lM,
+      'earlyHours': eH,
+      'earlyMinutes': eM,
+      'durationMins': totalDuration,
+      'reason': _reasonController.text.trim(),
+      // Backward compatibility keys
+      'minutes': totalDuration,
+      'permissionType': _permType == 'Late' ? 'lateArrival' : (_permType == 'Early' ? 'earlyExit' : 'both'),
+    };
 
     setState(() => _isSubmitting = true);
-    final result = await _requestService.createPermissionRequest(
-      date: _date,
-      type: _type,
-      requestedMinutes: minutes,
-      reason: reason,
-      fromTime: _type == 'both' && _fromTime != null
-          ? _formatTimeHHmm(_fromTime!)
-          : null,
-      toTime: _type == 'both' && _toTime != null
-          ? _formatTimeHHmm(_toTime!)
-          : null,
+    final res = await _requestService.createPermissionRequest(
+      date: _permDate!,
+      type: _permType == 'Late' ? 'lateArrival' : (_permType == 'Early' ? 'earlyExit' : 'both'),
+      requestedMinutes: totalDuration,
+      reason: _reasonController.text.trim(),
+      lateHours: lH,
+      lateMinutes: lM,
+      earlyHours: eH,
+      earlyMinutes: eM,
+      permTypeWeb: _permType,
     );
-    if (!mounted) return;
     setState(() => _isSubmitting = false);
 
-    if (result['success'] == true) {
-      Navigator.of(context).pop();
+    if (!mounted) return;
+
+    if (res['success'] == true) {
+      Navigator.pop(context);
       widget.onSuccess();
-      final overlay = Navigator.of(context, rootNavigator: true).overlay;
-      if (overlay != null && overlay.mounted) {
-        showRequestSubmittedSuccessDialog(overlay.context);
-      }
-      // Surface the exact policy notice when the permission time will be fined
-      // (disabled / no-allowance shift). Request was still accepted — informational.
-      final notice = result['notice'];
-      if (notice is String && notice.trim().isNotEmpty) {
-        SnackBarUtils.showSnackBar(context, notice);
-      }
+      showRequestSubmittedSuccessDialog(context);
     } else {
-      SnackBarUtils.showSnackBar(
-        context,
-        ErrorMessageUtils.sanitizeForDisplay(
-          result['message']?.toString(),
-          fallback: 'Failed to submit permission request',
-        ),
-        isError: true,
-      );
+      setState(() {
+        _errorMessage = ErrorMessageUtils.sanitizeForDisplay(
+          res['message']?.toString(),
+          fallback: 'Failed to submit permission request.',
+        );
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
       decoration: const BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       child: Form(
         key: _formKey,
-        child: Column(
-          children: [
-            // Header — back arrow + title
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 14, 16, 6),
-              child: Row(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios, size: 24),
-                    color: AppColors.textPrimary,
-                  ),
-                  const Text(
-                    'Request Permission',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 6, 20, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-
-                    // Date
-                    _sectionLabel('Date'),
-                    _buildDateField(date: _date, onTap: _pickDate),
-                    const SizedBox(height: 20),
-
-                    // Permission Type
-                    _sectionLabel('Permission Type'),
-                    DropdownButtonFormField<String>(
-                      initialValue: _type,
-                      isExpanded: true,
-                      icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.access_time_rounded,
+                          size: 20,
+                          color: Color(0xFFEFAA1F),
+                        ),
                       ),
-                      decoration: _fieldDecoration(),
-                      items: [
-                        if (_lateArrivalAllowed())
-                          const DropdownMenuItem(
-                            value: 'lateArrival',
-                            child: Text('Late Arrival'),
-                          ),
-                        if (_earlyExitAllowed())
-                          const DropdownMenuItem(
-                            value: 'earlyExit',
-                            child: Text('Early Exit'),
-                          ),
-                        if (_customAllowed())
-                          const DropdownMenuItem(
-                            value: 'both',
-                            child: Text('Custom'),
-                          ),
-                      ],
-                      onChanged: (v) =>
-                          setState(() => _type = v ?? 'lateArrival'),
-                    ),
-                    // Early Exit / Custom are tied to an active work session, so
-                    // for future dates (and today before punch-in) only Late
-                    // Arrival is offered.
-                    if (_permissionTypeRestrictionNote() != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _permissionTypeRestrictionNote()!,
+                      const SizedBox(width: 10),
+                      const Text(
+                        'Request Permission',
                         style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.textSecondary,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
                         ),
                       ),
                     ],
-                    const SizedBox(height: 20),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const Divider(color: Color(0xFFF1F5F9), height: 24),
 
-                    // Out/In window — only for the 'both' (custom-time) type.
-                    if (_type == 'both') ...[
+              // Error banner if any
+              if (_errorMessage != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFECACA)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () => setState(() => _errorMessage = null),
+                        child: const Icon(Icons.close, size: 14, color: Color(0xFFDC2626)),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
+              // DATE *
+              const Text(
+                'DATE *',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF64748B),
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 8),
+              InkWell(
+                onTap: _pickDate,
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
                       Row(
                         children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _sectionLabel('From Time'),
-                                _buildTimeField(
-                                  value: _fromTime,
-                                  hint: 'Out',
-                                  onTap: () => _pickTime(isFrom: true),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _sectionLabel('To Time'),
-                                _buildTimeField(
-                                  value: _toTime,
-                                  hint: 'In',
-                                  onTap: () => _pickTime(isFrom: false),
-                                ),
-                              ],
+                          const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFFEFAA1F)),
+                          const SizedBox(width: 8),
+                          Text(
+                            _permDate != null ? DateFormat('MMM dd, yyyy').format(_permDate!) : 'Select Date',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: _permDate != null ? FontWeight.w800 : FontWeight.w500,
+                              color: _permDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 20),
+                      const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
                     ],
+                  ),
+                ),
+              ),
 
-                    // Requested Minutes. For 'both' this is derived from the
-                    // From/To window and shown read-only.
-                    _sectionLabel(
-                      _type == 'both'
-                          ? 'Requested Minutes (from window)'
-                          : 'Requested Minutes',
-                    ),
-                    TextFormField(
-                      controller: _minutesController,
-                      keyboardType: TextInputType.number,
-                      readOnly: _type == 'both',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.textPrimary,
-                      ),
-                      decoration: _fieldDecoration(
-                        hint: _type == 'both'
-                            ? 'Auto from From/To'
-                            : 'Enter minutes',
-                      ),
-                      validator: (value) {
-                        final mins = int.tryParse((value ?? '').trim());
-                        if (mins == null || mins <= 0) {
-                          return _type == 'both'
-                              ? 'Pick a valid From/To window'
-                              : 'Enter valid minutes';
-                        }
-                        return null;
-                      },
-                    ),
+              const SizedBox(height: 16),
 
-                    // Permission/fine split tooltip for the current input.
-                    _buildPermissionFineSplitNotice(),
+              // PERMISSION TYPE
+              const Text(
+                'PERMISSION TYPE',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF64748B),
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _permType,
+                    isExpanded: true,
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                    items: const [
+                      DropdownMenuItem(value: 'Late', child: Text('Late')),
+                      DropdownMenuItem(value: 'Early', child: Text('Early')),
+                      DropdownMenuItem(value: 'Custom', child: Text('Custom')),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => _permType = val);
+                      }
+                    },
+                  ),
+                ),
+              ),
 
-                    // Live fine estimate (DB fine settings × this user's salary).
-                    _buildFineEstimate(),
-                    const SizedBox(height: 20),
+              const SizedBox(height: 16),
 
-                    // Reason
-                    _sectionLabel('Reason'),
-                    TextFormField(
-                      controller: _reasonController,
-                      maxLines: 4,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.textPrimary,
-                      ),
-                      decoration: _fieldDecoration(
-                        hint: 'Briefly describe your reason...',
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter reason';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 28),
-
-                    if (_showLimitWarning)
-                      _buildPermissionLimitBanner(_limitWarningMsg),
-                    if (_showLimitWarning) const SizedBox(height: 12),
-
-                    // Submit
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        // Always enabled (except while submitting): a not-configured
-                        // shift is allowed too and processed as Fine, matching break.
-                        onPressed: _isSubmitting ? null : _submit,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                        ),
-                        child: _isSubmitting
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    'Submit Request',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  SizedBox(width: 8),
-                                  Icon(Icons.send_rounded, size: 18),
-                                ],
+              // Duration Input Fields based on _permType
+              if (_permType == 'Late') ...[
+                const Text(
+                  'LATE DURATION *',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF64748B),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: _lateHoursController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Hours (e.g. 1)',
+                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
                               ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Hours', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: _lateMinutesController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Minutes (e.g. 30)',
+                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Minutes', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                        ],
                       ),
                     ),
                   ],
                 ),
+              ] else if (_permType == 'Early') ...[
+                const Text(
+                  'EARLY DURATION *',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF64748B),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: _earlyHoursController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Hours (e.g. 0)',
+                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Hours', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: _earlyMinutesController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Minutes (e.g. 45)',
+                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Minutes', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                // Custom: Both Late & Early rows
+                const Text(
+                  'LATE DURATION *',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF64748B),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: _lateHoursController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Hours (e.g. 0)',
+                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Hours', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: _lateMinutesController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Minutes (e.g. 0)',
+                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Minutes', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'EARLY DURATION *',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF64748B),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: _earlyHoursController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Hours (e.g. 0)',
+                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Hours', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: _earlyMinutesController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: 'Minutes (e.g. 30)',
+                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Minutes', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 16),
+
+              // REASON *
+              const Text(
+                'REASON *',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF64748B),
+                  letterSpacing: 0.5,
+                ),
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── Reference (Apply Leave / Request Loan) styling helpers ────────────────
-  Widget _sectionLabel(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        text.toUpperCase(),
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.6,
-          color: AppColors.textPrimary,
-        ),
-      ),
-    );
-  }
-
-  /// Grey filled, borderless field decoration (amber focus).
-  InputDecoration _fieldDecoration({String? hint}) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(color: AppColors.textCaption),
-      filled: true,
-      fillColor: AppColors.inputFill,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
-      ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-    );
-  }
-
-  /// Grey date card with a calendar icon — matches Apply Leave's date cards.
-  Widget _buildDateField({
-    required DateTime date,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-        decoration: BoxDecoration(
-          color: AppColors.inputFill,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.calendar_today, size: 18, color: AppColors.primary),
-            const SizedBox(width: 10),
-            Text(
-              DateFormat('dd MMM yyyy').format(date),
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _reasonController,
+                maxLines: 3,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                decoration: InputDecoration(
+                  hintText: 'State the reason for permission request...',
+                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                  ),
+                  contentPadding: const EdgeInsets.all(14),
+                ),
               ),
-            ),
-          ],
+
+              const SizedBox(height: 24),
+
+              // Action buttons (Cancel & Submit Request)
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFE2E8F0)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _isSubmitting ? null : _handleRequestPermissionSubmit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFEFAA1F),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Text(
+                              'Submit Request',
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -7954,7 +9018,11 @@ class PayslipRequestsTab extends StatefulWidget {
   State<PayslipRequestsTab> createState() => _PayslipRequestsTabState();
 }
 
-class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
+class _PayslipRequestsTabState extends State<PayslipRequestsTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final RequestService _requestService = RequestService();
   List<dynamic> _requests = [];
   bool _isLoading = true;
@@ -7963,8 +9031,8 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     'All Status',
     'Pending',
     'Approved',
-    'Generated',
     'Rejected',
+    'Cancelled',
   ];
 
   Timer? _debounce;
@@ -7975,6 +9043,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
   final int _itemsPerPage = 5;
   int _totalPages = 0;
   bool _showFilters = false;
+  bool _isTableView = false;
 
   void toggleFilters() {
     setState(() {
@@ -8160,69 +9229,113 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     return '-';
   }
 
-  Future<void> _downloadPayslip(
-    String requestId,
-    String month,
-    int year, {
-    String? payslipUrl,
-  }) async {
-    bool loadingShown = false;
+  Future<void> _viewPayslipItem(Map<String, dynamic> req) async {
     try {
-      String? url = payslipUrl?.trim();
-      // If URL is already present, download via browser so it lands in device Downloads.
+      final payroll = req['payrollId'];
+      final payrollId = payroll is Map
+          ? (payroll['_id']?.toString() ?? payroll['id']?.toString())
+          : (payroll is String ? payroll : req['_id']?.toString());
+      final token = await _requestService.getToken();
+      final baseUrl = _requestService.baseUrl.replaceAll(RegExp(r'/+$'), '');
+
+      String? url = req['payslipUrl']?.toString() ??
+          (payroll is Map ? payroll['payslipUrl']?.toString() : null);
+
+      if (url == null || url.isEmpty) {
+        if (payrollId != null && payrollId.isNotEmpty) {
+          url = '$baseUrl/admin/staff/payroll/statement/$payrollId/view?token=$token';
+        }
+      }
+
       if (url != null && url.isNotEmpty) {
-        final uri = Uri.tryParse(url);
-        if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+        final uri = Uri.parse(url);
+        if (await canLaunchUrl(uri)) {
           await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
+      }
+      if (mounted) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Unable to open payslip preview.',
+          isError: true,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Error opening payslip: $e',
+          isError: true,
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadPayslipItem(Map<String, dynamic> req) async {
+    try {
+      final payroll = req['payrollId'];
+      final payrollId = payroll is Map
+          ? (payroll['_id']?.toString() ?? payroll['id']?.toString())
+          : (payroll is String ? payroll : req['_id']?.toString());
+      final token = await _requestService.getToken();
+      final baseUrl = _requestService.baseUrl.replaceAll(RegExp(r'/+$'), '');
+
+      String? downloadUrl;
+      if (payrollId != null && payrollId.isNotEmpty) {
+        downloadUrl = '$baseUrl/admin/staff/payroll/statement/$payrollId/view?token=$token&download=true';
+      } else {
+        downloadUrl = req['payslipUrl']?.toString() ??
+            (payroll is Map ? payroll['payslipUrl']?.toString() : null);
+      }
+
+      if (downloadUrl == null || downloadUrl.isEmpty) {
+        if (mounted) {
+          SnackBarUtils.showSnackBar(
+            context,
+            'Payslip download link not available.',
+            isError: true,
+          );
+        }
+        return;
+      }
+
+      // Try in-app download and open file
+      try {
+        final dir = await getApplicationDocumentsDirectory();
+        final fileName = 'payslip_${payrollId ?? "statement"}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+        final savePath = '${dir.path}/$fileName';
+
+        final dio = Dio();
+        final response = await dio.download(downloadUrl, savePath);
+        if (response.statusCode == 200) {
+          final openRes = await OpenFilex.open(savePath);
           if (mounted) {
             SnackBarUtils.showSnackBar(
               context,
-              'Downloading file... Check your browser downloads.',
+              'Payslip downloaded successfully',
               isError: false,
             );
           }
           return;
         }
-      }
-      if (url == null || url.isEmpty) {
-        loadingShown = true;
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const Center(child: AppTabLoader()),
-        );
-        final result = await _requestService.downloadPayslipRequest(requestId);
-        if (mounted) {
-          Navigator.pop(context);
-          loadingShown = false;
-        }
-        url = result['payslipUrl']?.toString().trim();
-        if (url == null || url.isEmpty) {
-          SnackBarUtils.showSnackBar(
-            context,
-            ErrorMessageUtils.sanitizeForDisplay(
-              result['message']?.toString(),
-              fallback: 'Payslip not available yet',
-            ),
-            isError: true,
-          );
-          return;
-        }
+      } catch (_) {
+        // Fallback to browser launch
       }
 
-      // Download: always use browser so it downloads to device Downloads.
-      final uri = Uri.tryParse(url);
-      if (uri != null && uri.hasScheme && await canLaunchUrl(uri)) {
+      final uri = Uri.parse(downloadUrl);
+      if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
         if (mounted) {
           SnackBarUtils.showSnackBar(
             context,
-            'Downloading file... Check your browser downloads.',
+            'Downloading payslip... Check your browser downloads.',
             isError: false,
           );
         }
         return;
       }
+
       if (mounted) {
         SnackBarUtils.showSnackBar(
           context,
@@ -8232,13 +9345,55 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
       }
     } catch (e) {
       if (mounted) {
-        if (loadingShown) Navigator.pop(context);
         SnackBarUtils.showSnackBar(
           context,
-          'Error downloading payslip: ${e.toString()}',
+          'Error downloading payslip: $e',
           isError: true,
         );
       }
+    }
+  }
+
+  Future<void> _cancelPayslipRequest(String requestId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel Payslip Request'),
+        content: const Text('Are you sure you want to cancel this payslip request?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes, Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final res = await _requestService.cancelPayslipRequest(requestId);
+    if (!mounted) return;
+    if (res['success'] == true) {
+      SnackBarUtils.showSnackBar(
+        context,
+        res['message']?.toString() ?? 'Payslip request cancelled',
+        isError: false,
+      );
+      _fetchRequests();
+    } else {
+      SnackBarUtils.showSnackBar(
+        context,
+        res['message']?.toString() ?? 'Failed to cancel payslip request',
+        isError: true,
+      );
     }
   }
 
@@ -8470,21 +9625,179 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
     );
   }
 
+  Widget _buildPayslipControlBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Payslip Requests',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF0F172A),
+                  letterSpacing: -0.3,
+                ),
+              ),
+              // Card / Table View Mode Toggle
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.all(3),
+                child: Row(
+                  children: [
+                    InkWell(
+                      onTap: () => setState(() => _isTableView = false),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: !_isTableView ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: !_isTableView
+                              ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
+                              : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.grid_view_rounded,
+                              size: 14,
+                              color: !_isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Cards',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => setState(() => _isTableView = true),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _isTableView ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: _isTableView
+                              ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
+                              : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.table_rows_rounded,
+                              size: 14,
+                              color: _isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Table',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              // Search input
+              Expanded(
+                child: SizedBox(
+                  height: 38,
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search Reason, Month...',
+                      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                      prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                      ),
+                    ),
+                    onChanged: (val) {
+                      if (_debounce?.isActive ?? false) _debounce!.cancel();
+                      _debounce = Timer(const Duration(milliseconds: 500), () {
+                        _fetchRequests();
+                      });
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Status dropdown
+              Container(
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
+                    icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                    items: _statusOptions
+                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                        .toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => _selectedStatus = val);
+                        _fetchRequests();
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPayslipCard(Map<String, dynamic> req) {
     final appliedDate = req['createdAt'] != null
         ? DateFormat('MMM dd, yyyy').format(DateTime.parse(req['createdAt']))
         : '-';
-    final approver = req['approvedBy'];
-    final rejector = req['rejectedBy'];
-    final isRejectedPayslip = req['status'] == 'Rejected';
-    final approvedBy = approver != null
-        ? (approver is Map ? approver['name'] : 'System')
-        : '-';
-    final rejectedBy = rejector != null
-        ? (rejector is Map ? rejector['name'] : 'System')
-        : (isRejectedPayslip && approver != null ? approvedBy : '-');
 
-    // Get month name from month number or period
     String periodText = 'Payslip Request';
     if (req['period'] != null) {
       periodText = req['period'].toString();
@@ -8494,219 +9807,345 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
       periodText = '$monthName $year'.trim();
     }
 
-    Color statusColor = Colors.grey;
-    if (req['status'] == 'Generated' || req['status'] == 'Approved') {
-      statusColor = AppColors.success;
-    } else if (req['status'] == 'Rejected') {
-      statusColor = AppColors.error;
-    } else if (req['status'] == 'Pending') {
-      statusColor = AppColors.warning;
-    }
+    final status = (req['status'] ?? 'Pending').toString();
+    final isPending = status.toLowerCase() == 'pending';
+    final isApproved = status.toLowerCase() == 'approved' || status.toLowerCase() == 'generated';
+    final isRejected = status.toLowerCase() == 'rejected';
 
-    final isApproved =
-        req['status'] == 'Approved' || req['status'] == 'Generated';
+    final Color statusBg = isApproved
+        ? const Color(0xFFECFDF5)
+        : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
+    final Color statusBorder = isApproved
+        ? const Color(0xFFA7F3D0)
+        : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
+    final Color statusText = isApproved
+        ? const Color(0xFF059669)
+        : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
 
-    // Payslip URL from payroll (when approved and generated)
-    final payroll = req['payrollId'];
-    final String? payslipUrl = payroll is Map
-        ? (payroll['payslipUrl']?.toString().trim())
-        : null;
-    final bool hasPayslipUrl = payslipUrl != null && payslipUrl.isNotEmpty;
-    if (hasPayslipUrl) {
-      statusColor = AppColors.success;
-    }
+    final reason = (req['reason'] ?? '').toString().trim();
+    final rejectionReason = (req['actionReason'] ?? req['rejectionReason'])?.toString().trim();
 
-    // Status label: approved but not yet generated vs approved and viewable
-    String statusLabel = req['status'] ?? '';
-    if (isApproved && !hasPayslipUrl) {
-      statusLabel = 'Approved - wait for generation';
-    }
-    if (hasPayslipUrl) {
-      statusLabel = 'Generated';
-    }
-
-    final colorScheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: () => _showPayslipDetails(req),
-      borderRadius: BorderRadius.circular(16),
-      child: AppCard(
-        radius: 18,
-        child: Row(
-          children: [
-            // Icon
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.surfaceDark,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(
-                Icons.description,
-                color: Colors.white,
-                size: 28,
-              ),
-            ),
-            const SizedBox(width: 16),
-            // Content
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Period and Status
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          periodText,
-                          style: AppTextStyles.headingSmall.copyWith(
-                            color: colorScheme.onSurface,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          statusLabel,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: statusColor,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  // Details
-                  if (req['reason'] != null &&
-                      req['reason'].toString().isNotEmpty) ...[
-                    _buildPayslipCardDetailRow(
-                      Icons.info_outline,
-                      'Reason',
-                      req['reason'] ?? '',
-                    ),
-                    const SizedBox(height: 4),
-                  ],
-                  _buildPayslipCardDetailRow(
-                    Icons.access_time,
-                    'Applied',
-                    appliedDate,
-                  ),
-                  if (isRejectedPayslip && rejectedBy != '-') ...[
-                    const SizedBox(height: 4),
-                    _buildPayslipCardDetailRow(
-                      Icons.person_off_outlined,
-                      'Rejected By',
-                      rejectedBy,
-                    ),
-                  ] else if (!isRejectedPayslip && approvedBy != '-') ...[
-                    const SizedBox(height: 4),
-                    _buildPayslipCardDetailRow(
-                      Icons.person,
-                      'Approved By',
-                      approvedBy,
-                    ),
-                  ],
-                  // Download / Share actions â€“ show whenever payslip URL exists
-                  if (hasPayslipUrl) ...[
-                    const SizedBox(height: 8),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showPayslipDetails(req),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(14.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        IconButton(
-                          tooltip: 'Share Payslip',
-                          icon: const Icon(Icons.ios_share_rounded, size: 20),
-                          color: AppColors.primary,
-                          onPressed: () {
-                            String monthName = 'Month';
-                            int year = DateTime.now().year;
-                            if (req['month'] != null && req['year'] != null) {
-                              monthName = _getMonthName(req['month']);
-                              final yr = req['year'];
-                              if (yr is int) {
-                                year = yr;
-                              } else if (yr is num) {
-                                year = yr.toInt();
-                              } else if (yr is String) {
-                                year = int.tryParse(yr) ?? year;
-                              }
-                            } else {
-                              final period = _getPeriodText(req);
-                              final parts = period.split(' ');
-                              if (parts.isNotEmpty) monthName = parts[0];
-                              if (parts.length > 1) {
-                                final yr = int.tryParse(parts[1]);
-                                if (yr != null) year = yr;
-                              }
-                            }
-                            _sharePayslipPdf(
-                              url: payslipUrl,
-                              fileBaseName: 'Payslip_$monthName',
-                            );
-                          },
+                        Container(
+                          width: 34,
+                          height: 34,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.receipt_long_rounded, color: Color(0xFFEFAA1F), size: 18),
                         ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          tooltip: 'Download Payslip',
-                          icon: const Icon(Icons.download_outlined, size: 20),
-                          color: AppColors.primary,
-                          onPressed: () {
-                            final requestId = req['_id']?.toString();
-                            if (requestId == null || requestId.isEmpty) {
-                              SnackBarUtils.showSnackBar(
-                                context,
-                                'Invalid payslip request id',
-                                isError: true,
-                              );
-                              return;
-                            }
-                            String monthName = 'Month';
-                            int year = DateTime.now().year;
-                            if (req['month'] != null && req['year'] != null) {
-                              monthName = _getMonthName(req['month']);
-                              final yr = req['year'];
-                              if (yr is int) {
-                                year = yr;
-                              } else if (yr is num) {
-                                year = yr.toInt();
-                              } else if (yr is String) {
-                                year = int.tryParse(yr) ?? year;
-                              }
-                            } else {
-                              final period = _getPeriodText(req);
-                              final parts = period.split(' ');
-                              if (parts.isNotEmpty) monthName = parts[0];
-                              if (parts.length > 1) {
-                                final yr = int.tryParse(parts[1]);
-                                if (yr != null) year = yr;
-                              }
-                            }
-                            _downloadPayslip(
-                              requestId,
-                              monthName,
-                              year,
-                              payslipUrl: payslipUrl,
-                            );
-                          },
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              periodText,
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            Text(
+                              'Applied: $appliedDate',
+                              style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                            ),
+                          ],
                         ),
                       ],
                     ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: statusBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: statusBorder),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: statusText,
+                        ),
+                      ),
+                    ),
                   ],
+                ),
+                if (reason.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    reason,
+                    style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ],
-              ),
+                if (isRejected && rejectionReason != null && rejectionReason.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF2F2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.info_outline, size: 13, color: Color(0xFFDC2626)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Rejected: $rejectionReason',
+                            style: const TextStyle(fontSize: 10.5, color: Color(0xFFDC2626), fontWeight: FontWeight.w600),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (isApproved) ...[
+                      OutlinedButton.icon(
+                        onPressed: () => _viewPayslipItem(req),
+                        icon: const Icon(Icons.description_outlined, size: 14, color: Color(0xFF0F172A)),
+                        label: const Text('View', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Color(0xFFE2E8F0)),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          minimumSize: Size.zero,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () => _downloadPayslipItem(req),
+                        icon: const Icon(Icons.download_rounded, size: 14),
+                        label: const Text('Download', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFEFAA1F),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          minimumSize: Size.zero,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ] else if (isPending) ...[
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          final id = req['_id']?.toString() ?? req['id']?.toString();
+                          if (id != null && id.isNotEmpty) {
+                            _cancelPayslipRequest(id);
+                          }
+                        },
+                        icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
+                        label: const Text(
+                          'Cancel',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Color(0xFFFECACA)),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          minimumSize: Size.zero,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
             ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPayslipTableView() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+            headingTextStyle: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF94A3B8),
+              letterSpacing: 0.5,
+            ),
+            dataTextStyle: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF1E293B),
+            ),
+            columns: const [
+              DataColumn(label: Text('MONTH/YEAR')),
+              DataColumn(label: Text('REQUEST REASON')),
+              DataColumn(label: Text('STATUS')),
+              DataColumn(label: Text('REJECTION REASON')),
+              DataColumn(label: Text('ACTION')),
+            ],
+            rows: _requests.map((req) {
+              final raw = req is Map<String, dynamic> ? req : Map<String, dynamic>.from(req as Map);
+              String periodText = '-';
+              if (raw['period'] != null) {
+                periodText = raw['period'].toString();
+              } else if (raw['month'] != null) {
+                final monthName = _getMonthName(raw['month']);
+                final year = raw['year']?.toString() ?? '';
+                periodText = '$monthName $year'.trim();
+              }
+
+              final status = (raw['status'] ?? 'Pending').toString();
+              final isPending = status.toLowerCase() == 'pending';
+              final isApproved = status.toLowerCase() == 'approved' || status.toLowerCase() == 'generated';
+              final isRejected = status.toLowerCase() == 'rejected';
+
+              final Color statusBg = isApproved
+                  ? const Color(0xFFECFDF5)
+                  : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
+              final Color statusBorder = isApproved
+                  ? const Color(0xFFA7F3D0)
+                  : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
+              final Color statusText = isApproved
+                  ? const Color(0xFF059669)
+                  : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+
+              final reason = (raw['reason'] ?? '-').toString().trim();
+              final rejReason = (raw['actionReason'] ?? raw['rejectionReason'] ?? '-').toString().trim();
+
+              return DataRow(
+                cells: [
+                  DataCell(Text(periodText, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: Text(reason, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: statusBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: statusBorder),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: statusText,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 120),
+                      child: Text(isRejected ? rejReason : '-', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                  DataCell(
+                    isApproved
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.remove_red_eye_outlined, size: 16, color: Color(0xFF0F172A)),
+                                onPressed: () => _viewPayslipItem(raw),
+                                tooltip: 'View',
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.download_rounded, size: 16, color: Color(0xFFEFAA1F)),
+                                onPressed: () => _downloadPayslipItem(raw),
+                                tooltip: 'Download',
+                              ),
+                            ],
+                          )
+                        : (isPending
+                            ? OutlinedButton(
+                                onPressed: () {
+                                  final id = raw['_id']?.toString() ?? raw['id']?.toString();
+                                  if (id != null && id.isNotEmpty) {
+                                    _cancelPayslipRequest(id);
+                                  }
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Color(0xFFFECACA)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  minimumSize: Size.zero,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.cancel_outlined, size: 12, color: Color(0xFFDC2626)),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'Cancel',
+                                      style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : const Text('-', style: TextStyle(color: Color(0xFF94A3B8)))),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
         ),
       ),
     );
@@ -8719,7 +10158,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         const SizedBox(width: 6),
         Text(
           '$label: ',
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 12,
             color: Color(0xFF424242),
             fontWeight: FontWeight.w600,
@@ -8728,7 +10167,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
         Expanded(
           child: Text(
             value,
-            style: TextStyle(fontSize: 12, color: Color(0xFF424242)),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF424242)),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
@@ -8772,6 +10211,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Column(
       children: [
         Expanded(
@@ -8783,169 +10223,60 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                // Controls Column
-                if (_showFilters)
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: _searchController,
-                          decoration: InputDecoration(
-                            hintText: 'Search Reason, Month...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                        color: AppColors.primary,
-                        width: 2,
-                      ),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 0,
-                    ),
-                  ),
-                  onChanged: (val) {
-                    if (_debounce?.isActive ?? false) _debounce!.cancel();
-                    _debounce = Timer(const Duration(milliseconds: 500), () {
-                      _fetchRequests();
-                    });
-                  },
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _selectedStatus,
-                            isExpanded: true,
-                            items: _statusOptions
-                                .map(
-                                  (e) => DropdownMenuItem(
-                                    value: e,
-                                    child: Text(e),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (val) {
-                              if (val != null) {
-                                setState(() => _selectedStatus = val);
-                                _fetchRequests();
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    InkWell(
-                      onTap: _pickDate,
-                      child: Container(
-                        height: 48,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.calendar_today,
-                              color: Colors.grey[600],
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _startDate == null || _endDate == null
-                                  ? 'Date'
-                                  : _isSameCalendarDay(_startDate!, _endDate!)
-                                  ? DateFormat(
-                                      'MMM dd, yyyy',
-                                    ).format(_startDate!)
-                                  : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
-                              style: TextStyle(color: Colors.black),
-                            ),
-                            if (_startDate != null)
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 16),
-                                onPressed: () {
-                                  setState(() {
-                                    _startDate = null;
-                                    _endDate = null;
-                                  });
-                                  _fetchRequests();
-                                },
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+                // Control Bar with Dual View Mode Switcher
+                _buildPayslipControlBar(),
 
-                // List Body — loader / empty / items scroll with the header.
+                // List / Table Content
                 if (_isLoading)
                   SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.5,
+                    height: MediaQuery.of(context).size.height * 0.4,
                     child: const Center(child: AppTabLoader()),
                   )
                 else if (_requests.isEmpty)
                   SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.5,
+                    height: MediaQuery.of(context).size.height * 0.4,
                     child: Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(
-                            Icons.description_outlined,
-                            size: 64,
-                            color: Colors.grey[400],
+                          Container(
+                            padding: const EdgeInsets.all(18),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFFFFBEB),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.description_outlined,
+                              size: 40,
+                              color: Color(0xFFEFAA1F),
+                            ),
                           ),
-                          const SizedBox(height: 16),
-                          Text(
+                          const SizedBox(height: 14),
+                          const Text(
                             'No payslip requests found',
                             style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.black,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF64748B),
                             ),
                           ),
                         ],
                       ),
                     ),
                   )
+                else if (_isTableView)
+                  _buildPayslipTableView()
                 else
                   Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                     child: Column(
                       children: [
                         for (int i = 0; i < _requests.length; i++)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 12.0),
-                            child: FadeSlideIn(
-                              delay: Duration(
-                                milliseconds: (i * 45).clamp(0, 270),
-                              ),
-                              child: _buildPayslipCard(_requests[i]),
+                          FadeSlideIn(
+                            delay: Duration(
+                              milliseconds: (i * 40).clamp(0, 240),
                             ),
+                            child: _buildPayslipCard(_requests[i]),
                           ),
                       ],
                     ),
@@ -8955,17 +10286,17 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab> {
           ),
         ),
 
-        // Pagination Controls — only when there's more than one page, so a
-        // single-page result doesn't show a stray lone "1" strip (pinned footer).
-        if (!_isLoading && _requests.isNotEmpty && _totalPages > 1)
-          _PaginationBar(
-            currentPage: _currentPage,
-            totalPages: _totalPages,
-            onPageSelected: (page) {
-              setState(() => _currentPage = page);
-              _fetchRequests();
-            },
-          ),
+        // Bottom action bar: page numbers & Request Payslip button
+        _PaginationBar(
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          onPageSelected: (page) {
+            setState(() => _currentPage = page);
+            _fetchRequests();
+          },
+          createLabel: 'Request Payslip',
+          onCreate: showRequestPayslipDialog,
+        ),
       ],
     );
   }
@@ -8982,20 +10313,8 @@ class RequestPayslipDialog extends StatefulWidget {
 class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
   final _formKey = GlobalKey<FormState>();
   final RequestService _requestService = RequestService();
-  final AuthService _authService = AuthService();
 
-  bool _isBulkMode = false;
-  String _month = 'January';
-  final TextEditingController _yearController = TextEditingController(
-    text: DateTime.now().year.toString(),
-  );
-  final TextEditingController _reasonController = TextEditingController();
-  bool _isSubmitting = false;
-  List<dynamic> _existingRequests = [];
-  final Set<String> _selectedMonths = {};
-  DateTime? _joiningDate;
-
-  final List<String> _months = [
+  static const List<String> _months = [
     'January',
     'February',
     'March',
@@ -9010,513 +10329,277 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
     'December',
   ];
 
+  late String _month;
+  late final TextEditingController _yearController;
+  final TextEditingController _reasonController = TextEditingController();
+
+  String? _errorMessage;
+  bool _isSubmitting = false;
+
   @override
   void initState() {
     super.initState();
-    _loadJoiningDateAndExistingRequests();
+    final now = DateTime.now();
+    _month = _months[now.month - 1];
+    _yearController = TextEditingController(text: now.year.toString());
   }
 
-  /// Parse joining date from API/prefs (ISO string or { "$date": "..." }).
-  static DateTime? _parseJoiningDate(dynamic value) {
-    if (value == null) return null;
-    if (value is DateTime) return value;
-    String? str;
-    if (value is String) {
-      str = value;
-    } else if (value is Map && value.containsKey(r'$date')) {
-      str = value[r'$date']?.toString();
-    }
-    if (str == null || str.isEmpty) return null;
-    return DateTime.tryParse(str);
-  }
-
-  Future<void> _loadJoiningDateAndExistingRequests() async {
-    final profileResult = await _authService.getProfile();
-    DateTime? joining;
-    if (profileResult['success'] == true && profileResult['data'] is Map) {
-      final data = profileResult['data'] as Map<String, dynamic>;
-      final staffData = data['staffData'];
-      if (staffData is Map && staffData.containsKey('joiningDate')) {
-        joining = _parseJoiningDate(staffData['joiningDate']);
-      }
-      if (joining == null && data.containsKey('joiningDate')) {
-        joining = _parseJoiningDate(data['joiningDate']);
-      }
-    }
-    final result = await _requestService.getPayslipRequests();
-    if (mounted) {
-      setState(() {
-        _joiningDate = joining;
-        if (result['success'] && result['data'] != null) {
-          if (result['data'] is Map) {
-            _existingRequests = result['data']['requests'] ?? [];
-          } else if (result['data'] is List) {
-            _existingRequests = result['data'];
-          }
-        }
-        _clampMonthAndYearToAllowed();
-      });
-    }
-  }
-
-  int get _currentYear => DateTime.now().year;
-  int get _currentMonth => DateTime.now().month;
-  int get _joiningYear => _joiningDate?.year ?? _currentYear;
-  int get _joiningMonth => _joiningDate?.month ?? 1;
-
-  List<int> get _allowedYears {
-    final joinYear = _joiningYear;
-    final end = _currentYear;
-    if (joinYear > end) return [end];
-    return List.generate(end - joinYear + 1, (i) => joinYear + i);
-  }
-
-  int get _selectedYear {
-    final y = int.tryParse(_yearController.text) ?? _currentYear;
-    final allowed = _allowedYears;
-    if (allowed.isEmpty) return _currentYear;
-    if (y < allowed.first) return allowed.first;
-    if (y > allowed.last) return allowed.last;
-    return y;
-  }
-
-  List<String> get _allowedMonthsForSelectedYear {
-    final year = _selectedYear;
-    int first = 1;
-    int last = 12;
-    if (year == _joiningYear) first = _joiningMonth;
-    // Only completed previous months â€“ exclude current month (payslip not ready for current month yet)
-    if (year == _currentYear) last = _currentMonth - 1;
-    if (first > last) return [];
-    return _months.sublist(first - 1, last);
-  }
-
-  void _clampMonthAndYearToAllowed() {
-    final allowedYears = _allowedYears;
-    if (allowedYears.isEmpty) return;
-    int year = int.tryParse(_yearController.text) ?? _currentYear;
-    if (year < allowedYears.first || year > allowedYears.last) {
-      _yearController.text = allowedYears.last.toString();
-    }
-    final allowedMonths = _allowedMonthsForSelectedYear;
-    if (allowedMonths.isEmpty) return;
-    if (!allowedMonths.contains(_month)) {
-      _month = allowedMonths.last;
-    }
-    _selectedMonths.removeWhere((m) => !allowedMonths.contains(m));
-  }
-
-  bool _isDuplicateRequest(String month, int year) {
-    // Convert month name to number for comparison
-    final monthNumber = _months.indexOf(month) + 1;
-    return _existingRequests.any((req) {
-      final reqMonth = req['month'];
-      // Handle both number and string formats
-      final reqMonthNumber = reqMonth is int
-          ? reqMonth
-          : (reqMonth is String ? _months.indexOf(reqMonth) + 1 : 0);
-      return reqMonthNumber == monthNumber && req['year'] == year;
-    });
-  }
-
-  Future<void> _pickYear() async {
-    final years = _allowedYears;
-    if (years.isEmpty) return;
-    final currentYear = _selectedYear;
-    if (!mounted) return;
-    final picked = await showModalBottomSheet<int>(
-      context: context,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  'Select Year',
-                  style: Theme.of(
-                    ctx,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-                ),
-              ),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: years.length,
-                  itemBuilder: (context, index) {
-                    final year = years[index];
-                    return ListTile(
-                      title: Text('$year'),
-                      selected: year == currentYear,
-                      onTap: () => Navigator.pop(context, year),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-    if (picked != null && mounted) {
-      setState(() {
-        _yearController.text = picked.toString();
-        _clampMonthAndYearToAllowed();
-      });
-    }
+  @override
+  void dispose() {
+    _yearController.dispose();
+    _reasonController.dispose();
+    super.dispose();
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+    setState(() => _errorMessage = null);
 
-    final selectedYear =
-        int.tryParse(_yearController.text) ?? DateTime.now().year;
-    final reason = _reasonController.text.trim();
-
-    if (_isBulkMode) {
-      // Bulk request
-      if (_selectedMonths.isEmpty) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'Please select at least one month',
-          isError: true,
-        );
-        return;
-      }
-
-      // Check for duplicates
-      final duplicateMonths = _selectedMonths
-          .where((month) => _isDuplicateRequest(month, selectedYear))
-          .toList();
-
-      if (duplicateMonths.isNotEmpty) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'Requests already exist for: ${duplicateMonths.join(", ")}',
-          isError: true,
-        );
-        return;
-      }
-
-      setState(() => _isSubmitting = true);
-      // Convert month names to numbers (January = 1, December = 12)
-      final monthNumbers = _selectedMonths
-          .map((monthName) => _months.indexOf(monthName) + 1)
-          .toList();
-      final result = await _requestService.requestPayslip({
-        'months': monthNumbers,
-        'year': selectedYear,
-        'reason': reason,
-      });
-      setState(() => _isSubmitting = false);
-
-      if (mounted) {
-        if (result['success']) {
-          final overlay = Navigator.of(context, rootNavigator: true).overlay;
-          widget.onSuccess();
-          Navigator.pop(context);
-          if (overlay != null && overlay.context.mounted) {
-            showRequestSubmittedSuccessDialog(overlay.context);
-          }
-        } else {
-          SnackBarUtils.showSnackBar(
-            context,
-            ErrorMessageUtils.sanitizeForDisplay(
-              result['message']?.toString(),
-              fallback: 'Failed to submit payslip requests',
-            ),
-            isError: true,
-          );
-        }
-      }
-    } else {
-      // Single request
-      if (_isDuplicateRequest(_month, selectedYear)) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'A payslip request for $_month $selectedYear already exists',
-          isError: true,
-        );
-        return;
-      }
-
-      setState(() => _isSubmitting = true);
-      // Convert month name to number (January = 1, December = 12)
-      final monthNumber = _months.indexOf(_month) + 1;
-      final result = await _requestService.requestPayslip({
-        'month': monthNumber,
-        'year': selectedYear,
-        'reason': reason,
-      });
-      setState(() => _isSubmitting = false);
-
-      if (mounted) {
-        if (result['success']) {
-          final overlay = Navigator.of(context, rootNavigator: true).overlay;
-          widget.onSuccess();
-          Navigator.pop(context);
-          if (overlay != null && overlay.context.mounted) {
-            showRequestSubmittedSuccessDialog(overlay.context);
-          }
-        } else {
-          SnackBarUtils.showSnackBar(
-            context,
-            ErrorMessageUtils.sanitizeForDisplay(
-              result['message']?.toString(),
-              fallback: 'Failed to submit payslip request',
-            ),
-            isError: true,
-          );
-        }
-      }
+    final yearStr = _yearController.text.trim();
+    final year = int.tryParse(yearStr);
+    if (year == null || year < 2000 || year > 2100) {
+      setState(() => _errorMessage = 'Please enter a valid year.');
+      return;
     }
-  }
 
-  InputDecoration _inputDecoration(String label, IconData icon) {
-    return InputDecoration(
-      labelText: label,
-      prefixIcon: Icon(icon, size: 22, color: AppColors.primary),
-      labelStyle: const TextStyle(color: Colors.black),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: AppColors.primary, width: 2),
-      ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-    );
+    setState(() => _isSubmitting = true);
+
+    final payload = <String, dynamic>{
+      'month': _month,
+      'year': yearStr,
+      'reason': _reasonController.text.trim(),
+      // Fallback number representation if needed
+      'monthNumber': _months.indexOf(_month) + 1,
+    };
+
+    final result = await _requestService.requestPayslip(payload);
+    if (!mounted) return;
+    setState(() => _isSubmitting = false);
+
+    if (result['success'] == true) {
+      Navigator.pop(context);
+      widget.onSuccess();
+      showRequestSubmittedSuccessDialog(context);
+    } else {
+      setState(() {
+        _errorMessage = ErrorMessageUtils.sanitizeForDisplay(
+          result['message']?.toString(),
+          fallback: 'Failed to submit payslip request.',
+        );
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 24,
-        right: 24,
-        top: 24,
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       child: Form(
         key: _formKey,
-        child: Column(
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.description,
-                          color: AppColors.primary,
-                          size: 26,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Request Payslip',
-                          style: AppTextStyles.headingLarge,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Submit a new payslip request',
-                      style: AppTextStyles.bodySmall,
-                    ),
-                  ],
-                ),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, size: 28),
-                ),
-              ],
-            ),
-            const Divider(),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ChoiceChip(
-                            label: Text('Single Month'),
-                            selected: !_isBulkMode,
-                            selectedColor: AppColors.primary.withOpacity(0.2),
-                            onSelected: (selected) {
-                              setState(() {
-                                _isBulkMode = !selected;
-                                if (!_isBulkMode) _selectedMonths.clear();
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: ChoiceChip(
-                            label: Text('Bulk Months'),
-                            selected: _isBulkMode,
-                            selectedColor: AppColors.primary.withOpacity(0.2),
-                            onSelected: (selected) {
-                              setState(() {
-                                _isBulkMode = selected;
-                                if (_isBulkMode) {
-                                  _month =
-                                      _allowedMonthsForSelectedYear.isNotEmpty
-                                      ? _allowedMonthsForSelectedYear.first
-                                      : 'January';
-                                }
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-
-                    if (!_isBulkMode) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 20),
-                        child: DropdownButtonFormField<String>(
-                          initialValue:
-                              _allowedMonthsForSelectedYear.contains(_month)
-                              ? _month
-                              : (_allowedMonthsForSelectedYear.isNotEmpty
-                                    ? _allowedMonthsForSelectedYear.first
-                                    : 'January'),
-                          items: _allowedMonthsForSelectedYear
-                              .map(
-                                (e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)),
-                              )
-                              .toList(),
-                          onChanged: _allowedMonthsForSelectedYear.isEmpty
-                              ? null
-                              : (val) => setState(() => _month = val!),
-                          decoration: _inputDecoration(
-                            'Month',
-                            Icons.calendar_month,
-                          ),
-                        ),
-                      ),
-                    ] else ...[
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
                       Text(
-                        'Select Months *',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        padding: const EdgeInsets.all(12),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: _allowedMonthsForSelectedYear.map((month) {
-                            final isSelected = _selectedMonths.contains(month);
-                            return FilterChip(
-                              label: Text(month),
-                              selected: isSelected,
-                              selectedColor: AppColors.primary.withOpacity(0.2),
-                              onSelected: (selected) {
-                                setState(() {
-                                  if (selected) {
-                                    _selectedMonths.add(month);
-                                  } else {
-                                    _selectedMonths.remove(month);
-                                  }
-                                });
-                              },
-                            );
-                          }).toList(),
+                        'Request Payslip',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
                         ),
                       ),
-                      if (_selectedMonths.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          'Selected: ${_selectedMonths.length} month(s)',
-                          style: TextStyle(
-                            color: AppColors.primary,
-                            fontSize: 12,
-                          ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Request a payslip for a specific month',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF94A3B8),
                         ),
-                      ],
-                      const SizedBox(height: 16),
+                      ),
                     ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                    onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const Divider(color: Color(0xFFF1F5F9), height: 24),
 
-                    InkWell(
-                      onTap: _pickYear,
-                      borderRadius: BorderRadius.circular(16),
-                      child: IgnorePointer(
-                        child: TextFormField(
-                          controller: _yearController,
-                          readOnly: true,
-                          style: TextStyle(fontWeight: FontWeight.w500),
-                          decoration:
-                              _inputDecoration(
-                                'Year',
-                                Icons.calendar_today,
-                              ).copyWith(
-                                hintText: 'Tap to select year',
-                                suffixIcon: const Icon(
-                                  Icons.arrow_drop_down,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                          validator: (val) => val == null || val.isEmpty
-                              ? 'Year is required'
-                              : null,
+              // Error banner if any
+              if (_errorMessage != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFECACA)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 20),
-                    TextFormField(
-                      controller: _reasonController,
-                      maxLines: 3,
-                      style: TextStyle(fontWeight: FontWeight.w500),
-                      decoration: _inputDecoration(
-                        'Reason *',
-                        Icons.note,
-                      ).copyWith(hintText: 'Enter reason for payslip request'),
-                      validator: (val) => val == null || val.trim().isEmpty
-                          ? 'Reason is required'
-                          : null,
-                    ),
-                    const SizedBox(height: 24),
-                  ],
+                      InkWell(
+                        onTap: () => setState(() => _errorMessage = null),
+                        child: const Icon(Icons.close, size: 14, color: Color(0xFFDC2626)),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
+              // Month
+              const Text(
+                'Month',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF334155),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Row(
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _month,
+                    isExpanded: true,
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                    items: _months
+                        .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                        .toList(),
+                    onChanged: _isSubmitting
+                        ? null
+                        : (val) {
+                            if (val != null) setState(() => _month = val);
+                          },
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Year
+              const Text(
+                'Year',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF334155),
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _yearController,
+                keyboardType: TextInputType.number,
+                enabled: !_isSubmitting,
+                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                decoration: InputDecoration(
+                  hintText: 'e.g., 2026',
+                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Reason (Optional)
+              const Text(
+                'Reason (Optional)',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF334155),
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _reasonController,
+                maxLines: 3,
+                enabled: !_isSubmitting,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                decoration: InputDecoration(
+                  hintText: 'Enter reason for payslip request',
+                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  contentPadding: const EdgeInsets.all(12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Action Buttons
+              Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: _isSubmitting ? null : () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: BorderSide(color: AppColors.primary),
+                        side: const BorderSide(color: Color(0xFFE2E8F0)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
-                      child: Text('Cancel'),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -9524,34 +10607,28 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                     child: ElevatedButton(
                       onPressed: _isSubmitting ? null : _submit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
+                        backgroundColor: const Color(0xFFEFAA1F),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
                         elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: _isSubmitting
                           ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                             )
-                          : Text(
-                              _isBulkMode
-                                  ? 'Submit Bulk Request'
-                                  : 'Submit Request',
+                          : const Text(
+                              'Submit Request',
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
                             ),
                     ),
                   ),
                 ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

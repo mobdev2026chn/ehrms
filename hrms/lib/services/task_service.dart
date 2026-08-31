@@ -328,18 +328,20 @@ class TaskService {
       final body = response.data;
       if (body is List) {
         return (body)
-            .map((j) => Task.fromJson(j as Map<String, dynamic>))
+            .whereType<Map>()
+            .map((j) => Task.fromJson(Map<String, dynamic>.from(j)))
             .toList();
       }
       final list = (body is Map && body['data'] != null)
-          ? body['data'] as List?
+          ? (body['data'] is List ? body['data'] as List : null)
           : null;
       if (list != null) {
         return list
-            .map((j) => Task.fromJson(j as Map<String, dynamic>))
+            .whereType<Map>()
+            .map((j) => Task.fromJson(Map<String, dynamic>.from(j)))
             .toList();
       }
-      throw Exception('Failed to load assigned tasks: invalid response');
+      return [];
     } on DioException catch (e) {
       throw Exception(
         'Failed to load assigned tasks: ${e.response?.statusCode ?? e.message}',
@@ -361,11 +363,6 @@ class TaskService {
       final query = <String, dynamic>{'page': page, 'limit': limit};
       final q = (search ?? '').trim();
       if (q.isNotEmpty) query['search'] = q;
-      // Send the picked calendar day as UTC midnight so it matches how
-      // expectedCompletionDate is stored (UTC midnight of the calendar date)
-      // and how the backend re-extracts UTC date parts. Using local
-      // .toUtc() here shifted the day back one in +ve timezones (e.g. IST),
-      // making the date filter return the wrong day's tasks.
       if (startDate != null) {
         query['startDate'] = DateTime.utc(
           startDate.year,

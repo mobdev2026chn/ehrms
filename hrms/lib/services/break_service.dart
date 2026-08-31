@@ -166,19 +166,33 @@ class BreakService {
       final payloadStart = (clientTime != null && clientTime.isNotEmpty)
           ? clientTime
           : DateTime.now().toUtc().toIso8601String();
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/breaks/start',
-        data: {
-          'latitude': lat,
-          'longitude': lng,
-          'address': address,
-          'area': area,
-          'city': city,
-          'pincode': pincode,
-          'selfie': selfie,
-          'startTime': payloadStart,
-        },
-      );
+      Response<Map<String, dynamic>> response;
+      final bodyData = {
+        'latitude': lat,
+        'longitude': lng,
+        'address': address,
+        'area': area,
+        'city': city,
+        'pincode': pincode,
+        'selfie': selfie,
+        'startTime': payloadStart,
+      };
+      try {
+        response = await _api.dio.post<Map<String, dynamic>>(
+          '/breaks/start',
+          data: bodyData,
+        );
+      } catch (postErr) {
+        if (postErr is DioException && postErr.response?.statusCode == 413) {
+          final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
+          response = await _api.dio.post<Map<String, dynamic>>(
+            '/breaks/start',
+            data: noSelfie,
+          );
+        } else {
+          rethrow;
+        }
+      }
       breakFlowLog(
         'startBreak <- ok http=${response.statusCode} '
         '${_snapshotBreakRow(response.data?['data'])} '
@@ -298,19 +312,33 @@ class BreakService {
       final payloadEnd = (clientTime != null && clientTime.isNotEmpty)
           ? clientTime
           : DateTime.now().toUtc().toIso8601String();
-      final response = await _api.dio.patch<Map<String, dynamic>>(
-        '/breaks/$breakId/end',
-        data: {
-          'latitude': lat,
-          'longitude': lng,
-          'address': address,
-          'area': area,
-          'city': city,
-          'pincode': pincode,
-          'selfie': selfie,
-          'endTime': payloadEnd,
-        },
-      );
+      Response<Map<String, dynamic>> response;
+      final bodyData = {
+        'latitude': lat,
+        'longitude': lng,
+        'address': address,
+        'area': area,
+        'city': city,
+        'pincode': pincode,
+        'selfie': selfie,
+        'endTime': payloadEnd,
+      };
+      try {
+        response = await _api.dio.patch<Map<String, dynamic>>(
+          '/breaks/$breakId/end',
+          data: bodyData,
+        );
+      } catch (patchErr) {
+        if (patchErr is DioException && patchErr.response?.statusCode == 413) {
+          final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
+          response = await _api.dio.patch<Map<String, dynamic>>(
+            '/breaks/$breakId/end',
+            data: noSelfie,
+          );
+        } else {
+          rethrow;
+        }
+      }
       breakFlowLog(
         'endBreak <- ok http=${response.statusCode} ${_snapshotBreakRow(response.data?['data'])}',
       );
