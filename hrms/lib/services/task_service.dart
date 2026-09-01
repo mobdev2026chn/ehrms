@@ -403,39 +403,33 @@ class TaskService {
   Future<List<Task>> getAssignedTasks(String staffId) async {
     try {
       await _setToken();
-      Response<dynamic>? response;
-      try {
-        response = await _api.dio.get<dynamic>('/staff/geo-task/tasks');
-      } on DioException catch (de) {
-        if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
-          try {
-            response = await _api.dio.get<dynamic>('/tasks/staff/$staffId');
-          } catch (_) {
-            response = await _api.dio.get<dynamic>('/tasks');
+      for (final path in [
+        '/staff/geo-task/tasks',
+        '/tasks/staff/$staffId',
+        '/tasks',
+        '/admin/hrms-geo/task',
+      ]) {
+        try {
+          final res = await _api.dio.get<dynamic>(path);
+          if (res.statusCode == 200 && res.data != null) {
+            final body = res.data;
+            List? rawList;
+            if (body is List) {
+              rawList = body;
+            } else if (body is Map && body['data'] is List) {
+              rawList = body['data'] as List;
+            }
+            if (rawList != null) {
+              final tasks = rawList
+                  .whereType<Map<String, dynamic>>()
+                  .map((j) => Task.fromJson(j))
+                  .toList();
+              if (tasks.isNotEmpty) {
+                return tasks;
+              }
+            }
           }
-        } else {
-          try {
-            response = await _api.dio.get<dynamic>('/tasks/staff/$staffId');
-          } catch (_) {
-            response = await _api.dio.get<dynamic>('/tasks');
-          }
-        }
-      }
-      final body = response?.data;
-      if (body is List) {
-        return body
-            .whereType<Map<String, dynamic>>()
-            .map((j) => Task.fromJson(j))
-            .toList();
-      }
-      final list = (body is Map && body['data'] != null)
-          ? body['data'] as List?
-          : null;
-      if (list != null) {
-        return list
-            .whereType<Map<String, dynamic>>()
-            .map((j) => Task.fromJson(j))
-            .toList();
+        } catch (_) {}
       }
       return <Task>[];
     } catch (_) {

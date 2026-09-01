@@ -360,40 +360,80 @@ class Task {
 
   factory Task.fromJson(Map<String, dynamic> json) {
     final customerIdVal = json['customerId'];
-    final customer = customerIdVal is Map
-        ? Customer.fromJson(Map<String, dynamic>.from(customerIdVal))
-        : (json['customer'] is Map
-              ? Customer.fromJson(
-                  Map<String, dynamic>.from(json['customer'] as Map),
-                )
-              : null);
+    final custName = (json['customerName'] ?? json['customer_name'] ?? json['companyName'])?.toString();
+    final custAddr = (json['customerAddress'] ?? json['customerLocation'] ?? json['address'] ?? json['location'])?.toString();
+    final custPhone = (json['customerPhone'] ?? json['customerNumber'] ?? json['mobile'])?.toString();
+
+    Customer? customer;
+    if (customerIdVal is Map) {
+      customer = Customer.fromJson(Map<String, dynamic>.from(customerIdVal));
+    } else if (json['customer'] is Map) {
+      customer = Customer.fromJson(Map<String, dynamic>.from(json['customer'] as Map));
+    } else if (custName != null && custName.isNotEmpty) {
+      customer = Customer(
+        id: _stringFromId(customerIdVal),
+        customerName: custName,
+        customerNumber: custPhone,
+        address: custAddr ?? '',
+        city: (json['city'] ?? '').toString(),
+        pincode: (json['pincode'] ?? json['pinCode'] ?? '').toString(),
+      );
+    }
+
+    final titleStr = (json['taskTitle'] ?? json['title'] ?? '').toString();
+    final taskIdStr = (json['taskId'] ?? json['id'] ?? json['_id'] ?? '').toString();
+    final statusStr = (json['status'] ?? '').toString();
+
+    TaskLocation? destLoc;
+    if (json['destinationLocation'] is Map) {
+      destLoc = TaskLocation.fromJson(json['destinationLocation'] as Map<String, dynamic>);
+    } else if (json['latitude'] != null || json['longitude'] != null || custAddr != null) {
+      destLoc = TaskLocation(
+        lat: (json['latitude'] as num?)?.toDouble() ?? 0,
+        lng: (json['longitude'] as num?)?.toDouble() ?? 0,
+        address: custAddr,
+        fullAddress: custAddr,
+      );
+    }
+
+    TaskLocation? srcLoc;
+    if (json['sourceLocation'] is Map) {
+      srcLoc = TaskLocation.fromJson(json['sourceLocation'] as Map<String, dynamic>);
+    } else if (json['startLatitude'] != null || json['startLongitude'] != null) {
+      srcLoc = TaskLocation(
+        lat: (json['startLatitude'] as num?)?.toDouble() ?? 0,
+        lng: (json['startLongitude'] as num?)?.toDouble() ?? 0,
+        address: json['sourceLocation']?.toString(),
+      );
+    }
+
     return Task(
-      id: _stringFromId(json['_id']),
-      taskId: (json['taskId'] as String?) ?? '',
-      taskTitle: (json['taskTitle'] as String?) ?? '',
-      description: (json['description'] as String?) ?? '',
-      assignedTo: _stringFromId(json['assignedTo']) ?? '',
+      id: _stringFromId(json['_id'] ?? json['id']),
+      taskId: taskIdStr,
+      taskTitle: titleStr,
+      description: (json['description'] ?? '').toString(),
+      assignedTo: _stringFromId(json['assignedTo'] ?? json['staffId'] ?? json['staff']?['_id'] ?? json['staff']?['id']) ?? '',
       customerId: _stringFromId(customerIdVal),
       customer: customer,
       expectedCompletionDate:
-          _dateFromJson(json['expectedCompletionDate']) ?? DateTime.now(),
+          _dateFromJson(json['expectedCompletionDate'] ?? json['date'] ?? json['endDate']) ?? DateTime.now(),
       completedDate: _dateFromJson(json['completedDate']),
       assignedDate:
-          _dateFromJson(json['assignedDate']) ??
-          _dateFromJson(json['createdAt']),
-      status: statusFromJson((json['status'] as String?) ?? ''),
+          _dateFromJson(json['assignedDate'] ?? json['startDate'] ?? json['createdAt']),
+      status: statusFromJson(statusStr),
       isOtpRequired:
           (json['customFields'] != null
               ? (json['customFields']['otpRequired'] as bool?)
               : null) ??
           (json['isOtpRequired'] as bool?) ??
+          (json['otpRequired'] as bool?) ??
           false,
       isGeoFenceRequired: json['customFields'] != null
           ? (json['customFields']['geoFenceRequired'] as bool?) ?? false
           : false,
       isPhotoRequired: json['customFields'] != null
           ? (json['customFields']['photoRequired'] as bool?) ?? false
-          : false,
+          : (json['selfieRequired'] as bool?) ?? false,
       isFormRequired: json['customFields'] != null
           ? (json['customFields']['formRequired'] as bool?) ?? false
           : false,
@@ -428,16 +468,8 @@ class Task {
           (json['settings'] != null
               ? (json['settings']['autoApprove'] as bool?) ?? false
               : false),
-      sourceLocation: json['sourceLocation'] != null
-          ? TaskLocation.fromJson(
-              json['sourceLocation'] as Map<String, dynamic>,
-            )
-          : null,
-      destinationLocation: json['destinationLocation'] != null
-          ? TaskLocation.fromJson(
-              json['destinationLocation'] as Map<String, dynamic>,
-            )
-          : null,
+      sourceLocation: srcLoc,
+      destinationLocation: destLoc,
       arrivalLocation: _parseArrivalLocation(json),
       tasksExit: _parseList(
         json['exit'] ?? json['tasks_exit'],
