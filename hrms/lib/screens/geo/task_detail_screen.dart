@@ -2119,17 +2119,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   bool _actionLoading = false;
 
-  /// Show "Start Ride": autoApprove true → assigned/pending (direct start); autoApprove false → only when approved
-  /// autoApprove false = manual approval required; autoApprove true = can start directly
+  /// Show "Start Ride": enabled for any assigned, pending, scheduled, approved, or requested task.
   bool get _showStartRideButton =>
       task.id != null &&
       task.id!.isNotEmpty &&
-      ((task.status == TaskStatus.assigned ||
-                  task.status == TaskStatus.pending) &&
-              task.autoApprove ||
-          (!task.autoApprove &&
-              (task.status == TaskStatus.approved ||
-                  task.status == TaskStatus.staffapproved)));
+      (task.status == TaskStatus.assigned ||
+          task.status == TaskStatus.pending ||
+          task.status == TaskStatus.scheduled ||
+          task.status == TaskStatus.approved ||
+          task.status == TaskStatus.staffapproved ||
+          task.status == TaskStatus.requested ||
+          task.status == TaskStatus.onlineReady);
 
   /// Show "Resume Ride" when task is on hold, holdOnArrival, reopenedOnArrival, exited with hold, or admin reopened.
   bool get _showResumeAfterExitButton =>
@@ -2154,16 +2154,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       task.status == TaskStatus.waitingForApproval ||
       task.status == TaskStatus.rejected;
 
-  /// Show Approve/Reject when autoApprove is false (manual approval required) and task is assigned/pending.
+  /// Show Approve/Reject when autoApprove is false and status is waiting for approval.
   bool get _showApprovalButtons =>
       !task.autoApprove &&
-      (task.status == TaskStatus.assigned ||
-          task.status == TaskStatus.pending) &&
+      task.status == TaskStatus.waitingForApproval &&
       task.id != null &&
       task.id!.isNotEmpty &&
       !_showResumeRideButton &&
-      !_showResumeAfterExitButton &&
-      !_showBackOnly;
+      !_showResumeAfterExitButton;
 
   /// Staff can always approve; OTP verification applies only at arrival (arrived screen).
   bool get _canApprove => true;
