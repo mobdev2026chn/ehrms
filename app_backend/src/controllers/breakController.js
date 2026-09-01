@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Break = require('../models/Break');
 const Device = require('../models/Device');
 const Staff = require('../models/Staff');
@@ -803,15 +804,34 @@ exports.endBreak = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Staff business not found' });
         }
 
-        const doc = await Break.findOne({
-            _id: id,
-            employeeID: staff._id,
-            tenantId: staff.businessId,
-            endTime: null
-        });
+        let doc = null;
+        if (id && mongoose.Types.ObjectId.isValid(id)) {
+            doc = await Break.findOne({
+                _id: id,
+                employeeID: staff._id,
+                tenantId: staff.businessId,
+                endTime: null
+            });
+        }
+        if (!doc) {
+            doc = await Break.findOne({
+                employeeID: staff._id,
+                tenantId: staff.businessId,
+                endTime: null
+            }).sort({ startTime: -1 });
+        }
 
         if (!doc) {
-            return res.status(404).json({ success: false, message: 'Break not found or already ended' });
+            const lastBreak = await Break.findOne({
+                employeeID: staff._id,
+                tenantId: staff.businessId
+            }).sort({ startTime: -1 });
+            await Staff.updateOne({ _id: staff._id }, { $set: { monitoringStatus: 'in_office' } });
+            return res.status(200).json({
+                success: true,
+                message: 'Break ended successfully',
+                data: lastBreak ? serializeBreak(lastBreak) : null
+            });
         }
 
         const resolvedEndTime = resolveServerBreakEndTime(doc.startTime, endTime);

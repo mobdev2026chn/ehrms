@@ -18,5 +18,8 @@ router.get('/current', protect, breakLimiter, getCurrentBreak);
 router.get('/today', protect, breakLimiter, getTodayBreakSummary);
 router.post('/start', protect, breakLimiter, startBreak);
 router.patch('/:id/end', protect, breakLimiter, endBreak);
+router.post('/:id/end', protect, breakLimiter, endBreak);
+router.patch('/end', protect, breakLimiter, endBreak);
+router.post('/end', protect, breakLimiter, endBreak);
 
 module.exports = router;
