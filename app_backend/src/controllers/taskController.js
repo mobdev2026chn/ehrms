@@ -634,19 +634,24 @@ async function computePersistedTravelMetrics(taskMongoId, taskObj, endTimeInput)
   return computeTravelMetricsFromTrackingRecords(trackingRecords, window);
 }
 
+async function findTaskByIdOrTaskId(id) {
+  if (!id) return null;
+  const idStr = String(id).trim();
+  if (mongoose.Types.ObjectId.isValid(idStr)) {
+    const doc = await Task.findById(idStr).populate('assignedTo').populate('customerId');
+    if (doc) return doc;
+  }
+  return Task.findOne({ taskId: idStr }).populate('assignedTo').populate('customerId');
+}
+
+exports.findTaskByIdOrTaskId = findTaskByIdOrTaskId;
 exports.computePersistedTravelMetrics = computePersistedTravelMetrics;
 
 exports.getTaskById = async (req, res) => {
   try {
     const taskId = req.params.id;
     console.log('[Tasks] GET /tasks/:id - taskId:', taskId);
-    let task = null;
-    if (mongoose.Types.ObjectId.isValid(taskId)) {
-      task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
-    }
-    if (!task) {
-      task = await Task.findOne({ taskId }).populate('assignedTo').populate('customerId');
-    }
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) {
       console.log('[Tasks] Task not found:', taskId);
       return res.status(404).json({ message: 'Task not found' });
@@ -747,13 +752,7 @@ exports.updateTask = async (req, res) => {
       updateData.rejectedBy = staffId;
     }
 
-    let task = null;
-    if (mongoose.Types.ObjectId.isValid(taskId)) {
-      task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
-    }
-    if (!task) {
-      task = await Task.findOne({ taskId }).populate('assignedTo').populate('customerId');
-    }
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) return res.status(404).json({ message: 'Task not found' });
 
     if (status != null && !isValidStatusTransition(task.status, status)) {
@@ -808,9 +807,7 @@ exports.updateLocation = async (req, res) => {
       timestamp: parseTimestamp(timestamp),
       batteryPercent: batteryPercent != null ? Number(batteryPercent) : undefined,
     };
-    const task = await Task.findById(taskId)
-      .select('taskId assignedTo')
-      .populate('assignedTo', 'name');
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
@@ -820,8 +817,8 @@ exports.updateLocation = async (req, res) => {
     if (io) {
       const staffIdStr = task.assignedTo?._id?.toString();
       const payload = {
-        taskId,
-        taskMongoId: taskId,
+        taskId: task.taskId,
+        taskMongoId: task._id.toString(),
         staffId: staffIdStr || undefined,
         latitude: point.lat,
         longitude: point.lng,
@@ -830,7 +827,8 @@ exports.updateLocation = async (req, res) => {
         movementType: movementType || undefined,
         staffName: task.assignedTo?.name,
       };
-      io.to(`task:${taskId}`).emit('tracking:location', payload);
+      io.to(`task:${task._id}`).emit('tracking:location', payload);
+      io.to(`task:${task.taskId}`).emit('tracking:location', payload);
       io.to('admin:tracking').emit('tracking:location', payload);
       // Admin tracking by staffId (admin at 192.168.16.114 joins admin:staff:${staffId})
       if (staffIdStr) io.to(`admin:staff:${staffIdStr}`).emit('tracking:location', payload);
@@ -855,7 +853,7 @@ exports.updateSteps = async (req, res) => {
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ message: 'At least one step field required' });
     }
-    const task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) return res.status(404).json({ message: 'Task not found' });
     const details = await TaskDetails.findOne({ taskId: task._id }).lean();
     const fullDoc = {
@@ -1110,10 +1108,7 @@ exports.getCompletionReport = async (req, res) => {
 exports.getTrackingPath = async (req, res) => {
   try {
     const taskId = req.params.id;
-    const task = await Task.findById(taskId)
-      .select('taskId status assignedTo customerId')
-      .populate('assignedTo', 'name')
-      .populate('customerId', 'address city pincode');
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
@@ -1150,7 +1145,7 @@ exports.uploadPhotoProof = async (req, res) => {
     if (!file) {
       return res.status(400).json({ message: 'Photo file required' });
     }
-    const task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) return res.status(404).json({ message: 'Task not found' });
     const companyId = getCompanyIdFromTask(task);
     const employeeName = task.assignedTo?.name || 'unknown';
@@ -1222,7 +1217,7 @@ exports.uploadTaskSelfie = async (req, res) => {
     if (type !== 'checkin' && type !== 'checkout') {
       return res.status(400).json({ message: 'Type must be checkin or checkout' });
     }
-    const task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) return res.status(404).json({ message: 'Task not found' });
     const companyId = getCompanyIdFromTask(task);
     const employeeName = task.assignedTo?.name || 'unknown';
@@ -1291,10 +1286,7 @@ exports.uploadTaskSelfie = async (req, res) => {
 exports.sendOtp = async (req, res) => {
   try {
     const idParam = req.params.id;
-    let task = await Task.findById(idParam).populate('customerId');
-    if (!task) {
-      task = await Task.findOne({ taskId: idParam }).populate('customerId');
-    }
+    const task = await findTaskByIdOrTaskId(idParam);
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
@@ -1356,7 +1348,7 @@ exports.verifyOtp = async (req, res) => {
     if (!otp || String(otp).length !== 4) {
       return res.status(400).json({ message: 'Valid 4-digit OTP required' });
     }
-    const task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
@@ -1399,7 +1391,7 @@ exports.endTask = async (req, res) => {
   try {
     const taskId = req.params.id;
     const staffId = req.staff?._id;
-    const task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    const task = await findTaskByIdOrTaskId(taskId);
     if (!task) return res.status(404).json({ message: 'Task not found' });
     const statusLower = String(task.status || '').toLowerCase().replace(/\s+/g, '');
     const canComplete = ['arrived', 'holdonarrival', 'reopenedonarrival'].includes(statusLower);
@@ -1431,7 +1423,7 @@ exports.endTask = async (req, res) => {
     }
     const newStatus = requireApprovalOnComplete ? 'waiting_for_approval' : 'completed';
     const completedAt = parseTimestamp(new Date());
-    await Task.findByIdAndUpdate(taskId, {
+    await Task.findByIdAndUpdate(task._id, {
       $set: { status: newStatus },
       $unset: exports.buildUnsetExtended(),
     }, { runValidators: false });
@@ -1459,7 +1451,7 @@ exports.endTask = async (req, res) => {
       fullDoc.travelActivityDuration = travelActivityDuration;
     }
     await exports.upsertTaskDetails(fullDoc);
-    const updatedTask = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    const updatedTask = await Task.findById(task._id).populate('assignedTo').populate('customerId');
     const merged = await mergeTaskWithDetails(updatedTask);
     const finalMerged = await mergeTaskSettings(merged, companyId);
     console.log('[Tasks] Task ended:', task.taskId, 'status:', newStatus);
