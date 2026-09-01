@@ -241,7 +241,8 @@ class TaskService {
     required String taskTitle,
     required String description,
     required String assignedTo,
-    required String customerId,
+    String? customerId,
+    String? customerName,
     required DateTime expectedCompletionDate,
     DateTime? earliestCompletionDate,
     DateTime? latestCompletionDate,
@@ -256,13 +257,18 @@ class TaskService {
       'taskTitle': taskTitle,
       'description': description,
       'assignedTo': assignedTo,
-      'customerId': customerId,
       'expectedCompletionDate': expectedCompletionDate
           .toUtc()
           .toIso8601String(),
       'status': status,
       'source': 'app',
     };
+    if (customerId != null && customerId.isNotEmpty) {
+      body['customerId'] = customerId;
+    }
+    if (customerName != null && customerName.isNotEmpty) {
+      body['customerName'] = customerName;
+    }
     // Completion-date range. Normalize to UTC midnight of the calendar date so
     // it matches how the backend stores/filters expectedCompletionDate.
     if (earliestCompletionDate != null) {

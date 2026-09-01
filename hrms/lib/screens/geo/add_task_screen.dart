@@ -296,8 +296,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedCustomer == null || _selectedCustomer!.id == null) {
-      SnackBarUtils.showSnackBar(context, 'Please select a customer');
+    final typedCustomer = _customerSearchController.text.trim();
+    if (_selectedCustomer == null && typedCustomer.isEmpty) {
+      SnackBarUtils.showSnackBar(context, 'Please enter or select a customer');
       return;
     }
     if (_earliestCompletionDate == null || _latestCompletionDate == null) {
@@ -316,21 +317,17 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     }
     // Destination: Auto = selected customer's address, Manual = typed address.
     final String destAddr;
-    if (_useCustomerAddressForDest) {
+    if (_useCustomerAddressForDest && _selectedCustomer != null) {
       destAddr = _customerDestinationAddress(_selectedCustomer!);
       if (destAddr.isEmpty) {
-        SnackBarUtils.showSnackBar(
-          context,
-          'Selected customer has no address on file',
-        );
-        return;
+        destAddr = _destinationController.text.trim();
       }
     } else {
       destAddr = _destinationController.text.trim();
-      if (destAddr.isEmpty) {
-        SnackBarUtils.showSnackBar(context, 'Please enter a destination address');
-        return;
-      }
+    }
+    if (destAddr.isEmpty) {
+      SnackBarUtils.showSnackBar(context, 'Please enter a destination address or select a customer with address');
+      return;
     }
     // Manual source must have an address typed in before we try to geocode it.
     if (!_useCurrentLocationForSource && _sourceController.text.trim().isEmpty) {
@@ -444,7 +441,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         taskTitle: _taskTitleController.text.trim(),
         description: _buildDescription(),
         assignedTo: widget.staffId,
-        customerId: _selectedCustomer!.id!,
+        customerId: _selectedCustomer?.id,
+        customerName: _selectedCustomer?.customerName ?? typedCustomer,
         // Latest date is the hard deadline → keep it as expectedCompletionDate
         // so existing task views keep showing a due date.
         expectedCompletionDate: _latestCompletionDate!,
@@ -1198,15 +1196,28 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Customer',
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.grey.shade700,
-            fontWeight: FontWeight.w600,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Customer',
+              style: TextStyle(
+                fontSize: 14,
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (_allCustomers.isNotEmpty)
+              Text(
+                'Type name or select from ${_allCustomers.length} customers',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+          ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         TextFormField(
           focusNode: _customerFocusNode,
           controller: _customerSearchController,
@@ -1216,14 +1227,59 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               size: 22,
               color: AppColors.primary,
             ),
-            hintText: 'Search customer by name or address',
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_customerSearchController.text.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.clear_rounded, size: 18),
+                    onPressed: () {
+                      _customerSearchController.clear();
+                      setState(() {
+                        _selectedCustomer = null;
+                        _filteredCustomers = _allCustomers;
+                        _showCustomerDropdown = false;
+                      });
+                    },
+                  ),
+                IconButton(
+                  icon: Icon(
+                    _showCustomerDropdown
+                        ? Icons.arrow_drop_up_rounded
+                        : Icons.arrow_drop_down_rounded,
+                    size: 28,
+                    color: AppColors.primary,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _showCustomerDropdown = !_showCustomerDropdown;
+                      if (_showCustomerDropdown) {
+                        _filteredCustomers = _allCustomers;
+                      }
+                    });
+                  },
+                ),
+              ],
+            ),
+            hintText: 'Type custom customer name or select from list',
+            hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            filled: true,
+            fillColor: Colors.white,
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(color: Colors.grey.shade300),
             ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: AppColors.primary, width: 2),
+            ),
             contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 16,
+              horizontal: 14,
+              vertical: 14,
             ),
           ),
           onTap: () => setState(() => _showCustomerDropdown = true),
@@ -1232,7 +1288,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         if (_showCustomerDropdown) ...[
           const SizedBox(height: 4),
           Container(
-            constraints: const BoxConstraints(maxHeight: 200),
+            constraints: const BoxConstraints(maxHeight: 220),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
@@ -1253,12 +1309,20 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 : _filteredCustomers.isEmpty
                 ? Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Text(
-                      'No customers found',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
-                      ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 18, color: Colors.grey.shade600),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Will use typed customer name: "${_customerSearchController.text.trim()}"',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade700,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   )
                 : ListView.builder(
@@ -1266,14 +1330,25 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                     itemCount: _filteredCustomers.length,
                     itemBuilder: (context, i) {
                       final c = _filteredCustomers[i];
+                      final isSelected = _selectedCustomer?.id == c.id;
                       return ListTile(
                         dense: true,
+                        selected: isSelected,
+                        selectedTileColor: AppColors.primary.withOpacity(0.08),
+                        leading: Icon(
+                          isSelected ? Icons.check_circle_rounded : Icons.business_rounded,
+                          color: isSelected ? AppColors.primary : Colors.grey.shade500,
+                          size: 20,
+                        ),
                         title: Text(
                           c.customerName,
-                          style: TextStyle(fontSize: 14),
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
                         ),
                         subtitle: Text(
-                          '${c.address}, ${c.city}',
+                          [c.address, c.city].where((s) => s.isNotEmpty).join(', '),
                           style: TextStyle(
                             fontSize: 11,
                             color: Colors.grey.shade600,
