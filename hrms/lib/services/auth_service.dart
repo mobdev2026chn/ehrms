@@ -1053,30 +1053,41 @@ class AuthService {
 
       Response<Map<String, dynamic>>? response;
       try {
+        debugPrint('[enrollFace] POST /auth/enroll-face starting...');
         response = await _api.dio.post<Map<String, dynamic>>(
           '/auth/enroll-face',
           data: payload,
           options: Options(receiveTimeout: const Duration(seconds: 90)),
         );
+        debugPrint('[enrollFace] /auth/enroll-face succeeded: ${response.data}');
       } on DioException catch (de) {
+        debugPrint('[enrollFace] /auth/enroll-face failed: status=${de.response?.statusCode} msg=${de.message}');
         if (de.response?.statusCode == 404) {
           try {
+            debugPrint('[enrollFace] Trying /staff/attendance/enroll-face...');
             response = await _api.dio.post<Map<String, dynamic>>(
               '/staff/attendance/enroll-face',
               data: payload,
               options: Options(receiveTimeout: const Duration(seconds: 90)),
             );
+            debugPrint('[enrollFace] /staff/attendance/enroll-face succeeded: ${response.data}');
           } on DioException catch (de2) {
+            debugPrint('[enrollFace] /staff/attendance/enroll-face failed: status=${de2.response?.statusCode} data=${de2.response?.data}');
             if (de2.response?.statusCode == 404) {
               try {
+                debugPrint('[enrollFace] Trying /attendance/enroll-face...');
                 response = await _api.dio.post<Map<String, dynamic>>(
                   '/attendance/enroll-face',
                   data: payload,
                   options: Options(receiveTimeout: const Duration(seconds: 90)),
                 );
+                debugPrint('[enrollFace] /attendance/enroll-face succeeded: ${response.data}');
               } on DioException catch (de3) {
+                debugPrint('[enrollFace] /attendance/enroll-face failed: status=${de3.response?.statusCode}');
                 if (de3.response?.statusCode == 404 && imageFile != null) {
+                  debugPrint('[enrollFace] Falling back to updateProfilePhoto...');
                   final photoRes = await updateProfilePhoto(imageFile);
+                  debugPrint('[enrollFace] updateProfilePhoto result: $photoRes');
                   if (photoRes['success'] == true) {
                     return {
                       'success': true,

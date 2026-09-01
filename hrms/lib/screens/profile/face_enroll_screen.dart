@@ -56,6 +56,7 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
           await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
       debugPrint('[FaceEnroll] compressed dataUrl length: ${dataUrl.length} chars (${(dataUrl.length / 1024).toStringAsFixed(1)} KB)');
       final res = await _authService.enrollFace([dataUrl], imageFile: result);
+      debugPrint('[FaceEnroll] API response: $res');
       if (!mounted) return;
       final ok = res['success'] == true;
       SnackBarUtils.showSnackBar(
