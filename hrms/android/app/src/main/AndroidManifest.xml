@@ -82,8 +82,8 @@
         <service
             android:name="com.icapps.background_location_tracker.service.LocationUpdatesService"
             android:foregroundServiceType="location"
-            android:exported="false"
-            tools:replace="android:foregroundServiceType" />
+            android:exported="true"
+            tools:replace="android:exported,android:foregroundServiceType" />
         <!-- Required for scheduled notifications (alarms) to fire when app is closed -->
         <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
         <receiver android:exported="true" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
