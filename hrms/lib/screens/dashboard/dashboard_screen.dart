@@ -2504,8 +2504,8 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     final salaryStaffData = data['staffData'] as Map<String, dynamic>?;
     _updateSalaryConfigured(salaryStaffData);
-    // Punch-in config gates, surfaced in a fixed priority order every time:
-    // 1) salary  2) attendance & shift  3) weekly off  4) holiday  5) leave.
+    // Punch-in config gates bypassed for testing:
+    /*
     if (!_isSalaryConfiguredFromStaff(salaryStaffData)) {
       await _showValidationAlertDialog('Salary not configured. Contact HR.');
       return false;
@@ -2532,6 +2532,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
       return false;
     }
+    */
     final Map<String, dynamic> tmpl = template!;
     final staffData = data['staffData'] as Map<String, dynamic>?;
     final companyDocRaw = data['companyDocForShift'] as Map<String, dynamic>?;

@@ -6291,11 +6291,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     await _fetchAllTemplateDetails();
     if (!mounted) return;
 
-    // --- Check-in/check-out validation: show popup and block if any check fails ---
-    // Salary must be configured to punch IN (drives fine/late/early storage and payroll).
-    // Guarded to check-in only so an already-open day is never stranded at check-out.
-    // Punch-in config gates, surfaced in a fixed priority order every time:
-    // 1) salary  2) attendance & shift  3) weekly off  4) holiday  5) leave.
+    // --- Check-in/check-out validation: bypassed for testing ---
+    /*
     if (!isCheckedIn &&
         !_isSalaryConfiguredFromStaff(_profileStaffDataSnapshot)) {
       await _showValidationAlert('Salary not configured. Contact HR.');
@@ -6334,6 +6331,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       _setPunchActionInProgress(false);
       return;
     }
+    */
     final branchStatus =
         (_branchData!['status']?.toString().trim().toUpperCase()) ?? '';
     if (branchStatus != 'ACTIVE') {

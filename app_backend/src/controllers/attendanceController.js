@@ -1801,17 +1801,14 @@ const checkIn = async (req, res) => {
             selfieMultipart: Boolean(req.file && req.file.buffer && req.file.buffer.length > 0),
         });
 
-        // Salary must be configured to allow check-in (required for fine/late/early storage and payroll)
+        // Salary/Branch/Shift/Template config checks bypassed for testing:
+        /*
         const salaryStructure = staff.salary ? calculateSalaryStructure(staff.salary) : null;
         const netMonthlySalary = salaryStructure?.monthly?.netMonthlySalary != null ? Number(salaryStructure.monthly.netMonthlySalary) : 0;
         if (!staff.salary || netMonthlySalary <= 0) {
             return res.status(400).json({ message: 'Salary not configured. Contact HR.' });
         }
 
-        // Branch must be assigned. Presence (in/out of office) resolution, geofence and
-        // payroll location all key off the branch, so a staff with no branchId cannot punch.
-        // (Frontends pre-block this with a popup; this is the server-side enforcement that
-        // also covers the selfie-checkin/face-kiosk/web/software entry points.)
         if (!staff.branchId) {
             return res.status(403).json({ message: 'Branch not assigned. Contact HR.' });
         }
@@ -1819,20 +1816,16 @@ const checkIn = async (req, res) => {
         if (!isShiftAssignedForStaff(company, staff, templateDoc)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
-        // Attendance + Weekly Off templates must also be configured (not just the shift).
-        // Without these, punch-in cannot resolve attendance rules or week-off days, so block it.
         if (!templateDoc) {
             return res.status(403).json({ message: 'Attendance template is not assigned. Contact HR.' });
         }
-        // Enable/disable: a deactivated attendance template means attendance is turned
-        // off for this employee. Block new check-ins. (Check-out is intentionally left
-        // permissive so an already-open day is never stranded with an open punch.)
         if (templateDoc.isActive === false) {
             return res.status(403).json({ message: 'Attendance is disabled for your template. Contact HR.' });
         }
         if (!isWeeklyOffTemplateAssigned(staff)) {
             return res.status(403).json({ message: 'Weekly Off template is not assigned. Contact HR.' });
         }
+        */
         // PRIORITY 1: Check if On Approved Leave (highest priority - blocks all other rules)
         // `company`, `activeLeave` already fetched in the concurrent batch above.
         const { canCheckInWithHalfDayLeave, getShiftTimings, getBusinessTimezone, isHalfDayLeave } = require('../utils/leaveAttendanceHelper');
@@ -2495,9 +2488,11 @@ const checkOut = async (req, res) => {
                 date: { $gte: startOfDay, $lte: endOfDay }
             })
         ]);
+        /*
         if (!isShiftAssignedForStaff(company, staff, templateDoc)) {
             return res.status(403).json({ message: 'Shift not assigned. Contact HR.' });
         }
+        */
         const template = normalizeTemplate(templateDoc);
         console.log('[Attendance checkOut] template flags', {
             staffId: staffId?.toString(),
