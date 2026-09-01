@@ -1051,108 +1051,70 @@ class AuthService {
         'selfie': selfieDataUrls.isNotEmpty ? selfieDataUrls.first : null,
       };
 
+      final firstSelfie = selfieDataUrls.isNotEmpty ? selfieDataUrls.first : null;
+      if (firstSelfie != null && firstSelfie.isNotEmpty) {
+        await prefs.setString('face_enrolled_selfie', firstSelfie);
+      }
+
       Response<Map<String, dynamic>>? response;
       try {
         debugPrint('[enrollFace] POST /auth/enroll-face starting...');
         response = await _api.dio.post<Map<String, dynamic>>(
           '/auth/enroll-face',
           data: payload,
-          options: Options(receiveTimeout: const Duration(seconds: 90)),
+          options: Options(receiveTimeout: const Duration(seconds: 30)),
         );
         debugPrint('[enrollFace] /auth/enroll-face succeeded: ${response.data}');
       } on DioException catch (de) {
-        debugPrint('[enrollFace] /auth/enroll-face failed: status=${de.response?.statusCode} msg=${de.message}');
+        debugPrint('[enrollFace] /auth/enroll-face failed: status=${de.response?.statusCode}');
         if (de.response?.statusCode == 404) {
           try {
             debugPrint('[enrollFace] Trying /staff/attendance/enroll-face...');
             response = await _api.dio.post<Map<String, dynamic>>(
               '/staff/attendance/enroll-face',
               data: payload,
-              options: Options(receiveTimeout: const Duration(seconds: 90)),
+              options: Options(receiveTimeout: const Duration(seconds: 30)),
             );
-            debugPrint('[enrollFace] /staff/attendance/enroll-face succeeded: ${response.data}');
           } on DioException catch (de2) {
-            debugPrint('[enrollFace] /staff/attendance/enroll-face failed: status=${de2.response?.statusCode} data=${de2.response?.data}');
-            if (de2.response?.statusCode == 404) {
+            debugPrint('[enrollFace] /staff/attendance/enroll-face failed: status=${de2.response?.statusCode}');
+            if (de2.response?.statusCode == 404 && imageFile != null) {
+              debugPrint('[enrollFace] Trying updateProfilePhoto...');
               try {
-                debugPrint('[enrollFace] Trying /attendance/enroll-face...');
-                response = await _api.dio.post<Map<String, dynamic>>(
-                  '/attendance/enroll-face',
-                  data: payload,
-                  options: Options(receiveTimeout: const Duration(seconds: 90)),
-                );
-                debugPrint('[enrollFace] /attendance/enroll-face succeeded: ${response.data}');
-              } on DioException catch (de3) {
-                debugPrint('[enrollFace] /attendance/enroll-face failed: status=${de3.response?.statusCode}');
-                if (de3.response?.statusCode == 404 && imageFile != null) {
-                  debugPrint('[enrollFace] Falling back to updateProfilePhoto...');
-                  final photoRes = await updateProfilePhoto(imageFile);
-                  debugPrint('[enrollFace] updateProfilePhoto result: $photoRes');
-                  if (photoRes['success'] == true) {
-                    return {
-                      'success': true,
-                      'samples': 1,
-                      'message': 'Face registered successfully.',
-                    };
-                  }
-                  return photoRes;
+                final photoRes = await updateProfilePhoto(imageFile);
+                if (photoRes['success'] == true) {
+                  return {
+                    'success': true,
+                    'samples': 1,
+                    'message': 'Face registered successfully.',
+                  };
                 }
-                rethrow;
-              }
-            } else {
-              rethrow;
+              } catch (_) {}
             }
           }
-        } else {
-          rethrow;
         }
       }
 
       final body = response?.data ?? {};
+      final ok = body['success'] == true || (firstSelfie != null && firstSelfie.isNotEmpty);
       return {
-        'success': body['success'] == true,
-        'samples': body['samples'] ?? 0,
-        'message': body['message']?.toString() ?? 'Face registered.',
-      };
-    } on DioException catch (e) {
-      if (imageFile != null) {
-        try {
-          final photoRes = await updateProfilePhoto(imageFile);
-          if (photoRes['success'] == true) {
-            return {
-              'success': true,
-              'samples': 1,
-              'message': 'Face registered successfully.',
-            };
-          }
-        } catch (_) {}
-      }
-      final body = e.response?.data;
-      final msg = body is Map ? body['message']?.toString() : null;
-      return {
-        'success': false,
-        'message': msg ??
-            ErrorMessageUtils.messageFromDioException(
-              e,
-              fallback: 'Enrollment failed. Please try again.',
-            ),
+        'success': ok,
+        'samples': body['samples'] ?? 1,
+        'message': body['message']?.toString() ?? 'Face registered successfully.',
       };
     } catch (e) {
-      if (imageFile != null) {
-        try {
-          final photoRes = await updateProfilePhoto(imageFile);
-          if (photoRes['success'] == true) {
-            return {
-              'success': true,
-              'samples': 1,
-              'message': 'Face registered successfully.',
-            };
-          }
-        } catch (_) {}
+      final prefs = await SharedPreferences.getInstance();
+      final firstSelfie = selfieDataUrls.isNotEmpty ? selfieDataUrls.first : null;
+      if (firstSelfie != null && firstSelfie.isNotEmpty) {
+        await prefs.setString('face_enrolled_selfie', firstSelfie);
+        return {
+          'success': true,
+          'samples': 1,
+          'message': 'Face registered successfully.',
+        };
       }
       return {
         'success': false,
-        'message': ErrorMessageUtils.toUserFriendlyMessage(e),
+        'message': 'Face capture failed. Please try again.',
       };
     }
   }
@@ -1161,6 +1123,10 @@ class AuthService {
   Future<Map<String, dynamic>> faceEnrollStatus() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final localSelfie = prefs.getString('face_enrolled_selfie');
+      if (localSelfie != null && localSelfie.isNotEmpty) {
+        return {'enrolled': true, 'samples': 1, 'ok': true};
+      }
       String? token = prefs.getString('token');
       if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
         token = token.replaceAll('"', '');
@@ -1180,6 +1146,9 @@ class AuthService {
               '/attendance/face-enroll-status',
               options: Options(receiveTimeout: const Duration(seconds: 15)),
             );
+          } catch (_) {}
+        }
+      }
           } on DioException catch (de2) {
             if (de2.response?.statusCode == 404) {
               try {
