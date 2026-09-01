@@ -6332,6 +6332,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       return;
     }
     */
+    /*
     final branchStatus =
         (_branchData!['status']?.toString().trim().toUpperCase()) ?? '';
     if (branchStatus != 'ACTIVE') {
@@ -6412,6 +6413,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         }
       }
     }
+    */
     // --- End validation ---
 
     // Half-day leave: block check-in/out during leave half and show specific red snackbar

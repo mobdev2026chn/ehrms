@@ -2568,6 +2568,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       'effectiveIsWeekOff=${todayEffectiveShift?.isWeekOff == true} '
       'effectiveWindow=${effWin.isEmpty ? '(n/a)' : effWin}',
     );
+    /*
     if (branchData == null) {
       await _showValidationAlertDialog('Branch not assigned.');
       return false;
@@ -2636,6 +2637,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         }
       }
     }
+    */
 
     final isSecondHalfLeave =
         halfDayLeave != null &&
