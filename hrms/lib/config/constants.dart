@@ -96,13 +96,8 @@ class AppConstants {
   static const bool enableAttendanceFaceMatching = true;
 
   /// Master switch for the in-app selfie step on punch, break and custom
-  /// permission. When false (current product decision), the app NEVER opens the
-  /// selfie camera for these actions — punch/break/permission submit straight
-  /// through WITHOUT a selfie (and without the scan-time face-match, which can
-  /// only run on a captured selfie). The backend treats the selfie as optional
-  /// for these flows, while web / face-kiosk entry points still capture & store
-  /// selfies. Set true to restore the in-app selfie + face-match step.
-  static const bool enableAttendanceSelfie = false;
+  /// permission. Set true to capture selfie and satisfy backend requirement.
+  static const bool enableAttendanceSelfie = true;
 
   /// Master switch for the in-app selfie step on attendance PUNCH (in & out)
   /// only — independent of [enableAttendanceSelfie] (which now governs only
