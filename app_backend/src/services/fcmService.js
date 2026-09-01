@@ -506,7 +506,39 @@ async function sendAnnouncementNotificationToToken(token, announcementDoc) {
             type: 'announcement',
             announcementId: id,
         },
-        androidTag: id ? `announcement_${id}` : null,
+async function sendTaskAssignedNotification(taskDoc) {
+    if (!taskDoc) return { success: false, error: 'No task' };
+    const employeeId = taskDoc.assignedTo && taskDoc.assignedTo._id ? taskDoc.assignedTo._id : taskDoc.assignedTo;
+    if (!employeeId) return { success: false, error: 'No assignedTo' };
+    const title = 'New Task Assigned';
+    const taskTitle = taskDoc.taskTitle || 'Task';
+    const taskIdDisplay = taskDoc.taskId || String(taskDoc._id || '');
+    const dateStr = taskDoc.expectedCompletionDate ? new Date(taskDoc.expectedCompletionDate).toLocaleDateString('en-GB') : '';
+    const body = `A new task "${taskTitle}" (${taskIdDisplay})${dateStr ? ` Due ${dateStr}` : ''} has been assigned to you.`;
+    return _sendToEmployee(employeeId, title, body, {
+        module: 'task',
+        screen: 'task',
+        type: 'task_assigned',
+        taskId: String(taskDoc._id || ''),
+        displayTaskId: String(taskDoc.taskId || ''),
+    });
+}
+
+async function sendTaskStatusChangeNotification(taskDoc, newStatus) {
+    if (!taskDoc) return { success: false, error: 'No task' };
+    const employeeId = taskDoc.assignedTo && taskDoc.assignedTo._id ? taskDoc.assignedTo._id : taskDoc.assignedTo;
+    if (!employeeId) return { success: false, error: 'No assignedTo' };
+    const title = 'Task Status Updated';
+    const taskTitle = taskDoc.taskTitle || 'Task';
+    const taskIdDisplay = taskDoc.taskId || String(taskDoc._id || '');
+    const body = `Task "${taskTitle}" (${taskIdDisplay}) status has been updated to ${newStatus || taskDoc.status}.`;
+    return _sendToEmployee(employeeId, title, body, {
+        module: 'task',
+        screen: 'task',
+        type: 'task_updated',
+        taskId: String(taskDoc._id || ''),
+        displayTaskId: String(taskDoc.taskId || ''),
+        status: String(newStatus || taskDoc.status || ''),
     });
 }
 
@@ -529,5 +561,7 @@ module.exports = {
     sendPerformanceDeadlineNotification,
     sendPerformanceReviewStatusChangeNotification,
     sendCelebrationWishNotification,
+    sendTaskAssignedNotification,
+    sendTaskStatusChangeNotification,
     sendNotification,
 };

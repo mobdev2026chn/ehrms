@@ -222,6 +222,7 @@ async function mergeTaskWithDetails(taskDoc) {
 const fs = require('fs');
 const { sendTaskOtpEmail } = require('../services/emailService');
 const digitalOceanService = require('../services/digitalOceanService');
+const fcmService = require('../services/fcmService');
 
 /** Normalize date fields in request body for correct UTC storage. */
 function normalizeTaskBody(body) {
@@ -255,6 +256,9 @@ exports.createTask = async (req, res) => {
     const fullDoc = { ...normalized, taskId: newTask.taskId, _id: newTask._id, taskMongoId: newTask._id };
     await exports.upsertTaskDetails(fullDoc);
     const merged = await mergeTaskWithDetails(newTask);
+    if (newTask.assignedTo) {
+      fcmService.sendTaskAssignedNotification(newTask).catch((e) => console.log('[Tasks] FCM error:', e.message));
+    }
     res.status(201).json(merged);
   } catch (error) {
     console.error('[Tasks] createTask validation error:', error.message);
@@ -786,6 +790,9 @@ exports.updateTask = async (req, res) => {
     const companyId = getCompanyIdFromTask(updatedTask);
     const finalMerged = await mergeTaskSettings(merged, companyId);
     console.log('[Tasks] Updated task:', task.taskId);
+    if (status != null && status !== task.status && updatedTask.assignedTo) {
+      fcmService.sendTaskStatusChangeNotification(updatedTask, status).catch((e) => console.log('[Tasks] FCM error:', e.message));
+    }
     res.status(200).json(finalMerged);
   } catch (error) {
     console.error('[Tasks] Error updating task:', error.message);
@@ -1455,6 +1462,9 @@ exports.endTask = async (req, res) => {
     const merged = await mergeTaskWithDetails(updatedTask);
     const finalMerged = await mergeTaskSettings(merged, companyId);
     console.log('[Tasks] Task ended:', task.taskId, 'status:', newStatus);
+    if (updatedTask.assignedTo) {
+      fcmService.sendTaskStatusChangeNotification(updatedTask, newStatus).catch((e) => console.log('[Tasks] FCM error:', e.message));
+    }
     res.status(200).json(finalMerged);
   } catch (error) {
     console.error('[Tasks] Error ending task:', error.message);
