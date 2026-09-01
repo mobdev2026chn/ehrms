@@ -61,9 +61,20 @@ class BreakService {
     breakFlowLog('getCurrentBreak -> GET /breaks/current');
     try {
       await _setToken();
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/breaks/current',
-      );
+      Response<Map<String, dynamic>> response;
+      try {
+        response = await _api.dio.get<Map<String, dynamic>>(
+          '/breaks/current',
+        );
+      } on DioException catch (de) {
+        if (de.response?.statusCode == 404) {
+          response = await _api.dio.get<Map<String, dynamic>>(
+            '/staff/attendance/break-status',
+          );
+        } else {
+          rethrow;
+        }
+      }
       final data = response.data ?? <String, dynamic>{};
       final row = data['data'];
       breakFlowLog(
@@ -188,6 +199,11 @@ class BreakService {
           response = await _api.dio.post<Map<String, dynamic>>(
             '/breaks/start',
             data: noSelfie,
+          );
+        } else if (postErr is DioException && (postErr.response?.statusCode == 404 || postErr.response?.statusCode == 405)) {
+          response = await _api.dio.post<Map<String, dynamic>>(
+            '/staff/attendance/break/start',
+            data: bodyData,
           );
         } else {
           rethrow;
@@ -334,6 +350,11 @@ class BreakService {
           response = await _api.dio.patch<Map<String, dynamic>>(
             '/breaks/$breakId/end',
             data: noSelfie,
+          );
+        } else if (patchErr is DioException && (patchErr.response?.statusCode == 404 || patchErr.response?.statusCode == 405)) {
+          response = await _api.dio.post<Map<String, dynamic>>(
+            '/staff/attendance/break/end',
+            data: bodyData,
           );
         } else {
           rethrow;
