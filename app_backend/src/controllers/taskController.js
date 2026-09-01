@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Task = require('../models/Task');
 const TaskDetails = require('../models/TaskDetails');
 const TaskSettings = require('../models/TaskSettings');
@@ -639,7 +640,13 @@ exports.getTaskById = async (req, res) => {
   try {
     const taskId = req.params.id;
     console.log('[Tasks] GET /tasks/:id - taskId:', taskId);
-    const task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    let task = null;
+    if (mongoose.Types.ObjectId.isValid(taskId)) {
+      task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    }
+    if (!task) {
+      task = await Task.findOne({ taskId }).populate('assignedTo').populate('customerId');
+    }
     if (!task) {
       console.log('[Tasks] Task not found:', taskId);
       return res.status(404).json({ message: 'Task not found' });
@@ -740,7 +747,13 @@ exports.updateTask = async (req, res) => {
       updateData.rejectedBy = staffId;
     }
 
-    const task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    let task = null;
+    if (mongoose.Types.ObjectId.isValid(taskId)) {
+      task = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    }
+    if (!task) {
+      task = await Task.findOne({ taskId }).populate('assignedTo').populate('customerId');
+    }
     if (!task) return res.status(404).json({ message: 'Task not found' });
 
     if (status != null && !isValidStatusTransition(task.status, status)) {
@@ -766,10 +779,10 @@ exports.updateTask = async (req, res) => {
     if (Object.keys(minimalUpdate).length > 0) updateOp.$set = minimalUpdate;
     updateOp.$unset = exports.buildUnsetExtended();
     // Update tasks collection (status, etc.)
-    await Task.findByIdAndUpdate(taskId, updateOp);
+    await Task.findByIdAndUpdate(task._id, updateOp);
     // Sync to task_details (approve → approved, start ride → in_progress)
     await exports.upsertTaskDetails(fullDoc);
-    const updatedTask = await Task.findById(taskId).populate('assignedTo').populate('customerId');
+    const updatedTask = await Task.findById(task._id).populate('assignedTo').populate('customerId');
     const merged = await mergeTaskWithDetails(updatedTask);
     const companyId = getCompanyIdFromTask(updatedTask);
     const finalMerged = await mergeTaskSettings(merged, companyId);

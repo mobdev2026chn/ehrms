@@ -2282,6 +2282,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     try {
       final startLat = _currentPosition?.latitude ?? pickup.latitude;
       final startLng = _currentPosition?.longitude ?? pickup.longitude;
+      final resolvedId = (task.id != null && task.id!.isNotEmpty) ? task.id! : task.taskId;
       late final Task updated;
       if (task.status == TaskStatus.exited ||
           task.status == TaskStatus.hold ||
@@ -2289,11 +2290,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           task.status == TaskStatus.reopenedOnArrival ||
           task.status == TaskStatus.reopened) {
         // Resume after exit/hold/reopened: use restart API
-        await TaskService().restartTask(task.id!, lat: startLat, lng: startLng);
-        updated = await TaskService().getTaskById(task.id!);
+        await TaskService().restartTask(resolvedId, lat: startLat, lng: startLng);
+        updated = await TaskService().getTaskById(resolvedId);
       } else {
         updated = await TaskService().updateTask(
-          task.id!,
+          resolvedId,
           status: 'in_progress',
           startTime: DateTime.now(),
           startLat: startLat,
@@ -2302,7 +2303,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       }
       // Store initial point in Tracking collection (separate route).
       TaskService()
-          .storeTracking(task.id!, startLat, startLng, movementType: 'stop')
+          .storeTracking(resolvedId, startLat, startLng, movementType: 'stop')
           .catchError((_) {});
       PresenceTrackingService().pausePresenceTracking();
       if (mounted) {
