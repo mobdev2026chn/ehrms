@@ -1468,7 +1468,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     try {
       result = isEnding
           ? await _breakService.endBreak(
-              breakId: activeBreak?['id']?.toString() ?? '',
+              breakId: (activeBreak?['id'] ?? activeBreak?['_id'] ?? '').toString(),
               lat: position.latitude,
               lng: position.longitude,
               address: location.address,

@@ -407,7 +407,7 @@ class _BreakScreenState extends State<BreakScreen> {
     setState(() => _isLoading = true);
     final result = _isOnBreak
         ? await _breakService.endBreak(
-            breakId: _activeBreak!['id'].toString(),
+            breakId: (_activeBreak?['id'] ?? _activeBreak?['_id'] ?? '').toString(),
             lat: _position!.latitude,
             lng: _position!.longitude,
             address: _address ?? '',
