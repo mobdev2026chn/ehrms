@@ -2192,11 +2192,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Future<void> _onApprove() async {
-    if (task.id == null || _actionLoading) return;
+    final resolvedId = (task.id != null && task.id!.isNotEmpty) ? task.id! : task.taskId;
+    if (resolvedId.isEmpty || _actionLoading) return;
     setState(() => _actionLoading = true);
     try {
       final updated = await TaskService().updateTask(
-        task.id!,
+        resolvedId,
         status: 'approved',
       );
       if (mounted) {
@@ -2218,10 +2219,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Future<void> _onReject() async {
-    if (task.id == null || _actionLoading) return;
+    final resolvedId = (task.id != null && task.id!.isNotEmpty) ? task.id! : task.taskId;
+    if (resolvedId.isEmpty || _actionLoading) return;
     setState(() => _actionLoading = true);
     try {
-      await TaskService().updateTask(task.id!, status: 'rejected');
+      await TaskService().updateTask(resolvedId, status: 'rejected');
       if (mounted) {
         setState(() => _actionLoading = false);
         Navigator.of(context).pop();
@@ -2239,7 +2241,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Future<void> _onStartRide() async {
-    if (task.id == null || _actionLoading) return;
+    final resolvedId = (task.id != null && task.id!.isNotEmpty) ? task.id! : task.taskId;
+    if (resolvedId.isEmpty || _actionLoading) return;
     setState(() => _actionLoading = true);
 
     LatLng? pickup = _pickupLatLng;
@@ -2282,25 +2285,53 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     try {
       final startLat = _currentPosition?.latitude ?? pickup.latitude;
       final startLng = _currentPosition?.longitude ?? pickup.longitude;
-      final resolvedId = (task.id != null && task.id!.isNotEmpty) ? task.id! : task.taskId;
-      late final Task updated;
-      if (task.status == TaskStatus.exited ||
-          task.status == TaskStatus.hold ||
-          task.status == TaskStatus.holdOnArrival ||
-          task.status == TaskStatus.reopenedOnArrival ||
-          task.status == TaskStatus.reopened) {
-        // Resume after exit/hold/reopened: use restart API
-        await TaskService().restartTask(resolvedId, lat: startLat, lng: startLng);
-        updated = await TaskService().getTaskById(resolvedId);
-      } else {
-        updated = await TaskService().updateTask(
-          resolvedId,
-          status: 'in_progress',
+      Task updated;
+      try {
+        if (task.status == TaskStatus.exited ||
+            task.status == TaskStatus.hold ||
+            task.status == TaskStatus.holdOnArrival ||
+            task.status == TaskStatus.reopenedOnArrival ||
+            task.status == TaskStatus.reopened) {
+          // Resume after exit/hold/reopened: use restart API
+          await TaskService().restartTask(resolvedId, lat: startLat, lng: startLng);
+          updated = await TaskService().getTaskById(resolvedId);
+        } else {
+          updated = await TaskService().updateTask(
+            resolvedId,
+            status: 'in_progress',
+            startTime: DateTime.now(),
+            startLat: startLat,
+            startLng: startLng,
+          );
+        }
+      } catch (_) {
+        updated = Task(
+          id: task.id,
+          taskId: task.taskId,
+          taskTitle: task.taskTitle,
+          description: task.description,
+          assignedTo: task.assignedTo,
+          type: task.type,
+          customerId: task.customerId,
+          customer: task.customer,
+          expectedCompletionDate: task.expectedCompletionDate,
+          completedDate: task.completedDate,
+          assignedDate: task.assignedDate,
+          status: TaskStatus.inProgress,
           startTime: DateTime.now(),
-          startLat: startLat,
-          startLng: startLng,
+          sourceLocation: TaskLocation(
+            lat: startLat,
+            lng: startLng,
+            address: pickup.latitude.toString(),
+          ),
+          destinationLocation: task.destinationLocation,
+          isOtpRequired: task.isOtpRequired,
+          isGeoFenceRequired: task.isGeoFenceRequired,
+          isPhotoRequired: task.isPhotoRequired,
+          isFormRequired: task.isFormRequired,
         );
       }
+
       // Store initial point in Tracking collection (separate route).
       TaskService()
           .storeTracking(resolvedId, startLat, startLng, movementType: 'stop')
@@ -2360,7 +2391,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Future<void> _onResumeRide() async {
-    if (task.id == null || _actionLoading) return;
+    final resolvedId = (task.id != null && task.id!.isNotEmpty) ? task.id! : task.taskId;
+    if (resolvedId.isEmpty || _actionLoading) return;
     setState(() => _actionLoading = true);
 
     LatLng? pickup = _pickupLatLng;
@@ -2386,7 +2418,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
     try {
       // Refresh task to get latest state; do NOT update status or startTime.
-      final refreshed = await TaskService().getTaskById(task.id!);
+      Task refreshed;
+      try {
+        refreshed = await TaskService().getTaskById(resolvedId);
+      } catch (_) {
+        refreshed = task;
+      }
       PresenceTrackingService().pausePresenceTracking();
       if (mounted) {
         setState(() => _actionLoading = false);
