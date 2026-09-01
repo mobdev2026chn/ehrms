@@ -467,6 +467,13 @@ class _AppDrawerState extends State<AppDrawer> {
                 MaterialPageRoute(builder: (_) => const AdminOvertimeScreen()),
               );
             }),
+            _adminSubItem(Icons.assignment_outlined, 'GEOtasks', () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const MyTasksScreen(dashboardTabIndex: 1)),
+              );
+            }),
             _adminSubItem(Icons.payments_outlined, 'Payroll', () {
               Navigator.pop(context);
               Navigator.push(
