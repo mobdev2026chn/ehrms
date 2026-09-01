@@ -61,22 +61,37 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   bool _isSelectionMode = false;
   final Set<String> _selectedTaskIds = {};
   bool _exporting = false;
-  // Selected status-filter group key sent to the backend; null = All Statuses.
+  // Selected status-filter group key; null = All Statuses.
   String? _statusFilter;
+  String? _employeeTypeFilter;
+  String _selectedDateRange = 'All Dates';
 
-  // Dropdown options: label shown to the user + backend status-group key.
+  // Dropdown options matching the web portal exactly.
   static const List<({String label, String? group})> _statusFilterOptions = [
     (label: 'All Statuses', group: null),
-    (label: 'Pending/Assigned', group: 'pending'),
-    (label: 'In Progress', group: 'inProgress'),
-    (label: 'Hold', group: 'hold'),
-    (label: 'Hold on Arrival', group: 'holdOnArrival'),
-    (label: 'Waiting for Approval', group: 'waitingForApproval'),
-    (label: 'Completed', group: 'completed'),
-    (label: 'Exit on Arrival', group: 'exitOnArrival'),
-    (label: 'Exited', group: 'exited'),
-    (label: 'Reopened', group: 'reopened'),
-    (label: 'Rejected', group: 'rejected'),
+    (label: 'Assigned', group: 'Assigned'),
+    (label: 'Started', group: 'Started'),
+    (label: 'Pending Approval', group: 'Pending Approval'),
+    (label: 'Completed', group: 'Completed'),
+    (label: 'Requested', group: 'Requested'),
+    (label: 'Expired', group: 'Expired'),
+  ];
+
+  static const List<({String label, String? type})> _employeeTypeOptions = [
+    (label: 'All Types', type: null),
+    (label: 'Internal', type: 'Internal'),
+    (label: 'External', type: 'External'),
+  ];
+
+  static const List<String> _dateRangeOptions = [
+    'All Dates',
+    'Today',
+    'Yesterday',
+    'Last 7 Days',
+    'Last 30 Days',
+    'This Month',
+    'Last Month',
+    'Custom Date Range',
   ];
   int _tasksPage = 1;
   static const int _tasksPerPage = 5;
@@ -140,6 +155,11 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       }
     }
 
+    final empType = _employeeTypeFilter;
+    if (empType != null && empType.isNotEmpty) {
+      list = list.where((t) => (t.type ?? 'External').toLowerCase() == empType.toLowerCase());
+    }
+
     final q = _searchQuery.trim().toLowerCase();
     if (q.isNotEmpty) {
       list = list.where((t) => _taskMatchesSearch(t, q));
@@ -174,11 +194,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
 
   /// Whether the task's created-date calendar day falls within the selected
   /// range (inclusive). Uses [Task.assignedDate] (falls back to createdAt in
-  /// the model), matching the date shown on each task card. Compared using
-  /// local date parts since [_filterStartDate]/[_filterEndDate] are derived
-  /// from the device's local "today" (Today/This Week/This Month) —
-  /// comparing against the UTC date could shift tasks into the wrong day near
-  /// midnight depending on the device's timezone offset.
+  /// the model), matching the date shown on each task card.
   bool _taskInDateRange(Task t) {
     final du = (t.assignedDate ?? t.expectedCompletionDate).toLocal();
     final day = DateTime(du.year, du.month, du.day);
@@ -193,9 +209,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     return true;
   }
 
-  /// Orders tasks by assignment date, most recently assigned first, so the
-  /// list shows a stable, predictable order regardless of what the backend
-  /// returns. Tasks without an assigned date are pushed to the end.
+  /// Orders tasks by assignment date, most recently assigned first.
   List<Task> _orderTasks(List<Task> tasks) {
     tasks.sort((a, b) {
       final da = a.assignedDate;
@@ -208,30 +222,28 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     return tasks;
   }
 
-  /// TaskStatus values whose card badge belongs to a dropdown status group.
-  /// Mirrors _statusLabel so the filter matches exactly what the card shows.
+  /// TaskStatus values mapped to the exact Web filter categories.
   Set<TaskStatus> _statusesForGroup(String group) {
-    switch (group) {
+    switch (group.toLowerCase()) {
+      case 'assigned':
       case 'pending':
-        return {TaskStatus.pending, TaskStatus.assigned, TaskStatus.scheduled};
-      case 'inProgress':
-        return {TaskStatus.inProgress, TaskStatus.arrived};
-      case 'hold':
-        return {TaskStatus.hold};
-      case 'holdOnArrival':
-        return {TaskStatus.holdOnArrival};
-      case 'waitingForApproval':
-        return {TaskStatus.waitingForApproval};
+        return {TaskStatus.assigned, TaskStatus.pending, TaskStatus.scheduled};
+      case 'started':
+      case 'inprogress':
+        return {TaskStatus.inProgress, TaskStatus.arrived, TaskStatus.hold, TaskStatus.holdOnArrival};
+      case 'pending approval':
+      case 'pendingapproval':
+      case 'waitingforapproval':
+        return {TaskStatus.waitingForApproval, TaskStatus.holdOnArrival};
       case 'completed':
-        return {TaskStatus.completed};
-      case 'exitOnArrival':
-        return {TaskStatus.exitedOnArrival};
-      case 'exited':
-        return {TaskStatus.exited};
+        return {TaskStatus.completed, TaskStatus.approved, TaskStatus.staffapproved};
+      case 'requested':
       case 'reopened':
-        return {TaskStatus.reopened};
+        return {TaskStatus.requested, TaskStatus.reopened, TaskStatus.reopenedOnArrival};
+      case 'expired':
+      case 'exited':
       case 'rejected':
-        return {TaskStatus.rejected};
+        return {TaskStatus.expired, TaskStatus.exited, TaskStatus.exitedOnArrival, TaskStatus.rejected, TaskStatus.cancelled};
       default:
         return const {};
     }
@@ -239,6 +251,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
 
   int _statusGroupCount(String group) {
     switch (group) {
+      case 'Started':
       case 'inProgress':
         return _tasks
             .where(
@@ -247,14 +260,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   t.status == TaskStatus.arrived,
             )
             .length;
-      case 'hold':
-        return _tasks
-            .where(
-              (t) =>
-                  t.status == TaskStatus.hold ||
-                  t.status == TaskStatus.holdOnArrival,
-            )
-            .length;
+      case 'Completed':
       case 'completed':
         return _tasks
             .where(
@@ -272,7 +278,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       _searchQuery.trim().isNotEmpty ||
       _filterStartDate != null ||
       _filterEndDate != null ||
-      _statusFilter != null;
+      _statusFilter != null ||
+      _employeeTypeFilter != null;
 
   int get _totalTaskPages =>
       math.max((_matchedTasks.length / _tasksPerPage).ceil(), 1);
@@ -295,8 +302,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   }
 
   Future<void> _openTaskFilterBottomSheet() async {
+    String? tempStatus = _statusFilter;
+    String? tempType = _employeeTypeFilter;
+    String tempDateRange = _selectedDateRange;
     DateTime? tempStart = _filterStartDate;
     DateTime? tempEnd = _filterEndDate;
+
     final colorScheme = Theme.of(context).colorScheme;
 
     await showModalBottomSheet<void>(
@@ -309,185 +320,264 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setBottomState) {
-            String dateText() {
-              if (tempStart == null && tempEnd == null) return 'Not selected';
-              if (tempStart != null && tempEnd != null) {
-                return '${DateFormat('dd/MM/yy').format(tempStart!)} - ${DateFormat('dd/MM/yy').format(tempEnd!)}';
+            void applyDateRangeSelection(String option) async {
+              final now = DateTime.now();
+              final today = DateTime(now.year, now.month, now.day);
+              if (option == 'All Dates') {
+                tempStart = null;
+                tempEnd = null;
+              } else if (option == 'Today') {
+                tempStart = today;
+                tempEnd = today;
+              } else if (option == 'Yesterday') {
+                final y = today.subtract(const Duration(days: 1));
+                tempStart = y;
+                tempEnd = y;
+              } else if (option == 'Last 7 Days') {
+                tempStart = today.subtract(const Duration(days: 6));
+                tempEnd = today;
+              } else if (option == 'Last 30 Days') {
+                tempStart = today.subtract(const Duration(days: 29));
+                tempEnd = today;
+              } else if (option == 'This Month') {
+                tempStart = DateTime(now.year, now.month, 1);
+                tempEnd = DateTime(now.year, now.month + 1, 0);
+              } else if (option == 'Last Month') {
+                tempStart = DateTime(now.year, now.month - 1, 1);
+                tempEnd = DateTime(now.year, now.month, 0);
+              } else if (option == 'Custom Date Range') {
+                final base = DateTime.now();
+                final range = await showDateRangePicker(
+                  context: ctx,
+                  firstDate: DateTime(2020),
+                  lastDate: base.add(const Duration(days: 365)),
+                  initialDateRange: tempStart != null && tempEnd != null
+                      ? DateTimeRange(start: tempStart!, end: tempEnd!)
+                      : null,
+                );
+                if (range != null) {
+                  setBottomState(() {
+                    tempStart = range.start;
+                    tempEnd = range.end;
+                    tempDateRange = 'Custom Date Range';
+                  });
+                  return;
+                }
               }
-              if (tempStart != null) {
-                return 'From ${DateFormat('dd/MM/yy').format(tempStart!)}';
-              }
-              return 'To ${DateFormat('dd/MM/yy').format(tempEnd!)}';
+              setBottomState(() {
+                tempDateRange = option;
+              });
             }
 
             return SafeArea(
               child: Padding(
                 padding: EdgeInsets.fromLTRB(
+                  20,
                   16,
-                  12,
-                  16,
-                  12 + MediaQuery.of(ctx).viewInsets.bottom,
+                  20,
+                  16 + MediaQuery.of(ctx).viewInsets.bottom,
                 ),
                 child: SingleChildScrollView(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      // Header
                       Row(
                         children: [
+                          Icon(Icons.filter_alt_rounded, color: AppColors.primary, size: 22),
+                          const SizedBox(width: 8),
                           const Text(
-                            'Filter tasks',
+                            'TASK LIST FILTERS',
                             style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: AppColors.textPrimary,
                             ),
                           ),
                           const Spacer(),
                           IconButton(
                             onPressed: () => Navigator.of(ctx).pop(),
-                            icon: const Icon(Icons.close),
+                            icon: const Icon(Icons.close, size: 20),
+                            visualDensity: VisualDensity.compact,
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 16),
+
+                      // Section 1: Task Status
                       const Text(
-                        'Date filter',
+                        'TASK STATUS',
                         style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textSecondary,
+                          letterSpacing: 0.5,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Builder(
-                        builder: (_) {
-                          final now = DateTime.now();
-                          final today = DateTime(now.year, now.month, now.day);
-                          final weekStart = today.subtract(
-                            Duration(days: today.weekday - 1),
-                          );
-                          final weekEnd = weekStart.add(
-                            const Duration(days: 6),
-                          );
-                          final monthStart = DateTime(now.year, now.month, 1);
-                          final monthEnd = DateTime(now.year, now.month + 1, 0);
-
-                          bool sameDay(DateTime? a, DateTime? b) =>
-                              a != null &&
-                              b != null &&
-                              a.year == b.year &&
-                              a.month == b.month &&
-                              a.day == b.day;
-                          bool isRange(DateTime s, DateTime e) =>
-                              sameDay(tempStart, s) && sameDay(tempEnd, e);
-
-                          void selectRange(DateTime s, DateTime e) {
-                            setBottomState(() {
-                              tempStart = s;
-                              tempEnd = e;
-                            });
-                          }
-
-                          final isCustom =
-                              (tempStart != null || tempEnd != null) &&
-                              !isRange(today, today) &&
-                              !isRange(weekStart, weekEnd) &&
-                              !isRange(monthStart, monthEnd);
-
-                          return Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              ChoiceChip(
-                                label: const Text('Today'),
-                                selected: isRange(today, today),
-                                onSelected: (_) => selectRange(today, today),
-                              ),
-                              ChoiceChip(
-                                label: const Text('This Week'),
-                                selected: isRange(weekStart, weekEnd),
-                                onSelected: (_) =>
-                                    selectRange(weekStart, weekEnd),
-                              ),
-                              ChoiceChip(
-                                label: const Text('This Month'),
-                                selected: isRange(monthStart, monthEnd),
-                                onSelected: (_) =>
-                                    selectRange(monthStart, monthEnd),
-                              ),
-                              ChoiceChip(
-                                avatar: Icon(
-                                  Icons.date_range,
-                                  size: 18,
-                                  color: isCustom
-                                      ? colorScheme.onSecondaryContainer
-                                      : colorScheme.onSurfaceVariant,
-                                ),
-                                label: Text(isCustom ? dateText() : 'Custom'),
-                                selected: isCustom,
-                                onSelected: (_) async {
-                                  final base = DateTime.now();
-                                  final initialStart = tempStart ?? base;
-                                  final initialEnd =
-                                      tempEnd ?? tempStart ?? base;
-                                  final range = await showDateRangePicker(
-                                    context: ctx,
-                                    firstDate: DateTime(2020),
-                                    lastDate: base.add(
-                                      const Duration(days: 365),
-                                    ),
-                                    initialDateRange: DateTimeRange(
-                                      start: initialStart.isBefore(initialEnd)
-                                          ? initialStart
-                                          : initialEnd,
-                                      end: initialEnd.isAfter(initialStart)
-                                          ? initialEnd
-                                          : initialStart,
-                                    ),
-                                    helpText: 'Select date range',
-                                  );
-                                  if (range != null) {
-                                    setBottomState(() {
-                                      tempStart = range.start;
-                                      tempEnd = range.end;
-                                    });
-                                  }
-                                },
-                              ),
-                            ],
-                          );
-                        },
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String?>(
+                            isExpanded: true,
+                            value: tempStatus,
+                            borderRadius: BorderRadius.circular(10),
+                            items: _statusFilterOptions
+                                .map((o) => DropdownMenuItem<String?>(
+                                      value: o.group,
+                                      child: Text(o.label),
+                                    ))
+                                .toList(),
+                            onChanged: (val) {
+                              setBottomState(() => tempStatus = val);
+                            },
+                          ),
+                        ),
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 16),
+
+                      // Section 2: Employee Type
+                      const Text(
+                        'EMPLOYEE TYPE',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textSecondary,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String?>(
+                            isExpanded: true,
+                            value: tempType,
+                            borderRadius: BorderRadius.circular(10),
+                            items: _employeeTypeOptions
+                                .map((o) => DropdownMenuItem<String?>(
+                                      value: o.type,
+                                      child: Text(o.label),
+                                    ))
+                                .toList(),
+                            onChanged: (val) {
+                              setBottomState(() => tempType = val);
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Section 3: Date Range
+                      const Text(
+                        'DATE RANGE',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textSecondary,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            isExpanded: true,
+                            value: tempDateRange,
+                            borderRadius: BorderRadius.circular(10),
+                            items: _dateRangeOptions
+                                .map((o) => DropdownMenuItem<String>(
+                                      value: o,
+                                      child: Text(o),
+                                    ))
+                                .toList(),
+                            onChanged: (val) {
+                              if (val != null) applyDateRangeSelection(val);
+                            },
+                          ),
+                        ),
+                      ),
+                      if (tempStart != null && tempEnd != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Selected: ${DateFormat('dd MMM yyyy').format(tempStart!)} - ${DateFormat('dd MMM yyyy').format(tempEnd!)}',
+                          style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                      const SizedBox(height: 24),
+
+                      // Actions: Reset + Apply
                       Row(
                         children: [
                           Expanded(
                             child: OutlinedButton(
                               onPressed: () {
                                 setBottomState(() {
+                                  tempStatus = null;
+                                  tempType = null;
+                                  tempDateRange = 'All Dates';
                                   tempStart = null;
                                   tempEnd = null;
                                 });
                                 setState(() {
+                                  _statusFilter = null;
+                                  _employeeTypeFilter = null;
+                                  _selectedDateRange = 'All Dates';
                                   _filterStartDate = null;
                                   _filterEndDate = null;
                                   _tasksPage = 1;
                                 });
+                                Navigator.of(ctx).pop();
                               },
-                              child: const Text('Reset'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              child: const Text('Reset', style: TextStyle(fontWeight: FontWeight.bold)),
                             ),
                           ),
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: ElevatedButton(
                               onPressed: () {
                                 setState(() {
+                                  _statusFilter = tempStatus;
+                                  _employeeTypeFilter = tempType;
+                                  _selectedDateRange = tempDateRange;
                                   _filterStartDate = tempStart;
                                   _filterEndDate = tempEnd;
                                   _tasksPage = 1;
                                 });
                                 Navigator.of(ctx).pop();
                               },
-                              child: const Text('Apply'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                elevation: 0,
+                              ),
+                              child: const Text(
+                                'Apply',
+                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
                             ),
                           ),
                         ],

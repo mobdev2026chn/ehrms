@@ -233,6 +233,7 @@ class Task {
   final String taskTitle;
   final String description;
   final String assignedTo;
+  final String? type;
   final String? customerId;
   final Customer? customer;
   final DateTime expectedCompletionDate;
@@ -317,6 +318,7 @@ class Task {
     required this.taskTitle,
     required this.description,
     required this.assignedTo,
+    this.type,
     this.customerId,
     this.customer,
     required this.expectedCompletionDate,
@@ -383,6 +385,7 @@ class Task {
     final titleStr = (json['taskTitle'] ?? json['title'] ?? '').toString();
     final taskIdStr = (json['taskId'] ?? json['id'] ?? json['_id'] ?? '').toString();
     final statusStr = (json['status'] ?? '').toString();
+    final typeStr = (json['type'] ?? json['taskType'])?.toString();
 
     TaskLocation? destLoc;
     if (json['destinationLocation'] is Map) {
@@ -413,6 +416,7 @@ class Task {
       taskTitle: titleStr,
       description: (json['description'] ?? '').toString(),
       assignedTo: _stringFromId(json['assignedTo'] ?? json['staffId'] ?? json['staff']?['_id'] ?? json['staff']?['id']) ?? '',
+      type: typeStr,
       customerId: _stringFromId(customerIdVal),
       customer: customer,
       expectedCompletionDate:
