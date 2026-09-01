@@ -154,6 +154,10 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   void _onCustomerSearchChanged() {
     final q = _customerSearchController.text.trim().toLowerCase();
     setState(() {
+      if (_selectedCustomer != null && _selectedCustomer!.customerName.toLowerCase() != q) {
+        _selectedCustomer = null;
+        _useCustomerAddressForDest = false;
+      }
       if (q.isEmpty) {
         _filteredCustomers = _allCustomers;
       } else {
@@ -282,6 +286,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       _selectedCustomer = c;
       _customerSearchController.text = c.customerName;
       _showCustomerDropdown = false;
+      _useCustomerAddressForDest = true;
     });
   }
 
@@ -587,8 +592,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               ),
               const SizedBox(height: 16),
               _buildSourceField(),
-            //  const SizedBox(height: 16),
-             // _buildDestinationField(),
+              const SizedBox(height: 16),
+              _buildDestinationField(),
               const SizedBox(height: 24),
               // Create Task button scrolls with the form rather than being
               // pinned to the bottom of the screen.
