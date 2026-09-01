@@ -552,6 +552,7 @@ class TaskService {
       if (status != null) body['status'] = status;
       if (startTime != null) {
         body['startTime'] = startTime.toUtc().toIso8601String();
+        body['actualFieldInTime'] = startTime.toLocal().toIso8601String();
       }
       if (startLat != null && startLng != null) {
         final now = DateTime.now().toUtc();
@@ -560,6 +561,8 @@ class TaskService {
           'lng': startLng,
           'recordedAt': now.toIso8601String(),
         };
+        body['startLatitude'] = startLat;
+        body['startLongitude'] = startLng;
       }
       if (sourceLocation != null) body['sourceLocation'] = sourceLocation;
       if (destinationLocation != null) {
@@ -575,6 +578,47 @@ class TaskService {
       if (arrivalTime != null) {
         body['arrivalTime'] = arrivalTime.toUtc().toIso8601String();
       }
+
+      // 1. Try PATCH /tasks/:id
+      try {
+        final response = await _api.dio.patch<dynamic>('/tasks/$id', data: body);
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          final data = response.data;
+          final payload = (data is Map && data['data'] != null)
+              ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
+              : (data is Map ? data as Map<String, dynamic> : null);
+          if (payload != null) return Task.fromJson(payload);
+        }
+      } catch (_) {}
+
+      // 2. Try PUT /staff/geo-task/:id
+      try {
+        final altBody = Map<String, dynamic>.from(body);
+        if (altBody['status'] == 'in_progress') altBody['status'] = 'Started';
+        final response = await _api.dio.put<dynamic>('/staff/geo-task/$id', data: altBody);
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          final data = response.data;
+          final payload = (data is Map && data['data'] != null)
+              ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
+              : (data is Map ? data as Map<String, dynamic> : null);
+          if (payload != null) return Task.fromJson(payload);
+        }
+      } catch (_) {}
+
+      // 3. Try PUT /admin/hrms-geo/task/:id
+      try {
+        final altBody = Map<String, dynamic>.from(body);
+        if (altBody['status'] == 'in_progress') altBody['status'] = 'Started';
+        final response = await _api.dio.put<dynamic>('/admin/hrms-geo/task/$id', data: altBody);
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          final data = response.data;
+          final payload = (data is Map && data['data'] != null)
+              ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
+              : (data is Map ? data as Map<String, dynamic> : null);
+          if (payload != null) return Task.fromJson(payload);
+        }
+      } catch (_) {}
+
       final response = await _api.dio.patch<Map<String, dynamic>>(
         '/tasks/$id',
         data: body,
@@ -582,12 +626,12 @@ class TaskService {
       final data = response.data;
       if (data == null) throw Exception('Failed to update task');
       return Task.fromJson(data);
-    } on DioException catch (e) {
-      final msg = e.response?.data is Map
+    } catch (e) {
+      final msg = (e is DioException && e.response?.data is Map)
           ? (e.response!.data as Map)['message']?.toString()
           : null;
       throw Exception(
-        msg ?? 'Failed to update task: ${e.response?.statusCode ?? e.message}',
+        msg ?? 'Failed to update task',
       );
     }
   }
