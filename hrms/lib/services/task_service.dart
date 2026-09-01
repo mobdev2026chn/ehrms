@@ -507,10 +507,23 @@ class TaskService {
   Future<Task> getTaskById(String id) async {
     try {
       await _setToken();
-      final response = await _api.dio.get<Map<String, dynamic>>('/tasks/$id');
-      final data = response.data;
-      if (data == null) throw Exception('Failed to load task');
-      return Task.fromJson(data);
+      for (final path in [
+        '/staff/geo-task/$id',
+        '/tasks/$id',
+        '/admin/hrms-geo/task/$id',
+      ]) {
+        try {
+          final response = await _api.dio.get<dynamic>(path);
+          if (response.statusCode == 200 && response.data != null) {
+            final data = response.data;
+            final payload = (data is Map && data['data'] != null)
+                ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
+                : (data is Map ? data as Map<String, dynamic> : null);
+            if (payload != null) return Task.fromJson(payload);
+          }
+        } catch (_) {}
+      }
+      throw Exception('Failed to load task');
     } on DioException catch (e) {
       throw Exception(
         'Failed to load task: ${e.response?.statusCode ?? e.message}',
@@ -624,9 +637,12 @@ class TaskService {
     try {
       await _setToken();
       final body = <String, dynamic>{};
-      if (status != null) body['status'] = status;
+      if (status != null) {
+        body['status'] = status == 'in_progress' ? 'Started' : status;
+      }
       if (startTime != null) {
         body['startTime'] = startTime.toUtc().toIso8601String();
+        body['actualFieldInTime'] = startTime.toLocal().toIso8601String();
       }
       if (startLat != null && startLng != null) {
         final now = DateTime.now().toUtc();
@@ -635,6 +651,8 @@ class TaskService {
           'lng': startLng,
           'recordedAt': now.toIso8601String(),
         };
+        body['startLatitude'] = startLat;
+        body['startLongitude'] = startLng;
       }
       if (sourceLocation != null) body['sourceLocation'] = sourceLocation;
       if (destinationLocation != null) {
@@ -650,6 +668,28 @@ class TaskService {
       if (arrivalTime != null) {
         body['arrivalTime'] = arrivalTime.toUtc().toIso8601String();
       }
+
+      for (final path in [
+        '/staff/geo-task/$id',
+        '/tasks/$id',
+        '/admin/hrms-geo/task/$id',
+      ]) {
+        try {
+          final res = await _api.dio.put<dynamic>(path, data: body);
+          if (res.statusCode == 200 || res.statusCode == 201) {
+            final data = res.data;
+            final payload = (data is Map && data['data'] != null)
+                ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
+                : (data is Map ? data as Map<String, dynamic> : null);
+            if (payload != null) return Task.fromJson(payload);
+          }
+        } on DioException catch (de) {
+          if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
+            continue;
+          }
+        } catch (_) {}
+      }
+
       final response = await _api.dio.patch<Map<String, dynamic>>(
         '/tasks/$id',
         data: body,
@@ -1041,15 +1081,35 @@ class TaskService {
     Map<String, dynamic>? travelActivityDuration,
   }) async {
     await _setToken();
-    final response = await _api.dio.post<Map<String, dynamic>>(
+    for (final path in [
       '/tasks/$taskMongoId/end',
-      data: travelActivityDuration == null
-          ? null
-          : {'travelActivityDuration': travelActivityDuration},
+      '/staff/geo-task/$taskMongoId',
+      '/admin/hrms-geo/task/$taskMongoId',
+    ]) {
+      try {
+        final res = await _api.dio.post<dynamic>(
+          path,
+          data: travelActivityDuration == null
+              ? {'status': 'Completed', 'fieldOutTime': DateTime.now().toIso8601String()}
+              : {'travelActivityDuration': travelActivityDuration, 'status': 'Completed', 'fieldOutTime': DateTime.now().toIso8601String()},
+        );
+        if (res.statusCode == 200 || res.statusCode == 201) {
+          final data = res.data;
+          final payload = (data is Map && data['data'] != null)
+              ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
+              : (data is Map ? data as Map<String, dynamic> : null);
+          if (payload != null) return Task.fromJson(payload);
+        }
+      } catch (_) {}
+    }
+    final response = await _api.dio.put<Map<String, dynamic>>(
+      '/staff/geo-task/$taskMongoId',
+      data: {'status': 'Completed', 'fieldOutTime': DateTime.now().toIso8601String()},
     );
     final data = response.data;
     if (data == null) throw Exception('Failed to end task');
-    return Task.fromJson(data);
+    final payload = data['data'] is Map ? data['data'] as Map<String, dynamic> : data;
+    return Task.fromJson(payload);
   }
 
   // ─── Form (arrived screen) ───────────────────────────────────────────────
