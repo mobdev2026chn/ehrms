@@ -1146,9 +1146,6 @@ class AuthService {
               '/attendance/face-enroll-status',
               options: Options(receiveTimeout: const Duration(seconds: 15)),
             );
-          } catch (_) {}
-        }
-      }
           } on DioException catch (de2) {
             if (de2.response?.statusCode == 404) {
               try {
@@ -1159,8 +1156,6 @@ class AuthService {
               } catch (_) {}
             }
           }
-        } else {
-          rethrow;
         }
       }
       final body = response?.data ?? {};
