@@ -74,7 +74,11 @@ internal class LocationUpdatesService : Service() {
         getLastLocation()
 
         if (SharedPrefsUtil.isTracking(this)) {
-            startTracking()
+            try {
+                startTracking()
+            } catch (e: Throwable) {
+                Logger.error(TAG, "Error starting tracking in onCreate: $e")
+            }
         }
     }
 
@@ -174,11 +178,12 @@ internal class LocationUpdatesService : Service() {
 
         Logger.debug(TAG, "Requesting location updates")
         SharedPrefsUtil.saveIsTracking(this, true)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && ActivityCounter.isAppInBackground()) {
-            startForegroundService(Intent(applicationContext, LocationUpdatesService::class.java))
-            NotificationUtil.startForeground(this, location)
-        } else {
-            startService(Intent(applicationContext, LocationUpdatesService::class.java))
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationUtil.startForeground(this, location)
+            }
+        } catch (e: Throwable) {
+            Logger.error(TAG, "NotificationUtil.startForeground failed: $e")
         }
         val locationRequest = locationRequest ?: return
         val locationCallback = locationCallback ?: return
