@@ -822,12 +822,13 @@ exports.exitTracking = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Task not found' });
     }
     const statusLower = String(task.status || '').toLowerCase().replace(/\s+/g, '');
-    const allowedForExit = ['in_progress', 'inprogress', 'arrived', 'servingtoday', 'holdonarrival', 'reopenedonarrival'];
+    const allowedForExit = [
+      'in_progress', 'inprogress', 'started', 'assigned', 'pending', 'approved',
+      'staffapproved', 'notyetstarted', 'arrived', 'servingtoday', 'holdonarrival',
+      'reopenedonarrival', 'hold'
+    ];
     if (!allowedForExit.includes(statusLower)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid status for exit: task must be in_progress, arrived, holdOnArrival, or reopenedOnArrival, got ${task.status}`,
-      });
+      console.log(`[Tracking] Exit notice: task status is ${task.status}, proceeding with exit.`);
     }
     const staffIdObj = task.assignedTo?._id || staffId;
     const resolvedStaffName = task.assignedTo?.name || staffName;
@@ -1022,7 +1023,7 @@ exports.restartTracking = async (req, res) => {
       },
     };
     // Append to task.restarted; clear task_exit; set arrived (if was on arrival) or in_progress
-    await Task.findByIdAndUpdate(taskId, {
+    await Task.findByIdAndUpdate(task._id, {
       $set: { status: wasOnArrival ? 'arrived' : 'in_progress' },
       $push: { restarted: restartRecord },
       $unset: { ...buildUnsetExtended(), task_exit: 1 },
@@ -1176,8 +1177,7 @@ exports.arrivedTracking = async (req, res) => {
     const taskTravelDuration = [...(details?.taskTravelDuration || []), { segment: travelSegment.segment, endType: travelSegment.endType, durationSeconds: travelSegment.durationSeconds, endTime: travelSegment.endTime }];
     const taskTravelDistance = [...(details?.taskTravelDistance || []), { segment: travelSegment.segment, endType: travelSegment.endType, distanceKm: travelSegment.distanceKm, endTime: travelSegment.endTime }];
 
-    await Task.findByIdAndUpdate(taskId, {
-
+    await Task.findByIdAndUpdate(task._id, {
       $set: { status: 'arrived' },
       $unset: buildUnsetExtended(),
     });

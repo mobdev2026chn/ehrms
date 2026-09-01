@@ -1025,8 +1025,8 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
   }
 
   Future<void> _submitExitRide(String exitType, String reason) async {
-    final mongoId = widget.taskMongoId ?? task?.id;
-    if (mongoId == null || mongoId.isEmpty) return;
+    final mongoId = widget.taskMongoId ?? task?.id ?? task?.taskId ?? widget.taskId;
+    if (mongoId.isEmpty) return;
     try {
       final exitLocation = await _resolveExitLocation();
       await TaskService().exitRide(

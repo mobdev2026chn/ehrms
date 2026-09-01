@@ -992,7 +992,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       );
       return;
     }
-    if (widget.taskMongoId != null && widget.taskMongoId!.isNotEmpty) {
+    final resolvedMongoId = (widget.taskMongoId != null && widget.taskMongoId!.isNotEmpty)
+        ? widget.taskMongoId!
+        : (widget.task?.id != null && widget.task!.id!.isNotEmpty)
+            ? widget.task!.id!
+            : widget.taskId;
+
+    if (resolvedMongoId.isNotEmpty) {
       try {
         double? lat;
         double? lng;
@@ -1009,23 +1015,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           }
         }
         await TaskService().exitRide(
-          widget.taskMongoId!,
+          resolvedMongoId,
           reason,
           exitType: exitType,
           lat: lat,
           lng: lng,
         );
-        await LiveTrackingService().stopTracking();
-        await PresenceTrackingService().resumePresenceTracking();
       } catch (e) {
-        if (mounted) {
-          SnackBarUtils.showSnackBar(
-            context,
-            ErrorMessageUtils.toUserFriendlyMessage(e),
-            isError: true,
-          );
-        }
-        return;
+        debugPrint('[LiveTracking] exitRide error: $e');
+      } finally {
+        await LiveTrackingService().stopTracking().catchError((_) {});
+        await PresenceTrackingService().resumePresenceTracking().catchError((_) {});
       }
     }
     if (mounted) {
