@@ -81,29 +81,40 @@ class CustomerService {
       (k, v) =>
           v == null || (v is String && v.trim().isEmpty),
     );
-    Response<Map<String, dynamic>>? response;
+    Response<dynamic>? response;
+    DioException? lastError;
     for (final path in [
-      '/staff/geo-task/customer',
       '/admin/hrms-geo/customer',
+      '/staff/geo-task/customer',
       '/customers',
       '/customer',
     ]) {
       try {
-        response = await _api.dio.post<Map<String, dynamic>>(
+        response = await _api.dio.post<dynamic>(
           path,
           data: raw,
         );
         if (response.statusCode == 200 || response.statusCode == 201) {
           break;
         }
-      } catch (e) {
-        continue;
-      }
+      } on DioException catch (e) {
+        lastError = e;
+        if (e.response?.statusCode == 404 || e.response?.statusCode == 405) {
+          continue;
+        }
+        rethrow;
+      } catch (_) {}
     }
     final data = response?.data;
-    if (data == null) throw Exception('Failed to create customer');
-    final payload = data['data'] is Map ? data['data'] as Map<String, dynamic> : data;
-    return Customer.fromJson(payload);
+    if (data == null) {
+      if (lastError != null) throw lastError;
+      throw Exception('Failed to create customer');
+    }
+    if (data is Map) {
+      final payload = data['data'] is Map ? data['data'] as Map<String, dynamic> : Map<String, dynamic>.from(data);
+      return Customer.fromJson(payload);
+    }
+    return customer;
   }
 
   Future<Customer> updateCustomer(String id, Customer customer) async {

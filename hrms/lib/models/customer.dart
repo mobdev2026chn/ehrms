@@ -26,6 +26,11 @@ class Customer {
   final String? createdAt;
   final String? updatedAt;
 
+  final String? state;
+  final double? latitude;
+  final double? longitude;
+  final double? radius;
+
   Customer({
     this.id,
     required this.customerName,
@@ -37,44 +42,74 @@ class Customer {
     required this.city,
     required this.pincode,
     this.countryCode,
+    this.state,
+    this.latitude,
+    this.longitude,
+    this.radius,
     this.createdBy,
     this.createdAt,
     this.updatedAt,
   });
 
-  factory Customer.fromJson(Map<String, dynamic> json) =>
-      _$CustomerFromJson(json);
-  Map<String, dynamic> toJson() => _$CustomerToJson(this);
-
-  Customer copyWith({
-    String? id,
-    String? customerName,
-    String? customerNumber,
-    String? companyName,
-    String? email,
-    String? emailId,
-    String? address,
-    String? city,
-    String? pincode,
-    String? countryCode,
-    String? createdBy,
-    String? createdAt,
-    String? updatedAt,
-  }) {
+  factory Customer.fromJson(Map<String, dynamic> json) {
+    final name = (json['customerName'] ?? json['name'] ?? '').toString();
+    final number = (json['customerNumber'] ?? json['mobile'])?.toString();
+    final company = (json['companyName'] ?? json['company'])?.toString();
+    final mail = (json['email'] ?? json['emailId'])?.toString();
+    final addr = (json['address'] ?? '').toString();
+    final c = (json['city'] ?? '').toString();
+    final pin = (json['pincode'] ?? json['pinCode'] ?? '').toString();
+    final cCode = (json['countryCode'] ?? '91').toString();
+    final idVal = (json['_id'] ?? json['id'])?.toString();
     return Customer(
-      id: id ?? this.id,
-      customerName: customerName ?? this.customerName,
-      customerNumber: customerNumber ?? this.customerNumber,
-      companyName: companyName ?? this.companyName,
-      email: email ?? this.email,
-      emailId: emailId ?? this.emailId,
-      address: address ?? this.address,
-      city: city ?? this.city,
-      pincode: pincode ?? this.pincode,
-      countryCode: countryCode ?? this.countryCode,
-      createdBy: createdBy ?? this.createdBy,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
+      id: idVal,
+      customerName: name,
+      customerNumber: number,
+      companyName: company,
+      email: mail,
+      emailId: mail,
+      address: addr,
+      city: c,
+      pincode: pin,
+      countryCode: cCode,
+      state: json['state']?.toString(),
+      latitude: json['latitude'] is num
+          ? (json['latitude'] as num).toDouble()
+          : (json['lat'] is num ? (json['lat'] as num).toDouble() : null),
+      longitude: json['longitude'] is num
+          ? (json['longitude'] as num).toDouble()
+          : (json['lng'] is num ? (json['lng'] as num).toDouble() : null),
+      radius: json['radius'] is num ? (json['radius'] as num).toDouble() : null,
+      createdBy: json['createdBy']?.toString(),
+      createdAt: json['createdAt']?.toString(),
+      updatedAt: json['updatedAt']?.toString(),
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      if (id != null) '_id': id,
+      'name': customerName,
+      'customerName': customerName,
+      if (customerNumber != null) ...{
+        'mobile': customerNumber,
+        'customerNumber': customerNumber,
+      },
+      if (companyName != null) 'companyName': companyName,
+      if (effectiveEmail != null) ...{
+        'email': effectiveEmail,
+        'emailId': effectiveEmail,
+      },
+      'address': address,
+      'city': city,
+      if (state != null) 'state': state,
+      'pinCode': pincode,
+      'pincode': pincode,
+      if (countryCode != null) 'countryCode': countryCode,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      if (radius != null) 'radius': radius,
+      'status': 'Assigned',
+    };
   }
 }

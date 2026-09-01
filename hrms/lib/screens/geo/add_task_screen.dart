@@ -316,7 +316,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       return;
     }
     // Destination: Auto = selected customer's address, Manual = typed address.
-    final String destAddr;
+    String destAddr = '';
     if (_useCustomerAddressForDest && _selectedCustomer != null) {
       destAddr = _customerDestinationAddress(_selectedCustomer!);
       if (destAddr.isEmpty) {
