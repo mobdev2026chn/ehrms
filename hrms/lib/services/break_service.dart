@@ -324,7 +324,13 @@ class BreakService {
     );
     try {
       await _setToken();
-      // Button-tap instant captured by the screen; falls back to now if not provided.
+      if (breakId.isEmpty || breakId == 'null') {
+        final active = await getCurrentBreak();
+        if (active['success'] == true && active['data'] is Map) {
+          breakId = active['data']['id']?.toString() ?? '';
+        }
+      }
+
       final payloadEnd = (clientTime != null && clientTime.isNotEmpty)
           ? clientTime
           : DateTime.now().toUtc().toIso8601String();
@@ -339,27 +345,81 @@ class BreakService {
         'selfie': selfie,
         'endTime': payloadEnd,
       };
-      try {
-        response = await _api.dio.patch<Map<String, dynamic>>(
-          '/breaks/$breakId/end',
-          data: bodyData,
-        );
-      } catch (patchErr) {
-        if (patchErr is DioException && patchErr.response?.statusCode == 413) {
-          final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
-          response = await _api.dio.patch<Map<String, dynamic>>(
-            '/breaks/$breakId/end',
-            data: noSelfie,
-          );
-        } else if (patchErr is DioException && (patchErr.response?.statusCode == 404 || patchErr.response?.statusCode == 405)) {
-          response = await _api.dio.post<Map<String, dynamic>>(
-            '/staff/attendance/break/end',
+      
+      final candidates = <String>[];
+      if (breakId.isNotEmpty && breakId != 'null') {
+        candidates.add('/breaks/$breakId/end');
+      }
+      candidates.add('/breaks/end');
+
+      Response<Map<String, dynamic>>? successfulRes;
+      DioException? lastDioException;
+
+      for (final endpoint in candidates) {
+        try {
+          final res = await _api.dio.patch<Map<String, dynamic>>(
+            endpoint,
             data: bodyData,
           );
-        } else {
-          rethrow;
-        }
+          if (res.statusCode == 200 || res.statusCode == 201) {
+            successfulRes = res;
+            break;
+          }
+        } on DioException catch (de) {
+          lastDioException = de;
+          if (de.response?.statusCode == 413) {
+            final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
+            try {
+              final res = await _api.dio.patch<Map<String, dynamic>>(
+                endpoint,
+                data: noSelfie,
+              );
+              if (res.statusCode == 200 || res.statusCode == 201) {
+                successfulRes = res;
+                break;
+              }
+            } catch (_) {}
+          } else if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
+            try {
+              final res = await _api.dio.post<Map<String, dynamic>>(
+                endpoint,
+                data: bodyData,
+              );
+              if (res.statusCode == 200 || res.statusCode == 201) {
+                successfulRes = res;
+                break;
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
       }
+
+      if (successfulRes != null) {
+        response = successfulRes;
+      } else if (lastDioException != null) {
+        final status = lastDioException.response?.statusCode;
+        final body = lastDioException.response?.data;
+        final msg = body is Map ? body['message']?.toString() : null;
+        if (msg != null && (msg.contains('No break') || msg.contains('not found') || status == 404)) {
+          await BreakReminderService.cancel();
+          lastKnownHasOpenBreak = false;
+          _bumpStateRevision();
+          return {
+            'success': true,
+            'message': 'No active break running',
+          };
+        }
+        throw lastDioException;
+      } else {
+        await BreakReminderService.cancel();
+        lastKnownHasOpenBreak = false;
+        _bumpStateRevision();
+        return {
+          'success': true,
+          'message': 'Break ended successfully',
+        };
+      }
+
       breakFlowLog(
         'endBreak <- ok http=${response.statusCode} ${_snapshotBreakRow(response.data?['data'])}',
       );
@@ -376,6 +436,18 @@ class BreakService {
         'exceededMinutes': response.data?['exceededMinutes'],
       };
     } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      final body = e.response?.data;
+      final msg = body is Map ? body['message']?.toString() : null;
+      if (msg != null && (msg.contains('No break') || msg.contains('not found') || status == 404)) {
+        await BreakReminderService.cancel();
+        lastKnownHasOpenBreak = false;
+        _bumpStateRevision();
+        return {
+          'success': true,
+          'message': 'No active break running',
+        };
+      }
       breakFlowLog(
         'endBreak <- dio status=${e.response?.statusCode} type=${e.type} msg=${e.message}',
       );
