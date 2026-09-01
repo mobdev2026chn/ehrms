@@ -506,6 +506,10 @@ async function sendAnnouncementNotificationToToken(token, announcementDoc) {
             type: 'announcement',
             announcementId: id,
         },
+        androidTag: id ? `announcement_${id}` : null,
+    });
+}
+
 async function sendTaskAssignedNotification(taskDoc) {
     if (!taskDoc) return { success: false, error: 'No task' };
     const employeeId = taskDoc.assignedTo && taskDoc.assignedTo._id ? taskDoc.assignedTo._id : taskDoc.assignedTo;
