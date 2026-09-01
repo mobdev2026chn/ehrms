@@ -891,41 +891,83 @@ class AuthService {
       }
 
       _api.setAuthToken(token);
-      final formData = FormData.fromMap({
-        'file': await MultipartFile.fromFile(
-          imageFile.path,
-          filename: imageFile.path.split(RegExp(r'[/\\]')).last,
-        ),
-      });
-      final response = await _api.dio.post<Map<String, dynamic>>(
-        '/auth/profile-photo',
-        data: formData,
-        options: Options(
-          sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 30),
-        ),
-      );
-      final body = response.data;
-      if (body != null &&
-          body['data'] != null &&
-          body['data']['photoUrl'] != null) {
+      final filename = imageFile.path.split(RegExp(r'[/\\]')).last;
+      
+      Response<Map<String, dynamic>>? response;
+      // 1. Try /auth/profile-photo (multipart: file)
+      try {
+        final formData = FormData.fromMap({
+          'file': await MultipartFile.fromFile(imageFile.path, filename: filename),
+        });
+        response = await _api.dio.post<Map<String, dynamic>>(
+          '/auth/profile-photo',
+          data: formData,
+          options: Options(
+            sendTimeout: const Duration(seconds: 30),
+            receiveTimeout: const Duration(seconds: 30),
+          ),
+        );
+      } on DioException catch (e1) {
+        if (e1.response?.statusCode == 404) {
+          // 2. Try /staff/profile/photo (multipart: photo or file)
+          try {
+            final formData2 = FormData.fromMap({
+              'photo': await MultipartFile.fromFile(imageFile.path, filename: filename),
+              'file': await MultipartFile.fromFile(imageFile.path, filename: filename),
+            });
+            response = await _api.dio.post<Map<String, dynamic>>(
+              '/staff/profile/photo',
+              data: formData2,
+              options: Options(
+                sendTimeout: const Duration(seconds: 30),
+                receiveTimeout: const Duration(seconds: 30),
+              ),
+            );
+          } on DioException catch (e2) {
+            if (e2.response?.statusCode == 404) {
+              // 3. Try /staff/profile/face
+              try {
+                final formData3 = FormData.fromMap({
+                  'photo': await MultipartFile.fromFile(imageFile.path, filename: filename),
+                  'file': await MultipartFile.fromFile(imageFile.path, filename: filename),
+                });
+                response = await _api.dio.post<Map<String, dynamic>>(
+                  '/staff/profile/face',
+                  data: formData3,
+                  options: Options(
+                    sendTimeout: const Duration(seconds: 30),
+                    receiveTimeout: const Duration(seconds: 30),
+                  ),
+                );
+              } on DioException catch (e3) {
+                return _handleDioError(e3, 'Failed to update profile photo', null);
+              }
+            } else {
+              return _handleDioError(e2, 'Failed to update profile photo', null);
+            }
+          }
+        } else {
+          return _handleDioError(e1, 'Failed to update profile photo', null);
+        }
+      }
+
+      final body = response?.data;
+      final photoUrl = body?['data']?['photoUrl'] ?? body?['photoUrl'] ?? body?['data']?['avatar'] ?? body?['avatar'];
+      if (photoUrl != null) {
         final userStr = prefs.getString('user');
         if (userStr != null) {
           try {
             final user = jsonDecode(userStr) as Map<String, dynamic>;
-            final url = body['data']['photoUrl'] as String?;
-            if (url != null) {
-              user['photoUrl'] = url;
-              user['avatar'] = url;
-              await prefs.setString('user', jsonEncode(user));
-            }
+            user['photoUrl'] = photoUrl.toString();
+            user['avatar'] = photoUrl.toString();
+            await prefs.setString('user', jsonEncode(user));
           } catch (_) {}
         }
       }
       return {
         'success': true,
         'message': body?['message'] ?? 'Profile photo updated successfully',
-        'data': body?['data'],
+        'data': body?['data'] ?? body,
       };
     } on DioException catch (e) {
       return _handleDioError(e, 'Failed to update profile photo', null);
@@ -1020,7 +1062,7 @@ class AuthService {
         if (de.response?.statusCode == 404) {
           try {
             response = await _api.dio.post<Map<String, dynamic>>(
-              '/attendance/enroll-face',
+              '/staff/attendance/enroll-face',
               data: payload,
               options: Options(receiveTimeout: const Duration(seconds: 90)),
             );
@@ -1028,12 +1070,12 @@ class AuthService {
             if (de2.response?.statusCode == 404) {
               try {
                 response = await _api.dio.post<Map<String, dynamic>>(
-                  '/staff/attendance/enroll-face',
+                  '/attendance/enroll-face',
                   data: payload,
                   options: Options(receiveTimeout: const Duration(seconds: 90)),
                 );
-              } on DioException catch (_) {
-                if (imageFile != null) {
+              } on DioException catch (de3) {
+                if (de3.response?.statusCode == 404 && imageFile != null) {
                   final photoRes = await updateProfilePhoto(imageFile);
                   if (photoRes['success'] == true) {
                     return {
@@ -1042,6 +1084,7 @@ class AuthService {
                       'message': 'Face registered successfully.',
                     };
                   }
+                  return photoRes;
                 }
                 rethrow;
               }
