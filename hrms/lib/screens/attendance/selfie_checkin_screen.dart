@@ -13,7 +13,6 @@ import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../utils/face_enrollment_gate.dart';
 import '../../services/auth_service.dart';
-import '../../services/face_identity_guard.dart';
 import '../../services/attendance_template_store.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../../services/geo/accurate_location_helper.dart';
@@ -507,9 +506,9 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
           (_area != null
               ? '$_area, $_city${_pincode != null ? ' $_pincode' : ''}'
               : null);
-      // Require one-time face enrollment before the face check.
+      // Require one-time face enrollment before the check-in face check.
       if (!await FaceEnrollmentGate.ensureEnrolled(context,
-          actionLabel: _isCheckedIn ? 'punch out' : 'punch in')) {
+          actionLabel: 'punch in')) {
         return;
       }
       if (!mounted) return;
@@ -576,11 +575,6 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     } catch (_) {
       return 'Face verification failed. Please try again.';
     }
-
-    // Cross-user identity guard (anti buddy-punch): confirm the face is THIS user.
-    final verdict = await FaceIdentityGuard.verify(selfie);
-    if (!verdict.allow) return verdict.message ?? 'Face identity check failed.';
-
     return null;
   }
 

@@ -128,9 +128,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   final Set<String> _pendingWithCheckInDateSet =
       {}; // Pending + has punchIn → WA
 
-  String _activeFilter = 'All'; // Filter: 'All', 'Present', 'Absent', 'Half Day', 'On Leave', 'Pending', 'Holiday', 'Week Off', 'Late', 'Low Hours'
-  String _viewMode = 'calendar'; // 'calendar' or 'list'
-  String _periodMode = 'month'; // 'month' or 'week'
+  String _activeFilter = 'All'; // Filter for history list
   bool _showHistoryView =
       false; // true = History screen, false = Mark Attendance
 
@@ -703,10 +701,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         );
         setState(() {
           _isLoadingMonthData = false;
-          _monthLoadError = ErrorMessageUtils.sanitizeForDisplay(
-            result['message']?.toString(),
-            fallback: "Couldn't load this month's attendance.",
-          );
+          _monthLoadError = (result['message'] ?? 'Unknown error').toString();
         });
         // Single-click guarantee: a failed month fetch — most often a transient
         // "Too many requests" throttle when the screen fires several calls at once
@@ -761,10 +756,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           m is Map && (m[k] is List) && (m[k] as List).isNotEmpty;
       final bool newHasMarkers = newData is Map &&
           (listHas(newData, 'attendance') ||
-              listHas(newData, 'attendances') ||
               listHas(newData, 'presentDates') ||
               listHas(newData, 'absentDates') ||
-              listHas(newData, 'halfDayDates') ||
               listHas(newData, 'holidays') ||
               listHas(newData, 'weekOffDates') ||
               listHas(newData, 'leaveDates') ||
@@ -800,13 +793,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _monthData = result['data'];
         final _md = _monthData;
         if (_md != null) {
-          final attLen = ((_md['attendance'] ?? _md['attendances']) as List?)?.length ?? 0;
           debugPrint(
             '[Attendance] month fetch OK $year-$month: '
-            'attendance=$attLen '
+            'attendance=${(_md['attendance'] as List?)?.length ?? 0} '
             'present=${(_md['presentDates'] as List?)?.length ?? 0} '
             'absent=${(_md['absentDates'] as List?)?.length ?? 0} '
-            'halfDay=${(_md['halfDayDates'] as List?)?.length ?? 0} '
             'holidays=${(_md['holidays'] as List?)?.length ?? 0} '
             'weekOff=${(_md['weekOffDates'] as List?)?.length ?? 0} '
             'leave=${(_md['leaveDates'] as List?)?.length ?? 0}',
@@ -841,11 +832,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _pendingWithCheckInDateSet.clear();
 
         if (_monthData != null) {
-          final rawAttList = _monthData!['attendance'] ?? _monthData!['attendances'];
           // Attendance-based maps: one record per date (use attendance collection date; deduplicate)
-          if (rawAttList is List) {
+          if (_monthData!['attendance'] != null) {
             final attendanceList = _deduplicateAttendanceByDate(
-              rawAttList,
+              _monthData!['attendance'] as List,
             );
             for (var entry in attendanceList) {
               try {
@@ -1006,10 +996,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (mounted) {
         setState(() {
           _isLoadingMonthData = false;
-          _monthLoadError = ErrorMessageUtils.sanitizeForDisplay(
-            e.toString(),
-            fallback: "Couldn't load this month's attendance.",
-          );
+          _monthLoadError = e.toString();
         });
       }
     }
@@ -4621,47 +4608,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       isFuture = DateTime(day.year, day.month, day.day).isAfter(todayOnly);
     }
 
-    bool matchesStatusFilter = true;
-    if (isCurrentMonth && _activeFilter != 'All') {
-      final statusVal = _dayStatusByDate[dateStr];
-      final statusLower = (statusVal ?? '').toString().toLowerCase();
-      final isPresentFromBackend = _presentDateSet.contains(dateStr);
-      final isAbsentFromBackend = _absentDateSet.contains(dateStr);
-      final isHoliday = _holidayDateSet.contains(dateStr);
-      bool isWeekOff = _weekOffDateSet.contains(dateStr);
-      if (isWeekOff && _alternateWorkDatesInMonth.contains(dateStr)) {
-        isWeekOff = false;
-      }
-      final isAbsentStatus = statusLower == 'absent';
-      final isPresentStatus = (statusVal == 'Present' ||
-              statusVal == 'Approved' ||
-              isPresentFromBackend) &&
-          statusVal != 'Pending' &&
-          !isAbsentStatus &&
-          statusVal != 'Rejected';
-      final isHalfDayStatus =
-          statusVal == 'Half Day' || statusLower == 'half day';
-      final isLeaveStatus =
-          _leaveDateSet.contains(dateStr) || statusLower == 'on leave' || _dayLeaveTypeByDate.containsKey(dateStr);
-
-      if (_activeFilter == 'Present') {
-        matchesStatusFilter = isPresentStatus;
-      } else if (_activeFilter == 'Absent') {
-        matchesStatusFilter = isAbsentStatus || isAbsentFromBackend;
-      } else if (_activeFilter == 'Half Day') {
-        matchesStatusFilter = isHalfDayStatus;
-      } else if (_activeFilter == 'On Leave') {
-        matchesStatusFilter = isLeaveStatus;
-      } else if (_activeFilter == 'Pending') {
-        matchesStatusFilter = statusVal == 'Pending' || _pendingWithCheckInDateSet.contains(dateStr);
-      } else if (_activeFilter == 'Holiday') {
-        matchesStatusFilter = isHoliday;
-      } else if (_activeFilter == 'Week Off') {
-        matchesStatusFilter = isWeekOff;
-      }
-    }
-
-    final cell = Container(
+    return Container(
       margin: const EdgeInsets.all(4), // 8px spacing between cells
       decoration: BoxDecoration(
         color: bgColor == Colors.transparent ? null : bgColor,
@@ -4744,10 +4691,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         ],
       ),
     );
-
-    return matchesStatusFilter || !isCurrentMonth
-        ? cell
-        : Opacity(opacity: 0.22, child: cell);
   }
 
   Widget _buildCalendarHeader() {
@@ -5264,357 +5207,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     );
   }
 
-  Map<String, dynamic> _getSummaryStats() {
-    final md = _monthData;
-    int present = (md?['presentCount'] as num?)?.toInt() ?? _presentDateSet.length;
-    int absent = (md?['absentCount'] as num?)?.toInt() ?? _absentDateSet.length;
-    int halfDay = (md?['halfDayCount'] as num?)?.toInt() ?? ((md?['halfDayDates'] as List?)?.length ?? 0);
-    int onLeave = (md?['leaveCount'] as num?)?.toInt() ?? _leaveDateSet.length;
-    int holiday = _holidayDateSet.length;
-    int weekOff = _weekOffDateSet.length;
-    int workingDays = (md?['workingDays'] as num?)?.toInt() ?? (md?['totalWorkingDays'] as num?)?.toInt() ?? 0;
-    double payableDays = (md?['payableDays'] as num?)?.toDouble() ?? (md?['totalPayableDays'] as num?)?.toDouble() ?? 0.0;
-    double totalFine = 0.0;
-    double totalOT = 0.0;
-
-    final rawAtt = md?['attendance'] ?? md?['attendances'];
-    if (rawAtt is List) {
-      for (final e in rawAtt) {
-        if (e is Map) {
-          final fa = e['fineAdjustment'];
-          if (fa is Map) {
-            totalFine += (fa['totalFine'] as num?)?.toDouble() ?? 0.0;
-          }
-          final ot = e['overtimeAdjustment'];
-          if (ot is Map) {
-            totalOT += (ot['amount'] as num?)?.toDouble() ?? 0.0;
-          }
-        }
-      }
-    }
-    if (workingDays == 0) {
-      final daysInMonth = DateTime(_focusedDay.year, _focusedDay.month + 1, 0).day;
-      workingDays = (daysInMonth - weekOff - holiday).clamp(0, 31);
-    }
-    if (payableDays == 0.0) {
-      payableDays = (present + (halfDay * 0.5) + onLeave + weekOff + holiday).clamp(0.0, 31.0);
-    }
-
-    return {
-      'present': present,
-      'absent': absent,
-      'halfDay': halfDay,
-      'onLeave': onLeave,
-      'holiday': holiday,
-      'weekOff': weekOff,
-      'workingDays': workingDays,
-      'payableDays': payableDays,
-      'totalFine': totalFine,
-      'totalOT': totalOT,
-    };
-  }
-
-  Widget _buildSummaryCardItem(
-    String label,
-    String value,
-    Color textColor,
-    Color bgColor,
-    Color borderColor, {
-    String? filterKey,
-  }) {
-    final bool isSelected = filterKey != null && _activeFilter == filterKey;
-    return GestureDetector(
-      onTap: filterKey == null
-          ? null
-          : () {
-              setState(() {
-                if (_activeFilter == filterKey) {
-                  _activeFilter = 'All';
-                } else {
-                  _activeFilter = filterKey;
-                }
-                _page = 1;
-              });
-            },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: 86,
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isSelected ? textColor : borderColor,
-            width: isSelected ? 2.0 : 1.0,
-          ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: textColor.withOpacity(0.25),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ]
-              : null,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                color: textColor,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.4,
-                color: textColor.withOpacity(0.85),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAttendanceSummarySection() {
-    final stats = _getSummaryStats();
-    final currencyFormat = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10, left: 2),
-          child: Text(
-            '${DateFormat('MMM yyyy').format(_focusedDay).toUpperCase()} — SUMMARY',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF64748B),
-              letterSpacing: 0.8,
-            ),
-          ),
-        ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          child: Row(
-            children: [
-              _buildSummaryCardItem('PRESENT', '${stats['present']}', const Color(0xFF10B981), const Color(0xFFECFDF5), const Color(0xFFA7F3D0), filterKey: 'Present'),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('ABSENT', '${stats['absent']}', const Color(0xFFEF4444), const Color(0xFFFEF2F2), const Color(0xFFFECACA), filterKey: 'Absent'),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('HALF DAY', '${stats['halfDay']}', const Color(0xFF3B82F6), const Color(0xFFEFF6FF), const Color(0xFFBFDBFE), filterKey: 'Half Day'),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('ON LEAVE', '${stats['onLeave']}', const Color(0xFFA855F7), const Color(0xFFFAF5FF), const Color(0xFFE9D5FF), filterKey: 'On Leave'),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('HOLIDAY', '${stats['holiday']}', const Color(0xFFF59E0B), const Color(0xFFFFFBEB), const Color(0xFFFDE68A), filterKey: 'Holiday'),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('WEEK OFF', '${stats['weekOff']}', const Color(0xFF64748B), const Color(0xFFF8FAFC), const Color(0xFFE2E8F0), filterKey: 'Week Off'),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('WORKING DAYS', '${stats['workingDays']}', const Color(0xFF334155), const Color(0xFFF1F5F9), const Color(0xFFCBD5E1)),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('PAYABLE DAYS', '${stats['payableDays']}', const Color(0xFF06B6D4), const Color(0xFFECFEFF), const Color(0xFFA5F3FC)),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('FINES', currencyFormat.format(stats['totalFine']), const Color(0xFFF43F5E), const Color(0xFFFFF1F2), const Color(0xFFFECDD3)),
-              const SizedBox(width: 8),
-              _buildSummaryCardItem('OVERTIME', currencyFormat.format(stats['totalOT']), const Color(0xFF10B981), const Color(0xFFECFDF5), const Color(0xFFA7F3D0)),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPillToggle({
-    IconData? icon,
-    required String label,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: isSelected
-              ? const [
-                  BoxShadow(
-                    color: Color(0x14000000),
-                    blurRadius: 4,
-                    offset: Offset(0, 1),
-                  ),
-                ]
-              : null,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(
-                icon,
-                size: 14,
-                color: isSelected ? AppColors.textPrimary : const Color(0xFF64748B),
-              ),
-              const SizedBox(width: 4),
-            ],
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                color: isSelected ? AppColors.textPrimary : const Color(0xFF64748B),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusChip(String label) {
-    final isSelected = _activeFilter == label;
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _activeFilter = label;
-          _page = 1;
-        });
-      },
-      child: Container(
-        margin: const EdgeInsets.only(right: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? const Color(0xFF0F172A) : const Color(0xFFE2E8F0),
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-            color: isSelected ? Colors.white : const Color(0xFF475569),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAttendanceFilterBar() {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // View Mode (Calendar / List) + Period (Month / Week)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Calendar vs List toggle
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                padding: const EdgeInsets.all(3),
-                child: Row(
-                  children: [
-                    _buildPillToggle(
-                      icon: Icons.calendar_month_rounded,
-                      label: 'Calendar',
-                      isSelected: _viewMode == 'calendar',
-                      onTap: () => setState(() => _viewMode = 'calendar'),
-                    ),
-                    _buildPillToggle(
-                      icon: Icons.format_list_bulleted_rounded,
-                      label: 'List',
-                      isSelected: _viewMode == 'list',
-                      onTap: () => setState(() => _viewMode = 'list'),
-                    ),
-                  ],
-                ),
-              ),
-              // Month vs Week toggle
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                padding: const EdgeInsets.all(3),
-                child: Row(
-                  children: [
-                    _buildPillToggle(
-                      label: 'Month',
-                      isSelected: _periodMode == 'month',
-                      onTap: () => setState(() => _periodMode = 'month'),
-                    ),
-                    _buildPillToggle(
-                      label: 'Week',
-                      isSelected: _periodMode == 'week',
-                      onTap: () => setState(() => _periodMode = 'week'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // STATUS Filter Chips
-          Row(
-            children: [
-              const Text(
-                'STATUS:',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF64748B),
-                  letterSpacing: 0.5,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  child: Row(
-                    children: [
-                      _buildStatusChip('All'),
-                      _buildStatusChip('Present'),
-                      _buildStatusChip('Absent'),
-                      _buildStatusChip('Half Day'),
-                      _buildStatusChip('On Leave'),
-                      _buildStatusChip('Pending'),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildHistoryTab() {
     return RefreshIndicator(
       onRefresh: () => _refreshData(forceRefresh: true),
@@ -5624,190 +5216,214 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. Top Summary Metric Cards
-            _buildAttendanceSummarySection(),
-            // 2. Filter & View Mode Bar
-            _buildAttendanceFilterBar(),
-            // 3. Main Content: Calendar View or List View
-            if (_viewMode == 'calendar') ...[
-              Builder(
-                builder: (context) {
-                  final colorScheme = Theme.of(context).colorScheme;
-                  return Container(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x0D000000),
-                          blurRadius: 10,
-                          offset: Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        _buildCalendarHeader(),
-                        if (_monthData == null)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 10,
-                              horizontal: 8,
-                            ),
-                            child: _isLoadingMonthData
-                                ? Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: const [
-                                      SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2.2,
-                                        ),
+            Builder(
+              builder: (context) {
+                final colorScheme = Theme.of(context).colorScheme;
+                return Container(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x0D000000),
+                        blurRadius: 10,
+                        offset: Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      _buildCalendarHeader(),
+                      // When no month data is available the calendar grid can only
+                      // render faint, colorless day numbers — which reads as a broken
+                      // "stuck loading" calendar. Surface the real state instead: a
+                      // spinner while the fetch is in flight, or an explicit Retry when
+                      // it failed (e.g. throttle / timeout / server error). Markings
+                      // appear automatically once the bounded auto-retry succeeds; this
+                      // is the manual escape hatch.
+                      if (_monthData == null)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 10,
+                            horizontal: 8,
+                          ),
+                          child: _isLoadingMonthData
+                              ? Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: const [
+                                    SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.2,
                                       ),
-                                      SizedBox(width: 10),
-                                      Text(
-                                        'Loading attendance…',
-                                        style: TextStyle(
+                                    ),
+                                    SizedBox(width: 10),
+                                    Text(
+                                      'Loading attendance…',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                      Icons.error_outline_rounded,
+                                      size: 18,
+                                      color: Color(0xFF64748B),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Flexible(
+                                      child: Text(
+                                        _monthLoadError == null ||
+                                                _monthLoadError!.trim().isEmpty
+                                            ? "Couldn't load this month's attendance."
+                                            : "Couldn't load: ${_monthLoadError!}",
+                                        style: const TextStyle(
                                           fontSize: 13,
                                           color: Color(0xFF64748B),
                                         ),
                                       ),
-                                    ],
-                                  )
-                                : Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const Icon(
-                                        Icons.error_outline_rounded,
-                                        size: 18,
-                                        color: Color(0xFF64748B),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    TextButton(
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
                                       ),
-                                      const SizedBox(width: 8),
-                                      Flexible(
-                                        child: Text(
-                                          _monthLoadError == null ||
-                                                  _monthLoadError!.trim().isEmpty
-                                              ? "Couldn't load this month's attendance."
-                                              : _monthLoadError!,
-                                          style: const TextStyle(
-                                            fontSize: 13,
-                                            color: Color(0xFF64748B),
-                                          ),
+                                      onPressed: () {
+                                        // Manual retry: reset the per-month budget so the
+                                        // user gets a fresh set of auto-retries too.
+                                        _monthRetryAttempts = 0;
+                                        _monthRetryKey = null;
+                                        _fetchMonthData(
+                                          _focusedDay.year,
+                                          _focusedDay.month,
+                                          forceRefresh: true,
+                                        );
+                                      },
+                                      child: const Text(
+                                        'Retry',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                       ),
-                                      const SizedBox(width: 6),
-                                      TextButton(
-                                        style: TextButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 4,
-                                          ),
-                                          minimumSize: Size.zero,
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                        ),
-                                        onPressed: () {
-                                          _monthRetryAttempts = 0;
-                                          _monthRetryKey = null;
-                                          _fetchMonthData(
-                                            _focusedDay.year,
-                                            _focusedDay.month,
-                                            forceRefresh: true,
-                                          );
-                                        },
-                                        child: const Text(
-                                          'Retry',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                          ),
-                        TableCalendar(
-                          key: ValueKey(
-                            '${_focusedDay.year}-${_focusedDay.month}'
-                            '-${_periodMode}'
-                            '-${_joiningMonthStart?.year ?? 0}-${_joiningMonthStart?.month ?? 0}',
-                          ),
-                          firstDay: _joiningMonthStart ?? DateTime(2020),
-                          lastDay: DateTime.now().add(
-                            const Duration(days: 730),
-                          ),
-                          focusedDay: _focusedDay,
-                          selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-                          onDaySelected: (selectedDay, focusedDay) {
-                            setState(() {
-                              _selectedDay = selectedDay;
-                              _focusedDay = focusedDay;
-                            });
-                            _fetchAttendanceStatus(date: selectedDay);
-                          },
-                          headerVisible: false,
-                          calendarFormat: _periodMode == 'week'
-                              ? CalendarFormat.week
-                              : CalendarFormat.month,
-                          availableGestures: AvailableGestures.none,
-                          onCalendarCreated: (controller) =>
-                              _calendarPageController = controller,
-                          daysOfWeekHeight: 40,
-                          calendarBuilders: CalendarBuilders(
-                            defaultBuilder: (context, day, focusedDay) {
-                              return _buildCustomDay(context, day);
-                            },
-                            selectedBuilder: (context, day, focusedDay) {
-                              return _buildCustomDay(context, day);
-                            },
-                            todayBuilder: (context, day, focusedDay) {
-                              return _buildCustomDay(context, day);
-                            },
-                            holidayBuilder: (context, day, focusedDay) {
-                              return _buildCustomDay(context, day);
-                            },
-                            outsideBuilder: (context, day, focusedDay) {
-                              return const SizedBox.shrink();
-                            },
-                          ),
-                          onPageChanged: (focusedDay) {
-                            final intendedMonth =
-                                DateTime(_focusedDay.year, _focusedDay.month, 1);
-                            final incomingMonth =
-                                DateTime(focusedDay.year, focusedDay.month, 1);
-                            if (incomingMonth == intendedMonth) {
-                              return;
-                            }
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              final pc = _calendarPageController;
-                              if (!mounted || pc == null || !pc.hasClients) return;
-                              final monthsDelta =
-                                  (intendedMonth.year - incomingMonth.year) * 12 +
-                                      (intendedMonth.month - incomingMonth.month);
-                              final current =
-                                  (pc.page ?? pc.initialPage.toDouble()).round();
-                              final target = current + monthsDelta;
-                              if (target >= 0 && target != current) {
-                                pc.jumpToPage(target);
-                              }
-                            });
-                          },
+                                    ),
+                                  ],
+                                ),
                         ),
-                        const SizedBox(height: 8),
-                        Divider(height: 1, color: colorScheme.outline),
-                        const SizedBox(height: 12),
-                        _buildStatusLegend(),
-                        const SizedBox(height: 4),
-                      ],
+                      TableCalendar(
+                    key: ValueKey(
+                      '${_focusedDay.year}-${_focusedDay.month}'
+                      '-${_joiningMonthStart?.year ?? 0}-${_joiningMonthStart?.month ?? 0}',
+                    ), // Force rebuild when month/year OR firstDay (joiningMonthStart) changes
+                    // Start the calendar at the employee's joining month so months
+                    // before the Date of Joining cannot be displayed/navigated to.
+                    firstDay: _joiningMonthStart ?? DateTime(2020),
+                    lastDay: DateTime.now().add(
+                      const Duration(days: 730),
+                    ), // Allow 2 years in future
+                    focusedDay: _focusedDay,
+                    selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+                    onDaySelected: (selectedDay, focusedDay) {
+                      // Allow selecting future dates to view holidays/weekends (but can't mark attendance)
+                      setState(() {
+                        _selectedDay = selectedDay;
+                        _focusedDay = focusedDay;
+                      });
+                      // Fetch attendance status for selected day (will be null for future dates, which is fine)
+                      _fetchAttendanceStatus(date: selectedDay);
+                    },
+                    headerVisible: false, // Using custom header
+                    calendarFormat: CalendarFormat.month,
+                    // Disable the calendar's own gestures. Its internal PageView
+                    // (used for horizontal month swipes) would otherwise win the
+                    // gesture arena over the large grid area and swallow vertical
+                    // drags, so the parent SingleChildScrollView never scrolls.
+                    // Month navigation is handled by the < > arrows in the custom
+                    // header (_buildCalendarHeader -> shiftMonth), so swipe isn't
+                    // needed.
+                    availableGestures: AvailableGestures.none,
+                    onCalendarCreated: (controller) =>
+                        _calendarPageController = controller,
+                    daysOfWeekHeight: 40,
+                    calendarBuilders: CalendarBuilders(
+                      defaultBuilder: (context, day, focusedDay) {
+                        return _buildCustomDay(context, day);
+                      },
+                      selectedBuilder: (context, day, focusedDay) {
+                        return _buildCustomDay(context, day);
+                      },
+                      todayBuilder: (context, day, focusedDay) {
+                        return _buildCustomDay(context, day);
+                      },
+                      holidayBuilder: (context, day, focusedDay) {
+                        return _buildCustomDay(context, day);
+                      },
+                      outsideBuilder: (context, day, focusedDay) {
+                        return const SizedBox.shrink();
+                      },
                     ),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-            ],
-            // 4. Attendance Logs Section
+                    onPageChanged: (focusedDay) {
+                      // Swipe gestures are disabled (availableGestures.none), so the only
+                      // legitimate month change is the header < > arrows (shiftMonth),
+                      // which update _focusedDay AND fetch. TableCalendar also fires a
+                      // SPURIOUS page event on first build, drifting its internal PageView
+                      // to an ADJACENT month (e.g. it lands on July while _focusedDay is
+                      // June). Because outsideBuilder renders blank and the loaded data is
+                      // keyed to _focusedDay's month, that drift shows an EMPTY grid under
+                      // the (correct) June header — the "data loads then vanishes" glitch.
+                      // We must NOT follow the drift (that re-introduced the wrong-month
+                      // fetch / July-blank). Instead snap the PageView back to _focusedDay.
+                      final intendedMonth =
+                          DateTime(_focusedDay.year, _focusedDay.month, 1);
+                      final incomingMonth =
+                          DateTime(focusedDay.year, focusedDay.month, 1);
+                      if (incomingMonth == intendedMonth) {
+                        return; // page already on the focused month — nothing to do
+                      }
+                      debugPrint(
+                        '[Attendance][calPage] PageView drifted to '
+                        '${focusedDay.year}-${focusedDay.month}; snapping back to '
+                        '${_focusedDay.year}-${_focusedDay.month}',
+                      );
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        final pc = _calendarPageController;
+                        if (!mounted || pc == null || !pc.hasClients) return;
+                        final monthsDelta =
+                            (intendedMonth.year - incomingMonth.year) * 12 +
+                                (intendedMonth.month - incomingMonth.month);
+                        final current =
+                            (pc.page ?? pc.initialPage.toDouble()).round();
+                        final target = current + monthsDelta;
+                        if (target >= 0 && target != current) {
+                          pc.jumpToPage(target);
+                        }
+                      });
+                    },
+                  ),
+                      const SizedBox(height: 8),
+                      Divider(height: 1, color: colorScheme.outline),
+                      const SizedBox(height: 12),
+                      _buildStatusLegend(),
+                      const SizedBox(height: 4),
+                    ],
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
             Builder(
               builder: (context) {
                 final cs = Theme.of(context).colorScheme;
@@ -5815,15 +5431,33 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      _activeFilter == 'All'
-                          ? 'Attendance Logs'
-                          : 'Attendance Logs ($_activeFilter)',
+                      'Attendance Logs',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: cs.onSurface,
                       ),
                     ),
+                    // Figma Attendance-1: amber "View All" link → existing "All" filter.
+                    // InkWell(
+                    //   borderRadius: BorderRadius.circular(8),
+                    //   onTap: () {
+                    //     setState(() { _activeFilter = 'All'; _page = 1; });
+                    //     final now = DateTime.now();
+                    //     _fetchMonthData(now.year, now.month);
+                    //   },
+                    //   child: Padding(
+                    //     padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                    //     child: Text(
+                    //       'View All',
+                    //       style: TextStyle(
+                    //         fontSize: 13,
+                    //         fontWeight: FontWeight.w600,
+                    //         color: AppColors.primary,
+                    //       ),
+                    //     ),
+                    //   ),
+                    // ),
                   ],
                 );
               },
@@ -6657,49 +6291,588 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     await _fetchAllTemplateDetails();
     if (!mounted) return;
 
-    // --- Check-in/check-out validation (Matching Web App) ---
-    final setupStatus = _attendanceData?['setupStatus'] is Map
-        ? _attendanceData!['setupStatus'] as Map
-        : null;
-    if (setupStatus != null) {
-      final shiftAssigned = setupStatus['shiftAssigned'] == true;
-      final salaryTemplateAssigned =
-          setupStatus['salaryTemplateAssigned'] == true;
-      final salaryStructureAssigned =
-          setupStatus['salaryStructureAssigned'] == true;
-      if (!shiftAssigned || !salaryTemplateAssigned || !salaryStructureAssigned) {
-        await _showValidationAlert(
-          'Shift, Salary Template, and Salary Structure have not been assigned yet. Please contact your administrator.',
+    // --- Check-in/check-out validation: show popup and block if any check fails ---
+    // Salary must be configured to punch IN (drives fine/late/early storage and payroll).
+    // Guarded to check-in only so an already-open day is never stranded at check-out.
+    // Punch-in config gates, surfaced in a fixed priority order every time:
+    // 1) salary  2) attendance & shift  3) weekly off  4) holiday  5) leave.
+    if (!isCheckedIn &&
+        !_isSalaryConfiguredFromStaff(_profileStaffDataSnapshot)) {
+      await _showValidationAlert('Salary not configured. Contact HR.');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (!staffHasAssignedAttendanceTemplate(
+          profileAttendanceTemplateRef: _profileAttendanceTemplateId,
+          todayAttendanceTemplate: _attendanceTemplate,
+        ) ||
+        !isValidAttendanceTemplateMap(_attendanceTemplate) ||
+        _shiftAssigned != true) {
+      await _showValidationAlert(
+        'Attendance and shift not configured. Contact HR.',
+      );
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_weeklyOffAssigned != true) {
+      await _showValidationAlert('Weekly off not configured. Contact HR.');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_holidayTemplateAssigned != true) {
+      await _showValidationAlert('Holiday not configured. Contact HR.');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_leaveTemplateAssigned != true) {
+      await _showValidationAlert('Leave template not configured. Contact HR.');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_branchData == null) {
+      await _showValidationAlert('Branch not assigned.');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    final branchStatus =
+        (_branchData!['status']?.toString().trim().toUpperCase()) ?? '';
+    if (branchStatus != 'ACTIVE') {
+      await _showValidationAlert('Your branch is not active.');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    final geofence = _branchData!['geofence'] as Map<String, dynamic>?;
+    final requireTemplateGeolocation =
+        _attendanceTemplate?['requireGeolocation'] ?? true;
+    if (requireTemplateGeolocation == true) {
+      final geofenceEnabled = geofence?['enabled'] == true;
+      if (!geofenceEnabled) {
+        await _showValidationAlert('Geo fence is not set for your branch.');
+        _setPunchActionInProgress(false);
+        return;
+      }
+      final branchLat = geofence?['latitude'];
+      final branchLng = geofence?['longitude'];
+      final bool latLngSet =
+          branchLat != null &&
+          branchLng != null &&
+          (branchLat is num ||
+              (branchLat is String && branchLat.toString().trim().isNotEmpty)) &&
+          (branchLng is num ||
+              (branchLng is String && branchLng.toString().trim().isNotEmpty));
+      if (!latLngSet) {
+        await _showValidationAlert('Lat and long is not set for the branch.');
+        _setPunchActionInProgress(false);
+        return;
+      }
+    }
+    if (_attendanceTemplate!['isActive'] == false) {
+      await _showValidationAlert(
+        'Attendance template is not active. Contact HR.',
+      );
+      _setPunchActionInProgress(false);
+      return;
+    }
+    final todayEffectiveShift = _todayEffectiveShiftForAttendance();
+    if (kDebugMode) {
+      debugPrint(
+        '[PunchFlow][AttendanceTab][todayShift] '
+        'name=${todayEffectiveShift?.displayName ?? '(none)'} '
+        'type=${todayEffectiveShift?.shiftTypeLower ?? '(none)'} '
+        'isWeekOff=${todayEffectiveShift?.isWeekOff == true} '
+        'start=${todayEffectiveShift?.startTime ?? '(none)'} '
+        'end=${todayEffectiveShift?.endTime ?? '(none)'}',
+      );
+    }
+    if (todayEffectiveShift?.isWeekOff == true) {
+      SnackBarUtils.showSnackBar(context, "Today is weekoff", isError: true);
+      _setPunchActionInProgress(false);
+      return;
+    }
+    final isOpenShiftForToday =
+        todayEffectiveShift?.isOpen ?? _isOpenShiftTemplate();
+    if (!isOpenShiftForToday) {
+      final shiftStart =
+          todayEffectiveShift?.startTime?.trim() ?? _getShiftStartTimeFromDb();
+      final shiftEnd =
+          todayEffectiveShift?.endTime?.trim() ?? _getShiftEndTimeFromDb();
+      if (shiftStart == null ||
+          shiftStart.isEmpty ||
+          shiftEnd == null ||
+          shiftEnd.isEmpty) {
+        // Rotational wrappers may not carry direct start/end; effective day timing is resolved server-side.
+        if (_isAssignedShiftRotationalWrapper()) {
+          // Do not block here with a false "timings not set" error for rotational assignments.
+        } else {
+          await _showValidationAlert(
+            _shiftAssigned == true
+                ? 'Shift timings not set. Contact HR.'
+                : 'Shift not assigned. Contact HR.',
+          );
+          _setPunchActionInProgress(false);
+          return;
+        }
+      }
+    }
+    // --- End validation ---
+
+    // Half-day leave: block check-in/out during leave half and show specific red snackbar
+    final bool isSecondHalfLeave =
+        _halfDayLeave != null &&
+        (_halfDayLeave!['halfDayType'] == 'Second Half Day' ||
+            _halfDayLeave!['halfDaySession'] == 'Second Half Day' ||
+            _halfDayLeave!['session'] == '2');
+    final bool isFirstHalfLeave =
+        _halfDayLeave != null &&
+        (_halfDayLeave!['halfDayType'] == 'First Half Day' ||
+            _halfDayLeave!['halfDaySession'] == 'First Half Day' ||
+            _halfDayLeave!['session'] == '1');
+    if (!isCheckedIn && _isOnLeave && !_checkInAllowed) {
+      final String msg = isSecondHalfLeave
+          ? 'Not allowed check-in. You are on leave on second half.'
+          : isFirstHalfLeave
+          ? 'Not allowed check-in. You are on leave on first half.'
+          : (_leaveMessage ?? 'Check-in is not allowed at this time.');
+      SnackBarUtils.showSnackBar(
+        context,
+        ErrorMessageUtils.sanitizeForDisplay(msg),
+        isError: true,
+      );
+      await NotificationReactionOverlay.show(context, emoji: '😊');
+      _setPunchActionInProgress(false);
+      return;
+    }
+    // Do not block check-out client-side when already punched in; server decides.
+
+    if (_isHoliday &&
+        _attendanceTemplate?['allowAttendanceOnHolidays'] == false) {
+      SnackBarUtils.showSnackBar(context, "Today is a holiday", isError: true);
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_isCompensationWeekOff) {
+      SnackBarUtils.showSnackBar(
+        context,
+        "Today is compensation week off",
+        isError: true,
+      );
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_isCompensationCompOff) {
+      SnackBarUtils.showSnackBar(context, "Today is comp off", isError: true);
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_isPaidLeaveContext && !isCheckedIn) {
+      SnackBarUtils.showSnackBar(context, "Today is paid leave", isError: true);
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_isTodayAssignedRotationalWeekOff()) {
+      SnackBarUtils.showSnackBar(context, "Today is weekoff", isError: true);
+      _setPunchActionInProgress(false);
+      return;
+    }
+    if (_isWeeklyOff &&
+        _attendanceTemplate?['allowAttendanceOnWeeklyOff'] == false &&
+        !_isAlternateWorkDate) {
+      final now = DateTime.now();
+      // Exception: Allow check-in on Saturdays if it's the oddEvenSaturday pattern
+      if (_weeklyOffPattern == 'oddEvenSaturday' &&
+          now.weekday == DateTime.saturday) {
+        // Allow check-in to proceed even though it's a Weekly Off
+      } else {
+        SnackBarUtils.showSnackBar(
+          context,
+          "Today is a holiday",
+          isError: true,
         );
         _setPunchActionInProgress(false);
         return;
       }
     }
 
-    final isWeekOff = _attendanceData?['isWeekOff'] == true ||
-        _attendanceData?['isWeeklyOff'] == true ||
-        _isWeeklyOff;
-    final allowWeeklyOff =
-        _attendanceData?['allowAttendanceOnWeeklyOff'] == true ||
-        _attendanceTemplate?['allowAttendanceOnWeeklyOff'] == true;
-    if (isWeekOff && !allowWeeklyOff && !isCheckedIn) {
-      SnackBarUtils.showSnackBar(context, 'Today is a weekly off.', isError: true);
-      _setPunchActionInProgress(false);
-      return;
+    final now = DateTime.now();
+    // Block check-in after shift end time (full-day or half-day working session end)
+    if (!isCheckedIn && !_isOpenShiftTemplate()) {
+      final sessionTimings = _getWorkingSessionTimings();
+      final shiftEndStrForBlock =
+          sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb();
+      if (shiftEndStrForBlock != null && shiftEndStrForBlock.isNotEmpty) {
+        try {
+          final parts = shiftEndStrForBlock.split(':').map(int.parse).toList();
+          final shiftEndForBlock = DateTime(
+            now.year,
+            now.month,
+            now.day,
+            parts[0],
+            parts[1],
+          );
+          if (now.isAfter(shiftEndForBlock)) {
+            SnackBarUtils.showSnackBar(
+              context,
+              'Check-in not allowed after shift end time ($shiftEndStrForBlock).',
+              isError: true,
+            );
+            _setPunchActionInProgress(false);
+            return;
+          }
+        } catch (_) {}
+      }
     }
-
-    final isHoliday =
-        _attendanceData?['isHoliday'] == true || _isHoliday;
-    final allowHoliday =
-        _attendanceData?['allowAttendanceOnHolidays'] == true ||
-        _attendanceTemplate?['allowAttendanceOnHolidays'] == true;
-    if (isHoliday && !allowHoliday && !isCheckedIn) {
-      SnackBarUtils.showSnackBar(context, 'Today is a holiday.', isError: true);
-      _setPunchActionInProgress(false);
-      return;
+    // Late/early: fines are computed on the server; the app does not show minute-based
+    // "fine-style" dialogs when punch is allowed. When NOT allowed, block with a short message.
+    String? alertMessage;
+    bool shouldBlock = false;
+    await _fetchFineCalculation();
+    final netPerDaySalary = await _loadPerDaySalaryFromPrefs();
+    if (kDebugMode) {
+      debugPrint(
+        '[Fine TEST][Attendance] Refreshed fine rules before alert/fine evaluation',
+      );
+      debugPrint(
+        '[Fine TEST][Attendance] Loaded grossPerDaySalary='
+        '${netPerDaySalary?.toStringAsFixed(2) ?? "null"}',
+      );
     }
-    // --- End validation ---
-
+    if (!isCheckedIn) {
+      final allowLateEntry =
+          _attendanceTemplate?['allowLateEntry'] ??
+          _attendanceTemplate?['lateEntryAllowed'] ??
+          true;
+      if (_isOpenShiftTemplate()) {
+        // Open shift: no late-login confirmation dialog.
+      } else {
+        final sessionTimings = _getWorkingSessionTimings();
+        final shiftStartStr =
+            sessionTimings?['startTime'] ?? _getShiftStartTimeFromDb();
+        if (shiftStartStr == null && allowLateEntry == false) {
+          alertMessage = 'Shift start time not set. Contact HR.';
+          shouldBlock = true;
+        } else if (shiftStartStr != null) {
+          try {
+            final parts = shiftStartStr.split(':').map(int.parse).toList();
+            final gracePeriod = _getGracePeriodMinutesForLateCheckIn();
+            final shiftStartOnly = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              parts[0],
+              parts[1],
+            );
+            final graceEnd = shiftStartOnly.add(Duration(minutes: gracePeriod));
+            if (now.isAfter(graceEnd)) {
+              final shiftEndForFine =
+                  sessionTimings?['endTime'] ?? _getShiftEndTime();
+              final fineResult = calculateFine(
+                punchInTime: now,
+                attendanceDate: DateTime(now.year, now.month, now.day),
+                shiftTiming: ShiftTiming(
+                  name: 'Current Shift',
+                  startTime: shiftStartStr,
+                  endTime: shiftEndForFine,
+                  graceTime: GraceTime(value: gracePeriod, unit: 'minutes'),
+                ),
+                fineSettings: FineSettings(
+                  enabled: true,
+                  graceTimeMinutes: gracePeriod,
+                  calculationType: 'shiftBased',
+                ),
+                dailySalary: netPerDaySalary,
+              );
+              final hasRules = _hasFineRules();
+              final shiftHoursForFormula = calculateShiftHours(
+                shiftStartStr,
+                shiftEndForFine,
+              );
+              final lateRule = _matchFineRuleForAction('lateArrival');
+              double lateFineAmount = fineResult.fineAmount;
+              if (hasRules) {
+                if (lateRule == null) {
+                  lateFineAmount = 0.0;
+                } else {
+                  lateFineAmount = _computeFineFromRule(
+                    rule: lateRule,
+                    minutes: fineResult.lateMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: shiftHoursForFormula,
+                  );
+                }
+              }
+              if (kDebugMode) {
+                final fineLog = _resolveFineLogForAction('lateArrival');
+                debugPrint(
+                  '[Fine TEST][Attendance][LateIn] start=$shiftStartStr '
+                  'graceMin=$gracePeriod lateMin=${fineResult.lateMinutes} '
+                  'grossPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fine=${lateFineAmount.toStringAsFixed(2)} '
+                  'allowLate=$allowLateEntry',
+                );
+                String fineFormula;
+                String fineFormulaWords;
+                final ruleTypeLower = (lateRule?['type']?.toString() ?? '')
+                    .toLowerCase();
+                if (hasRules && lateRule != null && ruleTypeLower == 'custom') {
+                  final customAmount =
+                      (lateRule['customAmount'] as num?)?.toDouble() ?? 0.0;
+                  final unitLower =
+                      (lateRule['customAmountUnit']?.toString() ?? 'perHour')
+                          .toLowerCase();
+                  if (unitLower == 'perminute') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × ${fineResult.lateMinutes}';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perMinute × lateMinutes';
+                  } else if (unitLower == 'perhour') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × (${fineResult.lateMinutes} / 60)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perHour × (lateMinutes/60)';
+                  } else {
+                    fineFormula = '${customAmount.toStringAsFixed(2)} (fixed)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount fixed';
+                  }
+                } else {
+                  fineFormula =
+                      '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                      '* (${fineResult.lateMinutes} / 60)';
+                  fineFormulaWords =
+                      'perDaySalary/shiftHours × (lateMinutes/60)';
+                }
+                debugPrint(
+                  '[Fine FORMULA][Attendance][LateIn] '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fineFormula=$fineFormula '
+                  '= fineAmount:${lateFineAmount.toStringAsFixed(2)} '
+                  'fineFormulaWords=$fineFormulaWords',
+                );
+              }
+              final baseMessage = allowLateEntry == false
+                  ? 'Late entry is not allowed for your shift.'
+                  : 'You are checking in late.';
+              alertMessage = _buildLateAlertMessage(
+                baseMessage: baseMessage,
+                lateMinutes: fineResult.lateMinutes,
+                fineAmount: lateFineAmount,
+              );
+              shouldBlock = allowLateEntry == false;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+    if (isCheckedIn && alertMessage == null) {
+      final allowEarlyExit =
+          _attendanceTemplate?['allowEarlyExit'] ??
+          _attendanceTemplate?['earlyExitAllowed'] ??
+          true;
+      if (_isOpenShiftTemplate()) {
+        final punchInRaw = _attendanceData?['punchIn'];
+        if (punchInRaw != null) {
+          try {
+            final punchIn = DateTime.parse(punchInRaw.toString()).toLocal();
+            final reqH = _openShiftRequiredHours();
+            final requiredMin = (reqH * 60).round();
+            final workedMin = now.difference(punchIn).inMinutes;
+            final earlyMinutes = workedMin >= requiredMin
+                ? 0
+                : (requiredMin - workedMin);
+            if (earlyMinutes > 0) {
+              double estimatedFine = 0;
+              if (netPerDaySalary != null && netPerDaySalary > 0 && reqH > 0) {
+                estimatedFine =
+                    ((netPerDaySalary / reqH) * (earlyMinutes / 60) * 100)
+                        .round() /
+                    100;
+              }
+              final hasRules = _hasFineRules();
+              final shiftHoursForFormula = reqH;
+              final earlyRule = _matchFineRuleForAction('earlyExit');
+              double earlyFineAmount = estimatedFine;
+              if (hasRules) {
+                if (earlyRule == null) {
+                  earlyFineAmount = 0.0;
+                } else {
+                  earlyFineAmount = _computeFineFromRule(
+                    rule: earlyRule,
+                    minutes: earlyMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: shiftHoursForFormula,
+                  );
+                }
+              }
+              if (kDebugMode) {
+                debugPrint(
+                  '[Fine TEST][Attendance][EarlyOut][open] requiredH=$reqH '
+                  'earlyMin=$earlyMinutes fine=${earlyFineAmount.toStringAsFixed(2)}',
+                );
+              }
+              final baseMessage = allowEarlyExit == false
+                  ? 'Early check-out: you have not completed your required ${reqH == reqH.roundToDouble() ? reqH.toInt() : reqH} hour(s) for today.'
+                  : 'You are checking out before completing your required hours.';
+              alertMessage = _buildEarlyAlertMessage(
+                baseMessage: baseMessage,
+                earlyMinutes: earlyMinutes,
+                fineAmount: earlyFineAmount,
+              );
+              shouldBlock = allowEarlyExit == false;
+            }
+          } catch (_) {}
+        }
+      } else {
+        final sessionTimings = _getWorkingSessionTimings();
+        final shiftEndStr =
+            sessionTimings?['endTime'] ?? _getShiftEndTimeFromDb();
+        if (shiftEndStr == null && allowEarlyExit == false) {
+          alertMessage = 'Shift end time not set. Contact HR.';
+          shouldBlock = true;
+        } else if (shiftEndStr != null) {
+          try {
+            final shiftStartForFine =
+                sessionTimings?['startTime'] ?? _getShiftStartTime();
+            // Anchor to punch-in so overnight shifts (PM start / AM end) resolve
+            // the end boundary on the correct calendar day.
+            final punchInRaw = _attendanceData?['punchIn'];
+            final punchInDt = punchInRaw != null
+                ? DateTime.tryParse(punchInRaw.toString())?.toLocal()
+                : null;
+            final shiftEnd = _resolveShiftEndForEarly(
+              shiftStartStr: shiftStartForFine,
+              shiftEndStr: shiftEndStr,
+              anchor: punchInDt ?? now,
+            );
+            if (shiftEnd != null && now.isBefore(shiftEnd)) {
+              final earlyMinutes = shiftEnd.difference(now).inMinutes;
+              double estimatedFine = 0;
+              if (netPerDaySalary != null &&
+                  netPerDaySalary > 0 &&
+                  earlyMinutes > 0) {
+                final shiftHours = calculateShiftHours(
+                  shiftStartForFine,
+                  shiftEndStr,
+                );
+                if (shiftHours > 0) {
+                  estimatedFine =
+                      ((netPerDaySalary / shiftHours) *
+                              (earlyMinutes / 60) *
+                              100)
+                          .round() /
+                      100;
+                }
+              }
+              final hasRules = _hasFineRules();
+              final shiftHoursForFormula = calculateShiftHours(
+                shiftStartForFine,
+                shiftEndStr,
+              );
+              final earlyRule = _matchFineRuleForAction('earlyExit');
+              double earlyFineAmount = estimatedFine;
+              if (hasRules) {
+                if (earlyRule == null) {
+                  earlyFineAmount = 0.0;
+                } else {
+                  earlyFineAmount = _computeFineFromRule(
+                    rule: earlyRule,
+                    minutes: earlyMinutes,
+                    netPerDaySalary: netPerDaySalary ?? 0.0,
+                    shiftHours: shiftHoursForFormula,
+                  );
+                }
+              }
+              if (kDebugMode) {
+                final fineLog = _resolveFineLogForAction('earlyExit');
+                debugPrint(
+                  '[Fine TEST][Attendance][EarlyOut] start=$shiftStartForFine '
+                  'end=$shiftEndStr earlyMin=$earlyMinutes '
+                  'grossPerDay=${netPerDaySalary?.toStringAsFixed(2) ?? "null"} '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fine=${earlyFineAmount.toStringAsFixed(2)} '
+                  'allowEarly=$allowEarlyExit',
+                );
+                String fineFormula;
+                String fineFormulaWords;
+                final ruleTypeLower = (earlyRule?['type']?.toString() ?? '')
+                    .toLowerCase();
+                if (hasRules &&
+                    earlyRule != null &&
+                    ruleTypeLower == 'custom') {
+                  final customAmount =
+                      (earlyRule['customAmount'] as num?)?.toDouble() ?? 0.0;
+                  final unitLower =
+                      (earlyRule['customAmountUnit']?.toString() ?? 'perHour')
+                          .toLowerCase();
+                  if (unitLower == 'perminute') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × $earlyMinutes';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perMinute × earlyMinutes';
+                  } else if (unitLower == 'perhour') {
+                    fineFormula =
+                        '${customAmount.toStringAsFixed(2)} × ($earlyMinutes / 60)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount perHour × (earlyMinutes/60)';
+                  } else {
+                    fineFormula = '${customAmount.toStringAsFixed(2)} (fixed)';
+                    fineFormulaWords =
+                        'perDaySalary=${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"}; '
+                        'customAmount fixed';
+                  }
+                } else {
+                  fineFormula =
+                      '(${netPerDaySalary?.toStringAsFixed(2) ?? "0.00"} / ${shiftHoursForFormula.toStringAsFixed(2)}) '
+                      '* ($earlyMinutes / 60)';
+                  fineFormulaWords =
+                      'perDaySalary/shiftHours × (earlyMinutes/60)';
+                }
+                debugPrint(
+                  '[Fine FORMULA][Attendance][EarlyOut] '
+                  'fineType=${fineLog['fineType']} '
+                  'ruleType=${fineLog['ruleType']} '
+                  'ruleApplyTo=${fineLog['ruleApplyTo']} '
+                  'fineFormula=$fineFormula '
+                  '= fineAmount:${earlyFineAmount.toStringAsFixed(2)} '
+                  'fineFormulaWords=$fineFormulaWords',
+                );
+              }
+              final baseMessage = allowEarlyExit == false
+                  ? 'Early check-out is not allowed before shift end.'
+                  : 'You are checking out early.';
+              alertMessage = _buildEarlyAlertMessage(
+                baseMessage: baseMessage,
+                earlyMinutes: earlyMinutes,
+                fineAmount: earlyFineAmount,
+              );
+              shouldBlock = allowEarlyExit == false;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+    if (alertMessage != null) {
+      final lower = alertMessage.toLowerCase();
+      final isLate = lower.contains('late');
+      final isEarly = lower.contains('early');
+      await _showWarningAlert(alertMessage, isLate: isLate, isEarly: isEarly);
+      if (!mounted) return;
+      if (shouldBlock) {
+        _setPunchActionInProgress(false);
+        return; // Block only when not allowed
+      }
+    }
     if (!mounted) return;
 
     // Selfie is required on BOTH punch-in and punch-out when the assigned
@@ -7484,13 +7657,6 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return _activeFilter == 'All' ||
         _activeFilter == 'This Month' ||
         _activeFilter == 'This Week' ||
-        _activeFilter == 'Present' ||
-        _activeFilter == 'Absent' ||
-        _activeFilter == 'Half Day' ||
-        _activeFilter == 'On Leave' ||
-        _activeFilter == 'Pending' ||
-        _activeFilter == 'Holiday' ||
-        _activeFilter == 'Week Off' ||
         _activeFilter == 'Late' ||
         _activeFilter == 'Low Hours';
   }
@@ -7502,22 +7668,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final currentMonth = DateTime(now.year, now.month);
       final nextMonth = DateTime(now.year, now.month + 1);
 
-      // Period filter (Month vs Week)
-      if (_periodMode == 'week' || _activeFilter == 'This Week') {
-        final focused = _focusedDay;
-        // Start of week (Sunday)
-        final diffToSunday = focused.weekday % 7;
-        final sunday = DateTime(focused.year, focused.month, focused.day).subtract(Duration(days: diffToSunday));
-        final saturday = sunday.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
-        combined = combined.where((r) {
-          try {
-            final d = _extractDateOnly(r['date']);
-            return !d.isBefore(sunday) && !d.isAfter(saturday);
-          } catch (_) {
-            return false;
-          }
-        }).toList();
-      } else if (_activeFilter == 'This Month') {
+      if (_activeFilter == 'This Month') {
         combined = combined.where((r) {
           try {
             final d = _extractDateOnly(r['date']);
@@ -7527,43 +7678,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             return false;
           }
         }).toList();
-      }
-
-      // Status filters
-      if (_activeFilter == 'Present') {
+      } else if (_activeFilter == 'This Week') {
+        final weekAgo = DateTime(
+          now.year,
+          now.month,
+          now.day,
+        ).subtract(const Duration(days: 7));
         combined = combined.where((r) {
-          final s = (r['status'] ?? '').toString().toLowerCase();
-          return s == 'present' || s == 'approved';
-        }).toList();
-      } else if (_activeFilter == 'Absent') {
-        combined = combined.where((r) {
-          final s = (r['status'] ?? '').toString().toLowerCase();
-          return s == 'absent';
-        }).toList();
-      } else if (_activeFilter == 'Half Day') {
-        combined = combined.where((r) {
-          final s = (r['status'] ?? '').toString().toLowerCase();
-          return s == 'half day' || s == 'half_day';
-        }).toList();
-      } else if (_activeFilter == 'On Leave') {
-        combined = combined.where((r) {
-          final s = (r['status'] ?? '').toString().toLowerCase();
-          return s == 'on leave' || s == 'leave';
-        }).toList();
-      } else if (_activeFilter == 'Pending') {
-        combined = combined.where((r) {
-          final s = (r['status'] ?? '').toString().toLowerCase();
-          return s == 'pending' || s == 'waiting approval' || s == 'wa';
-        }).toList();
-      } else if (_activeFilter == 'Holiday') {
-        combined = combined.where((r) {
-          final s = (r['status'] ?? '').toString().toLowerCase();
-          return s == 'holiday';
-        }).toList();
-      } else if (_activeFilter == 'Week Off') {
-        combined = combined.where((r) {
-          final s = (r['status'] ?? '').toString().toLowerCase();
-          return s == 'weekend' || s == 'week off' || s == 'week_off';
+          try {
+            final d = _extractDateOnly(r['date']);
+            return d.isAfter(weekAgo) || isSameDay(d, weekAgo);
+          } catch (_) {
+            return false;
+          }
         }).toList();
       } else if (_activeFilter == 'Late') {
         combined = combined.where((r) {
@@ -7593,22 +7720,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
 
     return _historyList.where((r) {
-      if (_activeFilter == 'Present') {
-        final s = (r['status'] ?? '').toString().toLowerCase();
-        return s == 'present' || s == 'approved';
-      } else if (_activeFilter == 'Absent') {
-        final s = (r['status'] ?? '').toString().toLowerCase();
-        return s == 'absent';
-      } else if (_activeFilter == 'Half Day') {
-        final s = (r['status'] ?? '').toString().toLowerCase();
-        return s == 'half day' || s == 'half_day';
-      } else if (_activeFilter == 'On Leave') {
-        final s = (r['status'] ?? '').toString().toLowerCase();
-        return s == 'on leave' || s == 'leave';
-      } else if (_activeFilter == 'Pending') {
-        final s = (r['status'] ?? '').toString().toLowerCase();
-        return s == 'pending' || s == 'waiting approval';
-      } else if (_activeFilter == 'Late Check-in' || _activeFilter == 'Late') {
+      if (_activeFilter == 'Late Check-in' || _activeFilter == 'Late') {
         return _isLateCheckIn(r['punchIn'], record: r) ||
             _isLateCheckOut(r['punchOut'], record: r);
       } else if (_activeFilter == 'Late Check-out' ||
