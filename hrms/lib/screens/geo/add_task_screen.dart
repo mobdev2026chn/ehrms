@@ -453,7 +453,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         expectedCompletionDate: _latestCompletionDate!,
         earliestCompletionDate: _earliestCompletionDate!,
         latestCompletionDate: _latestCompletionDate!,
-        status: 'assigned',
+        status: 'Requested',
         sourceLocation: {
           'lat': pickup.latitude,
           'lng': pickup.longitude,

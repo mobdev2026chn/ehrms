@@ -253,12 +253,19 @@ class TaskService {
     await _setToken();
     final prefs = await SharedPreferences.getInstance();
     final storedBusinessId = prefs.getString('businessId');
+    final storedAdminId = prefs.getString('adminId');
+    final storedStaffId = prefs.getString('staffId') ?? prefs.getString('userId') ?? assignedTo;
+    final storedStaffName = prefs.getString('staffName') ?? prefs.getString('userName');
+    final resolvedStatus = (status.toLowerCase() == 'assigned' || status.isEmpty) ? 'Requested' : status;
+
     final body = <String, dynamic>{
       'taskTitle': taskTitle,
       'title': taskTitle,
       'description': description,
       'assignedTo': assignedTo,
-      'staffId': assignedTo,
+      'staffId': storedStaffId,
+      if (storedStaffName != null) 'staffName': storedStaffName,
+      'assignedBy': 'Staff',
       'type': 'External',
       'expectedCompletionDate': expectedCompletionDate
           .toUtc()
@@ -266,9 +273,12 @@ class TaskService {
       'date': expectedCompletionDate.toIso8601String().split('T')[0],
       'startDate': (earliestCompletionDate ?? expectedCompletionDate).toIso8601String().split('T')[0],
       'endDate': (latestCompletionDate ?? expectedCompletionDate).toIso8601String().split('T')[0],
-      'status': status,
+      'status': resolvedStatus,
       'source': 'app',
     };
+    if (storedAdminId != null && storedAdminId.isNotEmpty) {
+      body['adminId'] = storedAdminId;
+    }
     if (customerId != null && customerId.isNotEmpty) {
       body['customerId'] = customerId;
     }
@@ -298,6 +308,7 @@ class TaskService {
     if (destinationLocation != null) {
       body['destinationLocation'] = destinationLocation;
       if (destinationLocation['address'] != null) {
+        body['customerAddress'] = destinationLocation['address'];
         body['location'] = destinationLocation['address'];
         body['customerLocation'] = destinationLocation['address'];
         body['address'] = destinationLocation['address'];
@@ -308,15 +319,16 @@ class TaskService {
       if (destinationLocation['lng'] != null) {
         body['longitude'] = destinationLocation['lng'];
       }
+      body['radius'] = 10;
     }
     Response<Map<String, dynamic>>? response;
     DioException? lastError;
     for (final path in [
-      '/tasks',
+      '/admin/hrms-geo/task',
       '/staff/geo-task/tasks',
       '/staff/geo-task/task',
+      '/tasks',
       '/task',
-      '/admin/hrms-geo/task',
     ]) {
       try {
         final res = await _api.dio.post<dynamic>(
