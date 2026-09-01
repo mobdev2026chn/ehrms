@@ -3674,17 +3674,21 @@ class _DashboardScreenState extends State<DashboardScreen>
             onTap: (index) async {
               if (index == 6) {
                 if (_activeBreak != null) {
-                  SnackBarUtils.showSnackBar(
-                    context,
-                    'You are already on break. Use End Break above the bottom bar.',
-                    isError: true,
-                  );
+                  await _endBreakFlow();
                   return;
                 }
                 await _startBreakFlow();
                 return;
               }
               if (index == 5) {
+                if (_activeBreak != null) {
+                  SnackBarUtils.showSnackBar(
+                    context,
+                    'Please end your active break before punching out.',
+                    isError: true,
+                  );
+                  return;
+                }
                 await _startPunchFlow();
                 return;
               }

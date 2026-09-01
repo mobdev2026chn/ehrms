@@ -149,14 +149,17 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
       widget.activeBreakStartTime != null ||
       widget.isBreakActive;
 
-  DateTime? get _effectiveBreakStartTime => _useExternalBreakState
-      ? widget.activeBreakStartTime
-      : _fetchedBreakStartTime;
+  DateTime? get _effectiveBreakStartTime {
+    if (widget.activeBreakStartTime != null) return widget.activeBreakStartTime;
+    if (_fetchedBreakStartTime != null) return _fetchedBreakStartTime;
+    if (widget.isBreakActive) return DateTime.now();
+    return null;
+  }
 
-  // ignore: unused_element
-  bool get _effectiveBreakActive => _useExternalBreakState
-      ? (widget.isBreakActive || widget.activeBreakStartTime != null)
-      : _fetchedBreakStartTime != null;
+  bool get _effectiveBreakActive =>
+      widget.isBreakActive ||
+      widget.activeBreakStartTime != null ||
+      _fetchedBreakStartTime != null;
 
   Future<void> _fetchActiveBreak() async {
     final result = await _breakService.getCurrentBreak();
