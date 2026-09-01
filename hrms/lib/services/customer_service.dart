@@ -84,9 +84,9 @@ class CustomerService {
     Response<dynamic>? response;
     DioException? lastError;
     for (final path in [
-      '/admin/hrms-geo/customer',
-      '/staff/geo-task/customer',
       '/customers',
+      '/staff/geo-task/customer',
+      '/admin/hrms-geo/customer',
       '/customer',
     ]) {
       try {
@@ -99,7 +99,10 @@ class CustomerService {
         }
       } on DioException catch (e) {
         lastError = e;
-        if (e.response?.statusCode == 404 || e.response?.statusCode == 405) {
+        if (e.response?.statusCode == 401 ||
+            e.response?.statusCode == 403 ||
+            e.response?.statusCode == 404 ||
+            e.response?.statusCode == 405) {
           continue;
         }
         rethrow;

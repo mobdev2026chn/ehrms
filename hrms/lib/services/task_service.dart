@@ -255,11 +255,17 @@ class TaskService {
     final storedBusinessId = prefs.getString('businessId');
     final body = <String, dynamic>{
       'taskTitle': taskTitle,
+      'title': taskTitle,
       'description': description,
       'assignedTo': assignedTo,
+      'staffId': assignedTo,
+      'type': 'External',
       'expectedCompletionDate': expectedCompletionDate
           .toUtc()
           .toIso8601String(),
+      'date': expectedCompletionDate.toIso8601String().split('T')[0],
+      'startDate': (earliestCompletionDate ?? expectedCompletionDate).toIso8601String().split('T')[0],
+      'endDate': (latestCompletionDate ?? expectedCompletionDate).toIso8601String().split('T')[0],
       'status': status,
       'source': 'app',
     };
@@ -291,31 +297,58 @@ class TaskService {
     if (sourceLocation != null) body['sourceLocation'] = sourceLocation;
     if (destinationLocation != null) {
       body['destinationLocation'] = destinationLocation;
+      if (destinationLocation['address'] != null) {
+        body['location'] = destinationLocation['address'];
+        body['customerLocation'] = destinationLocation['address'];
+        body['address'] = destinationLocation['address'];
+      }
+      if (destinationLocation['lat'] != null) {
+        body['latitude'] = destinationLocation['lat'];
+      }
+      if (destinationLocation['lng'] != null) {
+        body['longitude'] = destinationLocation['lng'];
+      }
     }
     Response<Map<String, dynamic>>? response;
+    DioException? lastError;
     for (final path in [
-      '/staff/geo-task/task',
-      '/admin/hrms-geo/task',
       '/tasks',
+      '/staff/geo-task/tasks',
+      '/staff/geo-task/task',
       '/task',
+      '/admin/hrms-geo/task',
     ]) {
       try {
-        response = await _api.dio.post<Map<String, dynamic>>(
+        final res = await _api.dio.post<dynamic>(
           path,
           data: body,
         );
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          break;
+        if (res.statusCode == 200 || res.statusCode == 201) {
+          if (res.data is Map) {
+            response = Response<Map<String, dynamic>>(
+              data: res.data as Map<String, dynamic>,
+              statusCode: res.statusCode,
+              requestOptions: res.requestOptions,
+            );
+            break;
+          }
         }
-      } catch (e) {
-        if (e is DioException && (e.response?.statusCode == 404 || e.response?.statusCode == 405)) {
+      } on DioException catch (e) {
+        lastError = e;
+        if (e.response?.statusCode == 401 ||
+            e.response?.statusCode == 403 ||
+            e.response?.statusCode == 404 ||
+            e.response?.statusCode == 405) {
           continue;
         }
         rethrow;
-      }
+      } catch (_) {}
     }
     final data = response?.data;
-    if (data == null) throw Exception('Failed to create task');
+    if (data == null) {
+      if (lastError != null) throw lastError;
+      throw Exception('Failed to create task');
+    }
     final payload = data['data'] is Map ? data['data'] as Map<String, dynamic> : data;
     return Task.fromJson(payload);
   }
