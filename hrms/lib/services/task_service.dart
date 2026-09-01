@@ -286,13 +286,32 @@ class TaskService {
     if (destinationLocation != null) {
       body['destinationLocation'] = destinationLocation;
     }
-    final response = await _api.dio.post<Map<String, dynamic>>(
+    Response<Map<String, dynamic>>? response;
+    for (final path in [
+      '/staff/geo-task/task',
+      '/admin/hrms-geo/task',
       '/tasks',
-      data: body,
-    );
-    final data = response.data;
+      '/task',
+    ]) {
+      try {
+        response = await _api.dio.post<Map<String, dynamic>>(
+          path,
+          data: body,
+        );
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          break;
+        }
+      } catch (e) {
+        if (e is DioException && (e.response?.statusCode == 404 || e.response?.statusCode == 405)) {
+          continue;
+        }
+        rethrow;
+      }
+    }
+    final data = response?.data;
     if (data == null) throw Exception('Failed to create task');
-    return Task.fromJson(data);
+    final payload = data['data'] is Map ? data['data'] as Map<String, dynamic> : data;
+    return Task.fromJson(payload);
   }
 
   Future<List<Task>> getAllTasks() async {
