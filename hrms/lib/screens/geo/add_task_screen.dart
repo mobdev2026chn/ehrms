@@ -446,14 +446,13 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         taskTitle: _taskTitleController.text.trim(),
         description: _buildDescription(),
         assignedTo: widget.staffId,
-        customerId: _selectedCustomer?.id,
-        customerName: _selectedCustomer?.customerName ?? typedCustomer,
+        customerId: _selectedCustomer?.id ?? '',
         // Latest date is the hard deadline → keep it as expectedCompletionDate
         // so existing task views keep showing a due date.
         expectedCompletionDate: _latestCompletionDate!,
         earliestCompletionDate: _earliestCompletionDate!,
         latestCompletionDate: _latestCompletionDate!,
-        status: 'Requested',
+        status: 'assigned',
         sourceLocation: {
           'lat': pickup.latitude,
           'lng': pickup.longitude,
