@@ -1501,7 +1501,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               actions: [
                 if (!_isSelectionMode)
                   IconButton(
-                    icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.primary, size: 26),
+                    icon: Icon(Icons.add_circle_outline_rounded, color: AppColors.primary, size: 26),
                     tooltip: _mainTabController.index == 0 ? 'Add Task' : 'Add Customer',
                     onPressed: () {
                       if (_mainTabController.index == 0) {
