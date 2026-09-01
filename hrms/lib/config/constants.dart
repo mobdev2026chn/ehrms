@@ -93,38 +93,21 @@ class AppConstants {
   /// single-click enrollment. Runs alongside the same-domain face app engine
   /// ([enableCrossUserFaceCheck]). Requires the dlib deps on the 9001 host
   /// (face_verify/venv, or FACE_PYTHON_BIN) — see face_verify/setup_engine.sh.
-  static const bool enableAttendanceFaceMatching = true;
+  static const bool enableAttendanceFaceMatching = false;
 
   /// Master switch for the in-app selfie step on punch, break and custom
   /// permission. When false (current product decision), the app NEVER opens the
   /// selfie camera for these actions — punch/break/permission submit straight
   /// through WITHOUT a selfie (and without the scan-time face-match, which can
-  /// only run on a captured selfie). The backend treats the selfie as optional
-  /// for these flows, while web / face-kiosk entry points still capture & store
-  /// selfies. Set true to restore the in-app selfie + face-match step.
+  /// only run on a captured selfie).
   static const bool enableAttendanceSelfie = false;
 
-  /// Master switch for the in-app selfie step on attendance PUNCH (in & out)
-  /// only — independent of [enableAttendanceSelfie] (which now governs only
-  /// break / custom-permission). When true, whether a punch actually asks for a
-  /// selfie is driven entirely by the assigned attendance template's
-  /// `requireSelfie` flag (the "Require Selfie" toggle in Edit Attendance
-  /// Template): template on → selfie + scan-time face-match on every punch-in
-  /// and punch-out; template off → punch submits straight through WITHOUT a
-  /// selfie. Set false to hard-disable the punch selfie regardless of template.
-  static const bool enablePunchSelfie = true;
+  /// Master switch for the in-app selfie step on attendance PUNCH (in & out).
+  /// Set false to punch directly without selfie camera/validation like web app.
+  static const bool enablePunchSelfie = false;
 
-  /// Cross-user face check (anti buddy-punch): before a punch/break the app asks
-  /// the Face backend whether the captured face is the logged-in user and NOT a
-  /// different enrolled employee. EHRMS's own verify-face is 1-to-1 (self only);
-  /// this adds 1-to-many identity confirmation. Requires the Face backend running
-  /// Face validation via the FACE APP's engine, reached on the SAME DOMAIN
-  /// ([faceVerifyBaseUrl] → https://ehrms.askeva.net/face/api). ENABLED so EHRMS uses
-  /// the already-working face engine instead of running Python on the EHRMS API host.
-  /// It does 1-to-1 + 1-to-many against the face app's enrolled faces. Requires: the
-  /// /face reverse-proxy live on the EHRMS domain, and the employee enrolled in the
-  /// face app. Fail-open (never bricks attendance if the engine is unreachable).
-  static const bool enableCrossUserFaceCheck = true;
+  /// Cross-user face check (anti buddy-punch):
+  static const bool enableCrossUserFaceCheck = false;
 
   /// Face backend base — SAME DOMAIN as EHRMS. The face app's engine is reverse-
   /// proxied under /face on the EHRMS domain, so EHRMS reaches the (already working)
