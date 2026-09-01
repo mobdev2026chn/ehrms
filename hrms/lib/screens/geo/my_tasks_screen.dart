@@ -835,42 +835,39 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(child: _buildStatusFilterDropdown()),
-                if (_loggedInStaffId != null &&
-                    _loggedInStaffId!.isNotEmpty) ...[
-                  const SizedBox(width: 12),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              AddTaskScreen(staffId: _loggedInStaffId!),
-                        ),
-                      ).then((_) => _fetchTasks());
-                    },
-                    icon: const Icon(
-                      Icons.add_rounded,
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            AddTaskScreen(staffId: _loggedInStaffId ?? ''),
+                      ),
+                    ).then((_) => _fetchTasks());
+                  },
+                  icon: const Icon(
+                    Icons.add_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                  label: const Text(
+                    'New Task',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
                       color: Colors.white,
-                      size: 20,
-                    ),
-                    label: const Text(
-                      'New Task',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 0,
                     ),
                   ),
-                ],
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1502,6 +1499,29 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       ],
                     ),
               actions: [
+                if (!_isSelectionMode)
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.primary, size: 26),
+                    tooltip: _mainTabController.index == 0 ? 'Add Task' : 'Add Customer',
+                    onPressed: () {
+                      if (_mainTabController.index == 0) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                AddTaskScreen(staffId: _loggedInStaffId ?? ''),
+                          ),
+                        ).then((_) => _fetchTasks());
+                      } else {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AddCustomerScreen(),
+                          ),
+                        ).then((_) => _fetchCustomers());
+                      }
+                    },
+                  ),
                 if (!_isSelectionMode && _mainTabController.index == 0)
                   IconButton(
                     icon: Icon(
@@ -1513,39 +1533,6 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     tooltip: 'Filter tasks',
                     onPressed: _openTaskFilterBottomSheet,
                   ),
-                //if (_isSelectionMode || _mainTabController.index == 0)
-                  // IconButton(
-                  //   icon: _exporting
-                  //       ? const SizedBox(
-                  //           width: 20,
-                  //           height: 20,
-                  //           child: CircularProgressIndicator(strokeWidth: 2),
-                  //         )
-                  //       : Icon(
-                  //           _isSelectionMode
-                  //               ? Icons.file_download
-                  //               : Icons.download_outlined,
-                  //           color: _isSelectionMode
-                  //               ? colorScheme.primary
-                  //               : null,
-                  //         ),
-                  //   tooltip: _isSelectionMode
-                  //       ? 'Export selected tasks'
-                  //       : 'Select tasks to export',
-                  //   onPressed: _exporting
-                  //       ? null
-                  //       : () {
-                  //           if (_isSelectionMode) {
-                  //             _exportSelectedToExcel();
-                  //           } else {
-                  //             setState(() => _isSelectionMode = true);
-                  //             SnackBarUtils.showSnackBar(
-                  //               context,
-                  //               'Select tasks to export, then tap Export again.',
-                  //             );
-                  //           }
-                  //         },
-                  // ),
               ],
             ),
             body: TabBarView(
@@ -1554,8 +1541,6 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 // Tasks Tab
                 _isLoading
                     ? const Center(child: AppTabLoader())
-                    : _errorMessage != null
-                    ? Center(child: Text(_errorMessage!))
                     : RefreshIndicator(
                         onRefresh: _fetchTasks,
                         // Whole tab scrolls as one: the search row and stats
@@ -1570,7 +1555,37 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                               ),
                             if (!_isSelectionMode)
                               SliverToBoxAdapter(child: _buildTaskListHeader()),
-                            if (visibleTasks.isEmpty)
+                            if (_errorMessage != null)
+                              SliverFillRemaining(
+                                hasScrollBody: false,
+                                child: Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.info_outline_rounded,
+                                        size: 64,
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        _errorMessage!,
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      ElevatedButton.icon(
+                                        onPressed: _fetchTasks,
+                                        icon: const Icon(Icons.refresh),
+                                        label: const Text('Retry'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            else if (visibleTasks.isEmpty)
                               SliverFillRemaining(
                                 hasScrollBody: false,
                                 child: Center(
@@ -2128,31 +2143,48 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 ),
               ],
             ),
-            floatingActionButton: _mainTabController.index == 1
-                ? SizedBox(
-                    height: 40,
+            floatingActionButton: _isSelectionMode
+                ? null
+                : SizedBox(
+                    height: 44,
                     child: FloatingActionButton.extended(
                       foregroundColor: Colors.white,
+                      backgroundColor: _mainTabController.index == 0
+                          ? AppColors.primary
+                          : colorScheme.secondary,
                       onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const AddCustomerScreen(),
-                          ),
-                        ).then((_) => _fetchCustomers());
+                        if (_mainTabController.index == 0) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  AddTaskScreen(staffId: _loggedInStaffId ?? ''),
+                            ),
+                          ).then((_) => _fetchTasks());
+                        } else {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const AddCustomerScreen(),
+                            ),
+                          ).then((_) => _fetchCustomers());
+                        }
                       },
-                      label: const Text(
-                        'Add Customer',
-                        style: TextStyle(
+                      label: Text(
+                        _mainTabController.index == 0 ? 'Add Task' : 'Add Customer',
+                        style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      icon: const Icon(Icons.person_add, size: 18),
-                      backgroundColor: colorScheme.secondary,
+                      icon: Icon(
+                        _mainTabController.index == 0
+                            ? Icons.add_task_rounded
+                            : Icons.person_add,
+                        size: 18,
+                      ),
                     ),
-                  )
-                : null,
+                  ),
           );
         },
       ),

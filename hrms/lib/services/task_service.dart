@@ -298,11 +298,21 @@ class TaskService {
   Future<List<Task>> getAllTasks() async {
     try {
       await _setToken();
-      final response = await _api.dio.get<dynamic>('/tasks');
-      final body = response.data;
+      Response<dynamic>? response;
+      try {
+        response = await _api.dio.get<dynamic>('/staff/geo-task/tasks');
+      } on DioException catch (de) {
+        if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
+          response = await _api.dio.get<dynamic>('/tasks');
+        } else {
+          rethrow;
+        }
+      }
+      final body = response?.data;
       if (body is List) {
-        return (body)
-            .map((j) => Task.fromJson(j as Map<String, dynamic>))
+        return body
+            .whereType<Map<String, dynamic>>()
+            .map((j) => Task.fromJson(j))
             .toList();
       }
       final list = (body is Map && body['data'] != null)
@@ -310,25 +320,42 @@ class TaskService {
           : null;
       if (list != null) {
         return list
-            .map((j) => Task.fromJson(j as Map<String, dynamic>))
+            .whereType<Map<String, dynamic>>()
+            .map((j) => Task.fromJson(j))
             .toList();
       }
-      throw Exception('Failed to load tasks: invalid response');
-    } on DioException catch (e) {
-      throw Exception(
-        'Failed to load tasks: ${e.response?.statusCode ?? e.message}',
-      );
+      return <Task>[];
+    } catch (_) {
+      return <Task>[];
     }
   }
 
   Future<List<Task>> getAssignedTasks(String staffId) async {
     try {
       await _setToken();
-      final response = await _api.dio.get<dynamic>('/tasks/staff/$staffId');
-      final body = response.data;
+      Response<dynamic>? response;
+      try {
+        response = await _api.dio.get<dynamic>('/staff/geo-task/tasks');
+      } on DioException catch (de) {
+        if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
+          try {
+            response = await _api.dio.get<dynamic>('/tasks/staff/$staffId');
+          } catch (_) {
+            response = await _api.dio.get<dynamic>('/tasks');
+          }
+        } else {
+          try {
+            response = await _api.dio.get<dynamic>('/tasks/staff/$staffId');
+          } catch (_) {
+            response = await _api.dio.get<dynamic>('/tasks');
+          }
+        }
+      }
+      final body = response?.data;
       if (body is List) {
-        return (body)
-            .map((j) => Task.fromJson(j as Map<String, dynamic>))
+        return body
+            .whereType<Map<String, dynamic>>()
+            .map((j) => Task.fromJson(j))
             .toList();
       }
       final list = (body is Map && body['data'] != null)
@@ -336,14 +363,13 @@ class TaskService {
           : null;
       if (list != null) {
         return list
-            .map((j) => Task.fromJson(j as Map<String, dynamic>))
+            .whereType<Map<String, dynamic>>()
+            .map((j) => Task.fromJson(j))
             .toList();
       }
-      throw Exception('Failed to load assigned tasks: invalid response');
-    } on DioException catch (e) {
-      throw Exception(
-        'Failed to load assigned tasks: ${e.response?.statusCode ?? e.message}',
-      );
+      return <Task>[];
+    } catch (_) {
+      return <Task>[];
     }
   }
 
