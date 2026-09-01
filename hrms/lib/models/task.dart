@@ -225,6 +225,8 @@ enum TaskStatus {
   cancelled,
   reopened,
   hold,
+  requested,
+  expired,
 }
 
 class Task {
@@ -620,6 +622,12 @@ class Task {
         return TaskStatus.reopened;
       case 'hold':
         return TaskStatus.hold;
+      case 'requested':
+      case 'requestedtasks':
+        return TaskStatus.requested;
+      case 'expired':
+      case 'expiredtasks':
+        return TaskStatus.expired;
       default:
         return TaskStatus.onlineReady;
     }

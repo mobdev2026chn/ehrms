@@ -1414,6 +1414,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         return Colors.red.shade600;
       case TaskStatus.reopened:
         return Colors.teal.shade600;
+      case TaskStatus.requested:
+        return Colors.purple.shade600;
+      case TaskStatus.expired:
+        return Colors.red.shade700;
       case TaskStatus.cancelled:
         return Colors.grey.shade600;
       case TaskStatus.onlineReady:
@@ -1458,6 +1462,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         return 'Cancelled';
       case TaskStatus.reopened:
         return 'Reopened';
+      case TaskStatus.requested:
+        return 'Requested';
+      case TaskStatus.expired:
+        return 'Expired';
       case TaskStatus.onlineReady:
         return 'Ready';
       default:
