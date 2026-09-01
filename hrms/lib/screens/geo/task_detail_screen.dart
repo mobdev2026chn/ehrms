@@ -2240,17 +2240,45 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   Future<void> _onStartRide() async {
     if (task.id == null || _actionLoading) return;
-    final pickup = _pickupLatLng;
-    final dropoff = _dropoffLatLng;
-    if (pickup == null || dropoff == null) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Source and destination are required. Enable GPS and ensure destination is set.',
-        isError: true,
-      );
-      return;
-    }
     setState(() => _actionLoading = true);
+
+    LatLng? pickup = _pickupLatLng;
+    if (pickup == null) {
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+          timeLimit: const Duration(seconds: 5),
+        );
+        pickup = LatLng(pos.latitude, pos.longitude);
+        _currentPosition = pos;
+      } catch (_) {
+        final last = await Geolocator.getLastKnownPosition();
+        if (last != null) {
+          pickup = LatLng(last.latitude, last.longitude);
+          _currentPosition = last;
+        }
+      }
+    }
+
+    LatLng? dropoff = _dropoffLatLng;
+    if (dropoff == null) {
+      final cust = _customer ?? task.customer;
+      final addr = cust?.address ?? task.destinationLocation?.address ?? cust?.city ?? '';
+      if (addr.isNotEmpty) {
+        try {
+          final locs = await locationFromAddress(addr);
+          if (locs.isNotEmpty) {
+            dropoff = LatLng(locs.first.latitude, locs.first.longitude);
+            _destinationLatLng = dropoff;
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Ultimate fallback: if geocoding fails, use current position or fallback coords so staff can always start
+    dropoff ??= pickup ?? const LatLng(13.0827, 80.2707);
+    pickup ??= dropoff;
+
     try {
       final startLat = _currentPosition?.latitude ?? pickup.latitude;
       final startLng = _currentPosition?.longitude ?? pickup.longitude;
@@ -2310,7 +2338,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               builder: (context) => LiveTrackingScreen(
                 taskId: updated.taskId,
                 taskMongoId: updated.id,
-                pickupLocation: pickup,
+                pickupLocation: pickup!,
                 dropoffLocation: dropoff,
                 task: updated,
               ),
@@ -2332,17 +2360,29 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   Future<void> _onResumeRide() async {
     if (task.id == null || _actionLoading) return;
-    final pickup = _pickupLatLng;
-    final dropoff = _dropoffLatLng;
-    if (pickup == null || dropoff == null) {
-      SnackBarUtils.showSnackBar(
-        context,
-        'Source and destination are required. Enable GPS and ensure destination is set.',
-        isError: true,
-      );
-      return;
-    }
     setState(() => _actionLoading = true);
+
+    LatLng? pickup = _pickupLatLng;
+    if (pickup == null) {
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+          timeLimit: const Duration(seconds: 5),
+        );
+        pickup = LatLng(pos.latitude, pos.longitude);
+        _currentPosition = pos;
+      } catch (_) {
+        final last = await Geolocator.getLastKnownPosition();
+        if (last != null) {
+          pickup = LatLng(last.latitude, last.longitude);
+          _currentPosition = last;
+        }
+      }
+    }
+
+    LatLng? dropoff = _dropoffLatLng ?? pickup ?? const LatLng(13.0827, 80.2707);
+    pickup ??= dropoff;
+
     try {
       // Refresh task to get latest state; do NOT update status or startTime.
       final refreshed = await TaskService().getTaskById(task.id!);
@@ -2354,7 +2394,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             builder: (context) => LiveTrackingScreen(
               taskId: refreshed.taskId,
               taskMongoId: refreshed.id,
-              pickupLocation: pickup,
+              pickupLocation: pickup!,
               dropoffLocation: dropoff,
               task: refreshed,
             ),
