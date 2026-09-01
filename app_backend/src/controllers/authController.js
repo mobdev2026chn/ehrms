@@ -1882,9 +1882,20 @@ const checkActive = async (req, res) => {
  */
 const enrollFace = async (req, res) => {
     try {
-        const staff = req.staff;
+        let staff = req.staff;
         if (!staff || !staff._id) {
-            return res.status(400).json({ success: false, message: 'No staff profile to enroll.' });
+            if (req.user?._id) {
+                staff = await Staff.findOne({ userId: req.user._id });
+                if (!staff && req.user.email) {
+                    staff = await Staff.findOne({ email: req.user.email.toLowerCase() });
+                }
+            }
+        }
+        if (!staff || !staff._id) {
+            // If still no staff, but user exists, allow user enrollment
+            if (!req.user?._id) {
+                return res.status(400).json({ success: false, message: 'No user/staff profile to enroll.' });
+            }
         }
         const body = req.body || {};
         const list = Array.isArray(body.selfies) ? body.selfies : (body.selfie ? [body.selfie] : []);
@@ -1975,19 +1986,21 @@ const enrollFace = async (req, res) => {
             console.warn('[enrollFace] avatar upload failed (keeping enrollment):', e?.message);
         }
 
-        const staffUpdate = {
+        const updateData = {
             faceEnrollEmbeddings: embeddings,
             faceEnrolledAt: new Date(),
         };
         if (photoUrl) {
-            staffUpdate.avatar = photoUrl;
-            staffUpdate.faceEnrollImage = photoUrl;
+            updateData.avatar = photoUrl;
+            updateData.faceEnrollImage = photoUrl;
         }
-        await Staff.findByIdAndUpdate(staff._id, staffUpdate);
-        if (photoUrl && req.user?._id) {
-            await User.findByIdAndUpdate(req.user._id, { avatar: photoUrl });
+        if (staff?._id) {
+            await Staff.findByIdAndUpdate(staff._id, updateData);
         }
-        console.log(`[enrollFace] staff=${staff._id} enrolled samples=${embeddings.length} avatar=${photoUrl ? 'updated' : 'unchanged'}`);
+        if (req.user?._id) {
+            await User.findByIdAndUpdate(req.user._id, updateData);
+        }
+        console.log(`[enrollFace] staff=${staff?._id || 'none'} user=${req.user?._id || 'none'} enrolled samples=${embeddings.length} avatar=${photoUrl ? 'updated' : 'unchanged'}`);
         return res.status(200).json({
             success: true,
             samples: embeddings.length,
@@ -2007,11 +2020,28 @@ const enrollFace = async (req, res) => {
  */
 const getFaceEnrollStatus = async (req, res) => {
     try {
-        const staff = req.staff;
-        if (!staff || !staff._id) return res.json({ success: true, enrolled: false, samples: 0 });
-        const s = await Staff.findById(staff._id).select('faceEnrollEmbeddings faceEnrolledAt').lean();
-        const samples = Array.isArray(s?.faceEnrollEmbeddings) ? s.faceEnrollEmbeddings.length : 0;
-        return res.json({ success: true, enrolled: samples > 0, samples, enrolledAt: s?.faceEnrolledAt || null });
+        let staff = req.staff;
+        if (!staff || !staff._id) {
+            if (req.user?._id) {
+                staff = await Staff.findOne({ userId: req.user._id }).lean();
+                if (!staff && req.user.email) {
+                    staff = await Staff.findOne({ email: req.user.email.toLowerCase() }).lean();
+                }
+            }
+        }
+        let samples = 0;
+        let enrolledAt = null;
+        if (staff?._id) {
+            const s = await Staff.findById(staff._id).select('faceEnrollEmbeddings faceEnrolledAt').lean();
+            samples = Array.isArray(s?.faceEnrollEmbeddings) ? s.faceEnrollEmbeddings.length : 0;
+            enrolledAt = s?.faceEnrolledAt || null;
+        }
+        if (samples === 0 && req.user?._id) {
+            const u = await User.findById(req.user._id).select('faceEnrollEmbeddings faceEnrolledAt').lean();
+            samples = Array.isArray(u?.faceEnrollEmbeddings) ? u.faceEnrollEmbeddings.length : 0;
+            enrolledAt = u?.faceEnrolledAt || null;
+        }
+        return res.json({ success: true, enrolled: samples > 0, samples, enrolledAt });
     } catch (error) {
         console.error('[authController] getFaceEnrollStatus:', error.message);
         return res.status(500).json({ success: false, enrolled: false });

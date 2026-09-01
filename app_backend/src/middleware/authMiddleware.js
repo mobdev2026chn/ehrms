@@ -39,13 +39,25 @@ const protect = async (req, res, next) => {
             if (user) {
                 // Found User, now try to find associated Staff
                 staff = await Staff.findOne({ userId: user._id });
-                // If staff not found? Create temporary structure or allow just user? 
-                // Creating a mock staff object or just proceeding with user is safer for now.
+                if (!staff && user.email) {
+                    staff = await Staff.findOne({ email: user.email.toLowerCase() });
+                    if (staff && !staff.userId) {
+                        try {
+                            staff.userId = user._id;
+                            await staff.save();
+                        } catch (_) {}
+                    }
+                }
             } else {
                 // Fallback: Token might contain Staff ID (Legacy App Logic)
                 staff = await Staff.findById(decoded.id).select('-password');
                 if (staff) {
-                    user = await User.findById(staff.userId).select('-password');
+                    if (staff.userId) {
+                        user = await User.findById(staff.userId).select('-password');
+                    }
+                    if (!user && staff.email) {
+                        user = await User.findOne({ email: staff.email.toLowerCase() }).select('-password');
+                    }
                 }
             }
 

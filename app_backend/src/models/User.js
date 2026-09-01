@@ -25,6 +25,9 @@ const userSchema = new mongoose.Schema({
     faceFirstImage: { type: String },
     faceFirstImageAt: { type: Date },
     faceReferenceImage: { type: String },
+    faceEnrollEmbeddings: { type: [[Number]], default: [] },
+    faceEnrollImage: { type: String },
+    faceEnrolledAt: { type: Date },
     officeLocation: {
         latitude: Number,
         longitude: Number,
