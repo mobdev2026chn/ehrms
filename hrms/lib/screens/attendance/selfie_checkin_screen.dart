@@ -24,6 +24,7 @@ import '../../utils/request_guard.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/error_message_utils.dart';
+import '../../services/face_identity_guard.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/attendance_success_overlay.dart';
@@ -561,19 +562,35 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
   /// on the camera right after scanning), or null to accept. Wired via
   /// SelfieCameraScreen.onCaptured, so the check no longer waits for submit.
   Future<String?> _verifyCheckinFace(File file) async {
-    if (!AppConstants.enableAttendanceFaceMatching) return null;
     final bytes = await file.readAsBytes();
     final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
-    if (selfie.isEmpty) return null;
-    try {
-      final verify = await _authService.verifyFace(selfie);
-      if (verify['success'] != true || verify['match'] != true) {
+    if (selfie.isEmpty) return 'Could not process selfie. Please try again.';
+
+    final verifyFuture = AppConstants.enableAttendanceFaceMatching
+        ? _authService.verifyFace(selfie)
+        : Future.value(<String, dynamic>{'success': true, 'match': true});
+    final identityFuture = FaceIdentityGuard.verify(selfie);
+
+    final results = await Future.wait([
+      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
+    ]);
+
+    final verify = results[0] as Map<String, dynamic>;
+    if (AppConstants.enableAttendanceFaceMatching) {
+      if (verify['match'] != true) {
+        final msg = verify['message']?.toString();
         return ErrorMessageUtils.sanitizeForDisplay(
-          verify['message']?.toString() ?? 'Face not matching. Please try again.',
+          (msg != null && msg.isNotEmpty && !msg.toLowerCase().contains('matched'))
+              ? msg
+              : 'Face does not match your registered profile. You are not the registered person for this account.',
         );
       }
-    } catch (_) {
-      return 'Face verification failed. Please try again.';
+    }
+    final verdict = results[1] as FaceIdentityVerdict;
+    if (!verdict.allow) {
+      return verdict.message ??
+          'Face does not match this account. You are not the registered person for this account.';
     }
     return null;
   }

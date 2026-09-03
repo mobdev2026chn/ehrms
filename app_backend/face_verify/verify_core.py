@@ -315,8 +315,9 @@ def embed_live(img):
         img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    # 1. Exactly one face.
+    # 1. Exactly one face on direct live orientation (no redundant rotation retries on live frames)
     locs = face_recognition.face_locations(rgb)
+
     if len(locs) == 0:
         return None, "No face detected in feed. Please align your face inside the guide."
     if len(locs) > 1:

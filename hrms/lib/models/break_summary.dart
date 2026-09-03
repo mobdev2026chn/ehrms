@@ -1,8 +1,12 @@
-/// A single break taken today, as returned by GET /api/breaks/today.
+import 'package:intl/intl.dart';
+
+/// A single break taken today, as returned by GET /api/breaks/today or /staff/attendance/break-status.
 class BreakEntry {
   final String? id;
   final DateTime? startTime;
   final DateTime? endTime;
+  final String? rawStartTime;
+  final String? rawEndTime;
   final bool ongoing;
   final int durationSeconds;
   final int durationMin;
@@ -11,6 +15,8 @@ class BreakEntry {
     this.id,
     this.startTime,
     this.endTime,
+    this.rawStartTime,
+    this.rawEndTime,
     this.ongoing = false,
     this.durationSeconds = 0,
     this.durationMin = 0,
@@ -18,10 +24,29 @@ class BreakEntry {
 
   static DateTime? _parseTime(dynamic value) {
     if (value == null) return null;
+    if (value is DateTime) return value.isUtc ? value.toLocal() : value;
     final s = value.toString().trim();
-    if (s.isEmpty) return null;
+    if (s.isEmpty || s == 'null') return null;
     final dt = DateTime.tryParse(s);
-    return dt?.toLocal();
+    if (dt != null) return dt.toLocal();
+
+    // Try parsing 12-hour or 24-hour time strings e.g. "11:57 AM", "11:57:00"
+    final now = DateTime.now();
+    for (final pattern in [
+      'hh:mm a',
+      'h:mm a',
+      'hh:mma',
+      'h:mma',
+      'HH:mm:ss',
+      'HH:mm',
+      'H:mm',
+    ]) {
+      try {
+        final d = DateFormat(pattern).parseLoose(s);
+        return DateTime(now.year, now.month, now.day, d.hour, d.minute, d.second);
+      } catch (_) {}
+    }
+    return null;
   }
 
   static int _asInt(dynamic value) {
@@ -30,13 +55,40 @@ class BreakEntry {
   }
 
   factory BreakEntry.fromJson(Map<String, dynamic> json) {
+    final rawS = (json['startTime'] ??
+            json['startAt'] ??
+            json['start_time'] ??
+            json['start'] ??
+            json['from'])
+        ?.toString();
+    final rawE = (json['endTime'] ??
+            json['endAt'] ??
+            json['end_time'] ??
+            json['end'] ??
+            json['to'])
+        ?.toString();
+    final parsedStart = _parseTime(rawS);
+    final parsedEnd = _parseTime(rawE);
+    final isOngoing = json['ongoing'] == true ||
+        (parsedStart != null &&
+            (rawE == null ||
+                rawE.isEmpty ||
+                rawE == 'null'));
+    final dMin = _asInt(json['durationMin'] ??
+        json['durationMinutes'] ??
+        json['breakMin'] ??
+        json['duration']);
+    final dSec = _asInt(json['durationSeconds'] ??
+        json['totalSeconds']);
     return BreakEntry(
-      id: json['id']?.toString(),
-      startTime: _parseTime(json['startTime']),
-      endTime: _parseTime(json['endTime']),
-      ongoing: json['ongoing'] == true,
-      durationSeconds: _asInt(json['durationSeconds']),
-      durationMin: _asInt(json['durationMin']),
+      id: (json['id'] ?? json['_id'] ?? json['breakId'])?.toString(),
+      startTime: parsedStart,
+      endTime: parsedEnd,
+      rawStartTime: rawS,
+      rawEndTime: rawE,
+      ongoing: isOngoing,
+      durationSeconds: dSec != 0 ? dSec : (dMin * 60),
+      durationMin: dMin != 0 ? dMin : (dSec > 0 ? (dSec / 60).round() : 0),
     );
   }
 }
@@ -126,13 +178,24 @@ class BreakSummary {
   }
 
   factory BreakSummary.fromJson(Map<String, dynamic> json) {
-    final rawBreaks = json['breaks'];
+    final rawBreaks = json['breaks'] ?? json['sessions'];
     final list = <BreakEntry>[];
     if (rawBreaks is List) {
       for (final item in rawBreaks) {
         if (item is Map) {
           list.add(BreakEntry.fromJson(Map<String, dynamic>.from(item)));
         }
+      }
+    }
+    if (json['activeBreak'] is Map) {
+      final ab = json['activeBreak'] as Map;
+      final st = BreakEntry._parseTime(ab['startTime'] ?? ab['startAt']);
+      if (st != null && !list.any((b) => b.ongoing)) {
+        list.add(BreakEntry(
+          id: (ab['id'] ?? ab['_id'] ?? ab['breakId'])?.toString(),
+          startTime: st,
+          ongoing: true,
+        ));
       }
     }
     // Defensive: keep ascending by startTime even if the server order changes.
@@ -144,30 +207,36 @@ class BreakSummary {
       if (bt == null) return 1;
       return at.compareTo(bt);
     });
-    final remainingRaw = json['remainingMin'];
+    final remainingRaw = json['remainingMin'] ?? json['remainingMinutes'];
     final remainingSecRaw = json['remainingSeconds'];
     final allowedSecRaw = json['allowedSeconds'];
+    final usedMin = _asInt(json['totalBreakMin'] ?? json['usedMinutes'] ?? json['totalBreakMinutes']);
+    final totalSeconds = _asInt(json['totalBreakSeconds']) != 0
+        ? _asInt(json['totalBreakSeconds'])
+        : (usedMin * 60);
     return BreakSummary(
       breaks: list,
-      totalBreakSeconds: _asInt(json['totalBreakSeconds']),
-      totalBreakMin: _asInt(json['totalBreakMin']),
-      totalBreakCount: _asInt(json['totalBreakCount']),
-      policyEnabled: json['policyEnabled'] == true,
+      totalBreakSeconds: totalSeconds,
+      totalBreakMin: usedMin,
+      totalBreakCount: _asInt(json['totalBreakCount']) != 0 ? _asInt(json['totalBreakCount']) : list.length,
+      policyEnabled: json['policyEnabled'] == true || json['breakTemplateAssigned'] == true,
       policyDisabled: json['policyDisabled'] == true,
       // Default to configured=true when the backend omits the flag (older builds)
       // so the break flow is never blocked on a missing field.
       policyConfigured: json.containsKey('policyConfigured')
           ? json['policyConfigured'] == true
           : true,
-      isUnlimited: json['isUnlimited'] == true,
+      isUnlimited: json['isUnlimited'] == true || (_asInt(json['allowedMinutes']) == 0 && json['breakTemplateAssigned'] != true),
       allowedMinutes: _asInt(json['allowedMinutes']),
       allowedSeconds: allowedSecRaw == null ? null : _asInt(allowedSecRaw),
       remainingMin: remainingRaw == null ? null : _asInt(remainingRaw),
       remainingSeconds: remainingSecRaw == null
-          ? null
+          ? (remainingRaw != null ? _asInt(remainingRaw) * 60 : null)
           : _asInt(remainingSecRaw),
-      hasActiveBreak: json['hasActiveBreak'] == true,
-      configuredAllowedMinutes: _asInt(json['configuredAllowedMinutes']),
+      hasActiveBreak: json['hasActiveBreak'] == true ||
+          json['isOnBreak'] == true ||
+          list.any((b) => b.ongoing),
+      configuredAllowedMinutes: _asInt(json['configuredAllowedMinutes'] ?? json['allowedMinutes']),
       policyIsDisabledWithQuota: json['policyIsDisabledWithQuota'] == true,
       breakNotice: (json['breakNotice'] is String &&
               (json['breakNotice'] as String).trim().isNotEmpty)

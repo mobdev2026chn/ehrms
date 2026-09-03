@@ -150,7 +150,9 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
       widget.isBreakActive;
 
   DateTime? get _effectiveBreakStartTime {
-    if (widget.activeBreakStartTime != null) return widget.activeBreakStartTime;
+    if (_useExternalBreakState && widget.activeBreakStartTime != null) {
+      return widget.activeBreakStartTime;
+    }
     if (_fetchedBreakStartTime != null) return _fetchedBreakStartTime;
     if (widget.isBreakActive) return DateTime.now();
     return null;
@@ -166,7 +168,12 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
     if (!mounted) return;
     final data = result['data'];
     final parsed = data is Map
-        ? breakDisplayStartFromApi(data['startTime'])
+        ? breakDisplayStartFromApi(
+            data['startTime'] ??
+            data['startAt'] ??
+            data['breakStartDateTime'] ??
+            data['createdAt'],
+          )
         : null;
     setState(() {
       _fetchedBreakStartTime = parsed;
@@ -433,7 +440,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (isPunchedInForBreak && _effectiveBreakStartTime != null)
+        if (_effectiveBreakActive && _effectiveBreakStartTime != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
             child: BreakStatusCard(

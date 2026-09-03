@@ -57,28 +57,49 @@ class FaceIdentityGuard {
         token = token.replaceAll('"', '');
       }
 
-      // OLD: face app's separate enrollment store —
-      // '${AppConstants.faceVerifyBaseUrl}/attendance/verify-identity'.
-      // NOW: EHRMS's canonical Staff.faceEnrollEmbeddings (same store as 1-to-1).
-      final uri = Uri.parse(
-        '${AppConstants.baseUrl}/attendance/verify-identity',
-      );
-      final res = await http
-          .post(
-            uri,
-            headers: {
-              'Content-Type': 'application/json',
-              if (token != null && token.isNotEmpty)
-                'Authorization': 'Bearer $token',
-            },
-            body: jsonEncode({
-              'image_base64': selfieDataUrl,
-              'claimed_email': email,
-              'claimed_employee_id': empId,
-              'claimed_user_id': uid,
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
+      http.Response res;
+      final headers = {
+        'Content-Type': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+      final bodyPayload = jsonEncode({
+        'image_base64': selfieDataUrl,
+        'claimed_email': email,
+        'claimed_employee_id': empId,
+        'claimed_user_id': uid,
+      });
+
+      // 1. Primary: dedicated biometric kiosk engine (eface)
+      try {
+        res = await http
+            .post(
+              Uri.parse('${AppConstants.faceVerifyBaseUrl}/attendance/verify-identity'),
+              headers: headers,
+              body: bodyPayload,
+            )
+            .timeout(const Duration(milliseconds: 2500));
+        if (res.statusCode == 404) {
+          res = await http
+              .post(
+                Uri.parse('${AppConstants.baseUrl}/attendance/verify-identity'),
+                headers: headers,
+                body: bodyPayload,
+              )
+              .timeout(const Duration(milliseconds: 2500));
+        }
+      } catch (_) {
+        try {
+          res = await http
+              .post(
+                Uri.parse('${AppConstants.baseUrl}/attendance/verify-identity'),
+                headers: headers,
+                body: bodyPayload,
+              )
+              .timeout(const Duration(milliseconds: 2500));
+        } catch (_) {
+          return const FaceIdentityVerdict(true);
+        }
+      }
 
       if (res.statusCode != 200) return const FaceIdentityVerdict(true);
       final j = jsonDecode(res.body) as Map<String, dynamic>;
@@ -90,20 +111,38 @@ class FaceIdentityGuard {
         return FaceIdentityVerdict(
           false,
           who.isNotEmpty
-              ? 'This face matches $who — not your account. Punch denied.'
-              : 'This face matches another employee — not your account. Punch denied.',
+              ? 'Face mismatch: This face matches $who — not your account. You are not the registered person for this account.'
+              : 'Face mismatch: This face matches another employee. You are not the registered person for this account.',
         );
       }
       if (reason == 'not_recognized') {
         return const FaceIdentityVerdict(
           false,
-          'Face does not match your enrolled profile. Please try again.',
+          'Face mismatch: Face does not match the registered profile. You are not the registered person for this account.',
         );
       }
-      // claimer_not_enrolled / no_face / error / anything else → can't verify
-      // cross-user → allow (EHRMS 1-to-1 verify-face still gates the punch).
-      if (kDebugMode) {
-        debugPrint('[FaceIdentityGuard] inconclusive ($reason) → allow');
+      if (reason == 'claimer_not_enrolled') {
+        // Auto-enroll this employee so future punches are strictly protected against impersonation
+        try {
+          final enrollId = empId.isNotEmpty ? empId : (email.isNotEmpty ? email : uid);
+          if (enrollId.isNotEmpty) {
+            await http.post(
+              Uri.parse('${AppConstants.faceVerifyBaseUrl}/employees/enroll-face-mobile'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'employee_id': enrollId,
+                'image_base64': selfieDataUrl,
+              }),
+            );
+          }
+        } catch (_) {}
+        return const FaceIdentityVerdict(true);
+      }
+      if (reason == 'no_face') {
+        return const FaceIdentityVerdict(
+          false,
+          'No face detected. Please ensure your face is clearly visible inside the guide.',
+        );
       }
       return const FaceIdentityVerdict(true);
     } catch (e) {

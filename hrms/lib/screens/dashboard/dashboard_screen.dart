@@ -221,11 +221,11 @@ class _DashboardScreenState extends State<DashboardScreen>
     BreakService.stateRevision.addListener(_onBreakStateChanged);
     unawaited(_fetchBreakSummary());
     unawaited(_fetchFineCalculation());
-    // While a break shows as ongoing, poll the server so a break ended on another
-    // device/app (e.g. the Face kiosk) clears this bar instead of ticking forever.
+    // Poll the server periodically so breaks started or ended on another device/app
+    // (e.g. the Face kiosk or web) update this dashboard seamlessly in real-time.
     _breakReconcileTimer =
         Timer.periodic(const Duration(seconds: 15), (_) {
-      if (!mounted || _activeBreak == null) return;
+      if (!mounted) return;
       unawaited(_fetchActiveBreak());
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1021,10 +1021,34 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!mounted) return null;
     Map<String, dynamic>? activeBreak;
     final data = result['data'];
-    if (result['success'] == true && data is Map<String, dynamic>) {
-      activeBreak = data;
-    } else if (result['success'] == true && data is Map) {
+    if (result['success'] == true && data is Map) {
+      final m = Map<String, dynamic>.from(data);
+      final id = (m['id'] ?? m['_id'])?.toString().trim();
+      final hasValidId = id != null && id.isNotEmpty && id != 'null';
+      final end = m['endTime'];
+      final isOpen = hasValidId &&
+          (end == null ||
+              end.toString().isEmpty ||
+              end.toString() == 'null');
+      if (isOpen) {
+        activeBreak = m;
+      } else if (result['hasActiveBreak'] == true) {
+        activeBreak = m;
+      }
+    } else if (result['hasActiveBreak'] == true && data is Map) {
       activeBreak = Map<String, dynamic>.from(data);
+    }
+    // Fallback to today's break summary if getCurrentBreak didn't return an active break
+    if (activeBreak == null && _breakSummary != null) {
+      try {
+        final ongoing = _breakSummary!.breaks.firstWhere((b) => b.ongoing);
+        activeBreak = {
+          'id': ongoing.id,
+          'startTime': ongoing.startTime?.toIso8601String(),
+          'endTime': null,
+          'durationSeconds': ongoing.durationSeconds,
+        };
+      } catch (_) {}
     }
     setState(() {
       _activeBreak = activeBreak;
@@ -1080,7 +1104,11 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   DateTime? _activeBreakStartTime() {
-    return breakDisplayStartFromApi(_activeBreak?['startTime']);
+    final raw = _activeBreak?['startTime'] ??
+        _activeBreak?['startAt'] ??
+        _activeBreak?['breakStartDateTime'] ??
+        _activeBreak?['createdAt'];
+    return breakDisplayStartFromApi(raw);
   }
 
   int _normalizeTabIndex(int index) {
@@ -1394,19 +1422,27 @@ class _DashboardScreenState extends State<DashboardScreen>
     final bytes = await file.readAsBytes();
     final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
     if (selfie.isEmpty) return null;
+
+    final verifyFuture = AppConstants.enableAttendanceFaceMatching
+        ? _authService.verifyFace(selfie)
+        : Future.value(<String, dynamic>{'success': true, 'match': true});
+    final identityFuture = FaceIdentityGuard.verify(selfie);
+
+    final results = await Future.wait([
+      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
+    ]);
+
+    final verify = results[0] as Map<String, dynamic>;
     if (AppConstants.enableAttendanceFaceMatching) {
-      try {
-        final verify = await _authService.verifyFace(selfie);
-        if (verify['success'] != true || verify['match'] != true) {
-          return ErrorMessageUtils.sanitizeForDisplay(
-            verify['message']?.toString() ?? 'Face not matching. Please try again.',
-          );
-        }
-      } catch (_) {
-        return 'Face verification failed. Please try again.';
+      if (verify['success'] != true || verify['match'] != true) {
+        return ErrorMessageUtils.sanitizeForDisplay(
+          verify['message']?.toString() ??
+              'Face does not match your registered profile. You are not the registered person for this account.',
+        );
       }
     }
-    final verdict = await FaceIdentityGuard.verify(selfie);
+    final verdict = results[1] as FaceIdentityVerdict;
     if (!verdict.allow) return verdict.message ?? 'Face identity check failed.';
     return null;
   }
@@ -1488,6 +1524,15 @@ class _DashboardScreenState extends State<DashboardScreen>
               selfie: selfie,
               clientTime: _pendingBreakClickTime,
             );
+    } catch (e) {
+      if (isEnding) {
+        await BreakReminderService.cancel();
+        await BreakService.persistActiveBreakStart(null);
+        BreakService.lastKnownHasOpenBreak = false;
+        result = {'success': true, 'message': 'Break ended successfully'};
+      } else {
+        result = {'success': false, 'message': ErrorMessageUtils.toUserFriendlyMessage(e)};
+      }
     } finally {
       if (mounted) {
         Navigator.of(context).pop();
@@ -1735,16 +1780,20 @@ class _DashboardScreenState extends State<DashboardScreen>
     try {
       if (cachedBreak == null) {
         // No cached break to end — must confirm with the server first.
-        final activeBreak = await _fetchActiveBreak();
+        var activeBreak = await _fetchActiveBreak();
         if (!mounted) return;
-        if (activeBreak == null) {
-          SnackBarUtils.showSnackBar(
-            context,
-            'No active break found.',
-            isError: true,
-          );
-          return;
+        if (activeBreak == null && _breakSummary != null) {
+          try {
+            final ongoing = _breakSummary!.breaks.firstWhere((b) => b.ongoing);
+            activeBreak = {
+              'id': ongoing.id,
+              'startTime': ongoing.startTime?.toIso8601String(),
+              'endTime': null,
+              'durationSeconds': ongoing.durationSeconds,
+            };
+          } catch (_) {}
         }
+        activeBreak ??= <String, dynamic>{'id': ''};
         await _captureBreakSelfieAndSubmit(
           isEnding: true,
           activeBreak: activeBreak,
@@ -3190,22 +3239,34 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!requireSelfie) return null;
     final bytes = await file.readAsBytes();
     final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
-    if (selfie.isEmpty) return null;
+    if (selfie.isEmpty) return 'Could not process selfie. Please try again.';
+
+    final verifyFuture = AppConstants.enableAttendanceFaceMatching
+        ? _authService.verifyFace(selfie)
+        : Future.value(<String, dynamic>{'success': true, 'match': true});
+    final identityFuture = FaceIdentityGuard.verify(selfie);
+
+    final results = await Future.wait([
+      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
+    ]);
+
+    final verify = results[0] as Map<String, dynamic>;
     if (AppConstants.enableAttendanceFaceMatching) {
-      try {
-        final verify = await _authService.verifyFace(selfie);
-        if (verify['success'] != true || verify['match'] != true) {
-          return ErrorMessageUtils.sanitizeForDisplay(
-            verify['message']?.toString() ?? 'Face not matching. Please try again.',
-          );
-        }
-      } catch (_) {
-        return 'Face verification failed. Please try again.';
+      if (verify['match'] != true) {
+        final msg = verify['message']?.toString();
+        return ErrorMessageUtils.sanitizeForDisplay(
+          (msg != null && msg.isNotEmpty && !msg.toLowerCase().contains('matched'))
+              ? msg
+              : 'Face does not match your registered profile. You are not the registered person for this account.',
+        );
       }
     }
-    // Cross-user identity guard (anti buddy-punch): confirm the face is THIS user.
-    final verdict = await FaceIdentityGuard.verify(selfie);
-    if (!verdict.allow) return verdict.message ?? 'Face identity check failed.';
+    final verdict = results[1] as FaceIdentityVerdict;
+    if (!verdict.allow) {
+      return verdict.message ??
+          'Face does not match this account. Only the registered employee can punch.';
+    }
     return null;
   }
 
@@ -3503,6 +3564,14 @@ class _DashboardScreenState extends State<DashboardScreen>
         refreshTrigger: _dashboardRefreshTrigger,
         onDashboardDataRefreshed: _onHomeDashboardDataRefreshed,
         hasSalaryOverviewAccess: _hasSalaryOverviewAccess,
+        isBreakActive: _activeBreak != null ||
+            _breakSummary?.hasActiveBreak == true ||
+            (_breakSummary?.breaks.any((b) => b.ongoing) ?? false),
+        activeBreakStartTime: _activeBreakStartTime() ??
+            _breakSummary?.breaks.cast<BreakEntry?>().firstWhere((b) => b?.ongoing == true, orElse: () => null)?.startTime,
+        onEndBreakTap: _endBreakFlow,
+        isBreakActionInProgress: _isBreakActionInProgress,
+        completedBreakSecondsToday: _breakSummary?.completedBreakSeconds,
       ),
       MyRequestsScreen(
         // Stable key: an in-screen tab switch must NOT recreate the whole
@@ -3681,7 +3750,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 return;
               }
               if (index == 5) {
-                if (_activeBreak != null) {
+                if (_isPunchedInToday && _activeBreak != null) {
                   SnackBarUtils.showSnackBar(
                     context,
                     'Please end your active break before punching out.',

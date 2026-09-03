@@ -2000,6 +2000,7 @@ const enrollFace = async (req, res) => {
         if (req.user?._id) {
             await User.findByIdAndUpdate(req.user._id, updateData);
         }
+        invalidateEnrollCache();
         console.log(`[enrollFace] staff=${staff?._id || 'none'} user=${req.user?._id || 'none'} enrolled samples=${embeddings.length} avatar=${photoUrl ? 'updated' : 'unchanged'}`);
         return res.status(200).json({
             success: true,
@@ -2048,6 +2049,27 @@ const getFaceEnrollStatus = async (req, res) => {
     }
 };
 
+let _staffEnrollCache = new Map();
+const ENROLL_CACHE_TTL_MS = 30000; // 30s cache
+
+function invalidateEnrollCache() {
+    _staffEnrollCache.clear();
+}
+
+async function getCachedEnrolledStaff(scopeFilter) {
+    const key = JSON.stringify(scopeFilter || {});
+    const now = Date.now();
+    const cached = _staffEnrollCache.get(key);
+    if (cached && now - cached.ts < ENROLL_CACHE_TTL_MS) {
+        return cached.data;
+    }
+    const filter = { ...scopeFilter, faceEnrollEmbeddings: { $exists: true, $ne: [] } };
+    const staffList = await Staff.find(filter)
+        .select('_id userId employeeId name email businessId faceEnrollEmbeddings').lean();
+    _staffEnrollCache.set(key, { ts: now, data: staffList });
+    return staffList;
+}
+
 /**
  * Auto-enrollment on FIRST PUNCH. Persists the live (strict embedLive) embedding as
  * the user's canonical Staff.faceEnrollEmbeddings — the SAME store the 1-to-1 path,
@@ -2066,6 +2088,7 @@ async function persistFirstPunchEnrollment(staffId, embedding) {
             faceEnrollEmbeddings: [embedding],
             faceEnrolledAt: new Date(),
         });
+        invalidateEnrollCache();
         console.log(`[verifyFace] first-punch auto-enrolled staff=${staffId} (1 sample)`);
         return true;
     } catch (e) {
@@ -2101,9 +2124,7 @@ async function identifyFromEnrollments(selfie, scopeFilter = {}) {
         return { ok: true, liveError: liveError || 'No face detected', best: null, candidates: 0 };
     }
 
-    const filter = { ...scopeFilter, faceEnrollEmbeddings: { $exists: true, $ne: [] } };
-    const staffList = await Staff.find(filter)
-        .select('_id userId employeeId name email businessId faceEnrollEmbeddings').lean();
+    const staffList = await getCachedEnrolledStaff(scopeFilter);
 
     // Track the closest AND second-closest (different) person so the caller can
     // require a margin between them — an ambiguous near-tie is rejected rather than
@@ -2484,6 +2505,7 @@ const kioskClearFace = async (req, res) => {
                 await User.findByIdAndUpdate(staff.userId, { avatar: null }).catch(() => {});
             }
         }
+        invalidateEnrollCache();
         console.log(`[kioskClearFace] cleared ${matches.length} record(s) for id=${employeeId || '-'} email=${email || '-'} samples=${cleared} + profile image`);
         return res.json({
             success: true,

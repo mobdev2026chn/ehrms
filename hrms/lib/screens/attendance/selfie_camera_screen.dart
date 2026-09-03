@@ -108,6 +108,11 @@ class SelfieCameraScreen extends StatefulWidget {
   /// gate are completely unaffected.
   final bool enrollMode;
 
+  /// When true, once the capture and optional [onCaptured] validator succeed,
+  /// the screen immediately returns the [File] and closes without requiring
+  /// the user to press "Confirm & Submit" on a second review screen.
+  final bool skipReview;
+
   const SelfieCameraScreen({
     super.key,
     this.locationText,
@@ -119,6 +124,7 @@ class SelfieCameraScreen extends StatefulWidget {
     this.noticeText,
     this.onCaptured,
     this.enrollMode = false,
+    this.skipReview = false,
   });
 
   static Future<Object?> captureSelfie(
@@ -132,7 +138,9 @@ class SelfieCameraScreen extends StatefulWidget {
     String? noticeText,
     Future<String?> Function(File capturedFile)? onCaptured,
     bool enrollMode = false,
+    bool? skipReview,
   }) async {
+    final effectiveSkipReview = skipReview ?? (onCaptured != null);
     final result = await Navigator.of(context).push<Object?>(
       MaterialPageRoute(
         builder: (context) => SelfieCameraScreen(
@@ -145,6 +153,7 @@ class SelfieCameraScreen extends StatefulWidget {
           noticeText: noticeText,
           onCaptured: onCaptured,
           enrollMode: enrollMode,
+          skipReview: effectiveSkipReview,
         ),
       ),
     );
@@ -202,11 +211,14 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   // Enrollment widens them further (and auto-captures after a single good frame) so
   // a clear photo is accepted without fussy alignment — punch/break keep the tighter
   // base values via [widget.enrollMode] == false.
-  double get _kFaceTooFar => widget.enrollMode ? 0.12 : 0.18;
-  double get _kFaceTooClose => widget.enrollMode ? 0.85 : 0.66;
-  double get _kCenterTolX => widget.enrollMode ? 0.34 : 0.22;
-  double get _kCenterTolY => widget.enrollMode ? 0.36 : 0.24;
-  int get _kGoodFramesToCapture => widget.enrollMode ? 1 : 2;
+  // Fast guidance thresholds matching the original Ekta app: auto-captures on the
+  // first good frame without tedious holding. The authoritative server-side face
+  // match and anti-spoof still validate the final image upon capture.
+  double get _kFaceTooFar => 0.10;
+  double get _kFaceTooClose => 0.85;
+  double get _kCenterTolX => 0.35;
+  double get _kCenterTolY => 0.35;
+  int get _kGoodFramesToCapture => 1;
 
   @override
   void initState() {
@@ -305,9 +317,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       // run on this small image, so no reliance on native rotate semantics.
       final small = await FlutterImageCompress.compressWithFile(
         path,
-        minWidth: 1280,
-        minHeight: 1280,
-        quality: 90,
+        minWidth: 720,
+        minHeight: 720,
+        quality: 80,
       );
       final working = (small != null && small.isNotEmpty)
           ? small
@@ -405,6 +417,10 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
         return;
       }
     }
+    if (widget.skipReview) {
+      Navigator.of(context).pop(File(path));
+      return;
+    }
     setState(() => _capturedFilePath = path);
   }
 
@@ -484,10 +500,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       } else if (face.occluded == true) {
         guidance = 'Face Covered! Remove Cover';
         color = AppColors.error;
-      } else if (face.eyesOpen == false) {
-        guidance = 'Keep Eyes Open & Look at Camera';
-        color = AppColors.error;
-      } else if (face.headYaw != null && face.headYaw!.abs() > (widget.enrollMode ? 35 : 30)) {
+      } else if (face.headYaw != null && face.headYaw!.abs() > 35) {
         guidance = 'Look Straight at Camera';
         color = AppColors.error;
       } else {

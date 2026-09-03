@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
+import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
@@ -976,20 +977,31 @@ class AuthService {
     }
   }
 
+  static bool _verifyFaceEndpointsAbsent = false;
+
   /// Verify selfie against profile photo. Returns { success, match, message }.
   /// [message] is always user-friendly (no raw errors or exceptions).
   Future<Map<String, dynamic>> verifyFace(String selfieDataUrl) async {
+    if (_verifyFaceEndpointsAbsent) {
+      return {
+        'success': true,
+        'match': true,
+        'enrolled': true,
+        'message': 'Photo matched',
+      };
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
       if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
         token = token.replaceAll('"', '');
       }
-      if (token == null) {
+      if (token == null || token.isEmpty) {
         return {
-          'success': true,
-          'match': true,
-          'message': 'Photo matched',
+          'success': false,
+          'match': false,
+          'enrolled': false,
+          'message': 'Please sign in again to verify face.',
         };
       }
 
@@ -999,48 +1011,60 @@ class AuthService {
         response = await _api.dio.post<Map<String, dynamic>>(
           '/auth/verify-face',
           data: {'selfie': selfieDataUrl},
-          options: Options(receiveTimeout: const Duration(seconds: 15)),
+          options: Options(
+            receiveTimeout: const Duration(milliseconds: 3500),
+            sendTimeout: const Duration(milliseconds: 3500),
+          ),
         );
       } on DioException catch (de) {
         if (de.response?.statusCode == 404) {
-          try {
-            response = await _api.dio.post<Map<String, dynamic>>(
-              '/attendance/verify-face',
-              data: {'selfie': selfieDataUrl},
-              options: Options(receiveTimeout: const Duration(seconds: 15)),
-            );
-          } catch (_) {
-            return {
-              'success': true,
-              'match': true,
-              'enrolled': true,
-              'message': 'Photo matched',
-            };
-          }
-        } else {
+          // Endpoint not deployed on backend host (e.g. UAT). Cache so we don't
+          // waste network latency on repeated retries.
+          _verifyFaceEndpointsAbsent = true;
           return {
             'success': true,
             'match': true,
             'enrolled': true,
             'message': 'Photo matched',
           };
+        } else if (de.response?.data is Map) {
+          final errData = de.response!.data as Map;
+          final errMsg = errData['message'] ?? errData['error'];
+          return {
+            'success': false,
+            'match': false,
+            'enrolled': true,
+            'message': errMsg?.toString() ?? 'Face verification failed.',
+          };
+        } else {
+          return {
+            'success': false,
+            'match': false,
+            'enrolled': true,
+            'message': 'Face verification error. Please try again.',
+          };
         }
       }
 
       final body = response?.data;
-      final match = body?['match'] != false;
+      final bool isMatch = body?['match'] == true;
+      final bool isEnrolled = body?['enrolled'] ?? true;
+      final String msg = body?['message']?.toString() ??
+          (isMatch
+              ? 'Photo matched'
+              : 'Face does not match your registered profile. Only the registered employee can punch.');
       return {
-        'success': true,
-        'match': match,
-        'enrolled': true,
-        'message': 'Photo matched',
+        'success': body?['success'] == true || isMatch,
+        'match': isMatch,
+        'enrolled': isEnrolled,
+        'message': msg,
       };
     } catch (_) {
       return {
-        'success': true,
-        'match': true,
-        'enrolled': true,
-        'message': 'Photo matched',
+        'success': false,
+        'match': false,
+        'enrolled': false,
+        'message': 'Face verification failed. Please try again.',
       };
     }
   }
@@ -1069,6 +1093,24 @@ class AuthService {
       final firstSelfie = selfieDataUrls.isNotEmpty ? selfieDataUrls.first : null;
       if (firstSelfie != null && firstSelfie.isNotEmpty) {
         await prefs.setString('face_enrolled_selfie', firstSelfie);
+        // Sync biometrics to dedicated kiosk engine (eface) so buddy punching is blocked
+        try {
+          final userStr = prefs.getString('user');
+          if (userStr != null) {
+            final user = jsonDecode(userStr) as Map<String, dynamic>;
+            final empId = (user['employeeId'] ?? user['email'] ?? user['id'] ?? user['_id'] ?? '').toString();
+            if (empId.isNotEmpty) {
+              http.post(
+                Uri.parse('${AppConstants.faceVerifyBaseUrl}/employees/enroll-face-mobile'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode({
+                  'employee_id': empId,
+                  'image_base64': firstSelfie,
+                }),
+              ).timeout(const Duration(seconds: 10));
+            }
+          }
+        } catch (_) {}
       }
 
       Response<Map<String, dynamic>>? response;

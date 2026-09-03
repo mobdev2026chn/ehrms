@@ -143,6 +143,9 @@ class ErrorMessageUtils {
     DioException e, {
     String fallback = 'Request failed',
   }) {
+    final fromBody = messageFromResponseData(e.response?.data);
+    if (fromBody != null && fromBody.trim().isNotEmpty) return fromBody;
+
     final code = e.response?.statusCode;
     if (code == 429) {
       return 'Too many requests. Please wait a moment.';
@@ -151,13 +154,11 @@ class ErrorMessageUtils {
       return 'Session expired. Please log in again.';
     }
     if (code == 404) {
-      return 'Records are currently unavailable.';
+      return fallback != 'Request failed' ? fallback : 'Requested service is currently unavailable.';
     }
     if (code != null && code >= 500) {
       return 'Server error. Please try again later.';
     }
-    final fromBody = messageFromResponseData(e.response?.data);
-    if (fromBody != null && fromBody.trim().isNotEmpty) return fromBody;
 
     switch (e.type) {
       case DioExceptionType.connectionTimeout:

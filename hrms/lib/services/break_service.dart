@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/break_flow_log.dart';
 import '../utils/error_message_utils.dart';
@@ -18,6 +19,51 @@ class BreakService {
   /// Set to true/false after a successful start/end so listeners can optimistically
   /// update without waiting for the next API round-trip.
   static bool? lastKnownHasOpenBreak;
+
+  /// Stored start time of the ongoing break so the live timer is cumulative
+  /// (start time -> current time) and NEVER resets to 00:00 on navigation or reload.
+  static DateTime? lastKnownBreakStartTime;
+  static const String _kBreakStartPrefsKey = 'persisted_active_break_start_time';
+
+  static Future<void> persistActiveBreakStart(DateTime? startTime) async {
+    lastKnownBreakStartTime = startTime;
+    final prefs = await SharedPreferences.getInstance();
+    if (startTime != null) {
+      await prefs.setString(_kBreakStartPrefsKey, startTime.toIso8601String());
+    } else {
+      await prefs.remove(_kBreakStartPrefsKey);
+    }
+  }
+
+  static Future<DateTime?> getPersistedActiveBreakStart() async {
+    if (lastKnownBreakStartTime != null) return lastKnownBreakStartTime;
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kBreakStartPrefsKey);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final dt = DateTime.parse(raw).toLocal();
+        lastKnownBreakStartTime = dt;
+        return dt;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static DateTime? parseTimeStringToToday(String timeStr) {
+    try {
+      final now = DateTime.now();
+      final clean = timeStr.trim();
+      for (final fmt in ['hh:mm a', 'h:mm a', 'hh:mma', 'h:mma', 'HH:mm', 'H:mm']) {
+        try {
+          final d = DateFormat(fmt).parseLoose(clean);
+          return DateTime(now.year, now.month, now.day, d.hour, d.minute);
+        } catch (_) {}
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   static void _bumpStateRevision() => stateRevision.value++;
 
@@ -44,9 +90,10 @@ class BreakService {
   /// True when API returned a break row that is still open (no end time).
   static bool _isOpenBreakMap(Map<String, dynamic>? m) {
     if (m == null) return false;
-    final id = m['id']?.toString().trim();
-    if (id == null || id.isEmpty) return false;
-    return m['endTime'] == null;
+    final id = (m['id'] ?? m['_id'])?.toString().trim();
+    if (id == null || id.isEmpty || id == 'null') return false;
+    final end = m['endTime'];
+    return end == null || end.toString().isEmpty || end.toString() == 'null';
   }
 
   Future<void> _setToken() async {
@@ -86,11 +133,41 @@ class BreakService {
       // restarts and breaks ended from other flows (e.g. auto-end on checkout).
       final rowMap = _breakMapFrom(row);
       final isOpen = _isOpenBreakMap(rowMap);
+      if (!isOpen) {
+        try {
+          final bsRes = await _api.dio.get<Map<String, dynamic>>(
+            '/staff/attendance/break-status',
+          );
+          if (bsRes.statusCode == 200 && bsRes.data is Map) {
+            final bsData = bsRes.data!['data'];
+            if (bsData is Map && bsData['isOnBreak'] == true) {
+              final ab = bsData['activeBreak'];
+              final start = (ab is Map) ? (ab['startTime'] ?? ab['startAt']) : null;
+              final startDt = (start != null && start.toString().isNotEmpty)
+                  ? parseTimeStringToToday(start.toString())
+                  : null;
+              if (startDt != null) {
+                await persistActiveBreakStart(startDt);
+              }
+              lastKnownHasOpenBreak = true;
+              return {
+                'success': true,
+                'hasActiveBreak': true,
+                'data': {
+                  'startTime': start,
+                  'endTime': null,
+                  'ongoing': true,
+                },
+              };
+            }
+          }
+        } catch (_) {}
+      }
       await BreakReminderService.sync(
         hasOpenBreak: isOpen,
         startedAt: isOpen ? _parseStartTime(rowMap) : null,
       );
-      return {'success': true, 'data': row};
+      return {'success': true, 'data': isOpen ? rowMap : null};
     } on DioException catch (e) {
       breakFlowLog(
         'getCurrentBreak <- dio status=${e.response?.statusCode} '
@@ -116,12 +193,23 @@ class BreakService {
   /// remaining balance). Authoritative source for the punch card list/total and
   /// the break screen balance.
   Future<Map<String, dynamic>> getTodayBreakSummary() async {
-    breakFlowLog('getTodayBreakSummary -> GET /breaks/today');
+    breakFlowLog('getTodayBreakSummary -> GET /staff/attendance/break-status');
     try {
       await _setToken();
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/breaks/today',
-      );
+      Response<Map<String, dynamic>> response;
+      try {
+        response = await _api.dio.get<Map<String, dynamic>>(
+          '/staff/attendance/break-status',
+        );
+      } on DioException catch (de) {
+        if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
+          response = await _api.dio.get<Map<String, dynamic>>(
+            '/breaks/today',
+          );
+        } else {
+          rethrow;
+        }
+      }
       final data = response.data ?? <String, dynamic>{};
       final row = data['data'];
       breakFlowLog(
@@ -181,29 +269,33 @@ class BreakService {
       final bodyData = {
         'latitude': lat,
         'longitude': lng,
+        'accuracy': 10,
         'address': address,
+        'locationName': address,
         'area': area,
         'city': city,
         'pincode': pincode,
         'selfie': selfie,
+        'device': 'Mobile App',
         'startTime': payloadStart,
+        'timeStr': payloadStart,
       };
       try {
         response = await _api.dio.post<Map<String, dynamic>>(
-          '/breaks/start',
+          '/staff/attendance/break/start',
           data: bodyData,
         );
       } catch (postErr) {
-        if (postErr is DioException && postErr.response?.statusCode == 413) {
-          final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
+        if (postErr is DioException && (postErr.response?.statusCode == 404 || postErr.response?.statusCode == 405)) {
           response = await _api.dio.post<Map<String, dynamic>>(
             '/breaks/start',
-            data: noSelfie,
+            data: bodyData,
           );
-        } else if (postErr is DioException && (postErr.response?.statusCode == 404 || postErr.response?.statusCode == 405)) {
+        } else if (postErr is DioException && postErr.response?.statusCode == 413) {
+          final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
           response = await _api.dio.post<Map<String, dynamic>>(
             '/staff/attendance/break/start',
-            data: bodyData,
+            data: noSelfie,
           );
         } else {
           rethrow;
@@ -216,9 +308,11 @@ class BreakService {
       );
       // Break just opened — begin the every-10-minute "break ongoing" reminder,
       // anchored to the server's break start time when available.
+      final startDt = _parseStartTime(_breakMapFrom(response.data?['data'])) ?? DateTime.now();
       await BreakReminderService.schedule(
-        startedAt: _parseStartTime(_breakMapFrom(response.data?['data'])),
+        startedAt: startDt,
       );
+      await persistActiveBreakStart(startDt);
       lastKnownHasOpenBreak = true;
       _bumpStateRevision();
       return {
@@ -235,17 +329,37 @@ class BreakService {
       );
 
       // Duplicate start / race: server already has an open break for this user.
-      if (status == 409 && body is Map) {
+      if ((status == 409 || status == 400) && body is Map) {
         final embedded = _breakMapFrom(body['data']);
         if (_isOpenBreakMap(embedded)) {
+          final startDt = _parseStartTime(embedded) ?? DateTime.now();
+          await persistActiveBreakStart(startDt);
+          lastKnownHasOpenBreak = true;
+          _bumpStateRevision();
           breakFlowLog(
-            'startBreak reconcile 409 -> treat as success ${_snapshotBreakRow(embedded)}',
+            'startBreak reconcile $status -> treat as success ${_snapshotBreakRow(embedded)}',
           );
           return {
             'success': true,
             'data': embedded,
             'message': 'Break started successfully',
           };
+        }
+        final msg = body['message']?.toString() ?? '';
+        if (msg.toLowerCase().contains('already running') ||
+            msg.toLowerCase().contains('already on break')) {
+          lastKnownHasOpenBreak = true;
+          final match = RegExp(r'(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)').firstMatch(msg);
+          if (match != null) {
+            final timeStr = match.group(1)?.trim();
+            if (timeStr != null) {
+              final parsed = parseTimeStringToToday(timeStr);
+              if (parsed != null) {
+                await persistActiveBreakStart(parsed);
+              }
+            }
+          }
+          _bumpStateRevision();
         }
       }
 
@@ -327,8 +441,33 @@ class BreakService {
       if (breakId.isEmpty || breakId == 'null') {
         final active = await getCurrentBreak();
         if (active['success'] == true && active['data'] is Map) {
-          breakId = active['data']['id']?.toString() ?? '';
+          breakId = (active['data']['id'] ?? active['data']['_id'] ?? active['data']['breakId'])?.toString() ?? '';
         }
+      }
+      if (breakId.isEmpty || breakId == 'null') {
+        try {
+          final attRes = await _api.dio.get<Map<String, dynamic>>('/attendance/today');
+          if (attRes.statusCode == 200 && attRes.data is Map) {
+            final root = attRes.data!;
+            final inner = (root['data'] is Map) ? root['data'] as Map : root;
+            final brk = inner['break'];
+            if (brk is Map && brk['breaks'] is List) {
+              for (final b in (brk['breaks'] as List)) {
+                if (b is Map) {
+                  final end = b['endTime'];
+                  final isOngoing = end == null || end.toString().isEmpty || end.toString() == 'null';
+                  if (isOngoing) {
+                    final foundId = (b['id'] ?? b['_id'] ?? b['breakId'])?.toString();
+                    if (foundId != null && foundId.isNotEmpty && foundId != 'null') {
+                      breakId = foundId;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
       }
 
       final payloadEnd = (clientTime != null && clientTime.isNotEmpty)
@@ -338,15 +477,21 @@ class BreakService {
       final bodyData = {
         'latitude': lat,
         'longitude': lng,
+        'accuracy': 10,
         'address': address,
+        'locationName': address,
         'area': area,
         'city': city,
         'pincode': pincode,
         'selfie': selfie,
+        'device': 'Mobile App',
         'endTime': payloadEnd,
+        'timeStr': payloadEnd,
       };
       
-      final candidates = <String>[];
+      final candidates = <String>[
+        '/staff/attendance/break/end',
+      ];
       if (breakId.isNotEmpty && breakId != 'null') {
         candidates.add('/breaks/$breakId/end');
       }
@@ -356,8 +501,9 @@ class BreakService {
       DioException? lastDioException;
 
       for (final endpoint in candidates) {
+        // Try POST first (matching official /staff/attendance/break/end), then PATCH
         try {
-          final res = await _api.dio.patch<Map<String, dynamic>>(
+          final res = await _api.dio.post<Map<String, dynamic>>(
             endpoint,
             data: bodyData,
           );
@@ -367,23 +513,23 @@ class BreakService {
           }
         } on DioException catch (de) {
           lastDioException = de;
-          if (de.response?.statusCode == 413) {
-            final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
+          if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
             try {
               final res = await _api.dio.patch<Map<String, dynamic>>(
                 endpoint,
-                data: noSelfie,
+                data: bodyData,
               );
               if (res.statusCode == 200 || res.statusCode == 201) {
                 successfulRes = res;
                 break;
               }
             } catch (_) {}
-          } else if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
+          } else if (de.response?.statusCode == 413) {
+            final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
             try {
               final res = await _api.dio.post<Map<String, dynamic>>(
                 endpoint,
-                data: bodyData,
+                data: noSelfie,
               );
               if (res.statusCode == 200 || res.statusCode == 201) {
                 successfulRes = res;
@@ -400,18 +546,24 @@ class BreakService {
         final status = lastDioException.response?.statusCode;
         final body = lastDioException.response?.data;
         final msg = body is Map ? body['message']?.toString() : null;
-        if (msg != null && (msg.contains('No break') || msg.contains('not found') || status == 404)) {
+        if (status == 404 ||
+            (msg != null &&
+                (msg.toLowerCase().contains('no break') ||
+                    msg.toLowerCase().contains('not found') ||
+                    msg.toLowerCase().contains('already')))) {
           await BreakReminderService.cancel();
+          await persistActiveBreakStart(null);
           lastKnownHasOpenBreak = false;
           _bumpStateRevision();
           return {
             'success': true,
-            'message': 'No active break running',
+            'message': 'Break ended successfully',
           };
         }
         throw lastDioException;
       } else {
         await BreakReminderService.cancel();
+        await persistActiveBreakStart(null);
         lastKnownHasOpenBreak = false;
         _bumpStateRevision();
         return {
@@ -425,6 +577,7 @@ class BreakService {
       );
       // Break closed — stop the every-10-minute reminder immediately.
       await BreakReminderService.cancel();
+      await persistActiveBreakStart(null);
       lastKnownHasOpenBreak = false;
       _bumpStateRevision();
       return {

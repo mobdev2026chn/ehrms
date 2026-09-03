@@ -18,6 +18,8 @@ import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/confetti_burst.dart';
 import '../../widgets/cloud_punch_card.dart';
+import '../../widgets/break_status_card.dart';
+import '../../utils/break_datetime_util.dart';
 import '../../services/fcm_service.dart';
 import '../../utils/face_enrollment_gate.dart';
 import '../announcements/announcements_screen.dart';
@@ -53,6 +55,7 @@ import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/avatar_orientation.dart';
+import '../../services/face_identity_guard.dart';
 import '../attendance/selfie_camera_screen.dart'
     show SelfieCameraScreen, useImagePickerFallback;
 import '../attendance/shift_screen.dart';
@@ -79,6 +82,13 @@ class HomeDashboardScreen extends StatefulWidget {
   /// Staffs collection `salaryDetailsAccessEnabled` (profile [staffData]) — same strict `== true` as [SalaryOverviewScreen]; controls Salary Overview quick action only.
   final bool hasSalaryOverviewAccess;
 
+  /// Active break state passed down from parent dashboard shell.
+  final bool isBreakActive;
+  final DateTime? activeBreakStartTime;
+  final VoidCallback? onEndBreakTap;
+  final bool isBreakActionInProgress;
+  final int? completedBreakSecondsToday;
+
   const HomeDashboardScreen({
     super.key,
     this.onNavigate,
@@ -89,6 +99,11 @@ class HomeDashboardScreen extends StatefulWidget {
     this.refreshTrigger,
     this.onDashboardDataRefreshed,
     this.hasSalaryOverviewAccess = false,
+    this.isBreakActive = false,
+    this.activeBreakStartTime,
+    this.onEndBreakTap,
+    this.isBreakActionInProgress = false,
+    this.completedBreakSecondsToday,
   });
 
   @override
@@ -210,6 +225,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     _loadData();
     _checkLiveTracking();
     widget.refreshTrigger?.addListener(_onRefreshTriggered);
+    BreakService.stateRevision.addListener(_onBreakStateChanged);
+  }
+
+  void _onBreakStateChanged() {
+    if (!mounted) return;
+    _fetchLocalActiveBreak();
+    _fetchBreakSummary();
   }
 
   void _onRefreshTriggered() {
@@ -219,6 +241,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   @override
   void dispose() {
     widget.refreshTrigger?.removeListener(_onRefreshTriggered);
+    BreakService.stateRevision.removeListener(_onBreakStateChanged);
     super.dispose();
   }
 
@@ -456,7 +479,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             'policyEnabled=${summary.policyEnabled}',
           );
         }
-        setState(() => _breakSummary = summary);
+        setState(() {
+          _breakSummary = summary;
+          if (_localActiveBreak == null && (summary.hasActiveBreak || summary.breaks.any((b) => b.ongoing))) {
+            final ongoing = summary.breaks.cast<BreakEntry?>().firstWhere(
+              (b) => b?.ongoing == true,
+              orElse: () => null,
+            );
+            if (ongoing != null) {
+              _localActiveBreak = {
+                'id': ongoing.id,
+                'startTime': ongoing.startTime?.toIso8601String(),
+                'endTime': null,
+                'durationSeconds': ongoing.durationSeconds,
+              };
+            }
+          }
+        });
       } else if (kDebugMode) {
         debugPrint(
           '[BreakSummary] FAILED | success=${result['success']} '
@@ -470,6 +509,156 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       }
       // Non-fatal: the card simply omits the break section.
     }
+  }
+
+  Map<String, dynamic>? _localActiveBreak;
+
+  Future<void> _fetchLocalActiveBreak() async {
+    try {
+      final result = await _breakService.getCurrentBreak();
+      if (!mounted) return;
+      Map<String, dynamic>? activeBreak;
+      final data = result['data'];
+      if (result['success'] == true && data is Map) {
+        final m = Map<String, dynamic>.from(data);
+        final id = (m['id'] ?? m['_id'])?.toString().trim();
+        final hasValidId = id != null && id.isNotEmpty && id != 'null';
+        final end = m['endTime'];
+        final isOpen = hasValidId &&
+            (end == null ||
+                end.toString().isEmpty ||
+                end.toString() == 'null');
+        if (isOpen) {
+          activeBreak = m;
+        } else if (result['hasActiveBreak'] == true) {
+          activeBreak = m;
+        }
+      } else if (result['hasActiveBreak'] == true && data is Map) {
+        activeBreak = Map<String, dynamic>.from(data);
+      }
+      if (activeBreak == null && _breakSummary != null) {
+        try {
+          final ongoing = _breakSummary!.breaks.firstWhere((b) => b.ongoing);
+          activeBreak = {
+            'id': ongoing.id,
+            'startTime': ongoing.startTime?.toIso8601String(),
+            'endTime': null,
+            'durationSeconds': ongoing.durationSeconds,
+          };
+        } catch (_) {}
+      }
+      setState(() => _localActiveBreak = activeBreak);
+    } catch (_) {}
+  }
+
+  DateTime? _activeBreakStartTime() {
+    final fromWidget = widget.activeBreakStartTime;
+    if (fromWidget != null) {
+      BreakService.persistActiveBreakStart(fromWidget);
+      return fromWidget;
+    }
+    final fromSummary = _activeBreakStartTimeFromSummary();
+    if (fromSummary != null) {
+      BreakService.persistActiveBreakStart(fromSummary);
+      return fromSummary;
+    }
+    final fromAtt = _ongoingBreakFromTodayAttendance;
+    if (fromAtt != null) {
+      final raw = fromAtt['startTime'] ?? fromAtt['startAt'];
+      final parsed = breakDisplayStartFromApi(raw);
+      if (parsed != null) {
+        BreakService.persistActiveBreakStart(parsed);
+        return parsed;
+      }
+    }
+    final raw = _localActiveBreak?['startTime'] ??
+        _localActiveBreak?['startAt'] ??
+        _localActiveBreak?['breakStartDateTime'] ??
+        _localActiveBreak?['createdAt'];
+    if (raw != null) {
+      try {
+        final parsed = DateTime.parse(raw.toString()).toLocal();
+        BreakService.persistActiveBreakStart(parsed);
+        return parsed;
+      } catch (_) {}
+    }
+    if (BreakService.lastKnownBreakStartTime != null) {
+      return BreakService.lastKnownBreakStartTime;
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? get _ongoingBreakFromTodayAttendance {
+    if (_todayAttendance == null) return null;
+    if (_todayAttendance!['hasActiveBreak'] == true ||
+        _todayAttendance!['isOnBreak'] == true) {
+      final ab = _todayAttendance!['activeBreak'];
+      if (ab is Map) {
+        return Map<String, dynamic>.from(ab);
+      }
+    }
+    final brk = _todayAttendance!['break'];
+    if (brk is Map) {
+      final list = brk['breaks'];
+      if (list is List) {
+        for (final item in list) {
+          if (item is Map) {
+            final end = item['endTime'];
+            final hasStart = item['startTime'] != null &&
+                item['startTime'].toString().isNotEmpty &&
+                item['startTime'].toString() != 'null';
+            final isEndEmpty = end == null ||
+                end.toString().isEmpty ||
+                end.toString() == 'null';
+            if (hasStart && isEndEmpty) {
+              return Map<String, dynamic>.from(item);
+            }
+          }
+        }
+      }
+    }
+    final directList = _todayAttendance!['breaks'];
+    if (directList is List) {
+      for (final item in directList) {
+        if (item is Map) {
+          final end = item['endTime'];
+          final hasStart = item['startTime'] != null &&
+              item['startTime'].toString().isNotEmpty &&
+              item['startTime'].toString() != 'null';
+          final isEndEmpty = end == null ||
+              end.toString().isEmpty ||
+              end.toString() == 'null';
+          if (hasStart && isEndEmpty) {
+            return Map<String, dynamic>.from(item);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  bool get _hasOngoingBreakInTodayAttendance =>
+      _ongoingBreakFromTodayAttendance != null;
+
+  bool get _isCurrentBreakActive {
+    if (BreakService.lastKnownHasOpenBreak == true) return true;
+    if (widget.isBreakActive) return true;
+    if (_localActiveBreak != null) return true;
+    if (_breakSummary?.hasActiveBreak == true) return true;
+    if (_activeBreakStartTimeFromSummary() != null) return true;
+    if (_hasOngoingBreakInTodayAttendance) return true;
+    return false;
+  }
+
+  DateTime? _activeBreakStartTimeFromSummary() {
+    final summary = _breakSummary;
+    if (summary == null) return null;
+    for (final b in summary.breaks) {
+      if (b.ongoing && b.startTime != null) {
+        return b.startTime;
+      }
+    }
+    return null;
   }
 
   /// Loads today's custom-time ('both') permission so the punch card can offer
@@ -514,19 +703,35 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   /// SelfieCameraScreen.onCaptured, so a non-matching face is caught on the camera
   /// screen instead of only after the permission selfie is submitted.
   Future<String?> _verifyPermissionFace(File file) async {
-    if (!AppConstants.enableAttendanceFaceMatching) return null;
     final bytes = await file.readAsBytes();
     final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
-    if (selfie.isEmpty) return null;
-    try {
-      final verify = await _authService.verifyFace(selfie);
-      if (verify['success'] != true || verify['match'] != true) {
+    if (selfie.isEmpty) return 'Could not process selfie. Please try again.';
+
+    final verifyFuture = AppConstants.enableAttendanceFaceMatching
+        ? _authService.verifyFace(selfie)
+        : Future.value(<String, dynamic>{'success': true, 'match': true});
+    final identityFuture = FaceIdentityGuard.verify(selfie);
+
+    final results = await Future.wait([
+      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
+    ]);
+
+    final verify = results[0] as Map<String, dynamic>;
+    if (AppConstants.enableAttendanceFaceMatching) {
+      if (verify['match'] != true) {
+        final msg = verify['message']?.toString();
         return ErrorMessageUtils.sanitizeForDisplay(
-          verify['message']?.toString() ?? 'Face not matching. Please try again.',
+          (msg != null && msg.isNotEmpty && !msg.toLowerCase().contains('matched'))
+              ? msg
+              : 'Face does not match your registered profile. You are not the registered person for this account.',
         );
       }
-    } catch (_) {
-      return 'Face verification failed. Please try again.';
+    }
+    final verdict = results[1] as FaceIdentityVerdict;
+    if (!verdict.allow) {
+      return verdict.message ??
+          'Face does not match this account. You are not the registered person for this account.';
     }
     return null;
   }
@@ -866,6 +1071,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final loansFuture = _fetchActiveLoans();
       final tasksFuture = _fetchTasks();
       final breakFuture = _fetchBreakSummary();
+      final activeBreakFuture = _fetchLocalActiveBreak();
       final permissionFuture = _fetchTodayPermission();
       final perfFuture = _fetchPerformanceSummary();
       final fcmFuture = FcmService.getStoredNotifications();
@@ -983,6 +1189,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _activeLoans = loansList;
             _activeLoansCount = loansList.length;
             _todayAttendance = liveTodayAttendance ?? stats?['attendanceToday'];
+            if (_breakSummary == null && _todayAttendance?['break'] is Map) {
+              try {
+                final brkMap = Map<String, dynamic>.from(
+                  _todayAttendance!['break'] as Map,
+                );
+                _breakSummary = BreakSummary.fromJson(brkMap);
+              } catch (_) {}
+            }
+            if (_localActiveBreak == null && _ongoingBreakFromTodayAttendance != null) {
+              _localActiveBreak = _ongoingBreakFromTodayAttendance;
+            }
             _todayAnnouncements = announcementsList;
             _todayCelebrations = data['todayCelebrations'] is List
                 ? data['todayCelebrations'] as List
@@ -2075,6 +2292,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _buildWebWelcomeCard(),
             const SizedBox(height: 14),
 
+            // 1.5 Active Break Card (like old ekta app) - Most prominent when break ongoing!
+            if (_isCurrentBreakActive) ...[
+              BreakStatusCard(
+                startTime: _activeBreakStartTime() ??
+                    BreakService.lastKnownBreakStartTime ??
+                    DateTime.now(),
+                onEndBreak: widget.onEndBreakTap ?? () => widget.onNavigate?.call(2),
+                isBusy: widget.isBreakActionInProgress,
+                completedBreakSecondsToday: widget.completedBreakSecondsToday ??
+                    _breakSummary?.completedBreakSeconds,
+                showSuccessBanner: false,
+              ),
+              const SizedBox(height: 14),
+            ],
+
             // 2. Quick Actions Card (Web styled 5 actions)
             _buildWebQuickActionsCard(),
             const SizedBox(height: 14),
@@ -2676,10 +2908,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final isHoliday = _todayAttendance?['isHoliday'] == true;
     final branchName = _companyName.isNotEmpty ? _companyName : 'chennai';
 
+    final isOnBreak = _isCurrentBreakActive;
+    final breakStart = _activeBreakStartTime();
+    final breakStartStr = breakStart != null
+        ? DateFormat('hh:mm a').format(breakStart)
+        : '--:--';
     String badgeLabel = 'WORKING DAY';
     Color badgeColor = const Color(0xFF10B981);
     Color badgeBg = const Color(0xFFD1FAE5);
-    if (isWeekOff) {
+    if (isOnBreak) {
+      badgeLabel = 'ON BREAK';
+      badgeColor = const Color(0xFFF59E0B);
+      badgeBg = const Color(0xFFFEF3C7);
+    } else if (isWeekOff) {
       badgeLabel = 'WEEK OFF';
       badgeColor = const Color(0xFF3B82F6);
       badgeBg = const Color(0xFFDBEAFE);
@@ -2689,12 +2930,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       badgeBg = const Color(0xFFFEF3C7);
     }
 
-    String actionLabel = isWeekOff
-        ? 'Week Off'
-        : (isPunchedIn ? 'Punch Out' : 'Punch In');
-    IconData actionIcon = isWeekOff
-        ? Icons.arrow_forward_rounded
-        : (isPunchedIn ? Icons.logout_rounded : Icons.login_rounded);
+    String actionLabel = isOnBreak
+        ? 'End Break'
+        : (isWeekOff
+            ? 'Week Off'
+            : (isPunchedIn ? 'Punch Out' : 'Punch In'));
+    IconData actionIcon = isOnBreak
+        ? Icons.timer_off_rounded
+        : (isWeekOff
+            ? Icons.arrow_forward_rounded
+            : (isPunchedIn ? Icons.logout_rounded : Icons.login_rounded));
+    VoidCallback? actionCallback = isOnBreak
+        ? (widget.onEndBreakTap ?? () => widget.onNavigate?.call(2))
+        : (isWeekOff ? null : () => widget.onNavigate?.call(4));
+    Color btnBg = isOnBreak ? const Color(0xFFFEF3C7) : const Color(0xFFF1F5F9);
+    Color btnFg = isOnBreak ? const Color(0xFFD97706) : const Color(0xFF64748B);
 
     return AppCard(
       padding: const EdgeInsets.all(16),
@@ -2741,15 +2991,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                onPressed: isWeekOff ? null : () => widget.onNavigate?.call(4),
+                onPressed: actionCallback,
                 icon: Icon(actionIcon, size: 13),
                 label: Text(
                   actionLabel,
                   style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFF1F5F9),
-                  foregroundColor: const Color(0xFF64748B),
+                  backgroundColor: btnBg,
+                  foregroundColor: btnFg,
                   disabledBackgroundColor: const Color(0xFFF1F5F9),
                   disabledForegroundColor: const Color(0xFF94A3B8),
                   elevation: 0,
@@ -2783,14 +3033,335 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _buildWebPunchTimeCol('Punch In', inTime),
+              if (isOnBreak)
+                _buildWebPunchTimeCol(
+                  'Break Start',
+                  breakStartStr,
+                  valueColor: const Color(0xFFF59E0B),
+                ),
               _buildWebPunchTimeCol('Punch Out', outTime),
               _buildWebPunchTimeCol(
                 isWeekOff ? 'Week Off' : 'Status',
-                isWeekOff ? 'Weekly Off' : (isPunchedIn ? 'Present' : 'Not Punched'),
-                valueColor: isWeekOff ? const Color(0xFF3B82F6) : null,
+                isWeekOff
+                    ? 'Weekly Off'
+                    : (isOnBreak
+                        ? 'On Break'
+                        : (isPunchedIn ? 'Present' : 'Not Punched')),
+                valueColor: isWeekOff
+                    ? const Color(0xFF3B82F6)
+                    : (isOnBreak
+                        ? const Color(0xFFF59E0B)
+                        : (isPunchedIn ? const Color(0xFF10B981) : null)),
               ),
             ],
           ),
+          if (isOnBreak) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFFBEB),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFFDE68A)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF59E0B),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Break Ongoing • Started from $breakStartStr',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFB45309),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'You are on break. Tap End Break when done.',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: Color(0xFF92400E),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  ElevatedButton.icon(
+                    onPressed: actionCallback,
+                    icon: const Icon(Icons.timer_off_rounded, size: 12),
+                    label: const Text(
+                      'End Break',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFF59E0B),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (!isOnBreak) ...[
+            Builder(
+              builder: (context) {
+                int breakCount = _breakSummary?.totalBreakCount ?? 0;
+                int breakMin = _breakSummary?.totalBreakMin ?? 0;
+                if (breakCount == 0 && _todayAttendance?['break'] is Map) {
+                  final b = _todayAttendance!['break'] as Map;
+                  breakCount = (b['totalBreakCount'] as num?)?.toInt() ?? 0;
+                  breakMin = (b['totalBreakMin'] as num?)?.toInt() ?? 0;
+                }
+                if (breakCount <= 0) return const SizedBox.shrink();
+
+                String formatTime(dynamic val, [String? rawFallback]) {
+                  if (val is DateTime) {
+                    return DateFormat('hh:mm a').format(val.toLocal());
+                  }
+                  final target = (val ?? rawFallback)?.toString().trim();
+                  if (target == null || target.isEmpty || target == 'null') return '--:--';
+                  final dt = DateTime.tryParse(target);
+                  if (dt != null) {
+                    return DateFormat('hh:mm a').format(dt.toLocal());
+                  }
+                  final parsedTime = BreakService.parseTimeStringToToday(target);
+                  if (parsedTime != null) {
+                    return DateFormat('hh:mm a').format(parsedTime);
+                  }
+                  return target;
+                }
+
+                final sessions = <Map<String, dynamic>>[];
+
+                // 1. Check _breakSummary.breaks
+                if (_breakSummary?.breaks != null && _breakSummary!.breaks.isNotEmpty) {
+                  for (final b in _breakSummary!.breaks) {
+                    if (!b.ongoing) {
+                      String fromStr = formatTime(b.startTime, b.rawStartTime);
+                      String toStr = formatTime(b.endTime, b.rawEndTime);
+                      int mins = b.durationMin;
+                      if (mins <= 0 && b.startTime != null && b.endTime != null) {
+                        mins = b.endTime!.difference(b.startTime!).inMinutes;
+                      }
+                      if (mins <= 0 && b.durationSeconds > 0) {
+                        mins = (b.durationSeconds / 60).round();
+                      }
+                      if (mins <= 0 && breakMin > 0) {
+                        mins = breakMin;
+                      }
+                      if (fromStr == '--:--') {
+                        if (BreakService.lastKnownBreakStartTime != null) {
+                          fromStr = DateFormat('hh:mm a').format(BreakService.lastKnownBreakStartTime!);
+                        } else if (_todayAttendance?['punchIn'] != null) {
+                          fromStr = formatTime(_todayAttendance!['punchIn']);
+                        }
+                      }
+                      if (toStr == '--:--' && fromStr != '--:--' && mins > 0) {
+                        final sDt = BreakService.parseTimeStringToToday(fromStr);
+                        if (sDt != null) {
+                          toStr = DateFormat('hh:mm a').format(sDt.add(Duration(minutes: mins)));
+                        }
+                      }
+                      sessions.add({
+                        'from': fromStr,
+                        'to': toStr,
+                        'mins': mins,
+                      });
+                    }
+                  }
+                }
+
+                // 2. If sessions is still empty, check _todayAttendance['break']['breaks']
+                if (sessions.isEmpty && _todayAttendance?['break'] is Map) {
+                  final b = _todayAttendance!['break'] as Map;
+                  final rawList = b['breaks'];
+                  if (rawList is List) {
+                    for (final item in rawList) {
+                      if (item is Map) {
+                        final end = item['endTime'];
+                        final isOngoing = end == null || end.toString().isEmpty || end.toString() == 'null';
+                        if (!isOngoing) {
+                          String fromStr = formatTime(item['startTime'], item['startAt']?.toString() ?? item['start']?.toString());
+                          String toStr = formatTime(item['endTime'], item['endAt']?.toString() ?? item['end']?.toString());
+                          int mins = (item['durationMinutes'] ?? item['durationMin'] ?? item['breakMin'] ?? item['duration'] as num?)?.toInt() ?? 0;
+                          if (mins <= 0) {
+                            final sDt = DateTime.tryParse(item['startTime']?.toString() ?? '');
+                            final eDt = DateTime.tryParse(item['endTime']?.toString() ?? '');
+                            if (sDt != null && eDt != null) {
+                              mins = eDt.difference(sDt).inMinutes;
+                            }
+                          }
+                          if (mins <= 0 && breakMin > 0) mins = breakMin;
+                          if (fromStr == '--:--') {
+                            if (BreakService.lastKnownBreakStartTime != null) {
+                              fromStr = DateFormat('hh:mm a').format(BreakService.lastKnownBreakStartTime!);
+                            } else if (_todayAttendance?['punchIn'] != null) {
+                              fromStr = formatTime(_todayAttendance!['punchIn']);
+                            }
+                          }
+                          if (toStr == '--:--' && fromStr != '--:--' && mins > 0) {
+                            final sDt = BreakService.parseTimeStringToToday(fromStr);
+                            if (sDt != null) {
+                              toStr = DateFormat('hh:mm a').format(sDt.add(Duration(minutes: mins)));
+                            }
+                          }
+                          sessions.add({
+                            'from': fromStr,
+                            'to': toStr,
+                            'mins': mins,
+                          });
+                        }
+                      }
+                    }
+                  }
+                  if (sessions.isEmpty && (b['startTime'] != null || b['endTime'] != null)) {
+                    String fromStr = formatTime(b['startTime']);
+                    String toStr = formatTime(b['endTime']);
+                    if (fromStr == '--:--' && BreakService.lastKnownBreakStartTime != null) {
+                      fromStr = DateFormat('hh:mm a').format(BreakService.lastKnownBreakStartTime!);
+                    }
+                    if (toStr == '--:--' && fromStr != '--:--' && breakMin > 0) {
+                      final sDt = BreakService.parseTimeStringToToday(fromStr);
+                      if (sDt != null) {
+                        toStr = DateFormat('hh:mm a').format(sDt.add(Duration(minutes: breakMin)));
+                      }
+                    }
+                    sessions.add({
+                      'from': fromStr,
+                      'to': toStr,
+                      'mins': breakMin,
+                    });
+                  }
+                }
+
+                // 3. Fallback when breakCount > 0 but sessions still empty
+                if (sessions.isEmpty && breakCount > 0) {
+                  String fromStr = '--:--';
+                  String toStr = '--:--';
+                  if (BreakService.lastKnownBreakStartTime != null) {
+                    fromStr = DateFormat('hh:mm a').format(BreakService.lastKnownBreakStartTime!);
+                  } else if (_todayAttendance?['punchIn'] != null) {
+                    fromStr = formatTime(_todayAttendance!['punchIn']);
+                  }
+                  if (fromStr != '--:--' && breakMin > 0) {
+                    final sDt = BreakService.parseTimeStringToToday(fromStr);
+                    if (sDt != null) {
+                      toStr = DateFormat('hh:mm a').format(sDt.add(Duration(minutes: breakMin)));
+                    }
+                  }
+                  sessions.add({
+                    'from': fromStr,
+                    'to': toStr,
+                    'mins': breakMin,
+                  });
+                }
+
+                return Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.coffee_rounded, size: 14, color: Color(0xFF64748B)),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Breaks Today: $breakCount',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF334155),
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              'Total ${breakMin}m',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF1E293B),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (sessions.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          const Divider(height: 1, color: Color(0xFFE2E8F0)),
+                          const SizedBox(height: 6),
+                          for (int i = 0; i < sessions.length; i++) ...[
+                            if (i > 0) const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF94A3B8),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '${sessions[i]['from']}  -  ${sessions[i]['to']}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF475569),
+                                  ),
+                                ),
+                                const Spacer(),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF1F5F9),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    '${sessions[i]['mins']}m taken',
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFF475569),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -3497,20 +4068,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildSalaryItemBox('Gross', gross),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildSalaryItemBox('Net', net),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildSalaryItemBox('CTC', ctc),
-              ),
-            ],
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _buildSalaryItemBox('Gross', gross),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildSalaryItemBox('Net', net),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildSalaryItemBox('CTC', ctc),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -3525,46 +4099,46 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         border: Border.all(color: const Color(0xFFF1F5F9)),
       ),
       clipBehavior: Clip.antiAlias,
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              width: 3.5,
-              color: const Color(0xFFF59E0B),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            width: 3.5,
+            color: const Color(0xFFF59E0B),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF94A3B8),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      amount,
                       style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF94A3B8),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        amount,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

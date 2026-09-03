@@ -125,7 +125,7 @@ class AppConstants {
   /// proxied under /face on the EHRMS domain, so EHRMS reaches the (already working)
   /// face recognition engine without a separate IP/port and without installing the
   /// Python engine on the EHRMS API host. (LAN-IP dev value kept below for reference.)
-  static const String faceVerifyBaseUrl = 'https://uat.ektahr.com/face/api';
+  static const String faceVerifyBaseUrl = 'https://eface.askeva.io/api';
   // Local dev (machine LAN IP): 'http://192.168.0.26:8000/api'
 
   /// Punch/break/permission selfies captured BEFORE this instant were stored

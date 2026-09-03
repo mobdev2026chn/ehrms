@@ -441,18 +441,18 @@ class _CloudPunchCardState extends State<CloudPunchCard>
               ? DateFormat('hh:mm a').format(b.endTime!)
               : '--:--');
     final durColor = b.ongoing
-        ? AppColors.primary
+        ? Colors.orangeAccent.shade200
         : Colors.white.withValues(alpha: 0.85);
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: [
           Container(
-            width: 6,
-            height: 6,
+            width: 8,
+            height: 8,
             decoration: BoxDecoration(
               color: b.ongoing
-                  ? AppColors.primary
+                  ? Colors.orangeAccent.shade200
                   : Colors.white.withValues(alpha: 0.35),
               shape: BoxShape.circle,
             ),
@@ -460,24 +460,44 @@ class _CloudPunchCardState extends State<CloudPunchCard>
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '$start  →  $end',
+              b.ongoing ? '$start  →  Break Ongoing' : '$start  →  $end',
               style: TextStyle(
                 fontSize: 12,
-                color: Colors.white.withValues(alpha: 0.8),
-                fontWeight: FontWeight.w500,
+                color: b.ongoing
+                    ? Colors.orangeAccent.shade100
+                    : Colors.white.withValues(alpha: 0.8),
+                fontWeight: b.ongoing ? FontWeight.bold : FontWeight.w500,
               ),
             ),
           ),
-          Text(
-            // An ongoing break's duration is not shown until it's ended; the
-            // row already reads "→ Ongoing". A dash keeps the row aligned.
-            b.ongoing ? '—' : BreakSummary.formatDuration(b.durationSeconds),
-            style: TextStyle(
-              fontSize: 12,
-              color: durColor,
-              fontWeight: FontWeight.w600,
+          if (b.ongoing)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent.shade200.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: Colors.orangeAccent.shade200.withValues(alpha: 0.4),
+                ),
+              ),
+              child: Text(
+                'ON BREAK',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orangeAccent.shade200,
+                ),
+              ),
+            )
+          else
+            Text(
+              BreakSummary.formatDuration(b.durationSeconds),
+              style: TextStyle(
+                fontSize: 12,
+                color: durColor,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
         ],
       ),
     );

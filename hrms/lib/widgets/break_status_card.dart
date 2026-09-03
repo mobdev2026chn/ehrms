@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../config/app_colors.dart';
+import '../services/break_service.dart';
 
 class BreakStatusCard extends StatefulWidget {
   final DateTime startTime;
@@ -44,9 +46,17 @@ class _BreakStatusCardState extends State<BreakStatusCard>
 
   static DateTime _anchorFromApiStart(DateTime apiStart) {
     final now = DateTime.now();
-    // Parsed start should not be meaningfully after host clock (bad TZ / payload).
+    // If the passed start is essentially "now" (e.g. fallback DateTime.now()),
+    // but BreakService knows the actual earlier start time (e.g. 11:47 AM or 11:57 AM),
+    // always prefer the earlier authentic start time so the timer is cumulative!
+    final persisted = BreakService.lastKnownBreakStartTime;
+    if (persisted != null && persisted.isBefore(now)) {
+      if (apiStart.difference(now).abs() < const Duration(seconds: 10)) {
+        return persisted;
+      }
+    }
     if (apiStart.isAfter(now.add(const Duration(seconds: 3)))) {
-      return now;
+      return persisted ?? now;
     }
     return apiStart;
   }
@@ -58,6 +68,16 @@ class _BreakStatusCardState extends State<BreakStatusCard>
     _anchorStart = _anchorFromApiStart(widget.startTime);
     _tick();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    BreakService.getPersistedActiveBreakStart().then((persisted) {
+      if (persisted != null && mounted) {
+        if (_anchorStart.difference(persisted).inSeconds.abs() > 10) {
+          setState(() {
+            _anchorStart = persisted;
+            _tick();
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -72,7 +92,6 @@ class _BreakStatusCardState extends State<BreakStatusCard>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.startTime != widget.startTime) {
       _anchorStart = _anchorFromApiStart(widget.startTime);
-      _elapsed = Duration.zero;
       _tick();
     }
     // Once the parent pins a freeze instant (End Break tapped), stop the ticker
@@ -202,6 +221,8 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                   ),
                 );
 
+                final startedFromStr =
+                    DateFormat('hh:mm a').format(widget.startTime.toLocal());
                 final titleStyle = TextStyle(
                   color: Colors.green.shade700,
                   fontWeight: FontWeight.w700,
@@ -218,25 +239,57 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                     : Text(
                         'Break taken today: $takenToday',
                         style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
                           color: Colors.grey.shade600,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       );
 
+                final headerRow = Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade500,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Break Ongoing',
+                      style: titleStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Started from $startedFromStr',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFB45309),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+
                 if (narrow) {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        'Break Ongoing',
-                        style: titleStyle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
+                      headerRow,
+                      const SizedBox(height: 6),
                       Text(
                         _timerText,
                         style: timerStyle,
@@ -260,12 +313,7 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Break Ongoing',
-                            style: titleStyle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                          headerRow,
                           const SizedBox(height: 6),
                           Text(
                             _timerText,

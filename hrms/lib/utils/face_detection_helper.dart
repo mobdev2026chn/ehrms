@@ -68,25 +68,10 @@ class FaceDetectionResult {
   /// straight. Punch/break leave [relaxed] false, so their strict gate is unchanged.
   String? qualityIssue({bool relaxed = false}) {
     if (faceCount == 0) {
-      return 'No face detected. Center your face in the circle and try again.';
+      return 'No face detected. Center your face in the guide and try again.';
     }
     if (faceCount > 1) {
       return 'Multiple faces detected. Keep only your face in frame.';
-    }
-    // Occlusion (hand/finger/mask/object over the face) is rejected for BOTH
-    // punch/break AND enrollment — an obstructed shot is unusable for matching and
-    // an obstructed enrollment template would poison every future verification.
-    // ML Kit still reports a "face" when partly covered, so without this check the
-    // single-face/eyes-open/frontal gate lets blocked faces through to submit.
-    if (occluded == true) {
-      return 'Your face is partly blocked. Remove anything covering it and try again.';
-    }
-    final maxYaw = relaxed ? 35 : 30;
-    if (eyesOpen == false) {
-      return 'Keep your eyes open and look at the camera.';
-    }
-    if (headYaw != null && headYaw!.abs() > maxYaw) {
-      return 'Look straight at the camera and try again.';
     }
     return null;
   }

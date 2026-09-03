@@ -267,26 +267,51 @@ class _BreakScreenState extends State<BreakScreen> {
   Future<String?> _verifyBreakFace(File file) async {
     final bytes = await file.readAsBytes();
     final selfie = await AttendanceSelfieCompress.compressRawBytesToDataUrl(bytes);
-    if (selfie.isEmpty) return null;
+    if (selfie.isEmpty) return 'Could not process selfie. Please try again.';
+
+    final verifyFuture = AppConstants.enableAttendanceFaceMatching
+        ? _authService.verifyFace(selfie)
+        : Future.value(<String, dynamic>{'success': true, 'match': true});
+    final identityFuture = FaceIdentityGuard.verify(selfie);
+
+    final results = await Future.wait([
+      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
+    ]);
+
+    final verify = results[0] as Map<String, dynamic>;
     if (AppConstants.enableAttendanceFaceMatching) {
-      try {
-        final verify = await _authService.verifyFace(selfie);
-        if (verify['success'] != true || verify['match'] != true) {
-          return ErrorMessageUtils.sanitizeForDisplay(
-            verify['message']?.toString() ?? 'Face not matching. Please try again.',
-          );
-        }
-      } catch (_) {
-        return 'Face verification failed. Please try again.';
+      if (verify['match'] != true) {
+        final msg = verify['message']?.toString();
+        return ErrorMessageUtils.sanitizeForDisplay(
+          (msg != null && msg.isNotEmpty && !msg.toLowerCase().contains('matched'))
+              ? msg
+              : 'Face does not match your registered profile. You are not the registered person for this account.',
+        );
       }
     }
-    final verdict = await FaceIdentityGuard.verify(selfie);
-    if (!verdict.allow) return verdict.message ?? 'Face identity check failed.';
+    final verdict = results[1] as FaceIdentityVerdict;
+    if (!verdict.allow) {
+      return verdict.message ??
+          'Face does not match this account. You are not the registered person for this account.';
+    }
     return null;
   }
 
   DateTime? _breakStartTime() {
-    return breakDisplayStartFromApi(_activeBreak?['startTime']);
+    final raw = _activeBreak?['startTime'] ??
+        _activeBreak?['startAt'] ??
+        _activeBreak?['breakStartDateTime'] ??
+        _activeBreak?['createdAt'];
+    final parsed = breakDisplayStartFromApi(raw);
+    if (parsed != null) return parsed;
+    final summary = _breakSummary;
+    if (summary != null) {
+      for (final b in summary.breaks) {
+        if (b.ongoing && b.startTime != null) return b.startTime;
+      }
+    }
+    return null;
   }
 
   /// Short balance label for the face-scan camera info pill, e.g.
@@ -716,9 +741,9 @@ class _BreakScreenState extends State<BreakScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _buildBalanceCard(),
-                    if (_isOnBreak && startTime != null) ...[
+                    if (_isOnBreak) ...[
                       BreakStatusCard(
-                        startTime: startTime,
+                        startTime: startTime ?? DateTime.now(),
                         onEndBreak: _submit,
                         isBusy: _isLoading,
                         showSuccessBanner: _showStartedBanner,

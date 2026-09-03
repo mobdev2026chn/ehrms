@@ -336,6 +336,12 @@ Map<String, dynamic>? flattenTodayAttendancePayload(dynamic apiBody) {
     'lateMinutes',
     'earlyMinutes',
     'netPerDaySalary',
+    'break',
+    'breaks',
+    'hasActiveBreak',
+    'activeBreak',
+    'isOnBreak',
+    'breakSummary',
   ];
   for (final k in keysFromRoot) {
     if (root.containsKey(k)) out[k] = root[k];
