@@ -52,7 +52,10 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
 
   Future<void> _fetchReport() async {
     _snappedRoute = null;
-    if (widget.task.id == null || widget.task.id!.isEmpty) {
+    final targetId = (widget.task.id != null && widget.task.id!.isNotEmpty)
+        ? widget.task.id!
+        : widget.task.taskId;
+    if (targetId.isEmpty) {
       setState(() {
         _report = TaskCompletionReport(
           task: widget.task,
@@ -64,12 +67,11 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       return;
     }
     try {
-      final report = await TaskService().getTaskCompletionReport(
-        widget.task.id!,
-      );
+      final report = await TaskService().getTaskCompletionReport(targetId);
       if (mounted) {
         setState(() {
           _report = report;
+          _error = null;
           _loading = false;
         });
         _computeSnappedRoute(report.routePoints);
@@ -306,13 +308,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         bottomNavigationBar: AppBottomNavigationBar(
           currentIndex: -1,
           onTap: (index) {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(
-                builder: (_) =>
-                    DashboardScreen(initialIndex: index.clamp(0, 4)),
-              ),
-              (route) => false,
-            );
+            DashboardScreen.goToTab(context, index.clamp(0, 4));
           },
         ),
       ),
@@ -395,12 +391,18 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   }
 
   Widget _buildAddressCard(Task task) {
-    final source = task.sourceLocation?.displayAddress ?? '—';
-    final dest =
-        task.destinationLocation?.displayAddress ??
-        (task.customer != null
-            ? '${task.customer!.address}, ${task.customer!.city}, ${task.customer!.pincode}'
+    final source = (task.sourceLocation?.displayAddress != null && task.sourceLocation!.displayAddress!.isNotEmpty)
+        ? task.sourceLocation!.displayAddress!
+        : ((task.sourceLocation?.lat != null && task.sourceLocation!.lat != 0)
+            ? '${task.sourceLocation!.lat.toStringAsFixed(4)}, ${task.sourceLocation!.lng.toStringAsFixed(4)}'
             : '—');
+    final dest = (task.destinationLocation?.displayAddress != null && task.destinationLocation!.displayAddress!.isNotEmpty)
+        ? task.destinationLocation!.displayAddress!
+        : (task.customer != null
+            ? '${task.customer!.address}, ${task.customer!.city}, ${task.customer!.pincode}'
+            : ((task.destinationLocation?.lat != null && task.destinationLocation!.lat != 0)
+                ? '${task.destinationLocation!.lat.toStringAsFixed(4)}, ${task.destinationLocation!.lng.toStringAsFixed(4)}'
+                : '—'));
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -555,20 +557,25 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
-          ),
-          Text(
-            time != null
-                ? DateDisplayUtil.formatDateTime(time)
-                : (suffix ?? '—'),
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: Colors.black,
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
             ),
-            textAlign: TextAlign.right,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              time != null
+                  ? DateDisplayUtil.formatDateTime(time)
+                  : (suffix ?? '—'),
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Colors.black,
+              ),
+              textAlign: TextAlign.right,
+            ),
           ),
         ],
       ),
@@ -607,7 +614,9 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           ),
           _proofRow(
             'Photo Proof',
-            task.photoProofUrl != null ? 'Uploaded' : '—',
+            (task.photoProofUrl != null && task.photoProofUrl!.isNotEmpty) || task.photoProof == true
+                ? 'Uploaded'
+                : '—',
           ),
           if (task.photoProofAddress != null &&
               task.photoProofAddress!.isNotEmpty)

@@ -418,6 +418,12 @@ class LiveTrackingService {
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // The background location callback runs in its own isolate, whose prefs cache was
+      // filled at app launch - before any task started. Without a reload it never sees
+      // the active task and silently drops every background point.
+      try {
+        await prefs.reload();
+      } catch (_) {}
       final active = prefs.getBool(_keyActive);
       if (active != true) return;
       final taskMongoId = prefs.getString(_keyTaskMongoId);
@@ -514,11 +520,14 @@ class LiveTrackingService {
       );
 
       final url = baseUrl.replaceAll(RegExp(r'/$'), '');
-      final uri = Uri.parse('$url/tracking/store');
+      final liveRecordUri = Uri.parse('$url/staff/geo-task/live-tracking/record');
+      final fallbackUri = Uri.parse('$url/tracking/store');
       final body = <String, dynamic>{
         'taskId': taskMongoId,
         'lat': lat,
         'lng': lng,
+        'latitude': lat,
+        'longitude': lng,
         'timestamp': capturedAt.toIso8601String(),
       };
       if (batteryPercent != null) body['batteryPercent'] = batteryPercent;
@@ -541,14 +550,36 @@ class LiveTrackingService {
         body['pincode'] = resolvedAddress['pincode'];
       }
 
-      final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode(body),
-      );
+      http.Response response;
+      try {
+        response = await http.post(
+          liveRecordUri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(body),
+        );
+        if (response.statusCode >= 400 && response.statusCode != 401 && response.statusCode != 403) {
+          response = await http.post(
+            fallbackUri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode(body),
+          );
+        }
+      } catch (_) {
+        response = await http.post(
+          fallbackUri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(body),
+        );
+      }
       if (response.statusCode >= 200 && response.statusCode < 300) {
         if (kDebugMode && AppConstants.logTrackingsToConsole) {
           debugPrint(

@@ -365,25 +365,33 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  if (category.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: colorScheme.outline),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(category, style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        if (category.isNotEmpty)
+                          Flexible(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                border: Border.all(color: colorScheme.outline),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(category, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+                            ),
+                          ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: _priorityColor(priority).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(priority, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _priorityColor(priority))),
+                        ),
+                      ],
                     ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _priorityColor(priority).withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(priority, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _priorityColor(priority))),
                   ),
-                  const Spacer(),
+                  const SizedBox(width: 8),
                   if (dateStr.isNotEmpty)
                     Text(dateStr, style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
                 ],

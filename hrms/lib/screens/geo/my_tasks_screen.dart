@@ -11,6 +11,12 @@ import 'package:hrms/config/app_route_observer.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/services/task_service.dart';
+import 'package:hrms/services/geo/live_tracking_service.dart';
+import 'package:hrms/services/geo/location_service.dart';
+import 'package:hrms/services/presence_tracking_service.dart';
+import 'package:hrms/screens/geo/field_out_form_screen.dart';
+import 'package:background_location_tracker/background_location_tracker.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:hrms/screens/dashboard/dashboard_screen.dart';
 import 'package:hrms/screens/geo/add_task_screen.dart';
 import 'package:hrms/screens/geo/add_customer_screen.dart';
@@ -19,6 +25,7 @@ import 'package:hrms/widgets/app_drawer.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
 import 'package:hrms/screens/geo/arrived_screen.dart';
 import 'package:hrms/screens/geo/completed_task_detail_screen.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:hrms/screens/geo/task_detail_screen.dart';
 import 'package:intl/intl.dart';
 import 'package:hrms/utils/date_display_util.dart';
@@ -27,6 +34,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MyTasksScreen extends StatefulWidget {
@@ -53,6 +61,17 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   late TabController _mainTabController;
   List<Customer> _customers = [];
   bool _isLoadingCustomers = true;
+
+  bool _isInternalStaff = false;
+  List<Map<String, dynamic>> _allowances = [];
+  bool _isLoadingAllowances = false;
+  List<Task> _historyTasks = [];
+  bool _isLoadingHistory = false;
+  Map<String, dynamic>? _activeJourney;
+
+  /// Admin external Field-Out form fields, delivered by GET /journey as `requirements`.
+  List<TaskRequirement> _journeyRequirements = const [];
+  bool _isJourneyActionLoading = false;
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -105,7 +124,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _mainTabController = TabController(length: 2, vsync: this);
+    _mainTabController = TabController(length: 4, vsync: this);
     _mainTabController.addListener(() {
       if (!_mainTabController.indexIsChanging && mounted) setState(() {});
     });
@@ -134,7 +153,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   void didPopNext() {
     if (mounted) {
       _fetchTasks();
-      _fetchCustomers();
+      if (!_isInternalStaff) {
+        _fetchCustomers();
+        _fetchJourneyStatus();
+      }
+      _fetchAllowances();
+      _fetchHistory();
     }
   }
 
@@ -146,6 +170,14 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   /// left pagination counting tasks the status filter then hid).
   List<Task> get _matchedTasks {
     Iterable<Task> list = _tasks;
+
+    // Strict fieldType filtering:
+    // Internal employees only see Internal tasks; External employees only see External tasks.
+    if (_isInternalStaff) {
+      list = list.where((t) => (t.type ?? '').toLowerCase() == 'internal');
+    } else {
+      list = list.where((t) => (t.type ?? 'external').toLowerCase() == 'external');
+    }
 
     final group = _statusFilter;
     if (group != null) {
@@ -387,16 +419,19 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                         children: [
                           Icon(Icons.filter_alt_rounded, color: AppColors.primary, size: 22),
                           const SizedBox(width: 8),
-                          const Text(
-                            'TASK LIST FILTERS',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.5,
-                              color: AppColors.textPrimary,
+                          const Expanded(
+                            child: Text(
+                              'TASK LIST FILTERS',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                                color: AppColors.textPrimary,
+                              ),
                             ),
                           ),
-                          const Spacer(),
                           IconButton(
                             onPressed: () => Navigator.of(ctx).pop(),
                             icon: const Icon(Icons.close, size: 20),
@@ -740,7 +775,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     if (_loggedInStaffId != null || _tasks.isNotEmpty) {
       _fetchTasks();
     }
-    _fetchCustomers();
+    if (!_isInternalStaff) {
+      _fetchCustomers();
+      _fetchJourneyStatus();
+    }
+    _fetchAllowances();
+    _fetchHistory();
   }
 
   Future<void> _fetchCustomers() async {
@@ -760,6 +800,372 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           _isLoadingCustomers = false;
         });
       }
+    }
+  }
+
+  Future<void> _fetchJourneyStatus() async {
+    try {
+      final journey = await TaskService().getJourneyStatus();
+      if (mounted) {
+        final openJourney = (journey != null && journey['open'] != null)
+            ? Map<String, dynamic>.from(journey['open'] as Map)
+            : null;
+        setState(() {
+          _activeJourney = openJourney;
+          _journeyRequirements = TaskRequirement.listFrom(journey?['requirements']);
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<Position> _getQuickAccurateLocation() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      throw Exception('Location services are disabled. Please enable GPS.');
+    }
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        throw Exception('Location permission denied.');
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+      throw Exception('Location permissions are permanently denied. Please enable in Settings.');
+    }
+
+    // 1. Instant return if last known position is available
+    try {
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null) return last;
+    } catch (_) {}
+
+    // 2. Fetch fresh position with strict Dart future timeout
+    try {
+      return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
+      ).timeout(const Duration(seconds: 4));
+    } catch (_) {
+      try {
+        return await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.low),
+        ).timeout(const Duration(seconds: 3));
+      } catch (_) {
+        final last = await Geolocator.getLastKnownPosition();
+        if (last != null) return last;
+        throw Exception('Unable to acquire GPS location. Please check location settings.');
+      }
+    }
+  }
+
+  /// Precise position for journey Field In / Field Out. The backend pins the journey's
+  /// start and end to these coordinates, so a stale last-known fix is not good enough.
+  Future<Position> _getFreshLocation() async {
+    await _getQuickAccurateLocation(); // permission / service checks
+    try {
+      return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      ).timeout(const Duration(seconds: 12));
+    } catch (_) {
+      return _getQuickAccurateLocation();
+    }
+  }
+
+  Future<void> _handleJourneyFieldIn() async {
+    // Field work happens inside the working day: require an open punch.
+    final punch = await TaskService().getTodayPunchState();
+    if (!mounted) return;
+    if (punch != null && (!punch.punchedIn || punch.punchedOut)) {
+      SnackBarUtils.showSnackBar(
+        context,
+        punch.punchedOut
+            ? 'You have already punched out today. Field In is available only while punched in.'
+            : 'Please punch in first to start a Field In.',
+        isError: true,
+      );
+      return;
+    }
+    setState(() => _isJourneyActionLoading = true);
+
+    BuildContext? loadingDialogContext;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        loadingDialogContext = ctx;
+        return PopScope(
+          canPop: false,
+          child: Dialog(
+            backgroundColor: Colors.white,
+            elevation: 8,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(strokeWidth: 3),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Starting Field Journey...',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Validating location & starting live tracking...',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    try {
+      final pos = await _getFreshLocation();
+      final res = await TaskService().journeyFieldIn(
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+      );
+
+      final journeyData = res['data'] is Map ? Map<String, dynamic>.from(res['data'] as Map) : null;
+      // Live location for the whole journey (Field In -> Field Out), same pipeline as tasks.
+      final journeyMongoId = (journeyData?['_id'] ?? '').toString();
+      if (journeyMongoId.isNotEmpty) {
+        try {
+          await LiveTrackingService().startTracking(
+            taskMongoId: journeyMongoId,
+            taskId: (journeyData?['id'] ?? journeyMongoId).toString(),
+            pickupLat: pos.latitude,
+            pickupLng: pos.longitude,
+            dropoffLat: pos.latitude,
+            dropoffLng: pos.longitude,
+          );
+          unawaited(
+            TaskService()
+                .storeTracking(journeyMongoId, pos.latitude, pos.longitude, movementType: 'stop')
+                .then((_) {}, onError: (_) {}),
+          );
+          PresenceTrackingService().pausePresenceTracking();
+          // Starts the foreground position stream and the background tracker, which posts
+          // points for the active journey (see LiveTrackingService.sendTrackingFromBackground).
+          if (mounted) {
+            unawaited(
+              LocationService()
+                  .initLocationService(
+                    customerLocation: LatLng(pos.latitude, pos.longitude),
+                    context: context,
+                  )
+                  .catchError((_) {}),
+            );
+          }
+        } catch (_) {}
+      }
+      if (mounted) {
+        setState(() {
+          _activeJourney = journeyData;
+        });
+        _fetchTasks();
+      }
+
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
+        loadingDialogContext = null;
+      }
+
+      if (mounted) {
+        SnackBarUtils.showSnackBar(context, 'Field In recorded successfully.');
+        _fetchTasks();
+        _fetchAllowances();
+        _fetchHistory();
+      }
+    } catch (e) {
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
+        loadingDialogContext = null;
+      }
+      if (mounted) {
+        final cleanMsg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
+        final displayMsg = (cleanMsg.isNotEmpty &&
+                !cleanMsg.toLowerCase().contains('dioexception') &&
+                !cleanMsg.toLowerCase().contains('socketexception'))
+            ? cleanMsg
+            : ErrorMessageUtils.toUserFriendlyMessage(e);
+        SnackBarUtils.showSnackBar(context, displayMsg, isError: true);
+      }
+    } finally {
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
+      }
+      if (mounted) setState(() => _isJourneyActionLoading = false);
+    }
+  }
+
+  Future<void> _handleJourneyFieldOut() async {
+    // The admin's external Field-Out form (GET /journey `requirements`), same fields and
+    // rules as a task's Field Out. Images are uploaded; Email fields are OTP-verified.
+    if (_journeyRequirements.isEmpty) await _fetchJourneyStatus();
+    if (!mounted) return;
+    final answers = await FieldOutFormScreen.open(
+      context,
+      requirements: _journeyRequirements,
+      title: 'Field Out',
+      subtitle:
+          'Recording Field Out at your current location closes this journey and calculates your travel allowance.',
+    );
+    if (answers == null || !mounted) return;
+    String? answerFor(bool Function(TaskRequirement) test) {
+      final reqs = _journeyRequirements.isNotEmpty ? _journeyRequirements : TaskRequirement.webDefaults;
+      for (final r in reqs) {
+        if (test(r) && answers[r.name] != null) return answers[r.name];
+      }
+      return null;
+    }
+
+    setState(() => _isJourneyActionLoading = true);
+
+    BuildContext? loadingDialogContext;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        loadingDialogContext = ctx;
+        return PopScope(
+          canPop: false,
+          child: Dialog(
+            backgroundColor: Colors.white,
+            elevation: 8,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(strokeWidth: 3),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Recording Field Out...',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Validating location & updating allowance...',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    try {
+      final pos = await _getFreshLocation();
+      final desc = answerFor((r) => r.isTextArea) ?? 'Completed field journey';
+      await TaskService().journeyFieldOut(
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+        fieldOutNotes: desc,
+        fieldOutImage: answerFor((r) => r.isImage),
+        fieldOutOtp: answerFor((r) => r.isOtp),
+        answers: answers,
+      );
+      // Journey closed: stop its live tracking and hand back to presence tracking.
+      try {
+        await LiveTrackingService().stopTracking();
+        await BackgroundLocationTrackerManager.stopTracking();
+        await PresenceTrackingService().resumePresenceTracking();
+      } catch (_) {}
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
+        loadingDialogContext = null;
+      }
+      if (mounted) {
+        setState(() => _activeJourney = null);
+        SnackBarUtils.showSnackBar(context, 'Field Out recorded! Journey completed.');
+        _fetchTasks();
+        _fetchAllowances();
+        _fetchHistory();
+      }
+    } catch (e) {
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
+        loadingDialogContext = null;
+      }
+      if (mounted) {
+        final cleanMsg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
+        final displayMsg = (cleanMsg.isNotEmpty &&
+                !cleanMsg.toLowerCase().contains('dioexception') &&
+                !cleanMsg.toLowerCase().contains('socketexception'))
+            ? cleanMsg
+            : ErrorMessageUtils.toUserFriendlyMessage(e);
+        SnackBarUtils.showSnackBar(context, displayMsg, isError: true);
+        _fetchJourneyStatus();
+      }
+    } finally {
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
+      }
+      if (mounted) setState(() => _isJourneyActionLoading = false);
+    }
+  }
+
+  Future<void> _fetchAllowances() async {
+    setState(() => _isLoadingAllowances = true);
+    try {
+      final list = await TaskService().getStaffAllowances();
+      if (mounted) {
+        setState(() {
+          _allowances = list;
+          _isLoadingAllowances = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingAllowances = false);
+    }
+  }
+
+  Future<void> _fetchHistory() async {
+    setState(() => _isLoadingHistory = true);
+    try {
+      final list = await TaskService().getStaffTaskHistory();
+      if (mounted) {
+        setState(() {
+          _historyTasks = _isInternalStaff
+              ? list.where((t) => (t.type ?? '').toLowerCase() == 'internal').toList()
+              : list.where((t) => (t.type ?? 'external').toLowerCase() == 'external').toList();
+          _isLoadingHistory = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingHistory = false);
     }
   }
 
@@ -806,8 +1212,38 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           });
         }
       }
-      await _fetchTasks();
-      await _fetchCustomers();
+
+      String? fieldType = (userData['fieldType'] ?? userData['staff']?['fieldType'])?.toString();
+      if (fieldType == null || fieldType.isEmpty) {
+        fieldType = await TaskService().getStaffFieldType();
+        if (fieldType != null && fieldType.isNotEmpty) {
+          userData['fieldType'] = fieldType;
+          await prefs.setString('user', jsonEncode(userData));
+        }
+      }
+      final isInternal = (fieldType ?? '').toLowerCase().contains('internal');
+      final newLength = isInternal ? 3 : 4;
+      if (_mainTabController.length != newLength) {
+        _mainTabController.dispose();
+        _mainTabController = TabController(length: newLength, vsync: this);
+        _mainTabController.addListener(() {
+          if (!_mainTabController.indexIsChanging && mounted) setState(() {});
+        });
+      }
+      if (mounted) {
+        setState(() {
+          _isInternalStaff = isInternal;
+        });
+      }
+
+      // Independent loads: run together instead of one round trip after another.
+      await Future.wait<void>([
+        _fetchTasks(),
+        if (!_isInternalStaff) _fetchCustomers(),
+        if (!_isInternalStaff) _fetchJourneyStatus(),
+        _fetchAllowances(),
+        _fetchHistory(),
+      ]);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -925,39 +1361,41 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(child: _buildStatusFilterDropdown()),
-                const SizedBox(width: 12),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            AddTaskScreen(staffId: _loggedInStaffId ?? ''),
-                      ),
-                    ).then((_) => _fetchTasks());
-                  },
-                  icon: const Icon(
-                    Icons.add_rounded,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                  label: const Text(
-                    'New Task',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                if (!_isInternalStaff) ...[
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              AddTaskScreen(staffId: _loggedInStaffId ?? ''),
+                        ),
+                      ).then((_) => _fetchTasks());
+                    },
+                    icon: const Icon(
+                      Icons.add_rounded,
                       color: Colors.white,
+                      size: 20,
+                    ),
+                    label: const Text(
+                      'New Task',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
                     ),
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 0,
-                  ),
-                ),
+                ],
               ],
             ),
           ),
@@ -1155,11 +1593,13 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         return const SizedBox.shrink();
       }
       bar = _buildTaskPaginationBar(colorScheme);
-    } else {
+    } else if (!_isInternalStaff && _mainTabController.index == 1) {
       if (_isLoadingCustomers || _customers.isEmpty) {
         return const SizedBox.shrink();
       }
       bar = _buildCustomerPaginationBar(colorScheme);
+    } else {
+      return const SizedBox.shrink();
     }
     return Material(
       color: colorScheme.surface,
@@ -1547,10 +1987,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         if (Navigator.of(context).canPop()) {
           Navigator.of(context).pop();
         } else {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const DashboardScreen()),
-            (route) => false,
-          );
+          DashboardScreen.goToTab(context, 0);
         }
       },
       child: Builder(
@@ -1591,13 +2028,22 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       labelColor: colorScheme.primary,
                       unselectedLabelColor: colorScheme.onSurfaceVariant,
                       indicatorColor: colorScheme.primary,
-                      tabs: const [
-                        Tab(text: 'Tasks'),
-                        Tab(text: 'Customers'),
-                      ],
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      tabs: _isInternalStaff
+                          ? const [
+                              Tab(text: 'Tasks'),
+                              Tab(text: 'Allowance'),
+                              Tab(text: 'History'),
+                            ]
+                          : const [
+                              Tab(text: 'Tasks'),
+                              Tab(text: 'Customers'),
+                              Tab(text: 'Allowance'),
+                              Tab(text: 'History'),
+                            ],
                     ),
               actions: [
-                if (!_isSelectionMode)
+                if (!_isSelectionMode && !_isInternalStaff && (_mainTabController.index == 0 || _mainTabController.index == 1))
                   IconButton(
                     icon: Icon(Icons.add_circle_outline_rounded, color: AppColors.primary, size: 26),
                     tooltip: _mainTabController.index == 0 ? 'Add Task' : 'Add Customer',
@@ -1631,6 +2077,19 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     tooltip: 'Filter tasks',
                     onPressed: _openTaskFilterBottomSheet,
                   ),
+                if (!_isSelectionMode && ((_isInternalStaff && _mainTabController.index > 0) || (!_isInternalStaff && _mainTabController.index >= 2)))
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded),
+                    tooltip: 'Refresh',
+                    onPressed: () {
+                      final isAllowance = (_isInternalStaff && _mainTabController.index == 1) || (!_isInternalStaff && _mainTabController.index == 2);
+                      if (isAllowance) {
+                        _fetchAllowances();
+                      } else {
+                        _fetchHistory();
+                      }
+                    },
+                  ),
               ],
             ),
             body: TabBarView(
@@ -1653,6 +2112,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                               ),
                             if (!_isSelectionMode)
                               SliverToBoxAdapter(child: _buildTaskListHeader()),
+                            if (!_isSelectionMode && !_isInternalStaff)
+                              SliverToBoxAdapter(child: _buildFieldJourneyBanner(colorScheme)),
                             if (_errorMessage != null)
                               SliverFillRemaining(
                                 hasScrollBody: false,
@@ -1749,6 +2210,14 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                               }
                                             })
                                           : () {
+                                              // An open self-logged journey has no task flow
+                                              // (Field In is already done): offer its Field Out.
+                                              if (task.selfLogged && !isCompleted) {
+                                                if (!_isJourneyActionLoading) {
+                                                  _handleJourneyFieldOut();
+                                                }
+                                                return;
+                                              }
                                               if (isCompleted) {
                                                 Navigator.push(
                                                   context,
@@ -2134,90 +2603,97 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                         ),
                       ),
 
-                // Customers Tab
-                _isLoadingCustomers
-                    ? const Center(child: AppTabLoader())
-                    : _customers.isEmpty
-                    ? RefreshIndicator(
-                        onRefresh: _fetchCustomers,
-                        child: SingleChildScrollView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          child: SizedBox(
-                            height: MediaQuery.of(context).size.height * 0.45,
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.people_outline,
-                                    size: 64,
-                                    color: Colors.grey.shade400,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'No customers found',
-                                    style: TextStyle(
-                                      color: Colors.grey.shade600,
+                // Customers Tab (External Field Staff only)
+                if (!_isInternalStaff)
+                  _isLoadingCustomers
+                      ? const Center(child: AppTabLoader())
+                      : _customers.isEmpty
+                      ? RefreshIndicator(
+                          onRefresh: _fetchCustomers,
+                          child: SingleChildScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            child: SizedBox(
+                              height: MediaQuery.of(context).size.height * 0.45,
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.people_outline,
+                                      size: 64,
+                                      color: Colors.grey.shade400,
                                     ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Pull to refresh or tap Add Customer',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade500,
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No customers found',
+                                      style: TextStyle(
+                                        color: Colors.grey.shade600,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Pull to refresh or tap Add Customer',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: _fetchCustomers,
-                        child: ListView.builder(
-                          padding: const EdgeInsets.all(12),
-                          itemCount: _pagedCustomers.length,
-                          itemBuilder: (context, index) {
-                            final customer = _pagedCustomers[index];
-                            return Card(
-                              elevation: 1,
-                              margin: const EdgeInsets.only(bottom: 8),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: ListTile(
-                                onTap: () => _showCustomerDetails(customer),
-                                leading: CircleAvatar(
-                                  backgroundColor: colorScheme.primary
-                                      .withOpacity(0.1),
-                                  child: Icon(
-                                    Icons.person,
-                                    color: colorScheme.primary,
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _fetchCustomers,
+                          child: ListView.builder(
+                            padding: const EdgeInsets.all(12),
+                            itemCount: _pagedCustomers.length,
+                            itemBuilder: (context, index) {
+                              final customer = _pagedCustomers[index];
+                              return Card(
+                                elevation: 1,
+                                margin: const EdgeInsets.only(bottom: 8),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: ListTile(
+                                  onTap: () => _showCustomerDetails(customer),
+                                  leading: CircleAvatar(
+                                    backgroundColor: colorScheme.primary
+                                        .withOpacity(0.1),
+                                    child: Icon(
+                                      Icons.person,
+                                      color: colorScheme.primary,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    customer.customerName,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  subtitle: (customer.companyName != null &&
+                                          customer.companyName!.trim().isNotEmpty)
+                                      ? Text(
+                                          customer.companyName!.trim(),
+                                          style: const TextStyle(fontSize: 12),
+                                        )
+                                      : null,
+                                  trailing: const Icon(
+                                    Icons.chevron_right_rounded,
                                   ),
                                 ),
-                                title: Text(
-                                  customer.customerName,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                subtitle: (customer.companyName != null &&
-                                        customer.companyName!.trim().isNotEmpty)
-                                    ? Text(
-                                        customer.companyName!.trim(),
-                                        style: const TextStyle(fontSize: 12),
-                                      )
-                                    : null,
-                                trailing: const Icon(
-                                  Icons.chevron_right_rounded,
-                                ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
-                      ),
+
+                // Allowance Tab
+                _buildAllowanceTabView(colorScheme),
+
+                // History Tab
+                _buildHistoryTabView(colorScheme),
               ],
             ),
             bottomNavigationBar: Column(
@@ -2230,18 +2706,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 AppBottomNavigationBar(
                   currentIndex: -1,
                   onTap: (index) {
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            DashboardScreen(initialIndex: index.clamp(0, 4)),
-                      ),
-                      (route) => false,
-                    );
+                    DashboardScreen.goToTab(context, index.clamp(0, 4));
                   },
                 ),
               ],
             ),
-            floatingActionButton: _isSelectionMode
+            floatingActionButton: (_isSelectionMode || _isInternalStaff || _mainTabController.index >= 2)
                 ? null
                 : SizedBox(
                     height: 44,
@@ -2283,6 +2753,414 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       ),
                     ),
                   ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFieldJourneyBanner(ColorScheme colorScheme) {
+    final hasActive = _activeJourney != null;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: hasActive ? Colors.green.shade50 : Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: hasActive ? Colors.green.shade200 : Colors.blue.shade200,
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: hasActive ? Colors.green.shade100 : Colors.blue.shade100,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              hasActive ? Icons.directions_walk_rounded : Icons.explore_outlined,
+              color: hasActive ? Colors.green.shade800 : AppColors.primary,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  hasActive ? 'Field Journey In-Progress' : 'Field Movement / Journey',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: hasActive ? Colors.green.shade900 : Colors.blue.shade900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  hasActive
+                      ? 'Field In: ${_activeJourney!['fieldInTime'] ?? _activeJourney!['startTime'] ?? 'Active'} • Tap Field Out when done'
+                      : 'Self-log travel between visits to calculate allowance',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: hasActive ? Colors.green.shade800 : Colors.blue.shade800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (_isJourneyActionLoading)
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            ElevatedButton(
+              onPressed: hasActive ? _handleJourneyFieldOut : _handleJourneyFieldIn,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: hasActive ? Colors.green.shade700 : AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                elevation: 0,
+              ),
+              child: Text(
+                hasActive ? 'Field Out' : 'Field In',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAllowanceTabView(ColorScheme colorScheme) {
+    if (_isLoadingAllowances) {
+      return const Center(child: AppTabLoader());
+    }
+    if (_allowances.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _fetchAllowances,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.5,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.payments_outlined, size: 64, color: Colors.grey.shade400),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No travel allowances recorded yet',
+                    style: TextStyle(fontSize: 15, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Complete tasks or field journeys to earn allowances',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _fetchAllowances,
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        itemCount: _allowances.length,
+        itemBuilder: (context, index) {
+          final item = _allowances[index];
+          final dateStr = (item['date'] ?? '').toString();
+          final distance = (item['totalDistanceKm'] ?? 0.0).toDouble();
+          final amount = (item['generatedAmount'] ?? item['revisedAmount'] ?? 0.0).toDouble();
+          final status = (item['status'] ?? 'Pending').toString();
+          final rate = item['ratePerKm'] ?? item['transport']?['rate'];
+          final transportName = item['transport']?['name']?.toString();
+
+          Color statusColor = Colors.orange.shade700;
+          if (status.toLowerCase() == 'approved') {
+            statusColor = Colors.green.shade700;
+          } else if (status.toLowerCase() == 'rejected') {
+            statusColor = Colors.red.shade700;
+          }
+
+          return Card(
+            elevation: 1,
+            margin: const EdgeInsets.only(bottom: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Icon(Icons.calendar_today_outlined, size: 14, color: colorScheme.onSurfaceVariant),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                dateStr.isNotEmpty ? dateStr : 'Today',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: statusColor, width: 0.6),
+                        ),
+                        child: Text(
+                          status,
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: statusColor),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Total Distance',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${distance.toStringAsFixed(2)} km',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (rate != null)
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Text(
+                                transportName ?? 'Rate/Km',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '₹$rate/km',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'Allowance',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '₹ ${amount.toStringAsFixed(2)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primary),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHistoryTabView(ColorScheme colorScheme) {
+    if (_isLoadingHistory) {
+      return const Center(child: AppTabLoader());
+    }
+    if (_historyTasks.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _fetchHistory,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.5,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.history_rounded, size: 64, color: Colors.grey.shade400),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No task history found',
+                    style: TextStyle(fontSize: 15, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Completed branch and customer visits will appear here',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _fetchHistory,
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        itemCount: _historyTasks.length,
+        itemBuilder: (context, index) {
+          final task = _historyTasks[index];
+          final completedStr = task.completedDate != null
+              ? DateDisplayUtil.formatForDisplay(task.completedDate!, 'dd MMM yyyy, hh:mm a')
+              : (task.assignedDate != null
+                  ? DateDisplayUtil.formatForDisplay(task.assignedDate!, 'dd MMM yyyy')
+                  : 'Past Task');
+
+          return Card(
+            elevation: 1,
+            margin: const EdgeInsets.only(bottom: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => CompletedTaskDetailScreen(task: task),
+                  ),
+                );
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            task.taskTitle.isNotEmpty ? task.taskTitle : task.taskId,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.green.shade400, width: 0.6),
+                          ),
+                          child: Text(
+                            _statusLabel(task.status),
+                            style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Colors.green.shade700),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    if (task.customer?.customerName != null) ...[
+                      Row(
+                        children: [
+                          Icon(Icons.person_outline, size: 14, color: colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              task.customer!.customerName,
+                              style: TextStyle(fontSize: 12, color: colorScheme.onSurface),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    if (task.destinationLocation?.displayAddress != null) ...[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.place_outlined, size: 14, color: colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              task.destinationLocation!.displayAddress!,
+                              style: TextStyle(fontSize: 11.5, color: colorScheme.onSurfaceVariant),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    Row(
+                      children: [
+                        Icon(Icons.check_circle_outline, size: 14, color: Colors.green.shade600),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            completedStr,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11.5, color: colorScheme.onSurfaceVariant),
+                          ),
+                        ),
+                        Text(
+                          'View Report',
+                          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: AppColors.primary),
+                        ),
+                        Icon(Icons.chevron_right, size: 16, color: AppColors.primary),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
           );
         },
       ),

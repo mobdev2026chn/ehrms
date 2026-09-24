@@ -881,15 +881,18 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           final dynamic rawStaffData = profileData['staffData'];
           if (rawStaffData is Map) {
             staffData = Map<String, dynamic>.from(rawStaffData);
+          } else if (profileData['_id'] != null) {
+            // HRMSbackend `/staff/profile` returns the staff record without a wrapper.
+            staffData = profileData;
           }
 
           _clampSelectedFiltersToAllowed();
           if (staffData != null) {
             _staffId = staffData['_id']?.toString();
             _salaryDetailsAccessEnabled =
-                staffData['salaryDetailsAccessEnabled'] == true;
+                salaryDetailsAccessFromProfile(profileData) == true;
             _allowCurrentCycleSalaryAccess =
-                staffData['allowCurrentCycleSalaryAccess'] == true;
+                currentCycleSalaryAccessFromProfile(profileData);
             debugPrint(
               '[SalaryOverview] profile staffId=$_staffId salaryDetailsAccess=$_salaryDetailsAccessEnabled '
               'allowCurrentCycle=$_allowCurrentCycleSalaryAccess',
@@ -903,6 +906,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           final dynamic rawStaffData = profileData['staffData'];
           if (rawStaffData is Map) {
             staffData = Map<String, dynamic>.from(rawStaffData);
+          } else if (profileData['_id'] != null) {
+            staffData = profileData;
           }
           _perfLog('profile cache-fallback ${sw.elapsedMilliseconds}ms');
         }
@@ -2674,11 +2679,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
-                  Text(
-                    'Page $page of $pages · $total total',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  Expanded(
+                    child: Text(
+                      'Page $page of $pages · $total total',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  const Spacer(),
                   TextButton(
                     onPressed: page <= 1 || _payrollHistoryLoading
                         ? null

@@ -447,6 +447,11 @@ class PresenceTrackingService {
     double? accuracyM,
     double? speedMps,
   }) async {
+    // Background isolate: refresh the prefs cache so an active task is seen (see
+    // LiveTrackingService.sendTrackingFromBackground).
+    try {
+      await (await SharedPreferences.getInstance()).reload();
+    } catch (_) {}
     if (await LiveTrackingService().isActive()) return;
     if (!await isBackgroundPresenceEnabled()) return;
 
@@ -644,6 +649,16 @@ class PresenceTrackingService {
       await stopTracking();
       return;
     }
+
+    final status = await getPresenceStatus();
+    if (status['canTrack'] != true) {
+      if (kDebugMode) {
+        debugPrint('[PresenceTracking] cannot start tracking: ${status['reason']}');
+      }
+      await stopTracking();
+      return;
+    }
+
     await setTrackingAllowed();
     await _schedulePresenceSends();
   }
@@ -1417,6 +1432,13 @@ class PresenceTrackingService {
       // Keep replaying pending offline rows every minute while tracking is active.
       await flushPendingPresenceQueue();
       final status = await getPresenceStatus();
+      if (status['canTrack'] != true) {
+        if (kDebugMode) {
+          debugPrint('[PresenceTracking] periodic check cannot track: ${status['reason']}');
+        }
+        await stopTracking();
+        return;
+      }
       final gf = status['branchGeofence'] as Map<String, dynamic>?;
       await _tick(gf);
     } finally {
@@ -1435,6 +1457,11 @@ class PresenceTrackingService {
     await _ensureBackgroundPresenceTracking();
     try {
       final status = await getPresenceStatus();
+      if (status['canTrack'] != true) {
+        if (kDebugMode) debugPrint('[PresenceTracking] initial status cannot track: ${status['reason']}');
+        await stopTracking();
+        return;
+      }
       final gf = status['branchGeofence'] as Map<String, dynamic>?;
       await _tick(gf);
     } catch (e) {

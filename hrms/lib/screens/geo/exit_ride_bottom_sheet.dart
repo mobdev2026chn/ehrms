@@ -74,12 +74,9 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
     }
     final exitType = _selectedExitType!;
     if (widget.onSubmit == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!context.mounted) return;
-        Navigator.of(
-          context,
-        ).pop(<String, String>{'exitType': exitType, 'reason': reason});
-      });
+      if (context.mounted) {
+        Navigator.of(context).pop(<String, String>{'exitType': exitType, 'reason': reason});
+      }
       return;
     }
 
@@ -90,12 +87,10 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
+      debugPrint('[ExitRideBottomSheet] submit error: $e');
       setState(() => _submitting = false);
-      var message = e.toString();
-      if (message.startsWith('Exception: ')) {
-        message = message.substring(11);
-      }
-      SnackBarUtils.showSnackBar(context, message, isError: true);
+      // Still allow the exit even if network fails
+      Navigator.of(context).pop(true);
     }
   }
 
@@ -209,15 +204,22 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
                       vertical: 14,
                     ),
                   ),
+                  isExpanded: true,
                   hint: Text(
                     'Select Hold ride or Exit full ride',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: Colors.grey.shade600),
                   ),
                   items: _exitTypeOptions
                       .map(
                         (e) => DropdownMenuItem<String>(
                           value: e['value'] as String,
-                          child: Text(e['label'] as String),
+                          child: Text(
+                            e['label'] as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       )
                       .toList(),
@@ -253,12 +255,24 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
                       vertical: 14,
                     ),
                   ),
+                  isExpanded: true,
                   hint: Text(
                     'Select a reason',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: Colors.grey.shade600),
                   ),
                   items: _presetReasons
-                      .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                      .map(
+                        (r) => DropdownMenuItem(
+                          value: r,
+                          child: Text(
+                            r,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
                       .toList(),
                   onChanged: _submitting
                       ? null

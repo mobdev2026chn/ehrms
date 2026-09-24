@@ -172,13 +172,15 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
     const tabIconSize = 16.0;
     const tabFontSize = 12.0;
     final tabs = <Tab>[
-      Tab(text: 'My Courses', icon: Icon(Icons.menu_book_outlined, size: tabIconSize)),
+      Tab(height: 44, iconMargin: const EdgeInsets.only(bottom: 2), text: 'My Courses', icon: Icon(Icons.menu_book_outlined, size: tabIconSize)),
       Tab(
+        height: 44,
+        iconMargin: const EdgeInsets.only(bottom: 2),
         text: 'Learning Engine',
         icon: Icon(Icons.bar_chart_outlined, size: tabIconSize),
       ),
       if (widget.embeddedInShell)
-        Tab(text: 'Live Sessions', icon: Icon(Icons.video_call_outlined, size: tabIconSize)),
+        Tab(height: 44, iconMargin: const EdgeInsets.only(bottom: 2), text: 'Live Sessions', icon: Icon(Icons.video_call_outlined, size: tabIconSize)),
     ];
     final tabBar = TabBar(
       controller: _tabController,
@@ -246,7 +248,7 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
         backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(40),
+          preferredSize: const Size.fromHeight(44),
           child: Container(color: AppColors.surface, child: tabBar),
         ),
       ),
@@ -255,10 +257,7 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
       bottomNavigationBar: AppBottomNavigationBar(
         currentIndex: -1,
         onTap: (index) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => DashboardScreen(initialIndex: index)),
-            (route) => route.isFirst,
-          );
+          DashboardScreen.goToTab(context, index);
         },
       ),
     );
@@ -743,11 +742,13 @@ class _CourseCard extends StatelessWidget {
                     children: [
                       Icon(Icons.person_outline, size: 12, color: Colors.grey[600]),
                       const SizedBox(width: 4),
-                      Text(
-                        (course['instructor'] ?? 'Admin').toString(),
-                        style: TextStyle(fontSize: 10, color: Colors.grey[600]),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      Flexible(
+                        child: Text(
+                          (course['instructor'] ?? 'Admin').toString(),
+                          style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ),

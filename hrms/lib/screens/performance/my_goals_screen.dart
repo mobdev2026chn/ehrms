@@ -466,35 +466,44 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
     IconData icon,
     Color iconColor,
   ) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 13, color: iconColor),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.3,
-                color: AppColors.textSecondary,
-              ),
+    // Expanded: used only as a direct child of the stats Row.
+    return Expanded(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
             ),
-          ],
-        ),
-      ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 13, color: iconColor),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -519,19 +528,25 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(Icons.flag_rounded, size: 20, color: AppColors.primary),
-                  const SizedBox(width: 8),
-                  Text(
-                    'My Goals (${_goals.length})',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+              Expanded(
+                child: Row(
+                  children: [
+                    Icon(Icons.flag_rounded, size: 20, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'My Goals (${_goals.length})',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               Row(
                 children: [

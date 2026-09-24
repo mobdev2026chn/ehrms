@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -61,7 +62,9 @@ class AttendanceScreen extends StatefulWidget {
 
 class _AttendanceScreenState extends State<AttendanceScreen>
     with SingleTickerProviderStateMixin {
-  static const Duration _networkTimeout = Duration(seconds: 45);
+  // Kept below the Dio receive timeout so one stalled call cannot hold the screen's
+  // loader for (timeout x retries).
+  static const Duration _networkTimeout = Duration(seconds: 15);
   static const Duration _businessLookupCacheDuration = Duration(minutes: 5);
   Map<String, dynamic>? _attendanceData;
 
@@ -174,6 +177,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   /// True while fetching template details on open.
   bool _isFetchingTemplateDetails = false;
   bool _hasInitializedActiveData = false;
+  DateTime? _lastTabRefreshAt;
 
   /// Company fine calculation (company.settings.payroll.fineCalculation) fetched by staff's businessId.
   Map<String, dynamic>? _fineCalculation;
@@ -272,8 +276,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // fresh data when it actually matters.
     if (widget.isActiveTab == true && oldWidget.isActiveTab != true) {
       if (_hasInitializedActiveData) {
-        _refreshData();
+        // Skip the 5-call refresh when the tab was loaded moments ago.
+        final last = _lastTabRefreshAt;
+        if (last == null ||
+            DateTime.now().difference(last) > const Duration(seconds: 45)) {
+          _lastTabRefreshAt = DateTime.now();
+          _refreshData();
+        }
       } else {
+        _lastTabRefreshAt = DateTime.now();
         _hasInitializedActiveData = true;
         _initData();
       }
@@ -375,7 +386,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
       _profileAttendanceTemplateId = staffData?['attendanceTemplateId'];
-      _syncShiftCalendarContextFromStaff(staffData);
+      _syncShiftCalendarContextFromStaff(staffData, profileResult['data'] as Map<String, dynamic>?);
       debugPrint(
         '[Attendance] Profile fetched: profileTemplateRef=$_profileAttendanceTemplateId',
       );
@@ -583,18 +594,30 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   /// Profile staff snapshot + shift key (for template-name / shiftId reconciliation).
-  void _syncShiftCalendarContextFromStaff(Map<String, dynamic>? staffData) {
+  void _syncShiftCalendarContextFromStaff(Map<String, dynamic>? staffData, [Map<String, dynamic>? profileData]) {
     String? shiftKey;
     _profileStaffDataSnapshot = null;
-    if (staffData != null) {
-      final m = Map<String, dynamic>.from(staffData);
-      _profileStaffDataSnapshot = Map<String, dynamic>.from(m);
+    if (staffData != null || profileData != null) {
+      final m = <String, dynamic>{};
+      if (profileData != null) m.addAll(profileData);
+      if (staffData != null) m.addAll(staffData);
+      _profileStaffDataSnapshot = m;
       shiftKey = staffShiftKeyFromProfileMap(m);
     }
     if (!mounted) return;
+    // The joining date arrives with the profile; if the calendar is already on an
+    // earlier month, move it to the joining month.
+    final joinStart = _joiningMonthStart;
+    final moveToJoinMonth = joinStart != null &&
+        DateTime(_focusedDay.year, _focusedDay.month, 1).isBefore(joinStart);
     setState(() {
       _profileStaffShiftName = shiftKey;
+      if (moveToJoinMonth) {
+        _focusedDay = joinStart;
+        _selectedDay = joinStart;
+      }
     });
+    if (moveToJoinMonth) _fetchMonthData(joinStart.year, joinStart.month);
   }
 
   Future<void> _fetchFineCalculation() async {
@@ -621,7 +644,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final staffData =
           profileResult['data']?['staffData'] as Map<String, dynamic>?;
       _profileAttendanceTemplateId = staffData?['attendanceTemplateId'];
-      _syncShiftCalendarContextFromStaff(staffData);
+      _syncShiftCalendarContextFromStaff(staffData, profileResult['data'] as Map<String, dynamic>?);
       _reconcileShiftKeyWithAttendanceTemplate();
       if (mounted) {
         setState(() {
@@ -1009,12 +1032,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
     final pageToFetch = page ?? (refresh ? 1 : _page);
 
-    setState(() {
-      _isLoadingHistory = true;
-      if (refresh || pageToFetch == 1) {
-        _historyList = [];
-      }
-    });
+    // Keep the current list visible until the new page lands (wiping it here made
+    // the history flash to a loader on every tab entry).
+    setState(() => _isLoadingHistory = true);
 
     try {
       final result = await _attendanceService
@@ -1229,18 +1249,466 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
   }
 
+  /// Resolves punchIn time from all potential fields, nested objects, and activity logs.
+  dynamic _resolvePunchInFromRecord(Map<String, dynamic>? record) {
+    if (record == null) return null;
+    final presentDetails =
+        record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
+
+    final direct = record['punchIn'] ??
+        record['checkIn'] ??
+        record['checkInTime'] ??
+        record['punchInTime'] ??
+        record['punchInDateTime'] ??
+        record['checkInDateTime'] ??
+        record['punchInAt'] ??
+        record['inTime'] ??
+        record['loginTime'] ??
+        presentDetails?['checkInTime'] ??
+        presentDetails?['punchIn'];
+    if (direct != null &&
+        direct.toString().trim().isNotEmpty &&
+        direct != '-' &&
+        direct != 'null') {
+      return direct;
+    }
+
+    final loc = record['location'];
+    if (loc is Map) {
+      final pIn = loc['punchIn'];
+      if (pIn is Map) {
+        final t = pIn['time'] ?? pIn['timestamp'] ?? pIn['dateTime'] ?? pIn['punchInDateTime'];
+        if (t != null &&
+            t.toString().trim().isNotEmpty &&
+            t != '-' &&
+            t != 'null') {
+          return t;
+        }
+      }
+    }
+
+    final rawLogs = (record['activityLogs'] is List)
+        ? record['activityLogs'] as List
+        : ((record['logs'] is List) ? record['logs'] as List : null);
+    if (rawLogs != null && rawLogs.isNotEmpty) {
+      for (final l in rawLogs) {
+        if (l is! Map) continue;
+        final act = (l['action'] ?? '').toString().trim().toLowerCase().replaceAll('-', '_');
+        if (act == 'punch_in' || act == 'punchin' || act == 'check_in' || act == 'checkin') {
+          final when = l['punchInDateTime'] ?? l['time'] ?? l['timestamp'] ?? l['createdAt'];
+          if (when != null &&
+              when.toString().trim().isNotEmpty &&
+              when != '-' &&
+              when != 'null') {
+            return when;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /// Resolves punchOut time from all potential fields, nested objects, and activity logs.
+  dynamic _resolvePunchOutFromRecord(Map<String, dynamic>? record) {
+    if (record == null) return null;
+    final presentDetails =
+        record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
+
+    final direct = record['punchOut'] ??
+        record['checkOut'] ??
+        record['checkOutTime'] ??
+        record['punchOutTime'] ??
+        record['punchOutDateTime'] ??
+        record['checkOutDateTime'] ??
+        record['punchOutAt'] ??
+        record['outTime'] ??
+        record['logoutTime'] ??
+        presentDetails?['checkOutTime'] ??
+        presentDetails?['punchOut'];
+    if (direct != null &&
+        direct.toString().trim().isNotEmpty &&
+        direct != '-' &&
+        direct != 'null') {
+      return direct;
+    }
+
+    final loc = record['location'];
+    if (loc is Map) {
+      final pOut = loc['punchOut'];
+      if (pOut is Map) {
+        final t = pOut['time'] ?? pOut['timestamp'] ?? pOut['dateTime'] ?? pOut['punchOutDateTime'];
+        if (t != null &&
+            t.toString().trim().isNotEmpty &&
+            t != '-' &&
+            t != 'null') {
+          return t;
+        }
+      }
+    }
+
+    final rawLogs = (record['activityLogs'] is List)
+        ? record['activityLogs'] as List
+        : ((record['logs'] is List) ? record['logs'] as List : null);
+    if (rawLogs != null && rawLogs.isNotEmpty) {
+      dynamic latestPunchOut;
+      for (final l in rawLogs) {
+        if (l is! Map) continue;
+        final act = (l['action'] ?? '').toString().trim().toLowerCase().replaceAll('-', '_');
+        if (act == 'punch_out' || act == 'punchout' || act == 'check_out' || act == 'checkout') {
+          final when = l['punchOutDateTime'] ?? l['time'] ?? l['timestamp'] ?? l['createdAt'];
+          if (when != null &&
+              when.toString().trim().isNotEmpty &&
+              when != '-' &&
+              when != 'null') {
+            latestPunchOut = when;
+          }
+        }
+      }
+      if (latestPunchOut != null) return latestPunchOut;
+    }
+
+    return null;
+  }
+
+  /// Resolves punchIn selfie URL/base64 from all potential fields, nested objects, and activity logs.
+  dynamic _resolvePunchInSelfieFromRecord(Map<String, dynamic>? record) {
+    if (record == null) return null;
+    final presentDetails =
+        record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
+
+    final direct = record['punchInSelfie'] ??
+        record['punchInSelfieUrl'] ??
+        record['checkInSelfie'] ??
+        record['checkInSelfieUrl'] ??
+        record['selfieUrl'] ??
+        record['selfie'] ??
+        record['image'] ??
+        record['photo'] ??
+        presentDetails?['punchInSelfie'] ??
+        presentDetails?['punchInSelfieUrl'] ??
+        presentDetails?['checkInSelfie'] ??
+        presentDetails?['checkInSelfieUrl'] ??
+        presentDetails?['selfieUrl'] ??
+        presentDetails?['selfie'];
+
+    if (direct != null &&
+        direct.toString().trim().isNotEmpty &&
+        direct != '-' &&
+        direct != 'null') {
+      return direct;
+    }
+
+    final loc = record['location'];
+    if (loc is Map) {
+      final pIn = loc['punchIn'];
+      if (pIn is Map) {
+        final img = pIn['selfie'] ?? pIn['image'] ?? pIn['selfieUrl'] ?? pIn['photo'];
+        if (img != null &&
+            img.toString().trim().isNotEmpty &&
+            img != '-' &&
+            img != 'null') {
+          return img;
+        }
+      }
+    }
+
+    final rawLogs = (record['activityLogs'] is List)
+        ? record['activityLogs'] as List
+        : ((record['logs'] is List) ? record['logs'] as List : null);
+    if (rawLogs != null && rawLogs.isNotEmpty) {
+      for (final l in rawLogs) {
+        if (l is! Map) continue;
+        final act = (l['action'] ?? '').toString().trim().toLowerCase().replaceAll('-', '_');
+        if (act == 'punch_in' || act == 'punchin' || act == 'check_in' || act == 'checkin') {
+          final img = l['punchInSelfie'] ??
+              l['punchInSelfieUrl'] ??
+              l['selfieUrl'] ??
+              l['image'] ??
+              l['selfie'] ??
+              l['photo'];
+          if (img != null &&
+              img.toString().trim().isNotEmpty &&
+              img != '-' &&
+              img != 'null') {
+            return img;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /// Resolves punchOut selfie URL/base64 from all potential fields, nested objects, and activity logs.
+  dynamic _resolvePunchOutSelfieFromRecord(Map<String, dynamic>? record) {
+    if (record == null) return null;
+    final presentDetails =
+        record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
+
+    final direct = record['punchOutSelfie'] ??
+        record['punchOutSelfieUrl'] ??
+        record['checkOutSelfie'] ??
+        record['checkOutSelfieUrl'] ??
+        record['selfieUrl'] ??
+        record['selfie'] ??
+        record['image'] ??
+        record['photo'] ??
+        presentDetails?['punchOutSelfie'] ??
+        presentDetails?['punchOutSelfieUrl'] ??
+        presentDetails?['checkOutSelfie'] ??
+        presentDetails?['checkOutSelfieUrl'] ??
+        presentDetails?['selfieUrl'] ??
+        presentDetails?['selfie'];
+
+    if (direct != null &&
+        direct.toString().trim().isNotEmpty &&
+        direct != '-' &&
+        direct != 'null') {
+      return direct;
+    }
+
+    final loc = record['location'];
+    if (loc is Map) {
+      final pOut = loc['punchOut'];
+      if (pOut is Map) {
+        final img = pOut['selfie'] ?? pOut['image'] ?? pOut['selfieUrl'] ?? pOut['photo'];
+        if (img != null &&
+            img.toString().trim().isNotEmpty &&
+            img != '-' &&
+            img != 'null') {
+          return img;
+        }
+      }
+    }
+
+    final rawLogs = (record['activityLogs'] is List)
+        ? record['activityLogs'] as List
+        : ((record['logs'] is List) ? record['logs'] as List : null);
+    if (rawLogs != null && rawLogs.isNotEmpty) {
+      for (final l in rawLogs) {
+        if (l is! Map) continue;
+        final act = (l['action'] ?? '').toString().trim().toLowerCase().replaceAll('-', '_');
+        if (act == 'punch_out' || act == 'punchout' || act == 'check_out' || act == 'checkout') {
+          final img = l['punchOutSelfie'] ??
+              l['punchOutSelfieUrl'] ??
+              l['selfieUrl'] ??
+              l['image'] ??
+              l['selfie'] ??
+              l['photo'];
+          if (img != null &&
+              img.toString().trim().isNotEmpty &&
+              img != '-' &&
+              img != 'null') {
+            return img;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /// Resolves break sessions from all potential schema representations (breakSessions, breaks, break.breaks, breakDetails).
+  List<Map<String, dynamic>> _resolveBreakSessionsFromRecord(Map<String, dynamic>? record) {
+    if (record == null) return [];
+    final presentDetails =
+        record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
+
+    final raw = record['breakSessions'] ??
+        record['breaks'] ??
+        (record['break'] is Map ? (record['break']['breaks'] ?? record['break']['breakSessions']) : null) ??
+        (record['breakDetails'] is Map ? (record['breakDetails']['breaks'] ?? record['breakDetails']['breakSessions']) : null) ??
+        presentDetails?['breakSessions'] ??
+        presentDetails?['breaks'] ??
+        (presentDetails?['break'] is Map ? (presentDetails?['break']['breaks'] ?? presentDetails?['break']['breakSessions']) : null);
+
+    if (raw is List) {
+      return List<Map<String, dynamic>>.from(raw.whereType<Map>());
+    }
+    return [];
+  }
+
+  /// Safely resolves a human-readable address from string, map, or coordinate fields.
+  String? _resolveAddressFromMap(dynamic loc) {
+    if (loc == null) return null;
+    if (loc is String) {
+      final t = loc.trim();
+      if (t.isNotEmpty && t != 'null' && t != '-' && t != '{}') {
+        return t;
+      }
+      return null;
+    }
+    if (loc is Map) {
+      final parts = [loc['address'], loc['area'], loc['city'], loc['pincode']]
+          .whereType<String>()
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty && s != 'null' && s != '-')
+          .toList();
+      if (parts.isNotEmpty) return parts.join(', ');
+
+      if (loc['address'] != null) {
+        final a = loc['address'].toString().trim();
+        if (a.isNotEmpty && a != 'null' && a != '-') return a;
+      }
+      if (loc['branchName'] != null) {
+        final b = loc['branchName'].toString().trim();
+        if (b.isNotEmpty && b != 'null' && b != '-') return b;
+      }
+      if (loc['latitude'] != null && loc['longitude'] != null) {
+        final lat = loc['latitude'].toString().trim();
+        final lng = loc['longitude'].toString().trim();
+        if (lat.isNotEmpty && lng.isNotEmpty && lat != '0' && lng != '0') {
+          return '$lat, $lng';
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Resolves punch in address from various schema fields.
+  String? _resolvePunchInAddressFromRecord(Map<String, dynamic>? record) {
+    if (record == null) return null;
+    final presentDetails =
+        record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
+
+    final direct = record['punchInAddress'] ??
+        record['checkInAddress'] ??
+        record['inAddress'] ??
+        presentDetails?['punchInAddress'] ??
+        presentDetails?['checkInAddress'];
+    final resolvedDirect = _resolveAddressFromMap(direct);
+    if (resolvedDirect != null) return resolvedDirect;
+
+    final loc = record['location'] ?? presentDetails?['location'];
+    if (loc is Map) {
+      final pIn = loc['punchIn'] ?? loc['checkIn'];
+      final addr = _resolveAddressFromMap(pIn);
+      if (addr != null) return addr;
+
+      final rootAddr = _resolveAddressFromMap(loc);
+      if (rootAddr != null) return rootAddr;
+    } else if (loc != null) {
+      final addr = _resolveAddressFromMap(loc);
+      if (addr != null) return addr;
+    }
+
+    final coords = presentDetails?['checkInCoordinates'] ?? record['checkInCoordinates'];
+    if (coords is Map && coords['latitude'] != null && coords['longitude'] != null) {
+      return '${coords['latitude']}, ${coords['longitude']}';
+    }
+
+    final rawLogs = (record['activityLogs'] is List)
+        ? record['activityLogs'] as List
+        : ((record['logs'] is List) ? record['logs'] as List : null);
+    if (rawLogs != null) {
+      for (final l in rawLogs) {
+        if (l is! Map) continue;
+        final act = (l['action'] ?? '').toString().trim().toLowerCase().replaceAll('-', '_');
+        if (act == 'punch_in' || act == 'punchin' || act == 'check_in' || act == 'checkin') {
+          final addr = _resolveAddressFromMap(
+            l['punchInAddress'] ?? l['location'] ?? l['address'] ?? l['startAddress'],
+          );
+          if (addr != null) return addr;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /// Resolves punch out address from various schema fields.
+  String? _resolvePunchOutAddressFromRecord(Map<String, dynamic>? record) {
+    if (record == null) return null;
+    // Not punched out yet: the generic `location` fallbacks below would show
+    // the punch-in address as "Punch Out".
+    if (_resolvePunchOutFromRecord(record) == null) return null;
+    final presentDetails =
+        record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
+
+    final direct = record['punchOutAddress'] ??
+        record['checkOutAddress'] ??
+        record['outAddress'] ??
+        presentDetails?['punchOutAddress'] ??
+        presentDetails?['checkOutAddress'];
+    final resolvedDirect = _resolveAddressFromMap(direct);
+    if (resolvedDirect != null) return resolvedDirect;
+
+    final loc = record['location'] ?? presentDetails?['location'];
+    if (loc is Map) {
+      final pOut = loc['punchOut'] ?? loc['checkOut'];
+      final addr = _resolveAddressFromMap(pOut);
+      if (addr != null) return addr;
+    } else if (loc != null) {
+      final addr = _resolveAddressFromMap(loc);
+      if (addr != null) return addr;
+    }
+
+    final coords = presentDetails?['checkOutCoordinates'] ?? record['checkOutCoordinates'];
+    if (coords is Map && coords['latitude'] != null && coords['longitude'] != null) {
+      return '${coords['latitude']}, ${coords['longitude']}';
+    }
+
+    final rawLogs = (record['activityLogs'] is List)
+        ? record['activityLogs'] as List
+        : ((record['logs'] is List) ? record['logs'] as List : null);
+    if (rawLogs != null) {
+      for (final l in rawLogs) {
+        if (l is! Map) continue;
+        final act = (l['action'] ?? '').toString().trim().toLowerCase().replaceAll('-', '_');
+        if (act == 'punch_out' || act == 'punchout' || act == 'check_out' || act == 'checkout') {
+          final addr = _resolveAddressFromMap(
+            l['punchOutAddress'] ?? l['location'] ?? l['address'] ?? l['endAddress'],
+          );
+          if (addr != null) return addr;
+        }
+      }
+    }
+
+    return null;
+  }
+
   // Helper method to format time
-  String _formatTime(dynamic isoString) {
-    if (isoString == null ||
-        isoString.toString().isEmpty ||
-        isoString == 'null') {
+  /// [withSeconds] adds :ss (Attendance Detail page); lists keep hh:mm.
+  String _formatTime(dynamic value, {bool withSeconds = false}) {
+    if (value == null ||
+        value.toString().trim().isEmpty ||
+        value == 'null' ||
+        value == '-') {
       return '--:--';
     }
+    final s = value.toString().trim();
+    // 1. Check if already in 12-hour format: e.g. "05:23 PM" or "5:23 AM"
+    final match12 =
+        RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)$', caseSensitive: false)
+            .firstMatch(s);
+    if (match12 != null) {
+      final h = int.tryParse(match12.group(1)!) ?? 0;
+      final m = match12.group(2)!;
+      final period = match12.group(3)!.toUpperCase();
+      return '${h.toString().padLeft(2, '0')}:$m $period';
+    }
+    // 2. Check if in 24-hour format: e.g. "17:23" or "17:23:45"
+    final match24 = RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$').firstMatch(s);
+    if (match24 != null) {
+      final h = int.tryParse(match24.group(1)!) ?? 0;
+      final m = match24.group(2)!;
+      final period = h >= 12 ? 'PM' : 'AM';
+      final h12 = h % 12 == 0 ? 12 : h % 12;
+      final sec = withSeconds ? ':${match24.group(3) ?? '00'}' : '';
+      return '${h12.toString().padLeft(2, '0')}:$m$sec $period';
+    }
+    // 3. Try parsing as DateTime / ISO 8601
+    final dt = _parseAnyDateTimeToLocal(value);
+    final pattern = withSeconds ? 'hh:mm:ss a' : 'hh:mm a';
+    if (dt != null) {
+      return DateFormat(pattern).format(dt);
+    }
     try {
-      final date = DateTime.parse(isoString.toString()).toLocal();
-      return DateFormat('hh:mm a').format(date);
-    } catch (e) {
-      return '--:--';
+      final parsed = DateTime.parse(s).toLocal();
+      return DateFormat(pattern).format(parsed);
+    } catch (_) {
+      return s;
     }
   }
 
@@ -1299,15 +1767,40 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   /// Builds an [ImageProvider] for a selfie that may be either a remote
-  /// (Cloudinary) http URL or an inline base64 `data:` URL. Punch/break selfies
-  /// are uploaded and referenced by http URL; permission step-out/in selfies are
-  /// stored inline on the attendance record as a data URL. Returns null when the
-  /// value is neither / fails to decode.
-  ImageProvider? _selfieImageProvider(String url) {
-    if (url.startsWith('http')) return CachedNetworkImageProvider(url);
+  /// Builds an [ImageProvider] for a selfie that may be either a remote
+  /// (DigitalOcean/Cloudinary) http URL, a server-relative path, or an inline/raw base64 image.
+  /// Returns null when the value is empty, invalid, or fails to decode.
+  ImageProvider? _selfieImageProvider(String rawUrl) {
+    final url = rawUrl.trim();
+    if (url.isEmpty || url == 'null' || url == '-' || url == 'undefined') {
+      return null;
+    }
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return CachedNetworkImageProvider(url);
+    }
     if (url.startsWith('data:')) {
-      final bytes = Uri.parse(url).data?.contentAsBytes();
-      if (bytes != null && bytes.isNotEmpty) return MemoryImage(bytes);
+      try {
+        final commaIdx = url.indexOf(',');
+        final b64 = commaIdx != -1 ? url.substring(commaIdx + 1) : url;
+        final clean = b64.replaceAll(RegExp(r'\s+'), '');
+        final bytes = base64Decode(clean);
+        if (bytes.isNotEmpty) return MemoryImage(bytes);
+      } catch (_) {}
+      return null;
+    }
+    // Check if it's a raw base64 string (no data: header)
+    if (url.length > 50 && !url.contains(' ') && !url.startsWith('/')) {
+      try {
+        final clean = url.replaceAll(RegExp(r'\s+'), '');
+        final bytes = base64Decode(clean);
+        if (bytes.isNotEmpty) return MemoryImage(bytes);
+      } catch (_) {}
+    }
+    // Relative URL (e.g. /uploads/... or uploads/...)
+    if (url.startsWith('/') || url.startsWith('uploads/')) {
+      final cleanPath = url.startsWith('/') ? url.substring(1) : url;
+      final serverBase = AppConstants.fileBaseUrl;
+      return CachedNetworkImageProvider('$serverBase/$cleanPath');
     }
     return null;
   }
@@ -1521,6 +2014,21 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
     }).toList();
 
+    // Attendance logs should be displayed starting from the employee’s onboarding date
+    final onboardingDate = _profileJoiningDateForShiftResolution();
+    if (onboardingDate != null) {
+      final onboardingDateOnly = DateTime(onboardingDate.year, onboardingDate.month, onboardingDate.day);
+      combined = combined.where((e) {
+        try {
+          final d = _extractDateOnly(e['date']);
+          final dateOnly = DateTime(d.year, d.month, d.day);
+          return !dateOnly.isBefore(onboardingDateOnly);
+        } catch (_) {
+          return true;
+        }
+      }).toList();
+    }
+
     return combined;
   }
 
@@ -1537,9 +2045,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       formattedHeaderDate = dateStr.toString();
     }
 
-    final punchIn = record['punchIn'];
-    final punchOut = record['punchOut'];
-    final workHours = record['workHours'];
+    final presentDetails =
+        record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
+    dynamic punchIn = _resolvePunchInFromRecord(record);
+    dynamic punchOut = _resolvePunchOutFromRecord(record);
+    dynamic workHours = record['workHours'] ??
+        record['workingHours'] ??
+        presentDetails?['totalHours'];
     final status = record['status'] ?? 'Present';
     final compensationType = (record['compensationType'] as String? ?? '')
         .toString()
@@ -1640,42 +2152,154 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         (permissionEarlyMinutes != null && permissionEarlyMinutes > 0);
 
     // Extract location details
-    String? punchInAddress;
-    String? punchOutAddress;
-    String? branchName;
+    String? punchInAddress = _resolvePunchInAddressFromRecord(record);
+    String? punchOutAddress = _resolvePunchOutAddressFromRecord(record);
+    String? branchName = record['branchName']?.toString();
+    if (record['location'] is Map) {
+      branchName ??= record['location']['branchName']?.toString() ??
+          (record['location']['punchIn'] is Map ? record['location']['punchIn']['branchName']?.toString() : null) ??
+          (record['location']['punchOut'] is Map ? record['location']['punchOut']['branchName']?.toString() : null);
+    }
 
-    if (record['location'] != null) {
-      final location = record['location'];
-      if (location['punchIn'] != null) {
-        final punchInLoc = location['punchIn'];
-        punchInAddress =
-            punchInLoc['address'] ??
-            '${punchInLoc['area'] ?? ''}, ${punchInLoc['city'] ?? ''}, ${punchInLoc['pincode'] ?? ''}';
-        branchName = punchInLoc['branchName'] ?? record['branchName'];
+    // Raw selfie extraction with fallbacks across schema variants
+    dynamic rawPunchInSelfie = _resolvePunchInSelfieFromRecord(record);
+    dynamic rawPunchOutSelfie = _resolvePunchOutSelfieFromRecord(record);
+
+    final rawLogs = (record['activityLogs'] is List)
+        ? record['activityLogs'] as List
+        : ((record['logs'] is List) ? record['logs'] as List : []);
+    final logs = List<Map<String, dynamic>>.from(
+      rawLogs.whereType<Map>(),
+    );
+
+    // Look inside logs for punchIn, punchOut, selfie or address if still missing
+    for (final l in logs) {
+      final act = (l['action'] ?? '').toString().toLowerCase().replaceAll('-', '_');
+      final isPunchInLog = act == 'punch_in' || act == 'punchin' || act == 'check_in' || act == 'checkin';
+      final isPunchOutLog = act == 'punch_out' || act == 'punchout' || act == 'check_out' || act == 'checkout';
+
+      if (isPunchInLog && (punchIn == null || _formatTime(punchIn) == '--:--')) {
+        final t = l['punchInDateTime'] ?? l['time'] ?? l['timestamp'] ?? l['createdAt'];
+        if (t != null && t.toString().trim().isNotEmpty && t != '-' && t != 'null') {
+          punchIn = t;
+        }
       }
-      if (location['punchOut'] != null) {
-        final punchOutLoc = location['punchOut'];
-        punchOutAddress =
-            punchOutLoc['address'] ??
-            '${punchOutLoc['area'] ?? ''}, ${punchOutLoc['city'] ?? ''}, ${punchOutLoc['pincode'] ?? ''}';
-        branchName ??= punchOutLoc['branchName'] ?? record['branchName'];
+      if (isPunchOutLog && (punchOut == null || _formatTime(punchOut) == '--:--')) {
+        final t = l['punchOutDateTime'] ?? l['time'] ?? l['timestamp'] ?? l['createdAt'];
+        if (t != null && t.toString().trim().isNotEmpty && t != '-' && t != 'null') {
+          punchOut = t;
+        }
+      }
+
+      final img = l['punchInSelfie'] ??
+          l['punchInSelfieUrl'] ??
+          l['selfieUrl'] ??
+          l['image'] ??
+          l['selfie'] ??
+          l['photo'];
+      if (img != null &&
+          img.toString().trim().isNotEmpty &&
+          img.toString().trim() != 'null' &&
+          img.toString().trim() != '-') {
+        if (isPunchInLog && rawPunchInSelfie == null) {
+          rawPunchInSelfie = img;
+        }
+        if (isPunchOutLog && rawPunchOutSelfie == null) {
+          rawPunchOutSelfie = img;
+        }
+      }
+      final loc = _resolveAddressFromMap(
+        l['punchInAddress'] ??
+            l['punchOutAddress'] ??
+            l['location'] ??
+            l['address'] ??
+            l['startAddress'] ??
+            l['endAddress'],
+      );
+      if (loc != null && loc.isNotEmpty) {
+        if (isPunchInLog && punchInAddress == null) {
+          punchInAddress = loc;
+        }
+        if (isPunchOutLog && punchOutAddress == null) {
+          punchOutAddress = loc;
+        }
       }
     }
 
-    // Selfie URLs
-    final punchInSelfieUrl = record['punchInSelfie'];
-    final punchOutSelfieUrl = record['punchOutSelfie'];
-    final bool hasPunchInSelfie =
-        punchInSelfieUrl != null &&
-        punchInSelfieUrl.toString().startsWith('http');
-    final bool hasPunchOutSelfie =
-        punchOutSelfieUrl != null &&
-        punchOutSelfieUrl.toString().startsWith('http');
-    final logs = (record['logs'] is List)
-        ? List<Map<String, dynamic>>.from(
-            (record['logs'] as List).whereType<Map>(),
-          )
-        : <Map<String, dynamic>>[];
+    // Fallback: if selected day matches today or fetched attendance date, merge from _attendanceData
+    final isSelectedDayToday = _selectedDay.year == DateTime.now().year &&
+        _selectedDay.month == DateTime.now().month &&
+        _selectedDay.day == DateTime.now().day;
+    if (_attendanceData != null && (isSelectedDayToday || dateStr == _attendanceCalendarDate(_attendanceDataFetchedFor))) {
+      if (punchIn == null || _formatTime(punchIn) == '--:--') {
+        final tIn = _resolvePunchInFromRecord(_attendanceData);
+        if (tIn != null && _formatTime(tIn) != '--:--') punchIn = tIn;
+      }
+      if (punchOut == null || _formatTime(punchOut) == '--:--') {
+        final tOut = _resolvePunchOutFromRecord(_attendanceData);
+        if (tOut != null && _formatTime(tOut) != '--:--') punchOut = tOut;
+      }
+      if (rawPunchInSelfie == null) {
+        rawPunchInSelfie = _resolvePunchInSelfieFromRecord(_attendanceData);
+      }
+      if (rawPunchOutSelfie == null) {
+        rawPunchOutSelfie = _resolvePunchOutSelfieFromRecord(_attendanceData);
+      }
+      if (punchInAddress == null || punchInAddress.trim().isEmpty) {
+        punchInAddress = _resolvePunchInAddressFromRecord(_attendanceData);
+      }
+      if (punchOutAddress == null || punchOutAddress.trim().isEmpty) {
+        punchOutAddress = _resolvePunchOutAddressFromRecord(_attendanceData);
+      }
+      if (workHours == null && _attendanceData!['workHours'] != null) {
+        workHours = _attendanceData!['workHours'];
+      }
+    }
+
+    // Auto-compute workHours if missing/zero and both punchIn & punchOut are known
+    if ((workHours == null || workHours == 0) &&
+        punchIn != null &&
+        punchOut != null &&
+        _formatTime(punchIn) != '--:--' &&
+        _formatTime(punchOut) != '--:--') {
+      try {
+        final pi = _parseAnyDateTimeToLocal(punchIn);
+        final po = _parseAnyDateTimeToLocal(punchOut);
+        if (pi != null && po != null) {
+          workHours = po.difference(pi).inMinutes;
+        }
+      } catch (_) {}
+    }
+
+    final punchInSelfieUrl = rawPunchInSelfie?.toString()?.trim();
+    final punchOutSelfieUrl = rawPunchOutSelfie?.toString()?.trim();
+    final bool hasPunchInSelfie = punchInSelfieUrl != null &&
+        punchInSelfieUrl.isNotEmpty &&
+        punchInSelfieUrl != 'null' &&
+        punchInSelfieUrl != '-';
+    final bool hasPunchOutSelfie = punchOutSelfieUrl != null &&
+        punchOutSelfieUrl.isNotEmpty &&
+        punchOutSelfieUrl != 'null' &&
+        punchOutSelfieUrl != '-';
+
+    var breakSessions = _resolveBreakSessionsFromRecord(record);
+    if (breakSessions.isEmpty && _attendanceData != null && (isSelectedDayToday || dateStr == _attendanceCalendarDate(_attendanceDataFetchedFor))) {
+      breakSessions = _resolveBreakSessionsFromRecord(_attendanceData);
+    }
+    Map<String, dynamic>? activeBreak = (record['breakDetails']?['activeBreak'] ??
+        record['activeBreak'] ??
+        _attendanceData?['breakDetails']?['activeBreak'] ??
+        _attendanceData?['activeBreak']) as Map<String, dynamic>?;
+    if (activeBreak == null && isSelectedDayToday && BreakService.lastKnownHasOpenBreak == true) {
+      final persistedStart = BreakService.lastKnownBreakStartTime;
+      if (persistedStart != null) {
+        activeBreak = {
+          'startTime': persistedStart.toIso8601String(),
+          'startAt': persistedStart.toIso8601String(),
+          'ongoing': true,
+        };
+      }
+    }
 
     // Status color
     Color statusColor = Colors.green;
@@ -1771,8 +2395,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                         shiftTime: _shiftTimeLineForAttendanceDetail(record),
                         status: summaryStatus,
                         statusColor: statusColor,
-                        punchIn: _formatTime(punchIn),
-                        punchOut: _formatTime(punchOut),
+                        punchIn: _formatTime(punchIn, withSeconds: true),
+                        punchOut: _formatTime(punchOut, withSeconds: true),
                         workHours: _formatWorkHoursWithUnits(
                           workHours is num ? workHours : null,
                         ),
@@ -1792,6 +2416,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                 record['bufferTime'],
                               )
                             : null,
+                        punchInSelfieUrl:
+                            hasPunchInSelfie ? punchInSelfieUrl : null,
+                        punchOutSelfieUrl:
+                            hasPunchOutSelfie ? punchOutSelfieUrl : null,
+                        punchInAddress: punchInAddress,
+                        punchOutAddress: punchOutAddress,
                       ),
                       if (hasFineInfo) ...[
                         const SizedBox(height: 20),
@@ -1872,7 +2502,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                       ],
                       if (logs.isNotEmpty ||
                           punchIn != null ||
-                          punchOut != null) ...[
+                          punchOut != null ||
+                          breakSessions.isNotEmpty ||
+                          activeBreak != null) ...[
                         const SizedBox(height: 20),
                         _buildDayDetailSection(
                           'Log',
@@ -1889,6 +2521,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                             punchOutSelfieUrl: hasPunchOutSelfie
                                 ? punchOutSelfieUrl.toString()
                                 : null,
+                            punchInAddress: punchInAddress,
+                            punchOutAddress: punchOutAddress,
+                            breakSessions: breakSessions,
+                            activeBreak: activeBreak,
                           ),
                         ),
                       ],
@@ -1946,10 +2582,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     String? compensationType,
     String? overtimeDisplay,
     String? openShiftBufferDisplay,
+    String? punchInSelfieUrl,
+    String? punchOutSelfieUrl,
+    String? punchInAddress,
+    String? punchOutAddress,
   }) {
-    final shiftLine = shiftTime.trim().isEmpty
+    final cleanShiftTime = shiftTime.trim();
+    final shiftLine = (cleanShiftTime.isEmpty || cleanShiftTime == 'N/A - N/A')
         ? shiftLabel
-        : '$shiftLabel - $shiftTime';
+        : '$shiftLabel - $cleanShiftTime';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -1970,7 +2611,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   children: [
                     Text(
                       shiftLine,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                       ),
@@ -2034,6 +2675,67 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               Expanded(child: _buildSummaryMetric('Work Hours', workHours)),
             ],
           ),
+          if ((punchInSelfieUrl != null && punchInSelfieUrl.trim().isNotEmpty) ||
+              (punchOutSelfieUrl != null && punchOutSelfieUrl.trim().isNotEmpty)) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                if (punchInSelfieUrl != null && punchInSelfieUrl.trim().isNotEmpty) ...[
+                  _buildSelfieThumbnail(
+                    imageUrl: punchInSelfieUrl,
+                    label: 'Punch In Photo',
+                  ),
+                  const SizedBox(width: 16),
+                ],
+                if (punchOutSelfieUrl != null && punchOutSelfieUrl.trim().isNotEmpty) ...[
+                  _buildSelfieThumbnail(
+                    imageUrl: punchOutSelfieUrl,
+                    label: 'Punch Out Photo',
+                  ),
+                ],
+              ],
+            ),
+          ],
+          if (punchInAddress != null && punchInAddress.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.location_on_rounded, size: 15, color: Colors.blueGrey.shade700),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Punch In: ${punchInAddress.trim()}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (punchOutAddress != null && punchOutAddress.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.location_on_rounded, size: 15, color: Colors.blueGrey.shade700),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Punch Out: ${punchOutAddress.trim()}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           if (overtimeDisplay != null && overtimeDisplay.isNotEmpty) ...[
             const SizedBox(height: 12),
             Row(
@@ -2088,9 +2790,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          value,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+        // Times now include seconds; shrink rather than wrap in the 1/3 column.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          ),
         ),
         const SizedBox(height: 2),
         Text(
@@ -2105,28 +2813,43 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required String imageUrl,
     required String label,
   }) {
+    final provider = _selfieImageProvider(imageUrl);
     return GestureDetector(
       onTap: () => _showSelfieDialog(imageUrl, '$label Selfie'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 46,
-            height: 46,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey.shade300),
-              image: DecorationImage(
-                image: CachedNetworkImageProvider(imageUrl),
-                fit: BoxFit.cover,
-                onError: (_, __) {},
-              ),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+              color: Colors.grey.shade100,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(9),
+              child: provider == null
+                  ? Icon(Icons.person_rounded, size: 24, color: Colors.grey.shade400)
+                  : Image(
+                      image: provider,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Icon(
+                        Icons.broken_image_outlined,
+                        size: 20,
+                        color: Colors.grey.shade400,
+                      ),
+                    ),
             ),
           ),
           const SizedBox(height: 4),
           Text(
             label,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade700,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
@@ -2141,6 +2864,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     dynamic permissionPunches,
     String? punchInSelfieUrl,
     String? punchOutSelfieUrl,
+    String? punchInAddress,
+    String? punchOutAddress,
+    List<Map<String, dynamic>>? breakSessions,
+    Map<String, dynamic>? activeBreak,
   }) {
     DateTime? parseLogEventTime(dynamic value) {
       return _parseAnyDateTimeToLocal(value);
@@ -2151,16 +2878,21 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
 
     final items = <Map<String, dynamic>>[];
+    bool hasSeenPunchIn = false;
+    bool hasSeenPunchOut = false;
+
     if (logs.isNotEmpty) {
       for (final log in logs) {
-        final action = (log['action'] ?? '').toString().trim().toUpperCase();
+        final rawAction = (log['action'] ?? '').toString().trim();
+        final action = rawAction.toUpperCase().replaceAll('-', '_');
+
         if (const {'APPROVED', 'REJECTED'}.contains(action)) {
           Map<String, dynamic>? newValueMap;
           final nv = log['newValue'];
           if (nv is Map) {
             newValueMap = Map<String, dynamic>.from(nv);
           }
-          dynamic when = log['timestamp'];
+          dynamic when = log['timestamp'] ?? log['time'] ?? log['createdAt'];
           dynamic approvedAtRaw = newValueMap?['approvedAt'];
           if (approvedAtRaw is Map && approvedAtRaw['\$date'] != null) {
             approvedAtRaw = approvedAtRaw['\$date'];
@@ -2172,13 +2904,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           final title = action == 'REJECTED'
               ? 'Attendance rejected'
               : 'Attendance approved';
-          final headlineParts = <String>[
-            _formatLogTime(when),
-            if (statusLabel.isNotEmpty) statusLabel,
-          ];
           items.add({
             'title': title,
-            'headline': headlineParts.where((e) => e.isNotEmpty).join(' | '),
+            'timeLabel': _formatTime(when, withSeconds: true),
+            'when': when,
+            'duration': statusLabel.isNotEmpty ? statusLabel : null,
+            'address': null,
             'subtitle': _formatLogByline(
               log['performedByName']?.toString(),
               when,
@@ -2189,6 +2920,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           });
           continue;
         }
+
         if (action == 'UPDATED') {
           final changes = log['changes'];
           if (changes is List) {
@@ -2202,13 +2934,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               if (oldNum != null && newNum != null && oldNum == newNum) {
                 continue;
               }
-              final when = log['timestamp'] ?? log['createdAt'];
+              final when = log['timestamp'] ?? log['time'] ?? log['createdAt'];
               items.add({
                 'title': 'Fine amount updated',
-                'headline': [
-                  _formatLogTime(when),
-                  '${_formatFineAmountForLog(oldNum)} → ${_formatFineAmountForLog(newNum)}',
-                ].where((e) => e.isNotEmpty).join(' | '),
+                'timeLabel': _formatTime(when, withSeconds: true),
+                'when': when,
+                'duration': '${_formatFineAmountForLog(oldNum)} → ${_formatFineAmountForLog(newNum)}',
+                'address': null,
                 'subtitle': _formatLogByline(
                   log['performedByName']?.toString(),
                   when,
@@ -2221,116 +2953,233 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           }
           continue;
         }
-        if (!const {
-          'PUNCH_IN',
-          'PUNCH_OUT',
-          'BREAK_START',
-          'BREAK_END',
-        }.contains(action)) {
+
+        final isPunchIn = action == 'PUNCH_IN' || action == 'PUNCHIN';
+        final isPunchOut = action == 'PUNCH_OUT' || action == 'PUNCHOUT';
+        final isBreakStart = action == 'BREAK_START' || action == 'BREAKSTART' || action == 'START_BREAK';
+        final isBreakEnd = action == 'BREAK_END' || action == 'BREAKEND' || action == 'END_BREAK';
+
+        if (!isPunchIn && !isPunchOut && !isBreakStart && !isBreakEnd) {
           continue;
         }
-        final when = switch (action) {
-          'PUNCH_OUT' => log['punchOutDateTime'] ?? log['timestamp'],
-          'PUNCH_IN' => log['punchInDateTime'] ?? log['timestamp'],
-          'BREAK_START' => log['breakStartDateTime'] ?? log['timestamp'],
-          'BREAK_END' => log['breakEndDateTime'] ?? log['timestamp'],
-          _ =>
-            log['timestamp'] ??
-                log['punchOutDateTime'] ??
-                log['punchInDateTime'],
-        };
-        final title = switch (action) {
-          'PUNCH_IN' => 'Punched In',
-          'PUNCH_OUT' => 'Punched Out',
-          'BREAK_START' => 'Started Break',
-          'BREAK_END' => 'Ended Break',
-          _ => action.replaceAll('_', ' ').trim(),
-        };
-        final address = switch (action) {
-          'PUNCH_OUT' => log['punchOutAddress']?.toString(),
-          'PUNCH_IN' => log['punchInAddress']?.toString(),
-          'BREAK_START' => log['breakStartAddress']?.toString(),
-          'BREAK_END' => log['breakEndAddress']?.toString(),
-          _ => null,
-        };
-        final breakDuration = action == 'BREAK_END'
-            ? _formatBreakDuration(log['totalBreakSeconds'])
+
+        if (isPunchIn) hasSeenPunchIn = true;
+        if (isPunchOut) hasSeenPunchOut = true;
+
+        final when = isPunchOut
+            ? (log['punchOutDateTime'] ?? log['time'] ?? log['timestamp'] ?? log['createdAt'] ?? punchOut)
+            : (isPunchIn
+                ? (log['punchInDateTime'] ?? log['time'] ?? log['timestamp'] ?? log['createdAt'] ?? punchIn)
+                : (isBreakStart
+                    ? (log['breakStartDateTime'] ?? log['startTime'] ?? log['startAt'] ?? log['time'] ?? log['timestamp'] ?? log['createdAt'])
+                    : (log['breakEndDateTime'] ?? log['endTime'] ?? log['endAt'] ?? log['time'] ?? log['timestamp'] ?? log['createdAt'])));
+
+        final title = isPunchIn
+            ? 'Punched In'
+            : (isPunchOut
+                ? 'Punched Out'
+                : (isBreakStart ? 'Started Break' : 'Ended Break'));
+
+        final address = isPunchOut
+            ? (_resolveAddressFromMap(log['punchOutAddress'] ?? log['location'] ?? log['address'] ?? log['endAddress']) ?? punchOutAddress)
+            : (isPunchIn
+                ? (_resolveAddressFromMap(log['punchInAddress'] ?? log['location'] ?? log['address'] ?? log['startAddress']) ?? punchInAddress)
+                : (isBreakStart
+                    ? _resolveAddressFromMap(log['breakStartAddress'] ?? log['startAddress'] ?? log['location'] ?? log['address'])
+                    : _resolveAddressFromMap(log['breakEndAddress'] ?? log['endAddress'] ?? log['location'] ?? log['address'])));
+
+        final rawBreakMins = log['durationMinutes'] ??
+            log['duration'] ??
+            log['breakMin'] ??
+            log['breakSummary']?['BreakMin'] ??
+            log['break']?['BreakMin'];
+        final rawBreakSecs = log['totalBreakSeconds'] ??
+            log['totalSeconds'] ??
+            (rawBreakMins is num ? (rawBreakMins * 60).toInt() : null);
+        final breakDuration = isBreakEnd
+            ? (_formatBreakDuration(rawBreakSecs) ??
+                (rawBreakMins != null ? '$rawBreakMins mins' : null))
             : null;
-        // Punch tiles carry the selfie under action-specific keys; structured
-        // logs may omit it, so fall back to the record-level punch selfie URLs.
-        final selfie = switch (action) {
-          'PUNCH_OUT' =>
-            log['punchOutSelfie'] ??
-                log['punchOutSelfieUrl'] ??
-                log['selfieUrl'] ??
-                log['selfie'] ??
-                punchOutSelfieUrl,
-          'PUNCH_IN' =>
-            log['punchInSelfie'] ??
-                log['punchInSelfieUrl'] ??
-                log['selfieUrl'] ??
-                log['selfie'] ??
-                punchInSelfieUrl,
-          _ => log['selfieUrl'] ?? log['selfie'],
-        };
-        final headlineParts = [
-          _formatLogTime(when),
-          if (branchName != null && branchName.trim().isNotEmpty)
-            branchName.trim(),
-          if (breakDuration != null && breakDuration.isNotEmpty) breakDuration,
-          if (address != null && address.trim().isNotEmpty) address.trim(),
-        ];
+
+        dynamic selfie;
+        if (isPunchOut) {
+          selfie = [
+            log['punchOutSelfie'],
+            log['punchOutSelfieUrl'],
+            log['selfieUrl'],
+            log['image'],
+            log['selfie'],
+            log['photo'],
+            punchOutSelfieUrl,
+          ].firstWhere(
+            (s) => s != null && s.toString().trim().isNotEmpty && s.toString().trim() != 'null' && s.toString().trim() != '-',
+            orElse: () => null,
+          );
+        } else if (isPunchIn) {
+          selfie = [
+            log['punchInSelfie'],
+            log['punchInSelfieUrl'],
+            log['selfieUrl'],
+            log['image'],
+            log['selfie'],
+            log['photo'],
+            punchInSelfieUrl,
+          ].firstWhere(
+            (s) => s != null && s.toString().trim().isNotEmpty && s.toString().trim() != 'null' && s.toString().trim() != '-',
+            orElse: () => null,
+          );
+        } else {
+          selfie = [
+            log['image'],
+            log['selfieUrl'],
+            log['selfie'],
+            log['breakStartSelfie'],
+            log['breakEndSelfie'],
+            log['startSelfie'],
+            log['endSelfie'],
+            log['photo'],
+          ].firstWhere(
+            (s) => s != null && s.toString().trim().isNotEmpty && s.toString().trim() != 'null' && s.toString().trim() != '-',
+            orElse: () => null,
+          );
+        }
+
+        final tileIcon = isPunchIn
+            ? 'punch_in'
+            : (isPunchOut ? 'punch_out' : (isBreakStart || isBreakEnd ? 'break' : null));
+
         items.add({
           'title': title,
-          'headline': headlineParts.whereType<String>().join(' | '),
+          'timeLabel': _formatTime(when, withSeconds: true),
+          'when': when,
+          'duration': breakDuration,
+          'address': (address != null && address.trim().isNotEmpty)
+              ? address.trim()
+              : (branchName != null && branchName.trim().isNotEmpty ? branchName.trim() : null),
           'subtitle': _formatLogByline(
             log['performedByName']?.toString(),
             when,
           ),
           'imageUrl': selfie?.toString(),
-          'tileIcon': null,
+          'tileIcon': tileIcon,
           'flip': _selfieNeedsFlip(when),
           'sortMs': logSortMsFrom(when),
         });
       }
-    } else {
-      if (punchOut != null) {
-        final headlineParts = [
-          _formatLogTime(punchOut),
-          if (branchName != null && branchName.trim().isNotEmpty)
-            branchName.trim(),
-        ];
-        items.add({
-          'title': 'Punched Out',
-          'headline': headlineParts.join(' | '),
-          'subtitle': _formatLogByline(null, punchOut),
-          'imageUrl': punchOutSelfieUrl,
-          'tileIcon': null,
-          'flip': _selfieNeedsFlip(punchOut),
-          'sortMs': logSortMsFrom(punchOut),
-        });
-      }
-      if (punchIn != null) {
-        final headlineParts = [
-          _formatLogTime(punchIn),
-          if (branchName != null && branchName.trim().isNotEmpty)
-            branchName.trim(),
-        ];
-        items.add({
-          'title': 'Punched In',
-          'headline': headlineParts.join(' | '),
-          'subtitle': _formatLogByline(null, punchIn),
-          'imageUrl': punchInSelfieUrl,
-          'tileIcon': null,
-          'flip': _selfieNeedsFlip(punchIn),
-          'sortMs': logSortMsFrom(punchIn),
-        });
+    }
+
+    // Always guarantee Punch In and Punch Out entries if attendance recorded them but they weren't in logs
+    if (!hasSeenPunchIn && punchIn != null && punchIn.toString().isNotEmpty && punchIn != '-') {
+      items.add({
+        'title': 'Punched In',
+        'timeLabel': _formatTime(punchIn, withSeconds: true),
+        'when': punchIn,
+        'duration': null,
+        'address': punchInAddress ?? branchName,
+        'subtitle': _formatLogByline(null, punchIn),
+        'imageUrl': punchInSelfieUrl,
+        'tileIcon': 'punch_in',
+        'flip': _selfieNeedsFlip(punchIn),
+        'sortMs': logSortMsFrom(punchIn),
+      });
+    }
+
+    if (!hasSeenPunchOut && punchOut != null && punchOut.toString().isNotEmpty && punchOut != '-') {
+      items.add({
+        'title': 'Punched Out',
+        'timeLabel': _formatTime(punchOut, withSeconds: true),
+        'when': punchOut,
+        'duration': null,
+        'address': punchOutAddress ?? branchName,
+        'subtitle': _formatLogByline(null, punchOut),
+        'imageUrl': punchOutSelfieUrl,
+        'tileIcon': 'punch_out',
+        'flip': _selfieNeedsFlip(punchOut),
+        'sortMs': logSortMsFrom(punchOut),
+      });
+    }
+
+    // Process breakSessions if not already logged
+    if (breakSessions != null && breakSessions.isNotEmpty) {
+      for (final s in breakSessions) {
+        final startTime = (s['startTime'] ?? s['startAt'])?.toString() ?? '';
+        final endTime = (s['endTime'] ?? s['endAt'])?.toString() ?? '';
+        final sLoc = _resolveAddressFromMap(s['location'] ?? s['address'] ?? s['startAddress'] ?? s['breakStartAddress']);
+        final sEndLoc = _resolveAddressFromMap(s['endAddress'] ?? s['breakEndAddress'] ?? s['location'] ?? s['address']);
+        final sStartSelfie = (s['startSelfie'] ?? s['breakStartSelfie'] ?? s['selfieUrl'] ?? s['selfie'])?.toString();
+        final sEndSelfie = (s['endSelfie'] ?? s['breakEndSelfie'] ?? s['selfieUrl'] ?? s['selfie'])?.toString();
+        final durationRaw = s['duration'] ?? s['durationMinutes'] ?? s['breakMin'] ?? s['totalBreakMin'];
+        final durationSeconds = s['totalBreakSeconds'] ?? s['totalSeconds'] ?? (durationRaw is num ? (durationRaw * 60).toInt() : null);
+        final durationLabel = durationSeconds != null
+            ? _formatBreakDuration(durationSeconds)
+            : (durationRaw != null ? '$durationRaw mins' : null);
+
+        final whenStart = s['startAt'] ?? s['startTime'] ?? (startTime.isNotEmpty ? startTime : null);
+        final whenEnd = s['endAt'] ?? s['endTime'] ?? (endTime.isNotEmpty ? endTime : null);
+
+        // Check if start is already represented
+        final hasStart = whenStart == null || items.any((it) =>
+            (it['title'] == 'Started Break' || it['title'] == 'Break Start') &&
+            (_formatTime(it['when']) == _formatTime(whenStart) ||
+                (it['when'] != null && _parseAnyDateTimeToLocal(it['when']) == _parseAnyDateTimeToLocal(whenStart))));
+        if (!hasStart && startTime.isNotEmpty && startTime != '-' && startTime != 'null') {
+          items.add({
+            'title': 'Started Break',
+            'timeLabel': _formatTime(whenStart, withSeconds: true),
+            'when': whenStart,
+            'duration': null,
+            'address': sLoc,
+            'subtitle': null,
+            'imageUrl': sStartSelfie,
+            'tileIcon': 'break',
+            'flip': _selfieNeedsFlip(whenStart),
+            'sortMs': logSortMsFrom(whenStart),
+          });
+        }
+
+        // Check if end is already represented
+        final hasEnd = whenEnd == null || items.any((it) =>
+            (it['title'] == 'Ended Break' || it['title'] == 'Break End') &&
+            (_formatTime(it['when']) == _formatTime(whenEnd) ||
+                (it['when'] != null && _parseAnyDateTimeToLocal(it['when']) == _parseAnyDateTimeToLocal(whenEnd))));
+        if (!hasEnd && endTime.isNotEmpty && endTime != '-' && endTime != 'null') {
+          items.add({
+            'title': 'Ended Break',
+            'timeLabel': _formatTime(whenEnd, withSeconds: true),
+            'when': whenEnd,
+            'duration': durationLabel,
+            'address': sEndLoc ?? sLoc,
+            'subtitle': null,
+            'imageUrl': sEndSelfie,
+            'tileIcon': 'break',
+            'flip': _selfieNeedsFlip(whenEnd),
+            'sortMs': logSortMsFrom(whenEnd),
+          });
+        }
       }
     }
 
-    // Custom-time ('both') permission step-outs/returns are stamped (with a
-    // selfie) into the per-day attendance record under `permissionPunches`.
-    // Surface them in the same Log timeline as Permission Out / Permission In.
+    // Process running activeBreak
+    if (activeBreak != null && activeBreak.isNotEmpty) {
+      final aStart = activeBreak['startTime']?.toString() ?? '';
+      final aLoc = _resolveAddressFromMap(activeBreak['location'] ?? activeBreak['address']);
+      final aSelfie = activeBreak['selfie']?.toString();
+      final aStartAt = activeBreak['startAt'];
+      items.add({
+        'title': 'Started Break (In Progress)',
+        'timeLabel': _formatTime(aStart, withSeconds: true),
+        'when': aStartAt ?? aStart,
+        'duration': null,
+        'address': aLoc,
+        'subtitle': 'Currently on break',
+        'imageUrl': aSelfie,
+        'tileIcon': 'break',
+        'flip': _selfieNeedsFlip(aStartAt ?? aStart),
+        'sortMs': logSortMsFrom(aStartAt ?? aStart),
+      });
+    }
+
+    // Custom-time ('both') permission step-outs/returns
     if (permissionPunches is List) {
       for (final raw in permissionPunches) {
         if (raw is! Map) continue;
@@ -2340,22 +3189,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         final when = punch['at'];
         final selfie = punch['selfie']?.toString();
         final title = kind == 'out' ? 'Permission Out' : 'Permission In';
-        // Custom-permission overrun (out→in longer than the approved window) is
-        // fined. Surface it on the Permission In entry so a fined permission is
-        // visible in the log; the rupee amount settles into the day's Fine Details.
         final overrunMins = kind == 'in'
             ? (_parseLogNumericValue(punch['overrunMinutes'])?.toInt() ?? 0)
             : 0;
-        final headlineParts = [
-          _formatLogTime(when),
-          if (overrunMins > 0) 'Exceeded by $overrunMins min · Fine',
-          if (branchName != null && branchName.trim().isNotEmpty)
-            branchName.trim(),
-        ];
         final hasSelfie = selfie != null && selfie.trim().isNotEmpty;
         items.add({
           'title': title,
-          'headline': headlineParts.whereType<String>().join(' | '),
+          'timeLabel': _formatTime(when, withSeconds: true),
+          'when': when,
+          'duration': overrunMins > 0 ? 'Exceeded by $overrunMins min · Fine' : null,
+          'address': branchName,
           'subtitle': _formatLogByline(null, when),
           'imageUrl': hasSelfie ? selfie : null,
           'tileIcon': hasSelfie ? null : 'permission',
@@ -2382,151 +3225,267 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   Widget _buildAttendanceLogTile(Map<String, dynamic> item) {
-    final imageUrl = item['imageUrl']?.toString();
+    final imageUrl = item['imageUrl']?.toString()?.trim();
     final imageProvider = (imageUrl != null &&
-            (imageUrl.startsWith('http') || imageUrl.startsWith('data:')))
+            imageUrl.isNotEmpty &&
+            imageUrl != 'null' &&
+            imageUrl != '-')
         ? _selfieImageProvider(imageUrl)
         : null;
     final hasImage = imageProvider != null;
     final subtitle = item['subtitle']?.toString();
-    final headline = item['headline']?.toString() ?? '';
+    final address = item['address']?.toString();
+    final duration = item['duration']?.toString();
+    final timeLabel = item['timeLabel']?.toString() ?? _formatTime(item['when'], withSeconds: true);
     final tileIcon = item['tileIcon']?.toString();
     final flip = item['flip'] == true;
+    final title = item['title']?.toString() ?? 'Activity';
 
     Widget leading;
-    if (tileIcon == 'rejection') {
+    if (hasImage) {
+      leading = GestureDetector(
+        onTap: () => _showSelfieDialog(imageUrl!, title, flip),
+        child: Stack(
+          alignment: Alignment.bottomRight,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: RotatedBox(
+                quarterTurns: flip ? 2 : 0,
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: AppColors.primary.withValues(alpha: 0.3),
+                      width: 1.5,
+                    ),
+                    color: Colors.grey.shade100,
+                  ),
+                  child: Image(
+                    image: imageProvider,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Icon(
+                      Icons.broken_image_outlined,
+                      size: 20,
+                      color: Colors.grey.shade400,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.zoom_in_rounded,
+                size: 11,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else if (tileIcon == 'punch_in') {
       leading = Container(
-        width: 34,
-        height: 34,
+        width: 42,
+        height: 42,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(10),
+          color: Colors.green.shade50,
+          border: Border.all(color: Colors.green.shade200),
+        ),
+        child: Icon(Icons.login_rounded, size: 20, color: Colors.green.shade700),
+      );
+    } else if (tileIcon == 'punch_out') {
+      leading = Container(
+        width: 42,
+        height: 42,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: Colors.orange.shade50,
+          border: Border.all(color: Colors.orange.shade200),
+        ),
+        child: Icon(Icons.logout_rounded, size: 20, color: Colors.orange.shade800),
+      );
+    } else if (tileIcon == 'break') {
+      leading = Container(
+        width: 42,
+        height: 42,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: Colors.purple.shade50,
+          border: Border.all(color: Colors.purple.shade200),
+        ),
+        child: Icon(Icons.free_breakfast_outlined, size: 20, color: Colors.purple.shade700),
+      );
+    } else if (tileIcon == 'rejection') {
+      leading = Container(
+        width: 42,
+        height: 42,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
           color: Colors.red.shade50,
+          border: Border.all(color: Colors.red.shade200),
         ),
         child: Icon(Icons.cancel_rounded, size: 20, color: Colors.red.shade700),
       );
     } else if (tileIcon == 'approval') {
       leading = Container(
-        width: 34,
-        height: 34,
+        width: 42,
+        height: 42,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(10),
           color: Colors.green.shade50,
+          border: Border.all(color: Colors.green.shade200),
         ),
-        child: Icon(
-          Icons.check_circle_rounded,
-          size: 20,
-          color: Colors.green.shade700,
-        ),
+        child: Icon(Icons.check_circle_rounded, size: 20, color: Colors.green.shade700),
       );
     } else if (tileIcon == 'fine') {
       leading = Container(
-        width: 34,
-        height: 34,
+        width: 42,
+        height: 42,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(10),
           color: Colors.amber.shade50,
+          border: Border.all(color: Colors.amber.shade200),
         ),
-        child: Icon(
-          Icons.currency_rupee_rounded,
-          size: 20,
-          color: Colors.amber.shade900,
-        ),
+        child: Icon(Icons.currency_rupee_rounded, size: 20, color: Colors.amber.shade900),
       );
     } else if (tileIcon == 'permission') {
       leading = Container(
-        width: 34,
-        height: 34,
+        width: 42,
+        height: 42,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(10),
           color: Colors.indigo.shade50,
+          border: Border.all(color: Colors.indigo.shade200),
         ),
-        child: Icon(
-          Icons.fact_check_outlined,
-          size: 18,
-          color: Colors.indigo.shade700,
-        ),
-      );
-    } else if (hasImage) {
-      // Punch / break / permission selfie — render a proper, tappable
-      // thumbnail. Stored selfies are upside-down (front-camera capture), so
-      // they're rotated 180° here to display upright.
-      leading = GestureDetector(
-        onTap: () => _showSelfieDialog(imageUrl!, item['title'], flip),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: RotatedBox(
-            quarterTurns: flip ? 2 : 0,
-            child: Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.25),
-                ),
-                image: DecorationImage(
-                  image: imageProvider,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            ),
-          ),
-        ),
+        child: Icon(Icons.fact_check_outlined, size: 18, color: Colors.indigo.shade700),
       );
     } else {
       leading = Container(
-        width: 34,
-        height: 34,
+        width: 42,
+        height: 42,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
-          color: Colors.orange.shade100,
+          borderRadius: BorderRadius.circular(10),
+          color: Colors.orange.shade50,
+          border: Border.all(color: Colors.orange.shade200),
         ),
-        child: Icon(
-          Icons.access_time_rounded,
-          size: 18,
-          color: AppColors.primary,
-        ),
+        child: Icon(Icons.access_time_rounded, size: 20, color: AppColors.primary),
       );
     }
 
-    return Row(
-      crossAxisAlignment:
-          hasImage ? CrossAxisAlignment.center : CrossAxisAlignment.start,
-      children: [
-        leading,
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${item['title']} ${headline.isNotEmpty ? 'at $headline' : ''}',
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          leading,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (timeLabel.isNotEmpty && timeLabel != '--:--')
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2.5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          timeLabel,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              ),
-              if (subtitle != null && subtitle.trim().isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                if (duration != null && duration.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(Icons.timer_outlined, size: 13, color: Colors.purple.shade700),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Duration: ${duration.trim()}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.purple.shade700,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-            ],
+                ],
+                if (address != null && address.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.location_on_rounded, size: 14, color: Colors.grey.shade600),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          address.trim(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle.trim(),
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -2567,7 +3526,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (value == null) return null;
     final date = _parseAnyDateTimeToLocal(value);
     if (date == null) return null;
-    return DateFormat('dd MMM, hh:mm a').format(date);
+    return DateFormat('dd MMM, hh:mm:ss a').format(date);
   }
 
   DateTime? _parseAnyDateTimeToLocal(dynamic value) {
@@ -2850,13 +3809,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                         ),
                       ],
                       const SizedBox(height: 12),
-                      Text(
-                        fullMessage,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.4,
-                          color: Colors.white.withOpacity(0.8),
+                      Flexible(
+                        child: SingleChildScrollView(
+                          child: Text(
+                            fullMessage,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 14,
+                              height: 1.4,
+                              color: Colors.white.withOpacity(0.8),
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -3311,13 +4274,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    message,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.4,
-                      color: Colors.white.withOpacity(0.8),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Text(
+                        message,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.4,
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -3572,6 +4539,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   int _shiftSpanMinutesForPresentRecord(Map<String, dynamic> record) {
+    final eff = _resolveEffectiveShiftForAttendanceRecord(record);
+    if (eff != null) {
+      if (eff.isOpen) {
+        final h = eff.openWorkHours;
+        if (h != null && h > 0) return (h * 60).round();
+      } else if (eff.startTime != null &&
+          eff.endTime != null &&
+          eff.startTime!.isNotEmpty &&
+          eff.endTime!.isNotEmpty) {
+        return (calculateShiftHours(eff.startTime!, eff.endTime!) * 60).round();
+      }
+    }
     if (record['appliedShiftId'] != null) {
       final r = appliedShiftPastResolvedFromCompany(
         companyDoc: _companyDocForAppliedShiftResolution(),
@@ -3597,13 +4576,146 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return full ~/ 2;
   }
 
-  String _shiftLabelForAttendanceDetail(Map<String, dynamic> record) {
-    if (record['appliedShiftId'] != null) {
+  /// Comprehensive resolver for shift timing and details for an attendance record.
+  EffectiveShiftDay? _resolveEffectiveShiftForAttendanceRecord(
+    Map<String, dynamic> record,
+  ) {
+    // 1. Stamped appliedShiftId from the record (historical assignment)
+    final appliedId = record['appliedShiftId'];
+    if (appliedId != null) {
       final r = appliedShiftPastResolvedFromCompany(
         companyDoc: _companyDocForAppliedShiftResolution(),
-        appliedShiftId: record['appliedShiftId'],
+        appliedShiftId: appliedId,
       );
-      if (r != null && r.shiftName.isNotEmpty) return r.shiftName;
+      if (r != null) {
+        return EffectiveShiftDay(
+          displayName: r.shiftName,
+          startTime: r.startTime,
+          endTime: r.endTime,
+          shiftTypeLower: r.isOpen ? 'open' : 'standard',
+          openWorkHours: r.openWorkHours,
+          isWeekOff: false,
+        );
+      }
+    }
+
+    // 2. Direct shift fields stamped on record (e.g. from backend getMonthAttendance / getAttendanceHistory)
+    final recStart =
+        (record['shiftStartTime'] ?? record['startTime'])?.toString().trim();
+    final recEnd =
+        (record['shiftEndTime'] ?? record['endTime'])?.toString().trim();
+    final recName =
+        (record['shiftName'] ?? record['name'])?.toString().trim();
+    final recType =
+        (record['shiftType'] ?? '').toString().toLowerCase().trim();
+    final isOpenRec = recType.contains('open');
+    if ((recStart != null &&
+            recStart.isNotEmpty &&
+            recEnd != null &&
+            recEnd.isNotEmpty) ||
+        isOpenRec) {
+      return EffectiveShiftDay(
+        displayName:
+            (recName != null && recName.isNotEmpty) ? recName : 'Shift',
+        startTime: isOpenRec ? null : recStart,
+        endTime: isOpenRec ? null : recEnd,
+        shiftTypeLower: isOpenRec ? 'open' : 'standard',
+        openWorkHours: (record['openWorkHours'] as num?)?.toDouble() ?? 8.0,
+        isWeekOff: false,
+      );
+    }
+
+    // 3. Resolve shift for this specific calendar date using company shifts & employee schedule
+    final dateStr = record['date'];
+    DateTime? d;
+    if (dateStr != null) {
+      try {
+        d = _extractDateOnly(dateStr);
+      } catch (_) {}
+    }
+    if (d != null) {
+      final now = DateTime.now();
+      final isToday = isSameDay(d, DateTime(now.year, now.month, now.day));
+      final eff = effectiveShiftForCalendarDay(
+        companyDoc: _companyDocForAppliedShiftResolution(),
+        staffShiftKey: _profileStaffShiftName,
+        dayLocal: d,
+        joiningDate: _profileJoiningDateForShiftResolution(),
+        attendanceTodayTemplate: isToday ? _attendanceTemplate : null,
+      );
+      if (eff != null && !eff.isWeekOff) return eff;
+    }
+
+    // 4. Fallback to today's effective shift if available
+    final todayEff = _todayEffectiveShiftForAttendance();
+    if (todayEff != null && !todayEff.isWeekOff) return todayEff;
+
+    // 5. Fallback to attendance template
+    final t = _attendanceTemplate;
+    if (t != null && t.isNotEmpty) {
+      final tStart = t['shiftStartTime']?.toString().trim();
+      final tEnd = t['shiftEndTime']?.toString().trim();
+      final tName = (t['name'] ?? t['shiftName'])?.toString().trim();
+      final tType = (t['shiftType'] ?? '').toString().toLowerCase().trim();
+      final isOpenT = tType.contains('open');
+      if ((tStart != null &&
+              tStart.isNotEmpty &&
+              tEnd != null &&
+              tEnd.isNotEmpty) ||
+          isOpenT) {
+        return EffectiveShiftDay(
+          displayName:
+              (tName != null && tName.isNotEmpty) ? tName : 'Shift',
+          startTime: isOpenT ? null : tStart,
+          endTime: isOpenT ? null : tEnd,
+          shiftTypeLower: isOpenT ? 'open' : 'standard',
+          openWorkHours: (t['openWorkHours'] as num?)?.toDouble() ?? 8.0,
+          isWeekOff: false,
+        );
+      }
+    }
+
+    // 6. Fallback to first company shift if available
+    final companyDoc = _companyDocForAppliedShiftResolution();
+    final shifts = shiftsListFromCompany(companyDoc);
+    if (shifts != null && shifts.isNotEmpty) {
+      final firstShift = shifts.first;
+      if (firstShift is Map) {
+        final s = firstShift['startTime']?.toString();
+        final e = firstShift['endTime']?.toString();
+        final name = (firstShift['name'] ?? firstShift['shiftName'])
+            ?.toString()
+            .trim();
+        final type = (firstShift['shiftType'] ?? '')
+            .toString()
+            .toLowerCase()
+            .trim();
+        final isOpen = type.contains('open');
+        if ((s != null && e != null && s.isNotEmpty && e.isNotEmpty) ||
+            isOpen) {
+          return EffectiveShiftDay(
+            displayName:
+                (name != null && name.isNotEmpty) ? name : 'Shift',
+            startTime: isOpen ? null : s,
+            endTime: isOpen ? null : e,
+            shiftTypeLower: isOpen ? 'open' : 'standard',
+            openWorkHours:
+                (firstShift['openWorkHours'] as num?)?.toDouble() ?? 8.0,
+            isWeekOff: false,
+          );
+        }
+      }
+    }
+
+    return null;
+  }
+
+  String _shiftLabelForAttendanceDetail(Map<String, dynamic> record) {
+    final eff = _resolveEffectiveShiftForAttendanceRecord(record);
+    if (eff != null &&
+        eff.displayName.trim().isNotEmpty &&
+        eff.displayName.trim().toLowerCase() != 'week off') {
+      return eff.displayName.trim();
     }
     final fromRecord = (record['shiftName'] ?? '').toString().trim();
     if (fromRecord.isNotEmpty) {
@@ -3632,25 +4744,41 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // Hide shift timing text for week-off days.
     if (isWeekOffRecord) return '';
 
-    if (record['appliedShiftId'] != null) {
-      final r = appliedShiftPastResolvedFromCompany(
-        companyDoc: _companyDocForAppliedShiftResolution(),
-        appliedShiftId: record['appliedShiftId'],
-      );
-      if (r != null) {
-        if (r.isOpen) {
-          final h = r.openWorkHours ?? 8.0;
-          final label = h == h.roundToDouble()
-              ? '${h.toInt()}'
-              : h.toStringAsFixed(1);
-          return 'Open shift · $label hrs required';
-        }
-        final a = r.startTime;
-        final b = r.endTime;
-        if (a == null || b == null) return 'N/A - N/A';
+    final halfDayTimings = _getWorkingSessionTimingsForRecord(record);
+    if (halfDayTimings != null) {
+      final s = halfDayTimings['startTime'];
+      final e = halfDayTimings['endTime'];
+      if (s != null &&
+          e != null &&
+          s.isNotEmpty &&
+          e.isNotEmpty &&
+          s != 'N/A' &&
+          e != 'N/A') {
+        return '${_formatShiftTime12(s)} - ${_formatShiftTime12(e)}';
+      }
+    }
+
+    final eff = _resolveEffectiveShiftForAttendanceRecord(record);
+    if (eff != null) {
+      if (eff.isOpen) {
+        final h = eff.openWorkHours ?? 8.0;
+        final label = h == h.roundToDouble()
+            ? '${h.toInt()}'
+            : h.toStringAsFixed(1);
+        return 'Open shift · $label hrs required';
+      }
+      final a = eff.startTime;
+      final b = eff.endTime;
+      if (a != null &&
+          b != null &&
+          a.isNotEmpty &&
+          b.isNotEmpty &&
+          a != 'N/A' &&
+          b != 'N/A') {
         return '${_formatShiftTime12(a)} - ${_formatShiftTime12(b)}';
       }
     }
+
     if (_isOpenShiftTemplate()) {
       final h = _openShiftRequiredHours();
       final label = h == h.roundToDouble()
@@ -3658,15 +4786,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           : h.toStringAsFixed(1);
       return 'Open shift · $label hrs required';
     }
-    final halfDayTimings = _getWorkingSessionTimingsForRecord(record);
-    final start = halfDayTimings != null
-        ? halfDayTimings['startTime'] ?? 'N/A'
-        : _attendanceTemplate?['shiftStartTime']?.toString() ?? 'N/A';
-    final end = halfDayTimings != null
-        ? halfDayTimings['endTime'] ?? 'N/A'
-        : _attendanceTemplate?['shiftEndTime']?.toString() ?? 'N/A';
-    if (start == 'N/A' || end == 'N/A') return '$start - $end';
-    return '${_formatShiftTime12(start)} - ${_formatShiftTime12(end)}';
+
+    final start = _attendanceTemplate?['shiftStartTime']?.toString() ?? '';
+    final end = _attendanceTemplate?['shiftEndTime']?.toString() ?? '';
+    if (start.isNotEmpty &&
+        end.isNotEmpty &&
+        start != 'N/A' &&
+        end != 'N/A') {
+      return '${_formatShiftTime12(start)} - ${_formatShiftTime12(end)}';
+    }
+    return '';
   }
 
   /// Grace period in minutes from DB (template). Prefers [gracePeriodMinutes],
@@ -4147,8 +5276,23 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   DateTime? _profileJoiningDateForShiftResolution() {
     final snap = _profileStaffDataSnapshot;
-    if (snap == null) return null;
-    return parseJoiningDate(snap['joiningDate']);
+    final mData = _monthData;
+    final aData = _attendanceData;
+
+    final raw = snap?['onboardingDate'] ??
+        snap?['joiningDate'] ??
+        snap?['dateOfJoining'] ??
+        snap?['doj'] ??
+        mData?['onboardingDate'] ??
+        mData?['joiningDate'] ??
+        aData?['onboardingDate'] ??
+        aData?['joiningDate'];
+    // HRMSbackend stores local midnight as UTC (e.g. 1 Sep IST -> 2026-08-31T18:30Z);
+    // read it back as a local date so the joining day/month is not shifted back.
+    final parsed = parseJoiningDate(raw);
+    if (parsed == null) return null;
+    final local = parsed.isUtc ? parsed.toLocal() : parsed;
+    return DateTime(local.year, local.month, local.day);
   }
 
   /// First day of the employee's joining month. The attendance calendar must not
@@ -4606,6 +5750,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       };
       isLowHours = _shouldShowLowWorkHours(calendarRecord);
       isFuture = DateTime(day.year, day.month, day.day).isAfter(todayOnly);
+
+      final onboardingDate = _profileJoiningDateForShiftResolution();
+      final bool isBeforeOnboarding = onboardingDate != null &&
+          DateTime(day.year, day.month, day.day).isBefore(
+            DateTime(onboardingDate.year, onboardingDate.month, onboardingDate.day),
+          );
+      if (isBeforeOnboarding) {
+        bgColor = Colors.transparent;
+        textColor = const Color(0xFFCBD5E1);
+        leaveTypeAbbr = null;
+        isLowHours = false;
+      }
     }
 
     return Container(
@@ -4996,12 +6152,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                       ),
                                     ),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      'Check In',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: colorScheme.onSurface,
+                                    Flexible(
+                                      child: Text(
+                                        'Check In',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: colorScheme.onSurface,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -5072,12 +6232,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                       ),
                                     ),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      'Check Out',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: colorScheme.onSurface,
+                                    Flexible(
+                                      child: Text(
+                                        'Check Out',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: colorScheme.onSurface,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -5486,7 +6650,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     for (final e in raw) {
       if (e is! Map) continue;
       if (_dateKey(e) != dateStr) continue;
-      final logs = e['logs'];
+      final logs = e['activityLogs'] ?? e['logs'];
       if (logs is! List || logs.isEmpty) continue;
       final parsed = <Map<String, dynamic>>[];
       for (final x in logs) {
@@ -5504,7 +6668,24 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final selected = _selectedDay;
     final dateStr = DateFormat('yyyy-MM-dd').format(selected);
 
-    // 1. Prefer record from combined month history (same source as Attendance History list)
+    // 1. If date precedes onboarding, do not display or mark as absent
+    final onboardingDate = _profileJoiningDateForShiftResolution();
+    if (onboardingDate != null) {
+      final onboardingDateOnly = DateTime(onboardingDate.year, onboardingDate.month, onboardingDate.day);
+      final selectedDateOnly = DateTime(selected.year, selected.month, selected.day);
+      if (selectedDateOnly.isBefore(onboardingDateOnly)) {
+        return <String, dynamic>{
+          'date': dateStr,
+          'status': 'Pre-Onboarding',
+          'displayStatus': 'Pre-Onboarding',
+          'punchIn': null,
+          'punchOut': null,
+          'workHours': null,
+        };
+      }
+    }
+
+    // 2. Prefer record from combined month history (same source as Attendance History list)
     final combined = _getCombinedMonthHistory();
     for (final r in combined) {
       try {
@@ -5519,6 +6700,59 @@ class _AttendanceScreenState extends State<AttendanceScreen>
               monthLogs != null &&
               monthLogs.isNotEmpty) {
             record['logs'] = monthLogs;
+          }
+          final pIn = _resolvePunchInFromRecord(record);
+          if (pIn != null && (record['punchIn'] == null || record['punchIn'].toString().trim().isEmpty)) {
+            record['punchIn'] = pIn;
+          }
+          final pOut = _resolvePunchOutFromRecord(record);
+          if (pOut != null && (record['punchOut'] == null || record['punchOut'].toString().trim().isEmpty)) {
+            record['punchOut'] = pOut;
+          }
+          final pInSelfie = _resolvePunchInSelfieFromRecord(record);
+          if (pInSelfie != null && (record['punchInSelfie'] == null || record['punchInSelfie'].toString().trim().isEmpty)) {
+            record['punchInSelfie'] = pInSelfie;
+          }
+          final pOutSelfie = _resolvePunchOutSelfieFromRecord(record);
+          if (pOutSelfie != null && (record['punchOutSelfie'] == null || record['punchOutSelfie'].toString().trim().isEmpty)) {
+            record['punchOutSelfie'] = pOutSelfie;
+          }
+          final bSessions = _resolveBreakSessionsFromRecord(record);
+          if (bSessions.isNotEmpty && (record['breakSessions'] == null || (record['breakSessions'] as List).isEmpty)) {
+            record['breakSessions'] = bSessions;
+          }
+          final isTodayOrSelectedData =
+              _attendanceDataFetchedFor != null &&
+              selected.year == _attendanceDataFetchedFor!.year &&
+              selected.month == _attendanceDataFetchedFor!.month &&
+              selected.day == _attendanceDataFetchedFor!.day;
+          if (isTodayOrSelectedData && _attendanceData != null) {
+            final tIn = _resolvePunchInFromRecord(_attendanceData);
+            if (tIn != null && (record['punchIn'] == null || record['punchIn'].toString().trim().isEmpty)) {
+              record['punchIn'] = tIn;
+            }
+            final tOut = _resolvePunchOutFromRecord(_attendanceData);
+            if (tOut != null && (record['punchOut'] == null || record['punchOut'].toString().trim().isEmpty)) {
+              record['punchOut'] = tOut;
+            }
+            final sIn = _resolvePunchInSelfieFromRecord(_attendanceData);
+            if (sIn != null && (record['punchInSelfie'] == null || record['punchInSelfie'].toString().trim().isEmpty)) {
+              record['punchInSelfie'] = sIn;
+            }
+            final sOut = _resolvePunchOutSelfieFromRecord(_attendanceData);
+            if (sOut != null && (record['punchOutSelfie'] == null || record['punchOutSelfie'].toString().trim().isEmpty)) {
+              record['punchOutSelfie'] = sOut;
+            }
+            final sBreaks = _resolveBreakSessionsFromRecord(_attendanceData);
+            if (sBreaks.isNotEmpty && (record['breakSessions'] == null || (record['breakSessions'] as List).isEmpty)) {
+              record['breakSessions'] = sBreaks;
+            }
+            if (record['activeBreak'] == null && _attendanceData!['activeBreak'] != null) {
+              record['activeBreak'] = _attendanceData!['activeBreak'];
+            }
+            if (record['workHours'] == null && _attendanceData!['workHours'] != null) {
+              record['workHours'] = _attendanceData!['workHours'];
+            }
           }
           return record;
         }
@@ -5538,6 +6772,34 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       final monthLogs = _logsFromMonthAttendanceForDate(dateStr);
       if (monthLogs != null && monthLogs.isNotEmpty) {
         record['logs'] = monthLogs;
+      }
+      final pIn = _resolvePunchInFromRecord(record);
+      if (pIn != null && (record['punchIn'] == null || record['punchIn'].toString().trim().isEmpty)) {
+        record['punchIn'] = pIn;
+      }
+      final pOut = _resolvePunchOutFromRecord(record);
+      if (pOut != null && (record['punchOut'] == null || record['punchOut'].toString().trim().isEmpty)) {
+        record['punchOut'] = pOut;
+      }
+      final sIn = _resolvePunchInSelfieFromRecord(record);
+      if (sIn != null && (record['punchInSelfie'] == null || record['punchInSelfie'].toString().trim().isEmpty)) {
+        record['punchInSelfie'] = sIn;
+      }
+      final sOut = _resolvePunchOutSelfieFromRecord(record);
+      if (sOut != null && (record['punchOutSelfie'] == null || record['punchOutSelfie'].toString().trim().isEmpty)) {
+        record['punchOutSelfie'] = sOut;
+      }
+      final bSessions = _resolveBreakSessionsFromRecord(record);
+      if (bSessions.isNotEmpty) {
+        record['breakSessions'] = bSessions;
+      }
+      final addrIn = _resolvePunchInAddressFromRecord(record);
+      if (addrIn != null && (record['punchInAddress'] == null || record['punchInAddress'].toString().trim().isEmpty)) {
+        record['punchInAddress'] = addrIn;
+      }
+      final addrOut = _resolvePunchOutAddressFromRecord(record);
+      if (addrOut != null && (record['punchOutAddress'] == null || record['punchOutAddress'].toString().trim().isEmpty)) {
+        record['punchOutAddress'] = addrOut;
       }
       return record;
     }
@@ -5616,54 +6878,59 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 : Colors.black,
           ),
           const SizedBox(width: 8),
-          // Page numbers
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: List.generate(
-              effectivePages.clamp(0, 10), // Show max 10 pages
-              (index) {
-                final pageNum = index + 1;
-                final isCurrentPage = pageNum == safePage;
-                return GestureDetector(
-                  onTap: () {
-                    if (useMonthData) {
-                      setState(() => _page = pageNum);
-                    } else {
-                      _fetchHistory(page: pageNum);
-                    }
+          // Page numbers (horizontally scrollable so up to 10 chips fit narrow phones)
+          Flexible(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: List.generate(
+                  effectivePages.clamp(0, 10), // Show max 10 pages
+                  (index) {
+                    final pageNum = index + 1;
+                    final isCurrentPage = pageNum == safePage;
+                    return GestureDetector(
+                      onTap: () {
+                        if (useMonthData) {
+                          setState(() => _page = pageNum);
+                        } else {
+                          _fetchHistory(page: pageNum);
+                        }
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isCurrentPage
+                              ? colorScheme.primary
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isCurrentPage
+                                ? colorScheme.primary
+                                : colorScheme.outline,
+                          ),
+                        ),
+                        child: Text(
+                          '$pageNum',
+                          style: TextStyle(
+                            color: isCurrentPage
+                                ? colorScheme.onPrimary
+                                : colorScheme.onSurface,
+                            fontWeight: isCurrentPage
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    );
                   },
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isCurrentPage
-                          ? colorScheme.primary
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: isCurrentPage
-                            ? colorScheme.primary
-                            : colorScheme.outline,
-                      ),
-                    ),
-                    child: Text(
-                      '$pageNum',
-                      style: TextStyle(
-                        color: isCurrentPage
-                            ? colorScheme.onPrimary
-                            : colorScheme.onSurface,
-                        fontWeight: isCurrentPage
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                );
-              },
+                ),
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -6036,9 +7303,24 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         );
       }
       position = await getQuickPositionForUi();
-      final resolved = await AddressResolutionService.reverseGeocodeForUi(
+      Map<String, dynamic>? branch = _branchData;
+      if (branch == null) {
+        try {
+          final stored = await AttendanceTemplateStore.loadTemplateDetails();
+          final b = stored?['branch'];
+          if (b is Map<String, dynamic>) {
+            branch = b;
+          } else if (b is Map) {
+            branch = Map<String, dynamic>.from(b);
+          }
+        } catch (_) {}
+      }
+
+      final resolved =
+          await AddressResolutionService.resolvePunchLocationAddress(
         position.latitude,
         position.longitude,
+        branchData: branch,
       );
       if (resolved != null) {
         area = resolved.area;
@@ -6077,7 +7359,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final identityFuture = FaceIdentityGuard.verify(selfie);
 
     final results = await Future.wait([
-      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      // Fail closed: an error must never count as a verified face.
+      verifyFuture.catchError((_) => <String, dynamic>{
+        'success': false,
+        'match': false,
+        'message': 'Face verification failed. Please try again.',
+      }),
       identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
     ]);
 
@@ -7001,10 +8288,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final punchOut = _attendanceData?['punchOut'];
 
     // Extract location details
-    final punchInLoc = _attendanceData?['location']?['punchIn'];
-    final punchOutLoc = _attendanceData?['location']?['punchOut'];
+    final rawCardLoc = _attendanceData?['location'];
+    final punchInLoc = (rawCardLoc is Map && rawCardLoc['punchIn'] is Map)
+        ? Map<String, dynamic>.from(rawCardLoc['punchIn'] as Map)
+        : null;
+    final punchOutLoc = (rawCardLoc is Map && rawCardLoc['punchOut'] is Map)
+        ? Map<String, dynamic>.from(rawCardLoc['punchOut'] as Map)
+        : null;
 
     String? punchInAddress;
+    if (rawCardLoc is String && rawCardLoc.trim().isNotEmpty) {
+      punchInAddress = rawCardLoc.trim();
+    }
     // Helper to format address with lat/lng
     String formatLoc(Map<String, dynamic> loc) {
       String addr = '';
@@ -7027,10 +8322,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (punchInLoc != null) {
       punchInAddress = formatLoc(punchInLoc);
     }
+    if (punchInAddress == null || punchInAddress.trim().isEmpty) {
+      punchInAddress = _resolvePunchInAddressFromRecord(_attendanceData);
+    }
 
     String? punchOutAddress;
     if (punchOutLoc != null) {
       punchOutAddress = formatLoc(punchOutLoc);
+    }
+    if (punchOutAddress == null || punchOutAddress.trim().isEmpty) {
+      punchOutAddress = _resolvePunchOutAddressFromRecord(_attendanceData);
     }
 
     // For the Mark Attendance card, we ALWAYS use TODAY's date (not _focusedDay)
@@ -7730,7 +9031,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       return combined;
     }
 
+    final onboardingDate = _profileJoiningDateForShiftResolution();
+    final onboardingDateOnly = onboardingDate != null
+        ? DateTime(onboardingDate.year, onboardingDate.month, onboardingDate.day)
+        : null;
+
     return _historyList.where((r) {
+      if (onboardingDateOnly != null) {
+        try {
+          final d = _extractDateOnly(r['date']);
+          final dateOnly = DateTime(d.year, d.month, d.day);
+          if (dateOnly.isBefore(onboardingDateOnly)) return false;
+        } catch (_) {}
+      }
       if (_activeFilter == 'Late Check-in' || _activeFilter == 'Late') {
         return _isLateCheckIn(r['punchIn'], record: r) ||
             _isLateCheckOut(r['punchOut'], record: r);
@@ -7813,15 +9126,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
 
   /// Builds a single attendance history date card (same UI for list items and selected date card).
   Widget _buildHistoryDateCard(BuildContext context, dynamic record) {
-    final punchIn = record['punchIn'];
-    final punchOut = record['punchOut'];
-    final workHours = record['workHours'];
-    final isLateIn = _isLateCheckIn(punchIn, record: record);
-    final isLateOut = _isLateCheckOut(punchOut, record: record);
-    final isEarlyOut = _isEarlyCheckOut(punchOut, record: record);
-    final isLowHours = _shouldShowLowWorkHours(record);
+    if (record is! Map) return const SizedBox.shrink();
+    final recordMap = Map<String, dynamic>.from(record);
+    final punchIn = _resolvePunchInFromRecord(recordMap);
+    final punchOut = _resolvePunchOutFromRecord(recordMap);
+    final workHours = recordMap['workHours'];
+    final isLateIn = _isLateCheckIn(punchIn, record: recordMap);
+    final isLateOut = _isLateCheckOut(punchOut, record: recordMap);
+    final isEarlyOut = _isEarlyCheckOut(punchOut, record: recordMap);
+    final isLowHours = _shouldShowLowWorkHours(recordMap);
 
-    String status = record['status'] ?? 'Present';
+    String status = recordMap['status'] ?? 'Present';
     List<String> tags = [];
 
     final bool allowLate =
@@ -7837,7 +9152,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _attendanceTemplate?['allowOvertime'] ??
         true;
 
-    final lateMins = record['lateMinutes'] as num?;
+    final lateMins = recordMap['lateMinutes'] as num?;
     if (isLateIn &&
         !allowLate &&
         (lateMins == null || lateMins.toDouble() != 0)) {
@@ -7849,55 +9164,61 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (isEarlyOut && !allowEarly) tags.add('Early Exit');
     if (isLowHours && !allowEarly) tags.add('Low Hrs');
 
-    final leaveDetails = record['leaveDetails'] as Map<String, dynamic>?;
+    final leaveDetails = recordMap['leaveDetails'] as Map<String, dynamic>?;
     final leaveType =
-        (leaveDetails?['leaveType'] ?? record['leaveType']) as String?;
+        (leaveDetails?['leaveType'] ?? recordMap['leaveType']) as String?;
     // Use history card display: WF, CF, PL, HA, Present, On Leave
     final recordForDisplay = <String, dynamic>{
-      'status': record['status'] ?? 'Present',
-      'leaveType': leaveType ?? record['leaveType'],
-      'compensationType': record['compensationType'],
-      'isPaidLeave': record['isPaidLeave'],
+      'status': recordMap['status'] ?? 'Present',
+      'leaveType': leaveType ?? recordMap['leaveType'],
+      'compensationType': recordMap['compensationType'],
+      'isPaidLeave': recordMap['isPaidLeave'],
     };
     String displayStatus = AttendanceDisplayUtil.getHistoryCardDisplayStatus(
       recordForDisplay,
     );
     // Week-off by template should show as WF
-    final dateStr = _dateKey(record);
+    final dateStr = _dateKey(recordMap);
     if (dateStr.isNotEmpty &&
         _weekOffDateSet.contains(dateStr) &&
         !_alternateWorkDatesInMonth.contains(dateStr) &&
         (status.toString().toLowerCase() == 'on leave')) {
       displayStatus = 'WF';
     }
-    // Holiday name (e.g. "Pongal") for this date — shown even when the date is
-    // displayed as a Weekend/Week Off because the holiday overlaps a week-off.
-    final holidayName = _holidayNameByDate[dateStr];
     if (status == 'Pending' && punchIn != null) displayStatus = 'Waiting';
-
+ 
     String? locationAddress;
-    if (record['location'] != null && record['location']['punchIn'] != null) {
-      final addr = record['location']['punchIn']['address'];
-      if (addr != null && addr.toString().trim().isNotEmpty) {
-        locationAddress = addr.toString();
+    final rawLoc = recordMap['location'];
+    if (rawLoc is Map) {
+      final pIn = rawLoc['punchIn'];
+      if (pIn is Map && pIn['address'] != null) {
+        final addr = pIn['address'].toString().trim();
+        if (addr.isNotEmpty) locationAddress = addr;
+      } else if (rawLoc['address'] != null) {
+        final addr = rawLoc['address'].toString().trim();
+        if (addr.isNotEmpty) locationAddress = addr;
       }
+    } else if (rawLoc is String && rawLoc.trim().isNotEmpty) {
+      locationAddress = rawLoc.trim();
     }
 
     DateTime? parsedDate;
     try {
-      parsedDate = _extractDateOnly(record['date'] ?? '');
+      parsedDate = _extractDateOnly(recordMap['date'] ?? '');
     } catch (_) {}
     final dateText = parsedDate != null
         ? DateFormat('MMM d, EEE').format(parsedDate)
         : '--';
     num? workHoursVal = workHours;
     if (workHoursVal == null &&
-        record['punchIn'] != null &&
-        record['punchOut'] != null) {
+        punchIn != null &&
+        punchOut != null) {
       try {
-        final pi = DateTime.parse(record['punchIn'].toString()).toLocal();
-        final po = DateTime.parse(record['punchOut'].toString()).toLocal();
-        workHoursVal = po.difference(pi).inMinutes;
+        final pi = _parseAnyDateTimeToLocal(punchIn);
+        final po = _parseAnyDateTimeToLocal(punchOut);
+        if (pi != null && po != null) {
+          workHoursVal = po.difference(pi).inMinutes;
+        }
       } catch (_) {}
     }
     final totalHoursStr = _formatWorkHoursAsHHmm(
@@ -7948,11 +9269,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // Day-wise total fine = late/early (record.fineAmount) + break overage +
     // permission overage. Matches the detail sheet and shift screen.
     final breakMapForFine =
-        record['break'] is Map ? Map<String, dynamic>.from(record['break'] as Map) : null;
+        recordMap['break'] is Map ? Map<String, dynamic>.from(recordMap['break'] as Map) : null;
     final dayFineAmount =
-        ((record['fineAmount'] as num?)?.toDouble() ?? 0) +
+        ((recordMap['fineAmount'] as num?)?.toDouble() ?? 0) +
         ((breakMapForFine?['totalBreakFineAmount'] as num?)?.toDouble() ?? 0) +
-        ((record['permissionFineAmount'] as num?)?.toDouble() ?? 0);
+        ((recordMap['permissionFineAmount'] as num?)?.toDouble() ?? 0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),

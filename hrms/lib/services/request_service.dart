@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/error_message_utils.dart';
 import '../utils/punch_flow_log.dart';
 import 'api_client.dart';
+import 'attendance_service.dart';
 
 class RequestService {
   final ApiClient _api = ApiClient();
@@ -37,19 +38,8 @@ class RequestService {
     try {
       await _setToken();
 
-      // Attempt /staff/dashboard first
-      try {
-        final response = await _api.dio.get<dynamic>('/staff/dashboard');
-        final body = response.data;
-        if (body != null && body['success'] == true && body['data'] != null) {
-          final d = body['data'];
-          if (d is Map && (d['stats'] != null || d['attendance'] != null)) {
-            return {'success': true, 'data': d};
-          }
-        }
-      } catch (_) {}
-
-      // Fallback: Aggregate directly using web APIs (Web HRMS Parity)
+      // HRMSbackend has no aggregate /staff/dashboard (only /staff/dashboard/celebrations),
+      // so build the stats from the endpoints it does serve - fetched in parallel.
       final prefs = await SharedPreferences.getInstance();
       String? staffId;
       for (final key in ['user', 'staff', 'profile']) {
@@ -69,52 +59,85 @@ class RequestService {
       final year = now.year;
       final month = now.month;
 
-      // 1. Today Punch (Canonical Web API)
-      Map<String, dynamic> todayPunch = {};
-      try {
-        final res = await _api.dio.get<dynamic>('/staff/attendance/today-punch');
-        if (res.data is Map && res.data['data'] is Map) {
-          todayPunch = Map<String, dynamic>.from(res.data['data'] as Map);
-        }
-      } catch (_) {}
-
-      // 2. Leave Types / Balances
-      num totalAvailableBalance = 0;
-      try {
-        final res = await _api.dio.get<dynamic>('/admin/staff/settings/Leave/types');
-        final list = res.data?['data']?['leaveTypes'] ?? res.data?['data'] ?? [];
-        if (list is List) {
-          for (final lt in list) {
-            if (lt is Map && lt['availableBalance'] != null) {
-              totalAvailableBalance += (lt['availableBalance'] as num);
-            }
-          }
-        }
-      } catch (_) {}
-
-      // 3. Month Attendance
-      Map<String, dynamic> monthAttendance = {};
-      if (staffId != null && staffId.isNotEmpty) {
+      Future<dynamic> getData(String path, [Map<String, dynamic>? query]) async {
         try {
-          final res = await _api.dio.get<dynamic>(
-            '/admin/staff/attendance/staff/$staffId',
-            queryParameters: {'year': year, 'month': month},
-          );
-          if (res.data is Map && res.data['data'] is Map) {
-            monthAttendance = Map<String, dynamic>.from(res.data['data'] as Map);
-          }
-        } catch (_) {}
+          final res = await _api.dio.get<dynamic>(path, queryParameters: query);
+          return res.data is Map ? (res.data as Map)['data'] : null;
+        } catch (_) {
+          return null;
+        }
       }
 
-      // 4. Recent Leaves
-      List<dynamic> recentLeaves = [];
-      try {
-        final res = await _api.dio.get<dynamic>('/staff/requests/leave/my-requests');
-        final list = res.data?['data']?['requests'] ?? res.data?['data'] ?? [];
-        if (list is List) {
-          recentLeaves = list;
+      // Today punch + month attendance go through AttendanceService so the shell,
+      // Home cards and Attendance tab share one (deduped, cached) request each.
+      Future<dynamic> sharedData(Future<Map<String, dynamic>> f) async {
+        try {
+          final r = await f;
+          return r['success'] == true ? r['data'] : null;
+        } catch (_) {
+          return null;
         }
-      } catch (_) {}
+      }
+
+      final attendance = AttendanceService();
+      final results = await Future.wait<dynamic>([
+        sharedData(attendance.getTodayAttendance()),
+        getData('/staff/requests/leave/my-balances'),
+        (staffId != null && staffId.isNotEmpty)
+            ? sharedData(attendance.getMonthAttendance(year, month))
+            : Future<dynamic>.value(null),
+        getData('/staff/requests/leave/my-requests'),
+        getData('/staff/dashboard/celebrations'),
+      ]);
+
+      // 5. Celebrations ({ birthdays, anniversaries }) -> today / upcoming lists for the card.
+      final todayCelebrations = <Map<String, dynamic>>[];
+      final upcomingCelebrations = <Map<String, dynamic>>[];
+      final celeb = results[4];
+      if (celeb is Map) {
+        void addAll(dynamic list, String type) {
+          if (list is! List) return;
+          for (final e in list.whereType<Map>()) {
+            final isToday = e['isToday'] == true;
+            final entry = <String, dynamic>{
+              'name': e['name'],
+              'department': e['department'],
+              'type': type,
+              'displayDate': isToday ? 'Today' : (e['date'] ?? ''),
+              'daysLeft': e['inDays'],
+              if (e['years'] != null) 'yearsOfService': e['years'],
+            };
+            (isToday ? todayCelebrations : upcomingCelebrations).add(entry);
+          }
+        }
+
+        addAll(celeb['birthdays'], 'Birthday');
+        addAll(celeb['anniversaries'], 'Work Anniversary');
+      }
+
+      // 1. Today Punch
+      final Map<String, dynamic> todayPunch =
+          results[0] is Map ? Map<String, dynamic>.from(results[0] as Map) : {};
+
+      // 2. Leave balances ({ balances: [{ balance, ... }] })
+      num totalAvailableBalance = 0;
+      final balData = results[1];
+      final balances = balData is Map ? balData['balances'] : balData;
+      if (balances is List) {
+        for (final b in balances) {
+          final v = b is Map ? (b['balance'] ?? b['availableBalance']) : null;
+          if (v is num) totalAvailableBalance += v;
+        }
+      }
+
+      // 3. Month Attendance
+      final Map<String, dynamic> monthAttendance =
+          results[2] is Map ? Map<String, dynamic>.from(results[2] as Map) : {};
+
+      // 4. Recent Leaves
+      final leaveData = results[3];
+      final leaveList = leaveData is Map ? leaveData['requests'] : leaveData;
+      final List<dynamic> recentLeaves = leaveList is List ? leaveList : [];
 
       final presentDays = todayPunch['presentDays'] ?? monthAttendance['presentCount'] ?? 0;
       final totalWorkingDays = todayPunch['totalWorkingDays'] ?? monthAttendance['totalWorkingDays'] ?? 30;
@@ -148,8 +171,8 @@ class RequestService {
           'stats': stats,
           'recentLeaves': recentLeaves,
           'todayAnnouncements': [],
-          'todayCelebrations': [],
-          'upcomingCelebrations': [],
+          'todayCelebrations': todayCelebrations,
+          'upcomingCelebrations': upcomingCelebrations,
         },
       };
     } catch (e) {
@@ -209,12 +232,14 @@ class RequestService {
           '/staff/requests/leave/types',
           queryParameters: q,
         );
-      } catch (_) {
+      } on DioException catch (e1) {
+        if (!_isMissingRoute(e1)) rethrow;
         try {
           response = await _api.dio.get<dynamic>(
             '/admin/staff/settings/Leave/types',
           );
-        } catch (_) {
+        } on DioException catch (e2) {
+          if (!_isMissingRoute(e2)) rethrow;
           response = await _api.dio.get<dynamic>(
             '/requests/leave-types',
             queryParameters: q,
@@ -252,13 +277,16 @@ class RequestService {
       Response<dynamic>? response;
       try {
         response = await _api.dio.get<dynamic>('/staff/requests/leave/types');
-      } catch (_) {
+      } on DioException catch (e3) {
+        if (!_isMissingRoute(e3)) rethrow;
         try {
           response = await _api.dio.get<dynamic>('/admin/staff/settings/Leave/types');
-        } catch (_) {
+        } on DioException catch (e4) {
+          if (!_isMissingRoute(e4)) rethrow;
           try {
             response = await _api.dio.get<dynamic>('/requests/leave-types/for-apply');
-          } catch (_) {
+          } on DioException catch (e5) {
+            if (!_isMissingRoute(e5)) rethrow;
             response = await _api.dio.get<dynamic>('/requests/leave-types');
           }
         }
@@ -415,7 +443,8 @@ class RequestService {
           '/staff/requests/leave/apply',
           data: data,
         );
-      } catch (_) {
+      } on DioException catch (e6) {
+        if (!_isMissingRoute(e6)) rethrow;
         response = await _api.dio.post<dynamic>(
           '/requests/leave',
           data: data,
@@ -442,6 +471,193 @@ class RequestService {
     }
   }
 
+  /// HRMSbackend names these `leaveTypeName` / `duration` (leave) and
+  /// `durationMins` (permission); the screens read `leaveType` / `days` /
+  /// `requestedMinutes`, so alias them without overwriting existing values.
+  dynamic _normalizeMyRequestsBody(dynamic body) {
+    dynamic fix(dynamic item) {
+      if (item is! Map) return item;
+      final m = Map<String, dynamic>.from(item);
+      if (m['leaveType'] == null && m['leaveTypeName'] != null) m['leaveType'] = m['leaveTypeName'];
+      if (m['days'] == null && m['duration'] != null) m['days'] = m['duration'];
+      if (m['requestedMinutes'] == null && m['durationMins'] != null) {
+        m['requestedMinutes'] = m['durationMins'];
+      }
+      return m;
+    }
+
+    List<dynamic> fixAll(List<dynamic> list) => list.map(fix).toList();
+
+    if (body is List) return fixAll(body);
+    if (body is Map) {
+      final data = body['data'];
+      if (data is List) return {...body, 'data': fixAll(data)};
+      if (data is Map && data['requests'] is List) {
+        return {
+          ...body,
+          'data': {...data, 'requests': fixAll(data['requests'] as List)},
+        };
+      }
+    }
+    return body;
+  }
+
+  /// id -> display name for colleagues and the company admin, from the staff chat
+  /// directory. Loaded once per app session; used to name request reviewers.
+  static Map<String, String>? _reviewerNames;
+
+  /// Legacy-route fallbacks run only when the primary route does not exist.
+  /// Anything else (validation 400, timeout) is surfaced as-is: falling through
+  /// hid the server's message behind a legacy 404 and re-sent POSTs.
+  static bool _isMissingRoute(DioException e) {
+    final code = e.response?.statusCode;
+    return code == 404 || code == 405;
+  }
+
+  static Future<Map<String, String>>? _reviewerNamesInFlight;
+
+  /// The request tabs load together; share one directory fetch between them.
+  Future<Map<String, String>> _loadReviewerNames() {
+    final cached = _reviewerNames;
+    if (cached != null) return Future.value(cached);
+    final pending = _reviewerNamesInFlight;
+    if (pending != null) return pending;
+    final future = _fetchReviewerNames();
+    _reviewerNamesInFlight = future;
+    future.whenComplete(() => _reviewerNamesInFlight = null).ignore();
+    return future;
+  }
+
+  Future<Map<String, String>> _fetchReviewerNames() async {
+    final names = <String, String>{};
+    try {
+      final res = await _api.dio.get<dynamic>('/staff/interaction/chat/directory');
+      final data = res.data is Map ? (res.data as Map)['data'] : null;
+      if (data is Map) {
+        final admin = data['admin'];
+        if (admin is Map && admin['_id'] != null) {
+          final n = (admin['name'] ?? admin['companyAdmin'] ?? '').toString().trim();
+          if (n.isNotEmpty) names[admin['_id'].toString()] = n;
+        }
+        final staff = data['staff'];
+        if (staff is List) {
+          for (final s in staff.whereType<Map>()) {
+            final n = '${s['firstName'] ?? ''} ${s['lastName'] ?? ''}'.trim();
+            if (s['_id'] != null && n.isNotEmpty) names[s['_id'].toString()] = n;
+          }
+        }
+      }
+      _reviewerNames = names;
+    } catch (_) {
+      // Leave the cache empty so the next call retries.
+    }
+    return names;
+  }
+
+  /// HRMSbackend returns the reviewer as `reviewedBy` (an id) and, for expense/payslip,
+  /// `approvedBy` as the reviewer's name string. The screens expect
+  /// `approvedBy` / `rejectedBy` maps with a `name`, so build those here.
+  Future<dynamic> _attachReviewerNames(dynamic body) async {
+    final idPattern = RegExp(r'^[0-9a-fA-F]{24}$');
+    List<dynamic>? list;
+    if (body is List) {
+      list = body;
+    } else if (body is Map) {
+      final data = body['data'];
+      if (data is List) {
+        list = data;
+      } else if (data is Map && data['requests'] is List) {
+        list = data['requests'] as List;
+      }
+    }
+    if (list == null || list.isEmpty) return body;
+
+    Map<String, String>? directory;
+    for (var i = 0; i < list.length; i++) {
+      final item = list[i];
+      if (item is! Map) continue;
+      final status = (item['status'] ?? '').toString().toLowerCase();
+      final isRejected = status == 'rejected';
+      final key = isRejected ? 'rejectedBy' : 'approvedBy';
+      if (item[key] is Map && (item[key] as Map)['name'] != null) continue;
+
+      String? name;
+      final storedName = item['approvedBy'];
+      if (storedName is String && storedName.trim().isNotEmpty && !idPattern.hasMatch(storedName.trim())) {
+        name = storedName.trim();
+      } else {
+        final reviewer = item['reviewedBy'] ?? (storedName is String ? storedName : null);
+        final reviewerId = reviewer is Map ? reviewer['_id']?.toString() : reviewer?.toString();
+        if (reviewerId != null && reviewerId.isNotEmpty) {
+          directory ??= await _loadReviewerNames();
+          name = directory[reviewerId];
+        }
+      }
+
+      final m = Map<String, dynamic>.from(item);
+      // The raw string (a name or an id) is never a map the screens can read; without
+      // this they fall back to a made-up "System". Unresolved reviewers show "-".
+      if (m['approvedBy'] is String) m.remove('approvedBy');
+      if (name != null) m[key] = {'name': name};
+      list[i] = m;
+    }
+    return body;
+  }
+
+  /// HRMSbackend `/staff/requests/*/my-requests` returns every request and ignores
+  /// status/search/date query params, so apply them here. Server-paginated
+  /// responses are left untouched.
+  dynamic _filterMyRequestsBody(
+    dynamic body, {
+    String? status,
+    String? search,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) {
+    final wantStatus = (status == null || status == 'All Status') ? null : status.toLowerCase();
+    final q = search?.trim().toLowerCase() ?? '';
+    if (wantStatus == null && q.isEmpty && startDate == null && endDate == null) return body;
+
+    DateTime? parse(dynamic v) => v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
+
+    bool keep(dynamic item) {
+      if (item is! Map) return true;
+      if (wantStatus != null && (item['status'] ?? '').toString().toLowerCase() != wantStatus) {
+        return false;
+      }
+      if (q.isNotEmpty) {
+        final text = item.values
+            .where((v) => v is String || v is num)
+            .map((v) => v.toString().toLowerCase())
+            .join(' ');
+        if (!text.contains(q)) return false;
+      }
+      if (startDate != null || endDate != null) {
+        final from = parse(item['startDate'] ?? item['date'] ?? item['expenseDate'] ?? item['createdAt']);
+        final to = parse(item['endDate']) ?? from;
+        if (from == null || to == null) return false;
+        if (endDate != null && from.isAfter(endDate)) return false;
+        if (startDate != null && to.isBefore(startDate)) return false;
+      }
+      return true;
+    }
+
+    List<dynamic> apply(List<dynamic> list) => list.where(keep).toList();
+
+    if (body is List) return apply(body);
+    if (body is Map) {
+      final data = body['data'];
+      if (data is List) return {...body, 'data': apply(data)};
+      if (data is Map && data['requests'] is List && data['pagination'] == null) {
+        return {
+          ...body,
+          'data': {...data, 'requests': apply(data['requests'] as List)},
+        };
+      }
+    }
+    return body;
+  }
+
   Future<Map<String, dynamic>> getLeaveRequests({
     String? status,
     String? search,
@@ -466,13 +682,20 @@ class RequestService {
           '/staff/requests/leave/my-requests',
           queryParameters: q,
         );
-      } catch (_) {
+      } on DioException catch (e7) {
+        if (!_isMissingRoute(e7)) rethrow;
         response = await _api.dio.get<dynamic>(
           '/requests/leave',
           queryParameters: q,
         );
       }
-      final body = response.data;
+      final body = _filterMyRequestsBody(
+        await _attachReviewerNames(_normalizeMyRequestsBody(response.data)),
+        status: status,
+        search: search,
+        startDate: startDate,
+        endDate: endDate,
+      );
       if (body is List) return {'success': true, 'data': body};
       if (body is Map && body['success'] == true) {
         final data = body['data'];
@@ -502,7 +725,8 @@ class RequestService {
         response = await _api.dio.post<dynamic>(
           '/staff/requests/leave/cancel/$requestId',
         );
-      } catch (_) {
+      } on DioException catch (e8) {
+        if (!_isMissingRoute(e8)) rethrow;
         response = await _api.dio.patch<dynamic>(
           '/requests/leave/$requestId/cancel',
         );
@@ -612,7 +836,8 @@ class RequestService {
           '/staff/requests/expense/apply',
           data: data,
         );
-      } catch (_) {
+      } on DioException catch (e9) {
+        if (!_isMissingRoute(e9)) rethrow;
         response = await _api.dio.post<dynamic>(
           '/requests/expense',
           data: data,
@@ -663,13 +888,20 @@ class RequestService {
           '/staff/requests/expense/my-requests',
           queryParameters: q,
         );
-      } catch (_) {
+      } on DioException catch (e10) {
+        if (!_isMissingRoute(e10)) rethrow;
         response = await _api.dio.get<dynamic>(
           '/requests/expense',
           queryParameters: q,
         );
       }
-      final body = response.data;
+      final body = _filterMyRequestsBody(
+        await _attachReviewerNames(response.data),
+        status: status,
+        search: search,
+        startDate: startDate,
+        endDate: endDate,
+      );
       if (body is List) return {'success': true, 'data': body};
       if (body is Map && body['success'] == true) {
         final data = body['data'];
@@ -723,7 +955,8 @@ class RequestService {
           '/staff/requests/payslip/apply',
           data: data,
         );
-      } catch (_) {
+      } on DioException catch (e11) {
+        if (!_isMissingRoute(e11)) rethrow;
         response = await _api.dio.post<dynamic>(
           '/requests/payslip',
           data: data,
@@ -770,13 +1003,20 @@ class RequestService {
           '/staff/requests/payslip/my-requests',
           queryParameters: q,
         );
-      } catch (_) {
+      } on DioException catch (e12) {
+        if (!_isMissingRoute(e12)) rethrow;
         response = await _api.dio.get<dynamic>(
           '/requests/payslip',
           queryParameters: q,
         );
       }
-      final body = response.data;
+      final body = _filterMyRequestsBody(
+        await _attachReviewerNames(response.data),
+        status: status,
+        search: search,
+        startDate: startDate,
+        endDate: endDate,
+      );
       if (body is List) return {'success': true, 'data': body};
       if (body is Map && body['success'] == true) {
         final data = body['data'];
@@ -806,7 +1046,8 @@ class RequestService {
         response = await _api.dio.post<dynamic>(
           '/staff/requests/expense/cancel/$requestId',
         );
-      } catch (_) {
+      } on DioException catch (e13) {
+        if (!_isMissingRoute(e13)) rethrow;
         response = await _api.dio.patch<dynamic>(
           '/requests/expense/$requestId/cancel',
         );
@@ -831,7 +1072,8 @@ class RequestService {
         response = await _api.dio.post<dynamic>(
           '/staff/requests/payslip/cancel/$requestId',
         );
-      } catch (_) {
+      } on DioException catch (e14) {
+        if (!_isMissingRoute(e14)) rethrow;
         response = await _api.dio.patch<dynamic>(
           '/requests/payslip/$requestId/cancel',
         );
@@ -931,13 +1173,14 @@ class RequestService {
           '/staff/requests/permission/my-requests',
           queryParameters: q,
         );
-      } catch (_) {
+      } on DioException catch (e15) {
+        if (!_isMissingRoute(e15)) rethrow;
         response = await _api.dio.get<dynamic>(
           '/requests/permission',
           queryParameters: q,
         );
       }
-      final body = response.data;
+      final body = await _attachReviewerNames(_normalizeMyRequestsBody(response.data));
       punchFlowLog(
         '[Permission][App][getPermissionRequests] status=${response.statusCode} '
         'query=$q raw=$body',
@@ -1014,7 +1257,8 @@ class RequestService {
           '/staff/requests/permission/apply',
           data: reqData,
         );
-      } catch (_) {
+      } on DioException catch (e16) {
+        if (!_isMissingRoute(e16)) rethrow;
         response = await _api.dio.post<dynamic>(
           '/requests/permission',
           data: reqData,
@@ -1059,7 +1303,8 @@ class RequestService {
         response = await _api.dio.post<dynamic>(
           '/staff/requests/permission/cancel/$requestId',
         );
-      } catch (_) {
+      } on DioException catch (e17) {
+        if (!_isMissingRoute(e17)) rethrow;
         response = await _api.dio.patch<dynamic>(
           '/requests/permission/$requestId/cancel',
         );
@@ -1153,14 +1398,16 @@ class RequestService {
         res = await _api.dio.get<dynamic>(
           '/staff/requests/permission/my-quota',
         );
-      } catch (_) {
+      } on DioException catch (e18) {
+        if (!_isMissingRoute(e18)) rethrow;
         try {
           sourceEndpoint = '/permissions/balance';
           res = await _api.dio.get<dynamic>(
             '/permissions/balance',
             queryParameters: q,
           );
-        } catch (_) {
+        } on DioException catch (e19) {
+          if (!_isMissingRoute(e19)) rethrow;
           sourceEndpoint = '/requests/permission/balance';
           res = await _api.dio.get<dynamic>(
             '/requests/permission/balance',

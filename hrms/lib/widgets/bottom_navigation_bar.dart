@@ -154,7 +154,10 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
       return widget.activeBreakStartTime;
     }
     if (_fetchedBreakStartTime != null) return _fetchedBreakStartTime;
-    if (widget.isBreakActive) return DateTime.now();
+    if (widget.isBreakActive) {
+      // Unknown start: use the last start the server reported, not "now".
+      return BreakService.lastKnownBreakStartTime ?? DateTime.now();
+    }
     return null;
   }
 
@@ -309,12 +312,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
     if (widget.onTap != null) {
       widget.onTap!(targetIndex);
     } else {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => DashboardScreen(initialIndex: targetIndex),
-        ),
-        (route) => route.isFirst,
-      );
+      DashboardScreen.goToTab(context, targetIndex);
     }
   }
 
@@ -409,6 +407,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
             const SizedBox(height: 4),
             Text(
               busy ? 'Please wait' : item.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,

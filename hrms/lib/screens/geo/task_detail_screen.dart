@@ -134,6 +134,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         _loadingCustomer = false;
         _customerError = 'No customer linked';
       });
+      await _initMapAndDirections();
       return;
     }
     try {
@@ -151,6 +152,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           _customerError = 'Failed to load customer';
           _loadingCustomer = false;
         });
+        await _initMapAndDirections();
       }
     }
   }
@@ -172,16 +174,19 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     if (taskId == null || taskId.isEmpty) return;
     try {
       final report = await TaskService().getTaskCompletionReport(taskId);
+      final effectiveEndTime = task.arrivalTime ??
+          task.completedDate ??
+          (task.tasksExit.isNotEmpty ? task.tasksExit.last.exitedAt : null);
       final summary = TaskMovementSummary.fromRoutePoints(
         report.routePoints,
-        endTime: task.arrivalTime,
+        endTime: effectiveEndTime,
       );
       if (mounted) {
         setState(() {
           _movementSummary = summary.hasData ? summary : null;
           _routeDistanceKm = computeRouteDistanceKm(
             report.routePoints,
-            endTime: task.arrivalTime,
+            endTime: effectiveEndTime,
           );
         });
       }
@@ -214,8 +219,31 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     try {
       position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
       );
     } catch (_) {
+      try {
+        position = await Geolocator.getLastKnownPosition();
+      } catch (_) {}
+    }
+    if (position == null &&
+        task.sourceLocation != null &&
+        (task.sourceLocation!.lat != 0 || task.sourceLocation!.lng != 0)) {
+      position = Position(
+        latitude: task.sourceLocation!.lat,
+        longitude: task.sourceLocation!.lng,
+        timestamp: DateTime.now(),
+        accuracy: 0,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
+      );
+    }
+
+    if (position == null) {
       if (mounted) {
         setState(() {
           _loadingMap = false;
@@ -253,17 +281,26 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       }
     }
     if (destLatLng == null) {
+      final curPos = position!;
       if (mounted) {
         setState(() {
           _loadingMap = false;
-          _mapError = _customer == null
-              ? null
-              : 'Could not find destination address';
+          _mapError = null;
           _distanceKm = null;
           _durationText = null;
+          _markers = {
+            Marker(
+              markerId: const MarkerId('current'),
+              position: LatLng(curPos.latitude, curPos.longitude),
+              infoWindow: const InfoWindow(title: 'My Location'),
+              icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueAzure,
+              ),
+            ),
+          };
+          _polylines.clear();
         });
       }
-      if (_customer == null) return;
       return;
     }
 
@@ -294,12 +331,19 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
     // Show only actual GPS path from Tracking collection (no directions route).
     if (task.id != null && task.id!.isNotEmpty) {
+      final effectiveEndTime = task.arrivalTime ??
+          task.completedDate ??
+          (task.tasksExit.isNotEmpty ? task.tasksExit.last.exitedAt : null);
       final travelledMaps = await TaskService().getTravelledPathUntilArrived(
         task.id!,
-        arrivalTime: task.arrivalTime,
+        arrivalTime: effectiveEndTime,
       );
-      if (travelledMaps.length >= 2) {
-        final rawTravelledPts = travelledMaps
+      final rawCoords = (travelledMaps.length >= 2)
+          ? travelledMaps
+          : (task.travelledRoute ?? []);
+
+      if (rawCoords.length >= 2) {
+        final rawTravelledPts = rawCoords
             .map((e) => LatLng(e['lat']!, e['lng']!))
             .toList();
         // Snap to roads so the line follows the actual path travelled, not
@@ -321,6 +365,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         final min = (km / 30 * 60).round().clamp(0, 999);
         final eta = min > 60 ? '~${min ~/ 60} h' : '~$min min';
         if (!mounted) return;
+
+        final isExited = task.status == TaskStatus.hold ||
+            task.status == TaskStatus.exited ||
+            task.tasksExit.isNotEmpty;
+        final endMarkerTitle = isExited
+            ? 'Exited here'
+            : (task.status == TaskStatus.completed ? 'Completed here' : 'Arrived here');
+
         setState(() {
           _distanceKm = km;
           _durationText = eta;
@@ -340,7 +392,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               icon: BitmapDescriptor.defaultMarkerWithHue(
                 BitmapDescriptor.hueRed,
               ),
-              infoWindow: const InfoWindow(title: 'Arrived here'),
+              infoWindow: InfoWindow(title: endMarkerTitle),
             ),
           };
           _polylines.clear();
@@ -499,6 +551,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   if (_buildTrackEvents().isNotEmpty) ...[
                     const SizedBox(height: 16),
                     _buildTrackDetailsCard(),
+                  ],
+                  if (task.tasksExit.isNotEmpty || task.tasksRestarted.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _buildExitRestartHistoryCard(),
                   ],
                   if (_hasCompletionDetails) ...[
                     const SizedBox(height: 16),
@@ -926,12 +982,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     color: Colors.red.shade400,
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    _customer!.customerNumber!,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w500,
+                  Expanded(
+                    child: Text(
+                      _customer!.customerNumber!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ],
@@ -1478,6 +1538,20 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       );
     }
 
+    for (final exit in task.tasksExit) {
+      events.add(
+        _TaskTrackEvent(
+          time: exit.exitedAt,
+          title: 'Ride Exited (${exit.exitType == 'hold' ? 'On Hold' : 'Exited'})',
+          subtitle: exit.exitReason.isNotEmpty
+              ? exit.exitReason
+              : (exit.address ?? 'Trip paused'),
+          icon: Icons.pause_circle_filled_rounded,
+          iconColor: Colors.orange.shade700,
+        ),
+      );
+    }
+
     return events.where((e) => e.time != null).toList();
   }
 
@@ -1756,10 +1830,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+            ),
           ),
+          const SizedBox(width: 8),
           Flexible(
             child: Text(
               value,
@@ -2248,17 +2325,26 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     LatLng? pickup = _pickupLatLng;
     if (pickup == null) {
       try {
-        final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium,
-          timeLimit: const Duration(seconds: 5),
-        );
-        pickup = LatLng(pos.latitude, pos.longitude);
-        _currentPosition = pos;
-      } catch (_) {
         final last = await Geolocator.getLastKnownPosition();
         if (last != null) {
           pickup = LatLng(last.latitude, last.longitude);
           _currentPosition = last;
+        }
+      } catch (_) {}
+
+      if (pickup == null) {
+        try {
+          final pos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
+          ).timeout(const Duration(seconds: 4));
+          pickup = LatLng(pos.latitude, pos.longitude);
+          _currentPosition = pos;
+        } catch (_) {
+          final last = await Geolocator.getLastKnownPosition();
+          if (last != null) {
+            pickup = LatLng(last.latitude, last.longitude);
+            _currentPosition = last;
+          }
         }
       }
     }
@@ -2286,56 +2372,28 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       final startLat = _currentPosition?.latitude ?? pickup.latitude;
       final startLng = _currentPosition?.longitude ?? pickup.longitude;
       Task updated;
-      try {
-        if (task.status == TaskStatus.exited ||
-            task.status == TaskStatus.hold ||
-            task.status == TaskStatus.holdOnArrival ||
-            task.status == TaskStatus.reopenedOnArrival ||
-            task.status == TaskStatus.reopened) {
-          // Resume after exit/hold/reopened: use restart API
-          await TaskService().restartTask(resolvedId, lat: startLat, lng: startLng);
-          updated = await TaskService().getTaskById(resolvedId);
-        } else {
-          updated = await TaskService().updateTask(
-            resolvedId,
-            status: 'in_progress',
-            startTime: DateTime.now(),
-            startLat: startLat,
-            startLng: startLng,
-          );
-        }
-      } catch (_) {
-        updated = Task(
-          id: task.id,
-          taskId: task.taskId,
-          taskTitle: task.taskTitle,
-          description: task.description,
-          assignedTo: task.assignedTo,
-          type: task.type,
-          customerId: task.customerId,
-          customer: task.customer,
-          expectedCompletionDate: task.expectedCompletionDate,
-          completedDate: task.completedDate,
-          assignedDate: task.assignedDate,
-          status: TaskStatus.inProgress,
+      if (task.status == TaskStatus.exited ||
+          task.status == TaskStatus.hold ||
+          task.status == TaskStatus.holdOnArrival ||
+          task.status == TaskStatus.reopenedOnArrival ||
+          task.status == TaskStatus.reopened) {
+        // Resume after exit/hold/reopened: use restart API
+        await TaskService().restartTask(resolvedId, lat: startLat, lng: startLng);
+        updated = await TaskService().getTaskById(resolvedId);
+      } else {
+        updated = await TaskService().updateTask(
+          resolvedId,
+          status: 'in_progress',
           startTime: DateTime.now(),
-          sourceLocation: TaskLocation(
-            lat: startLat,
-            lng: startLng,
-            address: pickup.latitude.toString(),
-          ),
-          destinationLocation: task.destinationLocation,
-          isOtpRequired: task.isOtpRequired,
-          isGeoFenceRequired: task.isGeoFenceRequired,
-          isPhotoRequired: task.isPhotoRequired,
-          isFormRequired: task.isFormRequired,
+          startLat: startLat,
+          startLng: startLng,
         );
       }
 
       // Store initial point in Tracking collection (separate route).
       TaskService()
           .storeTracking(resolvedId, startLat, startLng, movementType: 'stop')
-          .catchError((_) {});
+          .catchError((_) => false);
       PresenceTrackingService().pausePresenceTracking();
       if (mounted) {
         setState(() => _actionLoading = false);
@@ -2381,9 +2439,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _actionLoading = false);
+        debugPrint('[StartRide] error: $e');
+        final errText = e.toString().replaceFirst('Exception: ', '').trim();
+        if (errText.toLowerCase().contains('already been started') ||
+            errText.toLowerCase().contains('already started')) {
+          _onResumeRide();
+          return;
+        }
         SnackBarUtils.showSnackBar(
           context,
-          ErrorMessageUtils.toUserFriendlyMessage(e),
+          errText.isNotEmpty ? errText : ErrorMessageUtils.toUserFriendlyMessage(e),
           isError: true,
         );
       }

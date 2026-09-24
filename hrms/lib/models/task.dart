@@ -55,11 +55,11 @@ class TaskLocation {
   factory TaskLocation.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const TaskLocation(lat: 0, lng: 0);
     return TaskLocation(
-      lat: (json['lat'] as num?)?.toDouble() ?? 0,
-      lng: (json['lng'] as num?)?.toDouble() ?? 0,
-      address: json['address'] as String?,
-      fullAddress: json['fullAddress'] as String?,
-      pincode: json['pincode'] as String?,
+      lat: (json['lat'] ?? json['latitude'] as num?)?.toDouble() ?? 0,
+      lng: (json['lng'] ?? json['longitude'] as num?)?.toDouble() ?? 0,
+      address: (json['address'] ?? json['name'] ?? json['branchName']) as String?,
+      fullAddress: (json['fullAddress'] ?? json['address']) as String?,
+      pincode: (json['pincode'] ?? json['pinCode']) as String?,
       overridencustomerlocation:
           json['overridencustomerlocation'] as bool?,
       overridendestinationlocation:
@@ -114,6 +114,7 @@ class TaskExitRecord {
   final String? fullAddress;
   final String? pincode;
   final String exitReason;
+  final String? exitType;
   final DateTime? exitedAt;
   final int? batteryPercent;
 
@@ -124,6 +125,7 @@ class TaskExitRecord {
     this.fullAddress,
     this.pincode,
     required this.exitReason,
+    this.exitType,
     this.exitedAt,
     this.batteryPercent,
   });
@@ -140,6 +142,7 @@ class TaskExitRecord {
       fullAddress: loc['fullAddress'] as String?,
       pincode: loc['pincode'] as String?,
       exitReason: (json['exitReason'] as String?) ?? '',
+      exitType: json['exitType'] as String?,
       exitedAt: Task._dateFromJson(json['exitedAt'] ?? json['time']),
       batteryPercent: (json['batteryPercent'] as num?)?.toInt(),
     );
@@ -229,6 +232,55 @@ enum TaskStatus {
   expired,
 }
 
+/// One active field of the admin's Field-Out form template (HRMSbackend
+/// `FormTemplate.fields`, delivered on each task as `requirements`).
+class TaskRequirement {
+  final String name;
+  /// e.g. 'Text Input', 'Text Area', 'Image File', 'Camera Capture', 'Numeric Input',
+  /// 'Dropdown Select', 'GPS Tracker', 'email'.
+  final String type;
+  /// Extra hint from the template (e.g. 'Paragraph Text', or dropdown options).
+  final String response;
+
+  const TaskRequirement({required this.name, this.type = '', this.response = ''});
+
+  factory TaskRequirement.fromJson(Map<String, dynamic> json) => TaskRequirement(
+        name: (json['name'] ?? '').toString(),
+        type: (json['type'] ?? '').toString(),
+        response: (json['response'] ?? '').toString(),
+      );
+
+  String get _n => name.trim().toLowerCase();
+  String get _t => type.trim().toLowerCase();
+
+  bool get isEmail => _n == 'email' || _t == 'email';
+  bool get isOtp => _n == 'otp' || (_t == 'numeric input' && _n.contains('otp'));
+  bool get isImage => _n == 'proof photo' || _t == 'image file' || _t == 'camera capture';
+  bool get isTextArea =>
+      _n == 'description' || _t == 'text area' || response.trim().toLowerCase() == 'paragraph text';
+  bool get isDropdown => _t == 'dropdown select';
+  bool get isGps => _t == 'gps tracker';
+  bool get isNumeric => _t == 'numeric input' && !isOtp;
+
+  Map<String, dynamic> toJson() => {'name': name, 'type': type, 'response': response};
+
+  /// What the web falls back to when a task carries no template.
+  static const List<TaskRequirement> webDefaults = [
+    TaskRequirement(name: 'Description', type: 'Text Area'),
+    TaskRequirement(name: 'Proof Photo', type: 'Image File'),
+    TaskRequirement(name: 'OTP', type: 'Numeric Input'),
+  ];
+
+  static List<TaskRequirement> listFrom(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => TaskRequirement.fromJson(Map<String, dynamic>.from(e)))
+        .where((r) => r.name.trim().isNotEmpty)
+        .toList();
+  }
+}
+
 class Task {
   final String? id;
   final String taskId;
@@ -313,6 +365,19 @@ class Task {
   final int? photoProofBatteryPercent;
   final int? otpVerifiedBatteryPercent;
   final int? completedBatteryPercent;
+  final String? fieldOutNotes;
+
+  /// Complete route breadcrumbs of the employee's travel.
+  final List<Map<String, double>>? travelledRoute;
+
+  /// Admin Field-Out form fields (HRMSbackend `requirements`). Empty when not provided.
+  final List<TaskRequirement> requirements;
+
+  /// True for a self-logged Field In / Field Out journey (not an assigned task).
+  final bool selfLogged;
+
+  /// Field In at the destination already done (HRMSbackend `actualFieldInTime`).
+  final String? actualFieldInTime;
 
   Task({
     this.id,
@@ -339,6 +404,7 @@ class Task {
     this.checkoutCustomerPlace,
     this.photoProofUrl,
     this.photoProofUploadedAt,
+    this.fieldOutNotes,
     this.requireApprovalOnComplete = false,
     this.autoApprove = false,
     this.sourceLocation,
@@ -360,6 +426,10 @@ class Task {
     this.photoProofBatteryPercent,
     this.otpVerifiedBatteryPercent,
     this.completedBatteryPercent,
+    this.travelledRoute,
+    this.requirements = const [],
+    this.selfLogged = false,
+    this.actualFieldInTime,
   });
 
   factory Task.fromJson(Map<String, dynamic> json) {
@@ -404,13 +474,37 @@ class Task {
     TaskLocation? srcLoc;
     if (json['sourceLocation'] is Map) {
       srcLoc = TaskLocation.fromJson(json['sourceLocation'] as Map<String, dynamic>);
-    } else if (json['startLatitude'] != null || json['startLongitude'] != null) {
+    } else if (json['startLocation'] is Map) {
+      srcLoc = TaskLocation.fromJson(json['startLocation'] as Map<String, dynamic>);
+    } else if (json['startLatitude'] != null || json['startLongitude'] != null || json['sourceLocation'] != null || json['startBranchAddress'] != null || json['branchName'] != null) {
+      final srcAddr = (json['sourceLocation'] ?? json['startBranchAddress'] ?? json['branchName'])?.toString();
       srcLoc = TaskLocation(
         lat: (json['startLatitude'] as num?)?.toDouble() ?? 0,
         lng: (json['startLongitude'] as num?)?.toDouble() ?? 0,
-        address: json['sourceLocation']?.toString(),
+        address: srcAddr,
+        fullAddress: srcAddr,
       );
     }
+
+    final proofImgStr = (json['photoProofUrl'] ?? json['proofImg'] ?? json['fieldOutImage'])?.toString();
+    final isOtpDone = (json['customFields']?['otpVerified'] as bool?) ??
+        (json['progressSteps']?['otpVerified'] as bool?) ??
+        (json['isOtpVerified'] as bool?) ??
+        (json['otpVerified'] as bool?) ??
+        (json['fieldOutOtp'] != null && json['fieldOutOtp'].toString().trim().isNotEmpty);
+    final isPhotoDone = (json['progressSteps'] != null ? (json['progressSteps']['photoProof'] as bool?) : null) ??
+        (proofImgStr != null && proofImgStr.isNotEmpty);
+
+    final startTimeVal = _parseTimeOrDateTime(
+      json['startTime'] ?? json['actualFieldInTime'] ?? json['timeIn'] ?? json['fieldInTime'] ?? json['startDate'],
+    );
+    final arrivalTimeVal = _parseTimeOrDateTime(
+      json['arrivalTime'] ?? json['actualFieldInTime'] ?? json['timeIn'] ?? json['fieldInTime'],
+    );
+    final completedDateVal = _parseTimeOrDateTime(
+      json['completedDate'] ?? json['timeOut'] ?? json['fieldOutTime'] ?? json['endDate'],
+    );
+    final requirementsVal = TaskRequirement.listFrom(json['requirements']);
 
     return Task(
       id: _stringFromId(json['_id'] ?? json['id']),
@@ -423,17 +517,20 @@ class Task {
       customer: customer,
       expectedCompletionDate:
           _dateFromJson(json['expectedCompletionDate'] ?? json['date'] ?? json['endDate']) ?? DateTime.now(),
-      completedDate: _dateFromJson(json['completedDate']),
+      completedDate: completedDateVal,
       assignedDate:
           _dateFromJson(json['assignedDate'] ?? json['startDate'] ?? json['createdAt']),
       status: statusFromJson(statusStr),
-      isOtpRequired:
-          (json['customFields'] != null
-              ? (json['customFields']['otpRequired'] as bool?)
-              : null) ??
-          (json['isOtpRequired'] as bool?) ??
-          (json['otpRequired'] as bool?) ??
-          false,
+      // HRMSbackend hardcodes otpRequired (false on the list, true by id); the admin's
+      // template (requirements) is the real answer whenever it is present.
+      isOtpRequired: requirementsVal.isNotEmpty
+          ? requirementsVal.any((r) => r.isOtp || r.isEmail)
+          : (json['customFields'] != null
+                  ? (json['customFields']['otpRequired'] as bool?)
+                  : null) ??
+              (json['isOtpRequired'] as bool?) ??
+              (json['otpRequired'] as bool?) ??
+              false,
       isGeoFenceRequired: json['customFields'] != null
           ? (json['customFields']['geoFenceRequired'] as bool?) ?? false
           : false,
@@ -443,15 +540,11 @@ class Task {
       isFormRequired: json['customFields'] != null
           ? (json['customFields']['formRequired'] as bool?) ?? false
           : false,
-      isOtpVerified:
-          (json['customFields']?['otpVerified'] as bool?) ??
-          (json['progressSteps']?['otpVerified'] as bool?),
+      isOtpVerified: isOtpDone,
       otpVerifiedAt: _dateFromJson(
         json['customFields']?['otpVerifiedAt'] ?? json['otpVerifiedAt'],
       ),
-      photoProof: json['progressSteps'] != null
-          ? (json['progressSteps']['photoProof'] as bool?)
-          : null,
+      photoProof: isPhotoDone,
       formFilled: json['progressSteps'] != null
           ? (json['progressSteps']['formFilled'] as bool?)
           : null,
@@ -461,7 +554,7 @@ class Task {
       checkoutCustomerPlace: json['progressSteps'] != null
           ? (json['progressSteps']['checkoutCustomerPlace'] as bool?)
           : null,
-      photoProofUrl: json['photoProofUrl'] as String?,
+      photoProofUrl: proofImgStr,
       photoProofUploadedAt: _dateFromJson(json['photoProofUploadedAt']),
       requireApprovalOnComplete:
           (json['requireApprovalOnComplete'] as bool?) ??
@@ -482,8 +575,9 @@ class Task {
         TaskExitRecord.fromJson,
       ),
       taskExitStatus: (json['task_exit'] is Map
-          ? (json['task_exit'] as Map<String, dynamic>)['status'] as String?
-          : null),
+              ? (json['task_exit'] as Map<String, dynamic>)['status'] as String?
+              : null) ??
+          json['taskExitStatus']?.toString(),
       tasksRestarted: _parseList(
         json['restarted'] ?? json['tasks_restarted'],
         TaskRestartRecord.fromJson,
@@ -494,13 +588,13 @@ class Task {
       ),
       tripDistanceKm: (json['tripDistanceKm'] as num?)?.toDouble(),
       tripDurationSeconds: json['tripDurationSeconds'] as int?,
-      arrivalTime: _dateFromJson(json['arrivalTime']),
+      arrivalTime: arrivalTimeVal,
       travelActivityDuration: json['travelActivityDuration'] != null
           ? TravelActivityDuration.fromJson(
               json['travelActivityDuration'] as Map<String, dynamic>,
             )
           : null,
-      startTime: _dateFromJson(json['startTime']),
+      startTime: startTimeVal,
       photoProofAddress: json['photoProofAddress'] as String?,
       otpVerifiedAddress: json['otpVerifiedAddress'] as String?,
       startBatteryPercent: (json['startBatteryPercent'] as num?)?.toInt(),
@@ -511,7 +605,29 @@ class Task {
           ?.toInt(),
       completedBatteryPercent: (json['completedBatteryPercent'] as num?)
           ?.toInt(),
+      fieldOutNotes: json['fieldOutNotes'] as String?,
+      travelledRoute: _parseRoute(json['travelledRoute']),
+      requirements: requirementsVal,
+      selfLogged: json['selfLogged'] == true,
+      actualFieldInTime: (json['actualFieldInTime']?.toString().trim().isNotEmpty ?? false)
+          ? json['actualFieldInTime'].toString()
+          : null,
     );
+  }
+
+  static List<Map<String, double>>? _parseRoute(dynamic raw) {
+    if (raw is! List || raw.isEmpty) return null;
+    final list = <Map<String, double>>[];
+    for (final e in raw) {
+      if (e is Map) {
+        final lat = (e['lat'] ?? e['latitude'] as num?)?.toDouble();
+        final lng = (e['lng'] ?? e['longitude'] as num?)?.toDouble();
+        if (lat != null && lng != null) {
+          list.add({'lat': lat, 'lng': lng});
+        }
+      }
+    }
+    return list.isNotEmpty ? list : null;
   }
 
   static TaskLocation? _parseArrivalLocation(Map<String, dynamic> json) {
@@ -554,6 +670,30 @@ class Task {
     return null;
   }
 
+  static DateTime? _parseTimeOrDateTime(dynamic value, [DateTime? baseDate]) {
+    if (value == null) return null;
+    final parsed = _dateFromJson(value);
+    if (parsed != null) return parsed;
+    if (value is String) {
+      final trimmed = value.trim();
+      final match = RegExp(
+        r'^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$',
+        caseSensitive: false,
+      ).firstMatch(trimmed);
+      if (match != null) {
+        int hour = int.parse(match.group(1)!);
+        final minute = int.parse(match.group(2)!);
+        final second = match.group(3) != null ? int.parse(match.group(3)!) : 0;
+        final ampm = match.group(4)?.toLowerCase();
+        if (ampm == 'pm' && hour < 12) hour += 12;
+        if (ampm == 'am' && hour == 12) hour = 0;
+        final base = baseDate ?? DateTime.now();
+        return DateTime(base.year, base.month, base.day, hour, minute, second);
+      }
+    }
+    return null;
+  }
+
   /// Backend expects snake_case: in_progress, waiting_for_approval, etc.
   static String statusToApiString(TaskStatus s) {
     switch (s) {
@@ -582,6 +722,7 @@ class Task {
         return TaskStatus.scheduled;
       case 'in_progress':
       case 'inprogress':
+      case 'started':
         return TaskStatus.inProgress;
       case 'completed':
       case 'completedtasks':
@@ -648,6 +789,10 @@ class Task {
     'isGeoFenceRequired': isGeoFenceRequired,
     'isPhotoRequired': isPhotoRequired,
     'isFormRequired': isFormRequired,
+    if (type != null) 'type': type,
+    'requirements': requirements.map((r) => r.toJson()).toList(),
+    'selfLogged': selfLogged,
+    if (actualFieldInTime != null) 'actualFieldInTime': actualFieldInTime,
   };
 
   Task copyWith({
@@ -689,8 +834,16 @@ class Task {
     DateTime? startTime,
     String? photoProofAddress,
     String? otpVerifiedAddress,
+    String? fieldOutNotes,
+    List<TaskRequirement>? requirements,
   }) {
     return Task(
+      type: type,
+      requirements: requirements ?? this.requirements,
+      selfLogged: selfLogged,
+      actualFieldInTime: actualFieldInTime,
+      taskExitStatus: taskExitStatus,
+      travelledRoute: travelledRoute,
       id: id ?? this.id,
       taskId: taskId ?? this.taskId,
       taskTitle: taskTitle ?? this.taskTitle,
@@ -698,6 +851,7 @@ class Task {
       assignedTo: assignedTo ?? this.assignedTo,
       customerId: customerId ?? this.customerId,
       customer: customer ?? this.customer,
+      fieldOutNotes: fieldOutNotes ?? this.fieldOutNotes,
       expectedCompletionDate:
           expectedCompletionDate ?? this.expectedCompletionDate,
       completedDate: completedDate ?? this.completedDate,

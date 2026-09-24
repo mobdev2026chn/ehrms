@@ -258,9 +258,14 @@ class MyApp extends StatelessWidget {
           theme: lightTheme,
           darkTheme: darkTheme,
           themeMode: themeProvider.themeMode,
-          builder: (context, child) => DeactivationCheckWrapper(
-            navigatorKey: navigatorKey,
-            child: child ?? const SizedBox.shrink(),
+          // Cap very large system font sizes: the fixed-size cards, calendars and
+          // nav bar overflow (striped RenderFlex errors) beyond ~1.3x.
+          builder: (context, child) => MediaQuery.withClampedTextScaling(
+            maxScaleFactor: 1.3,
+            child: DeactivationCheckWrapper(
+              navigatorKey: navigatorKey,
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
           home: const SplashScreen(),
         );

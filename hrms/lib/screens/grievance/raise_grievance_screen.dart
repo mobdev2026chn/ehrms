@@ -232,6 +232,7 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                   else
                     DropdownButtonFormField<String>(
                       initialValue: _selectedCategoryId,
+                      isExpanded: true,
                       decoration: InputDecoration(
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -239,7 +240,7 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                       items: _categories.map((c) {
                         final id = c['_id']?.toString() ?? '';
                         final name = c['name']?.toString() ?? '';
-                        return DropdownMenuItem(value: id, child: Text(name));
+                        return DropdownMenuItem(value: id, child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis));
                       }).toList(),
                       onChanged: (v) => setState(() => _selectedCategoryId = v),
                     ),

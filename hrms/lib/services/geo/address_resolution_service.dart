@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart' as gl;
 import 'package:hrms/config/constants.dart';
 import 'package:hrms/services/api_client.dart';
 
@@ -62,9 +63,14 @@ class AddressResolutionService {
   /// Reverse-geocode via **Google Geocoding API** first (best address for lat/lng),
   /// then device placemark if the key is missing or Google returns an error.
   static Future<ResolvedAddress?> reverseGeocode(double lat, double lng) async {
-    final googleResult = await reverseGeocodeWithGoogle(lat, lng);
-    if (googleResult != null) return googleResult;
-    return _reverseGeocodeWithPlacemark(lat, lng);
+    try {
+      final googleResult = await reverseGeocodeWithGoogle(lat, lng);
+      if (googleResult != null) return googleResult;
+      return await _reverseGeocodeWithPlacemark(lat, lng)
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Faster reverse-geocode for attendance/check-in UI where responsiveness
@@ -76,7 +82,7 @@ class AddressResolutionService {
     final googleResult = await reverseGeocodeWithGoogle(
       lat,
       lng,
-      receiveTimeout: const Duration(seconds: 4),
+      receiveTimeout: const Duration(seconds: 3),
     );
     if (googleResult != null) return googleResult;
     try {
@@ -89,12 +95,125 @@ class AddressResolutionService {
     }
   }
 
+  /// Check if coordinates fall within branch geofence (with an accuracy buffer)
+  static bool isInsideBranchGeofence(
+    double lat,
+    double lng,
+    Map<String, dynamic>? branchData, {
+    double bufferM = 30.0,
+  }) {
+    if (branchData == null) return false;
+    final geofenceRaw = branchData['geofence'];
+    final geofence =
+        geofenceRaw is Map ? Map<String, dynamic>.from(geofenceRaw) : null;
+
+    // Check multiple locations in geofence.locations[]
+    if (geofence != null && geofence['locations'] is List) {
+      final locs = geofence['locations'] as List;
+      for (final item in locs) {
+        if (item is! Map) continue;
+        final loc = Map<String, dynamic>.from(item);
+        final plat = (loc['latitude'] as num?)?.toDouble();
+        final plng = (loc['longitude'] as num?)?.toDouble();
+        final radius = (loc['radius'] as num?)?.toDouble() ?? 100.0;
+        if (plat == null || plng == null) continue;
+        final d = gl.Geolocator.distanceBetween(lat, lng, plat, plng);
+        if (d <= radius + bufferM) return true;
+      }
+    }
+
+    // Check main circle in geofence
+    if (geofence != null) {
+      final plat = (geofence['latitude'] as num?)?.toDouble();
+      final plng = (geofence['longitude'] as num?)?.toDouble();
+      final radius = (geofence['radius'] as num?)?.toDouble() ?? 100.0;
+      if (plat != null && plng != null) {
+        final d = gl.Geolocator.distanceBetween(lat, lng, plat, plng);
+        if (d <= radius + bufferM) return true;
+      }
+    }
+
+    // Check legacy branchData top-level
+    final legacyLat = (branchData['latitude'] as num?)?.toDouble();
+    final legacyLng = (branchData['longitude'] as num?)?.toDouble();
+    final legacyRadius = (branchData['radius'] as num?)?.toDouble() ?? 100.0;
+    if (legacyLat != null && legacyLng != null) {
+      final d = gl.Geolocator.distanceBetween(lat, lng, legacyLat, legacyLng);
+      if (d <= legacyRadius + bufferM) return true;
+    }
+
+    return false;
+  }
+
+  /// Construct verified address snapshot from branch data
+  static ResolvedAddress? resolveBranchAddress(Map<String, dynamic> branchData) {
+    final branchName = branchData['branchName']?.toString().trim();
+    final rawAddr = branchData['address'];
+    String? street;
+    String? city;
+    String? state;
+    String? pincode;
+    String? country;
+
+    if (rawAddr is Map) {
+      final m = Map<String, dynamic>.from(rawAddr);
+      street = m['street']?.toString().trim();
+      city = m['city']?.toString().trim();
+      state = m['state']?.toString().trim();
+      pincode = (m['zip'] ?? m['pincode'])?.toString().trim();
+      country = m['country']?.toString().trim();
+    } else if (rawAddr is String && rawAddr.trim().isNotEmpty) {
+      street = rawAddr.trim();
+    }
+
+    final parts = <String>[];
+    if (branchName != null && branchName.isNotEmpty) parts.add(branchName);
+    if (street != null && street.isNotEmpty) parts.add(street);
+    if (city != null && city.isNotEmpty) parts.add(city);
+    if (state != null && state.isNotEmpty) parts.add(state);
+    if (pincode != null && pincode.isNotEmpty) parts.add(pincode);
+
+    if (parts.isEmpty) return null;
+
+    final formatted = parts.join(', ');
+    return ResolvedAddress(
+      formattedAddress: formatted,
+      area: street ?? branchName,
+      city: city ?? state,
+      pincode: pincode,
+      state: state,
+      country: country,
+      fromGoogleApi: false,
+    );
+  }
+
+  /// Resolves punch location address. If the position is within the branch geofence,
+  /// snaps to the verified office/branch address instead of drifting street coordinates.
+  static Future<ResolvedAddress?> resolvePunchLocationAddress(
+    double lat,
+    double lng, {
+    Map<String, dynamic>? branchData,
+  }) async {
+    if (branchData != null && isInsideBranchGeofence(lat, lng, branchData)) {
+      final branchAddr = resolveBranchAddress(branchData);
+      if (branchAddr != null && branchAddr.formattedAddress.isNotEmpty) {
+        if (kDebugMode) {
+          debugPrint(
+            '[AddressResolution] Inside branch geofence -> snapped to branch address: ${branchAddr.formattedAddress}',
+          );
+        }
+        return branchAddr;
+      }
+    }
+    return reverseGeocodeForUi(lat, lng);
+  }
+
   /// Google Geocoding API only. Use when you must send the same address the user
   /// sees from Google to the backend. Returns null if the key is invalid / API error.
   static Future<ResolvedAddress?> reverseGeocodeWithGoogle(
     double lat,
     double lng, {
-    Duration receiveTimeout = const Duration(seconds: 12),
+    Duration receiveTimeout = const Duration(seconds: 4),
   }) async {
     final key = AppConstants.googleMapsApiKey.trim();
     if (key.isEmpty) return null;
@@ -112,10 +231,15 @@ class AddressResolutionService {
           '$langParam'
           '&key=$key';
 
-      final response = await _dio.get<Map<String, dynamic>>(
-        url,
-        options: Options(receiveTimeout: receiveTimeout),
-      );
+      final response = await _dio
+          .get<Map<String, dynamic>>(
+            url,
+            options: Options(
+              sendTimeout: const Duration(seconds: 3),
+              receiveTimeout: receiveTimeout,
+            ),
+          )
+          .timeout(const Duration(seconds: 4));
       final data = response.data;
       if (data == null) return null;
 
@@ -227,7 +351,10 @@ class AddressResolutionService {
     double lng,
   ) async {
     try {
-      final placemarks = await placemarkFromCoordinates(lat, lng);
+      final placemarks = await placemarkFromCoordinates(
+        lat,
+        lng,
+      ).timeout(const Duration(seconds: 3));
       if (placemarks.isEmpty) return null;
 
       final p = placemarks.first;

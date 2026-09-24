@@ -416,7 +416,7 @@ class _AdminInterviewFlowDetailsScreenState extends State<AdminInterviewFlowDeta
             children: [
               const Icon(Icons.person_outline_rounded, size: 14, color: Color(0xFFD97706)),
               const SizedBox(width: 4),
-              Text('Evaluator: ${round.interviewer}', style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B))),
+              Expanded(child: Text('Evaluator: ${round.interviewer}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)))),
             ],
           ),
           const SizedBox(height: 14),

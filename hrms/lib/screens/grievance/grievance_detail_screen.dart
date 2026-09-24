@@ -265,8 +265,8 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
         children: [
             Row(
               children: [
-                Text(ticketId, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'monospace', color: Colors.white)),
-                const Spacer(),
+                Expanded(child: Text(ticketId, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'monospace', color: Colors.white))),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
@@ -509,8 +509,8 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                     children: [
                       Row(
                         children: [
-                          Text(author, style: const TextStyle(fontWeight: FontWeight.w600)),
-                          const Spacer(),
+                          Expanded(child: Text(author, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600))),
+                          const SizedBox(width: 8),
                           if (dt != null) Text(DateFormat('MMM d, h:mm a').format(dt), style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
                         ],
                       ),

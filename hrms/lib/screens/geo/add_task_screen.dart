@@ -2,21 +2,24 @@
 // Fields: Task Title, Customer (searchable), completion-date range, Description,
 // Source. Destination is derived from the selected customer's address.
 
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/customer.dart';
+import 'package:hrms/models/task.dart';
 import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
-import 'package:hrms/screens/notifications/notifications_screen.dart';
 import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
+import 'package:hrms/widgets/profile_app_bar_actions.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String staffId;
@@ -62,6 +65,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   @override
   void initState() {
     super.initState();
+    _checkEmployeeAccess();
     _loadCustomers();
     _customerSearchController.addListener(_onCustomerSearchChanged);
     _customerFocusNode.addListener(() {
@@ -70,6 +74,23 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       }
     });
     if (_useCurrentLocationForSource) _fetchCurrentLocationAddress();
+  }
+
+  Future<void> _checkEmployeeAccess() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userString = prefs.getString('user');
+      if (userString != null && userString.isNotEmpty) {
+        final userData = jsonDecode(userString);
+        final fieldType = (userData['fieldType'] ?? userData['staff']?['fieldType'])?.toString().toLowerCase() ?? '';
+        if (fieldType.contains('internal')) {
+          if (mounted) {
+            SnackBarUtils.showSnackBar(context, 'Internal field employees cannot add tasks');
+            Navigator.of(context).pop();
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _fetchCurrentLocationAddress() async {
@@ -300,10 +321,34 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   }
 
   Future<void> _submit() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userString = prefs.getString('user');
+    if (userString != null && userString.isNotEmpty) {
+      try {
+        final userData = jsonDecode(userString);
+        final fieldType = (userData['fieldType'] ?? userData['staff']?['fieldType'])?.toString().toLowerCase() ?? '';
+        if (fieldType.contains('internal')) {
+          if (mounted) {
+            SnackBarUtils.showSnackBar(context, 'Internal field employees cannot add tasks');
+          }
+          return;
+        }
+      } catch (_) {}
+    }
+
     if (!_formKey.currentState!.validate()) return;
     final typedCustomer = _customerSearchController.text.trim();
     if (_selectedCustomer == null && typedCustomer.isEmpty) {
       SnackBarUtils.showSnackBar(context, 'Please enter or select a customer');
+      return;
+    }
+    // HRMSbackend only accepts a task for a customer assigned to this staff member.
+    if ((_selectedCustomer?.id ?? '').isEmpty) {
+      SnackBarUtils.showSnackBar(
+        context,
+        'Select a customer from your list. To use a new customer, add it in the Customers tab first.',
+        isError: true,
+      );
       return;
     }
     if (_earliestCompletionDate == null || _latestCompletionDate == null) {
@@ -467,9 +512,14 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       // flow. Pop back to the list (which refreshes on return) so it appears.
       // Show the confirmation at the TOP of the screen using the project's
       // standard animated top toast (see [SnackBarUtils]).
+      // HRMSbackend creates the task as 'Requested' (needs admin approval) unless the
+      // staff member has auto-approval, in which case it is 'Assigned' straight away.
+      final title = task.taskTitle.isNotEmpty ? task.taskTitle : _taskTitleController.text.trim();
       SnackBarUtils.showSnackBar(
         context,
-        'Task "${task.taskTitle}" assigned successfully',
+        task.status == TaskStatus.requested
+            ? 'Task "$title" sent to admin for approval'
+            : 'Task "$title" created successfully',
       );
       Navigator.of(context).pop(true);
     } on DioException catch (e) {
@@ -520,30 +570,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         backgroundColor: Colors.white,
         foregroundColor: AppColors.textPrimary,
         surfaceTintColor: Colors.transparent,
-        actions: [
-          IconButton(
-            icon: Icon(
-              Icons.notifications_none_rounded,
-              color: AppColors.textPrimary,
-              size: 26,
-            ),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 14, left: 4),
-            child: CircleAvatar(
-              radius: 18,
-              backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-              child: Icon(
-                Icons.person_rounded,
-                color: AppColors.primary,
-                size: 22,
-              ),
-            ),
-          ),
-        ],
+        actions: const [ProfileAppBarActions()],
       ),
       body: Form(
         key: _formKey,
@@ -1211,14 +1238,21 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 fontWeight: FontWeight.w700,
               ),
             ),
-            if (_allCustomers.isNotEmpty)
-              Text(
-                'Type name or select from ${_allCustomers.length} customers',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.grey.shade600,
+            if (_allCustomers.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Type name or select from ${_allCustomers.length} customers',
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey.shade600,
+                  ),
                 ),
               ),
+            ],
           ],
         ),
         const SizedBox(height: 8),

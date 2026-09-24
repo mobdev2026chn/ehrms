@@ -104,19 +104,36 @@ class BreakService {
     }
   }
 
+  /// Current break and today's summary both read /staff/attendance/break-status;
+  /// concurrent callers (shell + Home at startup) share one in-flight request.
+  static Future<Response<Map<String, dynamic>>>? _breakStatusInFlight;
+
+  Future<Response<Map<String, dynamic>>> _getBreakStatus() {
+    final pending = _breakStatusInFlight;
+    if (pending != null) return pending;
+    final future = _api.dio.get<Map<String, dynamic>>(
+      '/staff/attendance/break-status',
+    );
+    _breakStatusInFlight = future;
+    future.whenComplete(() {
+      if (identical(_breakStatusInFlight, future)) _breakStatusInFlight = null;
+    }).ignore();
+    return future;
+  }
+
   Future<Map<String, dynamic>> getCurrentBreak() async {
-    breakFlowLog('getCurrentBreak -> GET /breaks/current');
+    breakFlowLog('getCurrentBreak -> GET /staff/attendance/break-status');
     try {
       await _setToken();
+      // HRMSbackend: one call to /staff/attendance/break-status ({ isOnBreak, activeBreak }).
+      // /breaks/current is the legacy route, tried only when break-status does not exist.
       Response<Map<String, dynamic>> response;
       try {
-        response = await _api.dio.get<Map<String, dynamic>>(
-          '/breaks/current',
-        );
+        response = await _getBreakStatus();
       } on DioException catch (de) {
         if (de.response?.statusCode == 404) {
           response = await _api.dio.get<Map<String, dynamic>>(
-            '/staff/attendance/break-status',
+            '/breaks/current',
           );
         } else {
           rethrow;
@@ -128,41 +145,46 @@ class BreakService {
         'getCurrentBreak <- http=${response.statusCode} '
         'hasActive=${data['hasActiveBreak']} ${_snapshotBreakRow(row)}',
       );
+
+      if (row is Map && row.containsKey('isOnBreak')) {
+        if (row['isOnBreak'] == true) {
+          final ab = row['activeBreak'];
+          // `startAt` is the exact instant (ISO); `startTime` is only display text
+          // like "06:26 PM" that date parsers can't read. Prefer the instant.
+          final startAt = (ab is Map) ? ab['startAt'] : null;
+          final startText = (ab is Map) ? ab['startTime'] : null;
+          final start = startAt ?? startText;
+          final startDt = (startAt != null
+                  ? DateTime.tryParse(startAt.toString())?.toLocal()
+                  : null) ??
+              ((startText != null && startText.toString().isNotEmpty)
+                  ? parseTimeStringToToday(startText.toString())
+                  : null);
+          if (startDt != null) {
+            await persistActiveBreakStart(startDt);
+          }
+          lastKnownHasOpenBreak = true;
+          return {
+            'success': true,
+            'hasActiveBreak': true,
+            'data': {
+              // UTC ISO ("…Z") so every screen's date parser reads the same instant.
+              'startTime': startDt?.toUtc().toIso8601String() ?? start,
+              'endTime': null,
+              'ongoing': true,
+            },
+          };
+        }
+        await BreakReminderService.sync(hasOpenBreak: false, startedAt: null);
+        return {'success': true, 'data': null};
+      }
+
+      // Legacy /breaks/current row shape.
       // Keep the every-10-minute break reminder in sync with the real break
       // state: schedule while a break is open, clear it once ended. Covers app
       // restarts and breaks ended from other flows (e.g. auto-end on checkout).
       final rowMap = _breakMapFrom(row);
       final isOpen = _isOpenBreakMap(rowMap);
-      if (!isOpen) {
-        try {
-          final bsRes = await _api.dio.get<Map<String, dynamic>>(
-            '/staff/attendance/break-status',
-          );
-          if (bsRes.statusCode == 200 && bsRes.data is Map) {
-            final bsData = bsRes.data!['data'];
-            if (bsData is Map && bsData['isOnBreak'] == true) {
-              final ab = bsData['activeBreak'];
-              final start = (ab is Map) ? (ab['startTime'] ?? ab['startAt']) : null;
-              final startDt = (start != null && start.toString().isNotEmpty)
-                  ? parseTimeStringToToday(start.toString())
-                  : null;
-              if (startDt != null) {
-                await persistActiveBreakStart(startDt);
-              }
-              lastKnownHasOpenBreak = true;
-              return {
-                'success': true,
-                'hasActiveBreak': true,
-                'data': {
-                  'startTime': start,
-                  'endTime': null,
-                  'ongoing': true,
-                },
-              };
-            }
-          }
-        } catch (_) {}
-      }
       await BreakReminderService.sync(
         hasOpenBreak: isOpen,
         startedAt: isOpen ? _parseStartTime(rowMap) : null,
@@ -198,9 +220,7 @@ class BreakService {
       await _setToken();
       Response<Map<String, dynamic>> response;
       try {
-        response = await _api.dio.get<Map<String, dynamic>>(
-          '/staff/attendance/break-status',
-        );
+        response = await _getBreakStatus();
       } on DioException catch (de) {
         if (de.response?.statusCode == 404 || de.response?.statusCode == 405) {
           response = await _api.dio.get<Map<String, dynamic>>(

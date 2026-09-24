@@ -1,11 +1,3 @@
-import 'dart:convert';
-
-import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-
-import '../config/constants.dart';
-
 /// Verdict from the cross-user identity check.
 class FaceIdentityVerdict {
   /// Whether the punch/break may proceed.
@@ -19,135 +11,17 @@ class FaceIdentityVerdict {
 
 /// Cross-user (1-to-many) identity guard — anti buddy-punching.
 ///
-/// EHRMS's own `/auth/verify-face` is 1-to-1 (the selfie vs the logged-in user's
-/// OWN reference). That can't catch a user with no reference, and doesn't say
-/// "this is actually a different employee". This guard asks EHRMS's own
-/// `/attendance/verify-identity` endpoint, which embeds the selfie and matches it
-/// against ALL enrolled faces (the SAME canonical Staff.faceEnrollEmbeddings store
-/// the 1-to-1 path uses), then confirms the best match is the logged-in user.
+/// The 1-to-many check now runs on HRMSbackend inside the same live verification
+/// call as the 1-to-1 check (POST /staff/face/verify, see AuthService.verifyFace):
+/// a selfie that matches a different employee better than the logged-in one is
+/// rejected there with that employee's name. This guard therefore has nothing
+/// extra to check and always allows; the punch is gated by verifyFace, which
+/// fails closed.
 ///
-/// NOTE: this now hits EHRMS ([AppConstants.baseUrl]) — NOT the separate face app
-/// ([faceVerifyBaseUrl]) — so 1-to-1 and 1-to-many validate against ONE enrollment.
-///
-/// Fail-open by design: it only BLOCKS on a confident wrong-person result
-/// (a different enrolled employee, or a face that matches no enrolled profile).
-/// Anything it can't determine — user not enrolled in the Face system, backend
-/// unreachable, no face — returns allow=true so it never bricks attendance
-/// (EHRMS's own 1-to-1 verify-face still applies on top of this).
+/// The old path called the separate face app (eface) and auto-enrolled unknown
+/// users there; it could never recognise app users and let every punch through.
 class FaceIdentityGuard {
-  /// [selfieDataUrl] is the same compressed `data:image/jpeg;base64,...` payload
-  /// already built for the punch.
   static Future<FaceIdentityVerdict> verify(String selfieDataUrl) async {
-    if (!AppConstants.enableCrossUserFaceCheck) {
-      return const FaceIdentityVerdict(true);
-    }
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final userStr = prefs.getString('user');
-      if (userStr == null) return const FaceIdentityVerdict(true);
-      final user = jsonDecode(userStr) as Map<String, dynamic>;
-      final email = (user['email'] ?? '').toString();
-      final empId = (user['employeeId'] ?? '').toString();
-      final uid = (user['id'] ?? user['_id'] ?? '').toString();
-
-      // EHRMS endpoint is protected — attach the stored access token (prefs 'token').
-      // Without it the request is rejected and the guard fail-opens (allow).
-      String? token = prefs.getString('token');
-      if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
-        token = token.replaceAll('"', '');
-      }
-
-      http.Response res;
-      final headers = {
-        'Content-Type': 'application/json',
-        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      };
-      final bodyPayload = jsonEncode({
-        'image_base64': selfieDataUrl,
-        'claimed_email': email,
-        'claimed_employee_id': empId,
-        'claimed_user_id': uid,
-      });
-
-      // 1. Primary: dedicated biometric kiosk engine (eface)
-      try {
-        res = await http
-            .post(
-              Uri.parse('${AppConstants.faceVerifyBaseUrl}/attendance/verify-identity'),
-              headers: headers,
-              body: bodyPayload,
-            )
-            .timeout(const Duration(milliseconds: 2500));
-        if (res.statusCode == 404) {
-          res = await http
-              .post(
-                Uri.parse('${AppConstants.baseUrl}/attendance/verify-identity'),
-                headers: headers,
-                body: bodyPayload,
-              )
-              .timeout(const Duration(milliseconds: 2500));
-        }
-      } catch (_) {
-        try {
-          res = await http
-              .post(
-                Uri.parse('${AppConstants.baseUrl}/attendance/verify-identity'),
-                headers: headers,
-                body: bodyPayload,
-              )
-              .timeout(const Duration(milliseconds: 2500));
-        } catch (_) {
-          return const FaceIdentityVerdict(true);
-        }
-      }
-
-      if (res.statusCode != 200) return const FaceIdentityVerdict(true);
-      final j = jsonDecode(res.body) as Map<String, dynamic>;
-      if (j['verified'] == true) return const FaceIdentityVerdict(true);
-
-      final reason = (j['reason'] ?? '').toString();
-      if (reason == 'identity_mismatch') {
-        final who = (j['matched_name'] ?? '').toString().trim();
-        return FaceIdentityVerdict(
-          false,
-          who.isNotEmpty
-              ? 'Face mismatch: This face matches $who — not your account. You are not the registered person for this account.'
-              : 'Face mismatch: This face matches another employee. You are not the registered person for this account.',
-        );
-      }
-      if (reason == 'not_recognized') {
-        return const FaceIdentityVerdict(
-          false,
-          'Face mismatch: Face does not match the registered profile. You are not the registered person for this account.',
-        );
-      }
-      if (reason == 'claimer_not_enrolled') {
-        // Auto-enroll this employee so future punches are strictly protected against impersonation
-        try {
-          final enrollId = empId.isNotEmpty ? empId : (email.isNotEmpty ? email : uid);
-          if (enrollId.isNotEmpty) {
-            await http.post(
-              Uri.parse('${AppConstants.faceVerifyBaseUrl}/employees/enroll-face-mobile'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'employee_id': enrollId,
-                'image_base64': selfieDataUrl,
-              }),
-            );
-          }
-        } catch (_) {}
-        return const FaceIdentityVerdict(true);
-      }
-      if (reason == 'no_face') {
-        return const FaceIdentityVerdict(
-          false,
-          'No face detected. Please ensure your face is clearly visible inside the guide.',
-        );
-      }
-      return const FaceIdentityVerdict(true);
-    } catch (e) {
-      if (kDebugMode) debugPrint('[FaceIdentityGuard] error → allow: $e');
-      return const FaceIdentityVerdict(true);
-    }
+    return const FaceIdentityVerdict(true);
   }
 }

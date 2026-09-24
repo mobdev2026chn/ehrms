@@ -1,4 +1,4 @@
-// OTP Verification screen – customer card, 4-digit OTP input, Verify & Complete.
+// OTP Verification screen – customer card, 6-digit OTP input, Verify & Complete.
 import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
@@ -37,11 +37,14 @@ class OtpVerificationScreen extends StatefulWidget {
 }
 
 class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
+  /// HRMSbackend emails a 6-digit passcode.
+  static const int _otpLength = 6;
+
   final List<TextEditingController> _controllers = List.generate(
-    4,
+    _otpLength,
     (_) => TextEditingController(),
   );
-  final List<FocusNode> _focusNodes = List.generate(4, (_) => FocusNode());
+  final List<FocusNode> _focusNodes = List.generate(_otpLength, (_) => FocusNode());
   final bool _verified = false;
   bool _verifying = false;
   bool _sendingOtp = false;
@@ -83,7 +86,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       _sendingOtp = true;
       _error = null;
     });
-    final result = await TaskService().sendOtp(taskId);
+    final result = await TaskService().sendOtp(taskId, customer: widget.task.customer);
     if (!mounted) return;
     setState(() => _sendingOtp = false);
     final success = result['success'] == true;
@@ -94,7 +97,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         _otpSent = true;
         _error = null;
       });
-      final displayEmail = widget.task.customer?.effectiveEmail;
+      final displayEmail = (result['email'] as String?) ?? widget.task.customer?.effectiveEmail;
       final userMessage = displayEmail != null && displayEmail.isNotEmpty
           ? 'OTP sent to ${displayEmail.replaceAll(RegExp(r'(?<=.).(?=.*@)'), '*')}'
           : message;
@@ -117,8 +120,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   Future<void> _verifyOtp() async {
     final otp = _enteredOtp;
-    if (otp.length != 4) {
-      setState(() => _error = 'Enter 4-digit OTP');
+    if (otp.length != _otpLength) {
+      setState(() => _error = 'Enter the $_otpLength-digit OTP');
       return;
     }
     if (widget.taskMongoId == null || widget.taskMongoId!.isEmpty) {
@@ -149,6 +152,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         lat: lat,
         lng: lng,
         fullAddress: fullAddress,
+        customer: widget.task.customer,
       );
       if (mounted) {
         setState(() => _verifying = false);
@@ -157,10 +161,11 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final text = e.toString().replaceFirst('Exception: ', '');
         setState(() {
-          _error = e.toString().contains('Invalid')
-              ? 'Invalid OTP. Try again.'
-              : 'Verification failed.';
+          _error = text.toLowerCase().contains('invalid')
+              ? 'Invalid or expired OTP. Try again.'
+              : (text.isNotEmpty ? text : 'Verification failed.');
           _verifying = false;
         });
       }
@@ -175,8 +180,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   Widget build(BuildContext context) {
     final customer = widget.task.customer;
     final customerName = customer?.customerName ?? 'Customer';
-    final company = 'ABC Corporation'; // or from customer if available
-    final phone = customer?.customerNumber ?? '+91 9940255566';
+    final company = customer?.companyName?.trim() ?? '';
+    final phone = customer?.customerNumber?.trim() ?? '';
     final initial = customerName.isNotEmpty
         ? customerName[0].toUpperCase()
         : '?';
@@ -197,6 +202,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         centerTitle: true,
         elevation: 0,
         actions: [
+          if (phone.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: Material(
@@ -274,14 +280,17 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                               color: Colors.white,
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            company,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.white.withOpacity(0.95),
+                          if (company.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              company,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.white.withOpacity(0.95),
+                              ),
                             ),
-                          ),
+                          ],
+                          if (phone.isNotEmpty) ...[
                           const SizedBox(height: 6),
                           Row(
                             children: [
@@ -303,6 +312,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                               ),
                             ],
                           ),
+                          ],
                         ],
                       ),
                     ),
@@ -314,18 +324,19 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
-                  vertical: 8,
+                  vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
                 ),
                 child: Text(
                   'Task #${widget.task.taskId} - ${widget.task.taskTitle}',
                   style: const TextStyle(
                     fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF334155),
                   ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -360,7 +371,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'OTP will be sent to the customer\'s email via SendPulse. Ask the customer to share the 4-digit code with you.',
+                          'OTP will be sent to the customer\'s email. Ask the customer to share the $_otpLength-digit code with you.',
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey.shade600,
@@ -508,7 +519,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Ask the customer for the 4-digit OTP sent to their email',
+                              'Ask the customer for the $_otpLength-digit OTP sent to their email',
                               style: TextStyle(
                                 fontSize: 13,
                                 color: Colors.grey.shade600,
@@ -524,10 +535,10 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              for (int i = 0; i < 4; i++) ...[
-                                if (i > 0) const SizedBox(width: 12),
+                              for (int i = 0; i < _otpLength; i++) ...[
+                                if (i > 0) const SizedBox(width: 8),
                                 SizedBox(
-                                  width: 56,
+                                  width: 42,
                                   child: TextField(
                                   controller: _controllers[i],
                                   focusNode: _focusNodes[i],
@@ -573,8 +584,10 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                     ),
                                   ),
                                   onChanged: (v) {
-                                    if (v.length == 1 && i < 3) {
+                                    if (v.length == 1 && i < _otpLength - 1) {
                                       _focusNodes[i + 1].requestFocus();
+                                    } else if (v.isEmpty && i > 0) {
+                                      _focusNodes[i - 1].requestFocus();
                                     }
                                     setState(() => _error = null);
                                   },

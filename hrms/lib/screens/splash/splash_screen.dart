@@ -9,6 +9,7 @@
 // If you'd rather not add the dependency, replace the GoogleFonts.bricolageGrotesque(...)
 // calls with TextStyle(fontFamily: 'YourBundledFont', ...).
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -216,15 +217,24 @@ class _SplashScreenState extends State<SplashScreen>
     // after a 250ms delay and runs for 1600ms (finishing at ~1850ms), so we wait
     // ~2000ms for it to settle. The auth/redirect work below also runs network
     // calls, so real cold-start time is gated on those.
-    await Future.delayed(const Duration(milliseconds: 2000));
-
-    // If the API server (baseUrl) changed since last run, the stored token was
-    // signed by a different backend and will 401 on every protected call. Clear
-    // it so we fall through to the login screen instead of a broken session.
-    await AuthService().clearSessionIfBaseUrlChanged();
-
+    // Run the session check (and warm the profile cache the dashboard reads
+    // first) while the animation plays, instead of after it.
+    final sessionWork = () async {
+      // If the API server (baseUrl) changed since last run, the stored token was
+      // signed by a different backend and will 401 on every protected call. Clear
+      // it so we fall through to the login screen instead of a broken session.
+      await AuthService().clearSessionIfBaseUrlChanged();
+      final prefs = await SharedPreferences.getInstance();
+      final t = prefs.getString('token');
+      if (t != null && t.isNotEmpty) unawaited(AuthService().getProfile());
+      return t;
+    }();
+    await Future.wait<void>([
+      Future.delayed(const Duration(milliseconds: 1400)),
+      sessionWork,
+    ]);
+    final token = await sessionWork;
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
 
     if (!mounted) return;
 

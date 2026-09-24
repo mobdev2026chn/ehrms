@@ -29,6 +29,7 @@ const grievanceRoutes = require('./src/routes/grievanceRoutes');
 const pmsRoutes = require('./src/routes/pmsRoutes');
 const performanceRoutes = require('./src/routes/performanceRoutes');
 const shiftPolicyRoutes = require('./src/routes/shiftPolicyRoutes');
+const liveTrackingRoutes = require('./src/routes/liveTrackingRoutes');
 
 const app = express();
 
@@ -92,6 +93,8 @@ app.use('/api/pms', pmsRoutes);
 app.use('/api/performance', performanceRoutes);
 // Admin/HR: per-shift break/permission/overtime policies on the attendance template.
 app.use('/api/shift-policies', shiftPolicyRoutes);
+// Dedicated Live Tracking routes for mobile & web live monitoring
+app.use('/api/live-tracking', liveTrackingRoutes);
 
 // Debug: Log all incoming requests (only in development)
 if (process.env.NODE_ENV !== 'production') {

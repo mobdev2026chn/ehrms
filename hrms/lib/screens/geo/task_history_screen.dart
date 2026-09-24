@@ -20,12 +20,14 @@ class TaskHistoryScreen extends StatefulWidget {
 
 class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
   Task? _task;
-  bool _loading = true;
+  bool _loading = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    // Show the task we were given at once; refresh it quietly in the background.
+    _task = widget.task;
     _fetchTaskDetails();
   }
 
@@ -37,10 +39,6 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
       });
       return;
     }
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
     try {
       final t = await TaskService().getTaskById(widget.task.id!);
       if (mounted) {

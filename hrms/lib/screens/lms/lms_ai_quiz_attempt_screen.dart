@@ -375,8 +375,9 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
               ],
             ),
             const SizedBox(height: 32),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            Wrap(
+              alignment: WrapAlignment.center,
+              runSpacing: 8,
               children: [
                 if (courseId != null)
                   Padding(

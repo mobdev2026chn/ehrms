@@ -535,48 +535,60 @@ class _HolidaysScreenState extends State<HolidaysScreen>
   Widget _buildYearRow() {
     return Row(
       children: [
-        // Month selector "June ⌄"
-        GestureDetector(
-          onTap: () => _showMonthPickerSheet(context),
+        Expanded(
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                _monthNames[_selectedMonth - 1],
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
+              // Month selector "June ⌄"
+              Flexible(
+                child: GestureDetector(
+                  onTap: () => _showMonthPickerSheet(context),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          _monthNames[_selectedMonth - 1],
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.keyboard_arrow_down_rounded,
+                          color: AppColors.textPrimary, size: 24),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 4),
-              Icon(Icons.keyboard_arrow_down_rounded,
-                  color: AppColors.textPrimary, size: 24),
+              const SizedBox(width: 16),
+              // Year selector "2026 ⌄"
+              GestureDetector(
+                onTap: () => _showYearPickerSheet(context),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '$_selectedYear',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.textPrimary, size: 24),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
-        const SizedBox(width: 16),
-        // Year selector "2026 ⌄"
-        GestureDetector(
-          onTap: () => _showYearPickerSheet(context),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '$_selectedYear',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.keyboard_arrow_down_rounded,
-                  color: AppColors.textPrimary, size: 24),
-            ],
-          ),
-        ),
-        const Spacer(),
+        const SizedBox(width: 8),
         // THIS MONTH
         GestureDetector(
           onTap: _goToToday,
@@ -597,7 +609,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
   Widget _buildBalanceCard() {
     final remaining = _upcomingMonthHolidays.length;
     return Container(
-      height: 120,
+      constraints: const BoxConstraints(minHeight: 120),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         gradient: LinearGradient(
@@ -616,6 +628,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(20),
         child: Stack(
+          alignment: AlignmentDirectional.centerStart,
           children: [
             // Decorative circle
             Positioned(

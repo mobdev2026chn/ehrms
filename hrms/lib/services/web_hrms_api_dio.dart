@@ -25,8 +25,8 @@ Dio webHrmsApiDio() {
   final dio = Dio(
     BaseOptions(
       baseUrl: base,
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 45),
+      connectTimeout: const Duration(seconds: 12),
+      receiveTimeout: const Duration(seconds: 25),
       sendTimeout: const Duration(seconds: 45),
       headers: {
         'Content-Type': 'application/json',

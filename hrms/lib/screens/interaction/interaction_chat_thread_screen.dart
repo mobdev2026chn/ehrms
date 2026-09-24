@@ -825,8 +825,13 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                               ),
                                             ),
                                             if (_canManageGroupSettings && !isSelf)
-                                              Row(
-                                                mainAxisSize: MainAxisSize.min,
+                                              ConstrainedBox(
+                                                constraints: BoxConstraints(
+                                                  maxWidth: MediaQuery.of(context).size.width * 0.55,
+                                                ),
+                                                child: Wrap(
+                                                alignment: WrapAlignment.end,
+                                                crossAxisAlignment: WrapCrossAlignment.center,
                                                 children: [
                                                   if (canAssignAdmin && role != 'admin')
                                                     TextButton(
@@ -914,6 +919,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                                     child: const Text('Remove'),
                                                   ),
                                                 ],
+                                              ),
                                               ),
                                           ],
                                         ),
@@ -2280,12 +2286,16 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            online ? 'Online' : off,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: online ? const Color(0xFF16A34A) : Colors.grey.shade600,
+          Flexible(
+            child: Text(
+              online ? 'Online' : off,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: online ? const Color(0xFF16A34A) : Colors.grey.shade600,
+              ),
             ),
           ),
         ],

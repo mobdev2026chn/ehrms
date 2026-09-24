@@ -24,10 +24,7 @@ class _GrievanceShellScreenState extends State<GrievanceShellScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-          (route) => route.isFirst,
-        );
+        DashboardScreen.goToTab(context, 0);
       },
       child: Scaffold(
         backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,

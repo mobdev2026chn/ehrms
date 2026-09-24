@@ -43,10 +43,14 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
       });
     }
     try {
-      final result = await InteractionService.instance.getAnnouncements();
-      final unseen = await InteractionService.instance
-          .getAnnouncementsUnseenHrTotal();
-      final profileInfo = await _loadProfileInfo();
+      // Independent calls — run them together.
+      final resultF = InteractionService.instance.getAnnouncements();
+      final unseenF =
+          InteractionService.instance.getAnnouncementsUnseenHrTotal();
+      final profileF = _loadProfileInfo();
+      final result = await resultF;
+      final unseen = await unseenF;
+      final profileInfo = await profileF;
       final joiningDate = profileInfo.joiningDate;
       final myStaffId = profileInfo.staffId;
       if (!mounted) return;
@@ -283,31 +287,39 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  '${_announcements.length} ${_announcements.length == 1 ? 'announcement' : 'announcements'}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: colorScheme.onSurfaceVariant,
+                Flexible(
+                  child: Text(
+                    '${_announcements.length} ${_announcements.length == 1 ? 'announcement' : 'announcements'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
                 if (_unseenEngagementTotal > 0) ...[
                   const SizedBox(width: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      'Engagement unseen: $_unseenEngagementTotal',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: colorScheme.onPrimaryContainer,
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        'Engagement unseen: $_unseenEngagementTotal',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: colorScheme.onPrimaryContainer,
+                        ),
                       ),
                     ),
                   ),
@@ -466,12 +478,16 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                                   color: colorScheme.onSurfaceVariant,
                                 ),
                                 const SizedBox(width: 4),
-                                Text(
-                                  'Published: $dateStr',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colorScheme.onSurfaceVariant,
-                                    fontWeight: FontWeight.w500,
+                                Expanded(
+                                  child: Text(
+                                    'Published: $dateStr',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: colorScheme.onSurfaceVariant,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -489,16 +505,20 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                                       : colorScheme.onSurfaceVariant,
                                 ),
                                 const SizedBox(width: 4),
-                                Text(
-                                  isExpired
-                                      ? 'Expired on: $expiryStr'
-                                      : 'Expires: $expiryStr',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: isExpired
-                                        ? colorScheme.error
-                                        : colorScheme.onSurfaceVariant,
-                                    fontWeight: FontWeight.w500,
+                                Expanded(
+                                  child: Text(
+                                    isExpired
+                                        ? 'Expired on: $expiryStr'
+                                        : 'Expires: $expiryStr',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: isExpired
+                                          ? colorScheme.error
+                                          : colorScheme.onSurfaceVariant,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ),
                               ],

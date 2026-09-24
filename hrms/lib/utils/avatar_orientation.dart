@@ -48,10 +48,29 @@ class AvatarOrientation {
   /// available; otherwise downloads the image once, runs face detection, caches
   /// the result and returns it. Returns null when it can't be determined (the
   /// result is NOT cached in that case, so a later load can retry).
-  static Future<bool?> resolveNeedsFlip(String url) async {
-    final key = url.trim();
-    if (key.isEmpty || !key.startsWith('http')) return null;
+  static final Map<String, Future<bool?>> _inFlight = {};
 
+  /// URLs where no face was found this session. Not persisted, so the next app
+  /// launch retries — but Home/drawer reloads no longer re-download and re-run
+  /// face detection every time.
+  static final Set<String> _undetermined = {};
+
+  static Future<bool?> resolveNeedsFlip(String url) {
+    final key = url.trim();
+    if (key.isEmpty || !key.startsWith('http')) return Future.value(null);
+    if (_undetermined.contains(key)) return Future.value(null);
+    final pending = _inFlight[key];
+    if (pending != null) return pending;
+    final future = _resolve(key).then((v) {
+      if (v == null) _undetermined.add(key);
+      return v;
+    });
+    _inFlight[key] = future;
+    future.whenComplete(() => _inFlight.remove(key)).ignore();
+    return future;
+  }
+
+  static Future<bool?> _resolve(String key) async {
     final existing = await cachedDecision(key);
     if (existing != null) return existing;
 

@@ -84,6 +84,8 @@ class CustomerService {
     Response<dynamic>? response;
     DioException? lastError;
     for (final path in [
+      // HRMSbackend: POST /api/staff/geo-task/customers
+      '/staff/geo-task/customers',
       '/customers',
       '/staff/geo-task/customer',
       '/admin/hrms-geo/customer',
@@ -99,10 +101,9 @@ class CustomerService {
         }
       } on DioException catch (e) {
         lastError = e;
-        if (e.response?.statusCode == 401 ||
-            e.response?.statusCode == 403 ||
-            e.response?.statusCode == 404 ||
-            e.response?.statusCode == 405) {
+        // Only a missing route means "try the next path"; any other error (validation,
+        // 401/403 such as "external field employees only") is the real answer to show.
+        if (e.response?.statusCode == 404 || e.response?.statusCode == 405) {
           continue;
         }
         rethrow;

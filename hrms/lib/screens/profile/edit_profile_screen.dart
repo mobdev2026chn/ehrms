@@ -48,7 +48,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final d = widget.userData;
     _nameCtrl = TextEditingController(text: d['name']?.toString() ?? '');
     _emailCtrl = TextEditingController(text: d['email']?.toString() ?? '');
-    _phoneCtrl = TextEditingController(text: d['phone']?.toString() ?? '');
+    _phoneCtrl = TextEditingController(
+      text: (d['phoneNumber'] ?? d['phone'] ?? d['mobile'] ?? d['mobileNumber'] ?? '')?.toString() ?? '',
+    );
     _addressCtrl =
         TextEditingController(text: _composeAddress(d['address']));
     _photoUrl =

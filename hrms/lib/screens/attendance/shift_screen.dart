@@ -1849,13 +1849,15 @@ class _ShiftScreenState extends State<ShiftScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          Text(
-            value,
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
-              color: valueColor ?? AppColors.textPrimary,
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+                color: valueColor ?? AppColors.textPrimary,
+              ),
             ),
           ),
         ],

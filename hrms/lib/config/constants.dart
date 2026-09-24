@@ -6,6 +6,8 @@ class AppConstants {
   // Local-dev alt: `adb reverse tcp:2001 tcp:2001`, then 'http://127.0.0.1:2001/api'
   // (EHRMS backend PORT=2001 in app_backend/.env).
   static const String baseUrl = 'https://uat.ektahr.com/api';
+ // static const String baseUrl = 'http://127.0.0.1:5000/api';
+
 
   /// Web/Interaction HRMS API — web companion of [baseUrl] (chat, polls, LMS).
   static const String webBaseUrl = 'https://uat.ektahr.com/api';
@@ -80,8 +82,10 @@ class AppConstants {
   // static const bool logTrackingsToConsole = false;
 
   /// Task live-tracking capture interval (used by ride screen periodic upload timer).
-  /// TESTING now: 5 minutes. Set to 900 for 15 minutes in production.
-  static const int taskTrackingCaptureIntervalSeconds = 300;
+  /// Every point becomes a vertex of the route the web draws, so this has to be short
+  /// enough to follow the roads actually taken; minutes-apart points draw straight lines
+  /// and leave the live marker behind the employee.
+  static const int taskTrackingCaptureIntervalSeconds = 30;
 
   /// Presence (non-task) tracking interval in seconds.
   /// TESTING now: 5 minutes. Set to 900 for 15 minutes in production.

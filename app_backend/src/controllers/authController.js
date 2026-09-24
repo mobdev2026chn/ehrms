@@ -105,7 +105,7 @@ const findOrCreateUserByEmail = async (rawEmail) => {
             role: 'Employee',
             companyId: staff.businessId,
             branchId: staff.branchId,
-            phone: staff.phone
+            phone: staff.phoneNumber || staff.phone
         });
 
         // Link staff to new user
@@ -384,7 +384,8 @@ const login = async (req, res) => {
             email: user.email,
             name: user.name,
             role: user.role,
-            phone: user.phone,
+            phone: user.phone || staff?.phoneNumber || staff?.phone,
+            phoneNumber: user.phone || staff?.phoneNumber || staff?.phone,
             companyId: company?._id || company,
             companyName: company && company.name ? company.name : undefined,
             businessId: businessId || company?._id || company,
@@ -393,6 +394,7 @@ const login = async (req, res) => {
             employeeId: staff?.employeeId,
             avatar: staff?.avatar || user.avatar,
             locationAccess: staff?.locationAccess === true,
+            tracking: staff?.tracking === true,
             taskSettings: taskSettings?.settings || null,
             branchName: staff?.branchId?.branchName ?? undefined,
         };
@@ -566,7 +568,8 @@ const googleLogin = async (req, res) => {
             email: user.email,
             name: user.name,
             role: user.role,
-            phone: user.phone,
+            phone: user.phone || staff?.phoneNumber || staff?.phone,
+            phoneNumber: user.phone || staff?.phoneNumber || staff?.phone,
             companyId: company?._id || company,
             companyName: company && company.name ? company.name : undefined,
             businessId: businessId || company?._id || company,
@@ -575,6 +578,7 @@ const googleLogin = async (req, res) => {
             employeeId: staff?.employeeId,
             avatar: staff?.avatar || user.avatar,
             locationAccess: staff?.locationAccess === true,
+            tracking: staff?.tracking === true,
             taskSettings: taskSettings?.settings || null,
             branchName: staff?.branchId?.branchName ?? undefined,
         };
@@ -727,6 +731,7 @@ const getProfile = async (req, res) => {
                     : String(atRef));
             staffDataPayload = {
                 ...staffPlain,
+                tracking: fullStaff.tracking === true,
                 attendanceTemplateId: attendanceTemplateIdOut,
                 candidateId: candidateData || fullStaff.candidateId,
                 employmentIds: {
@@ -748,13 +753,28 @@ const getProfile = async (req, res) => {
             }
         }
 
+        const staffPhone = fullStaff?.phoneNumber || fullStaff?.phone || fullUser?.phone || candidateData?.phone || candidateData?.phoneNumber || null;
+        const staffAltPhone = fullStaff?.alternatePhoneNumber || fullStaff?.alternativePhone || fullStaff?.altPhone || candidateData?.alternatePhoneNumber || candidateData?.altPhone || candidateData?.alternativePhone || null;
+
+        if (staffDataPayload) {
+            staffDataPayload.phone = staffPhone;
+            staffDataPayload.phoneNumber = staffPhone;
+            staffDataPayload.altPhone = staffAltPhone;
+            staffDataPayload.alternatePhoneNumber = staffAltPhone;
+            staffDataPayload.alternativePhone = staffAltPhone;
+        }
+
         res.status(200).json({
             success: true,
             data: {
                 profile: {
                     name: fullUser.name,
                     email: fullUser.email,
-                    phone: fullStaff?.phone || fullUser.phone,
+                    phone: staffPhone,
+                    phoneNumber: staffPhone,
+                    altPhone: staffAltPhone,
+                    alternatePhoneNumber: staffAltPhone,
+                    alternativePhone: staffAltPhone,
                     avatar: fullUser.avatar || fullStaff?.avatar,
                     role: fullUser.role
                 },
@@ -771,14 +791,16 @@ const getProfile = async (req, res) => {
 
 const updateProfile = async (req, res) => {
     try {
-        const { name, phone, avatar } = req.body;
+        const { name, phone, phoneNumber, altPhone, alternatePhoneNumber, alternativePhone, avatar } = req.body;
+        const phoneVal = phoneNumber || phone || null;
+        const altPhoneVal = alternatePhoneNumber || altPhone || alternativePhone || null;
         const userId = req.user._id;
 
         const user = await User.findById(userId);
         if (!user) return res.status(404).json({ success: false, error: { message: 'User not found' } });
 
         if (name) user.name = name;
-        if (phone) user.phone = phone;
+        if (phoneVal) user.phone = phoneVal;
         // Support avatar delete: when avatar/photoUrl key is present, update (including clearing to empty)
         if ('avatar' in req.body || 'photoUrl' in req.body) {
             const avatarVal = req.body.avatar ?? req.body.photoUrl ?? null;
@@ -797,7 +819,15 @@ const updateProfile = async (req, res) => {
 
             const updateData = {};
             if (name) updateData.name = name;
-            if (phone) updateData.phone = phone;
+            if (phoneVal) {
+                updateData.phone = phoneVal;
+                updateData.phoneNumber = phoneVal;
+            }
+            if (altPhoneVal !== null && altPhoneVal !== undefined) {
+                updateData.altPhone = altPhoneVal;
+                updateData.alternatePhoneNumber = altPhoneVal;
+                updateData.alternativePhone = altPhoneVal;
+            }
             if ('avatar' in req.body || 'photoUrl' in req.body) {
                 const avatarVal = req.body.avatar ?? req.body.photoUrl ?? null;
                 updateData.avatar = (avatarVal && String(avatarVal).trim()) ? avatarVal : null;
@@ -877,6 +907,7 @@ const updateProfile = async (req, res) => {
                     id: user._id,
                     name: user.name,
                     phone: user.phone,
+                    phoneNumber: user.phone,
                     avatar: user.avatar
                 }
             }

@@ -341,7 +341,8 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
+          SizedBox(width: 110, child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
+          const SizedBox(width: 8),
           if (isStatus)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -359,7 +360,7 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
               ),
             )
           else
-            Text(value, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
+            Expanded(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)))),
         ],
       ),
     );

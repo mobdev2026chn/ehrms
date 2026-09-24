@@ -355,13 +355,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           _updateRoutePolyline(newLatLng, accuracyM: location.accuracy);
 
           if (_lastLocation != null) {
-            double distance = gl.Geolocator.distanceBetween(
+            final distance = gl.Geolocator.distanceBetween(
               _lastLocation!.latitude!,
               _lastLocation!.longitude!,
               location.latitude!,
               location.longitude!,
             );
-            _totalDistanceCovered += distance;
+            // Only accumulate distance if accuracy is reliable (<= 25m) and movement is genuine (>= 8m)
+            final acc = location.accuracy ?? 0;
+            if (acc <= 25 && distance >= 8 && _currentActivity.toLowerCase() != 'stop') {
+              _totalDistanceCovered += distance;
+            }
           }
 
           final movementType = MovementClassificationService()
@@ -820,11 +824,18 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   /// Minimum move before a new vertex is added to the traveled line (drops
   /// GPS jitter that would otherwise zig-zag the path while standing still).
-  static const double _minTraveledMoveMeters = 6;
+  static const double _minTraveledMoveMeters = 15;
+  static const double _maxPolylineAccuracyM = 25;
 
   void _updateRoutePolyline(LatLng newLatLng, {double? accuracyM}) {
-    // Ignore low-accuracy fixes – they are the main source of route glitches.
-    if (accuracyM != null && accuracyM > kMaxAccuracyM) {
+    // Ignore low-accuracy fixes (> 25m) – they are the main source of zig-zags and jumps into buildings.
+    if (accuracyM != null && accuracyM > _maxPolylineAccuracyM) {
+      _updateRemainingEta();
+      return;
+    }
+
+    // Do not append jittery points when stationary/stopped
+    if (_currentActivity.toLowerCase() == 'stop' || _currentActivity.toLowerCase() == 'standing') {
       _updateRemainingEta();
       return;
     }
@@ -833,7 +844,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       _routePolyline = Polyline(
         polylineId: const PolylineId('traveled'),
         points: [widget.pickupLocation, newLatLng],
-        color: Colors.blueAccent.withOpacity(0.7),
+        color: AppColors.primary,
         width: 5,
         startCap: Cap.roundCap,
         endCap: Cap.roundCap,
@@ -850,7 +861,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           newLatLng.latitude,
           newLatLng.longitude,
         );
-        // Skip near-duplicates / jitter; only extend on real movement.
+        // Skip near-duplicates / jitter; only extend on real movement (>= 15m).
         if (movedM < _minTraveledMoveMeters) {
           _updateRemainingEta();
           _fetchRoadRoute(newLatLng.latitude, newLatLng.longitude);
@@ -1014,12 +1025,28 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             lng = _lastLocation!.longitude;
           }
         }
+        final totalKm = _totalDistanceCovered / 1000;
+        final durationSeconds = _elapsedDuration.inSeconds;
+        final routeCoords = _routePolyline?.points
+            .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+            .toList();
+
         await TaskService().exitRide(
           resolvedMongoId,
           reason,
           exitType: exitType,
           lat: lat,
           lng: lng,
+          fullAddress: _lastResolvedTrackingAddress?.formattedAddress,
+          pincode: _lastResolvedTrackingAddress?.pincode,
+          tripDistanceKm: totalKm,
+          tripDurationSeconds: durationSeconds,
+          travelActivityDuration: {
+            'driveDuration': _drivingDuration.inSeconds,
+            'walkDuration': _walkingDuration.inSeconds,
+            'stopDuration': _stopDuration.inSeconds,
+          },
+          travelledRoute: routeCoords,
         );
       } catch (e) {
         debugPrint('[LiveTracking] exitRide error: $e');
@@ -1105,6 +1132,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             'walkDuration': _walkingDuration.inSeconds,
             'stopDuration': _stopDuration.inSeconds,
           },
+          travelledRoute: _routePolyline?.points
+              .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+              .toList(),
         );
         try {
           arrivedTask = await TaskService().getTaskById(widget.taskMongoId!);
@@ -1117,8 +1147,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           });
         }
         await LiveTrackingService().stopTracking();
-      } catch (_) {
-        if (mounted) setState(() => _submittingArrived = false);
+      } catch (e) {
+        if (mounted) {
+          setState(() => _submittingArrived = false);
+          SnackBarUtils.showSnackBar(
+            context,
+            ErrorMessageUtils.toUserFriendlyMessage(e),
+            isError: true,
+          );
+        }
         return;
       }
       // _arrivedSent and _submittingArrived keep Arrived button disabled
@@ -1135,6 +1172,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       arrivalAddr ??= '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}';
     }
     if (!mounted) return;
+    final recordedRoute = _routePolyline?.points
+        .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+        .toList();
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (context) => ArrivedScreen(
@@ -1148,6 +1188,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           totalDistanceKm: arrivedTask?.tripDistanceKm ?? totalKm,
           isWithinGeofence: _isInsideGeofence,
           arrivalTime: arrival,
+          travelledRoute: recordedRoute,
           sourceLat: widget.pickupLocation.latitude,
           sourceLng: widget.pickupLocation.longitude,
           sourceAddress: _task?.sourceLocation?.address,
@@ -1325,12 +1366,16 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 color: Colors.grey.shade700,
               ),
               const SizedBox(width: 4),
-              Text(
-                _etaText ?? '—',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade800,
+              Flexible(
+                child: Text(
+                  _etaText ?? '—',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1340,12 +1385,16 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 color: Colors.grey.shade700,
               ),
               const SizedBox(width: 4),
-              Text(
-                '${_remainingDistanceKm.toStringAsFixed(1)} km left',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade800,
+              Flexible(
+                child: Text(
+                  '${_remainingDistanceKm.toStringAsFixed(1)} km left',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
                 ),
               ),
               if (_currentActivity.toLowerCase() == 'stop' ||
@@ -1746,11 +1795,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                             color: AppColors.primary,
                           ),
                           const SizedBox(width: 8),
-                          Text(
-                            'Shortest to destination: ',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade700,
+                          Flexible(
+                            child: Text(
+                              'Shortest to destination: ',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade700,
+                              ),
                             ),
                           ),
                           Text(

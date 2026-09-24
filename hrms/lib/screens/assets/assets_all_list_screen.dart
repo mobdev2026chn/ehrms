@@ -617,7 +617,10 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                 : colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 8),
-          Row(
+          Flexible(
+            child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
             mainAxisSize: MainAxisSize.min,
             children: List.generate(
               _totalPages.clamp(0, 10),
@@ -656,6 +659,8 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                   ),
                 );
               },
+            ),
+          ),
             ),
           ),
           const SizedBox(width: 8),

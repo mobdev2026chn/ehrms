@@ -29,6 +29,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   final _addressController = TextEditingController();
   final _cityController = TextEditingController();
   final _pincodeController = TextEditingController();
+  final _stateController = TextEditingController();
   bool _submitting = false;
 
   /// E.164 digits only (no leading +), for API `countryCode`.
@@ -89,6 +90,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     _addressController.dispose();
     _cityController.dispose();
     _pincodeController.dispose();
+    _stateController.dispose();
     super.dispose();
   }
 
@@ -158,6 +160,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
         address: _addressController.text.trim(),
         city: _cityController.text.trim(),
         pincode: _pincodeController.text.trim(),
+        state: _stateController.text.trim(),
         countryCode: _dialDigits,
       );
 
@@ -348,7 +351,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                           child: TextFormField(
                             controller: _numberController,
                             decoration: _inputDecoration(
-                              'Customer Number (mobile) *',
+                              'Mobile Number *',
                               Icons.phone_rounded,
                               hint: _mobileHint,
                             ),
@@ -369,9 +372,13 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                     TextFormField(
                       controller: _companyController,
                       decoration: _inputDecoration(
-                        'Company Name',
+                        'Company Name *',
                         Icons.business_rounded,
                       ),
+                      textCapitalization: TextCapitalization.words,
+                      // HRMSbackend rejects a customer without a company name.
+                      validator: (v) =>
+                          (v == null || v.trim().isEmpty) ? 'Required' : null,
                       textInputAction: TextInputAction.next,
                     ),
                     const SizedBox(height: 16),
@@ -431,6 +438,18 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _stateController,
+                      decoration: _inputDecoration(
+                        'State *',
+                        Icons.map_rounded,
+                      ),
+                      textCapitalization: TextCapitalization.words,
+                      validator: (v) =>
+                          (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      textInputAction: TextInputAction.next,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(

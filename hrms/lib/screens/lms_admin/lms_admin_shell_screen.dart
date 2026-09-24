@@ -57,10 +57,7 @@ class _LmsAdminShellScreenState extends State<LmsAdminShellScreen>
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-          (route) => route.isFirst,
-        );
+        DashboardScreen.goToTab(context, 0);
       },
       child: Scaffold(
         backgroundColor: AppColors.background,
@@ -121,11 +118,7 @@ class _LmsAdminShellScreenState extends State<LmsAdminShellScreen>
         bottomNavigationBar: AppBottomNavigationBar(
           currentIndex: -1,
           onTap: (index) {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(
-                  builder: (_) => DashboardScreen(initialIndex: index)),
-              (route) => route.isFirst,
-            );
+            DashboardScreen.goToTab(context, index);
           },
         ),
       ),

@@ -275,7 +275,12 @@ class _BreakScreenState extends State<BreakScreen> {
     final identityFuture = FaceIdentityGuard.verify(selfie);
 
     final results = await Future.wait([
-      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      // Fail closed: an error must never count as a verified face.
+      verifyFuture.catchError((_) => <String, dynamic>{
+        'success': false,
+        'match': false,
+        'message': 'Face verification failed. Please try again.',
+      }),
       identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
     ]);
 

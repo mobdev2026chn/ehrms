@@ -203,14 +203,18 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                           color: Colors.grey[600],
                         ),
                         const SizedBox(width: 8),
-                        const Text(
-                          'Learning consistency',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
+                        const Expanded(
+                          child: Text(
+                            'Learning consistency',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 8),
                         Text(
                           'Last 12 months',
                           style: TextStyle(

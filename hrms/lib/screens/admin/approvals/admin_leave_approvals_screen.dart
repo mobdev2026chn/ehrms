@@ -416,7 +416,8 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
+          SizedBox(width: 110, child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
+          const SizedBox(width: 8),
           if (isStatus)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -434,7 +435,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
               ),
             )
           else
-            Text(value, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
+            Expanded(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)))),
         ],
       ),
     );
@@ -577,6 +578,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
         surfaceTintColor: Colors.transparent,
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
           labelColor: const Color(0xFFD97706),
           unselectedLabelColor: const Color(0xFF64748B),
           indicatorColor: const Color(0xFFEFAA1F),
@@ -792,23 +794,32 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
             const SizedBox(height: 10),
 
             Container(
+              width: double.infinity,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Type
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(color: typeBg, borderRadius: BorderRadius.circular(4)),
-                    child: Text('${r.leaveType}${r.isHalfDay ? " (${r.halfDaySession})" : ""}', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: typeFg)),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      // Type
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: typeBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text('${r.leaveType}${r.isHalfDay ? " (${r.halfDaySession})" : ""}', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: typeFg)),
+                      ),
+                      // Days
+                      Text('${r.days} days', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF1E293B))),
+                      // Date
+                      Text(r.startDate, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+                    ],
                   ),
-                  // Days
-                  Text('${r.days} days', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF1E293B))),
-                  // Date
-                  Text(r.startDate, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+                  const SizedBox(height: 4),
                   // Reason
-                  Text('Reason: ${r.reason}', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
+                  Text('Reason: ${r.reason}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
                 ],
               ),
             ),
@@ -830,12 +841,14 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: const [
-                  Icon(Icons.calendar_month_outlined, color: Color(0xFFD97706), size: 18),
-                  SizedBox(width: 6),
-                  Text('Leave Calendar', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800)),
-                ],
+              Flexible(
+                child: Row(
+                  children: const [
+                    Icon(Icons.calendar_month_outlined, color: Color(0xFFD97706), size: 18),
+                    SizedBox(width: 6),
+                    Flexible(child: Text('Leave Calendar', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800))),
+                  ],
+                ),
               ),
               Row(
                 children: [
@@ -941,7 +954,8 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
-          child: Column(
+          child: ClipRect(
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('$d', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
@@ -952,6 +966,8 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                   decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(3)),
                   child: Text(
                     '${leavesForDay.length} on leave',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.w800, color: Color(0xFFD97706)),
                   ),
                 ),
@@ -962,11 +978,12 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                         margin: const EdgeInsets.only(bottom: 1),
                         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
                         decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(2)),
-                        child: Text(l.name, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.w700, color: Color(0xFF16A34A)), overflow: TextOverflow.ellipsis),
+                        child: Text(l.name, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.w700, color: Color(0xFF16A34A)), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     )),
               ],
             ],
+          ),
           ),
         ),
       );
@@ -976,7 +993,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
       crossAxisCount: 7,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 0.85,
+      childAspectRatio: 0.6,
       children: dayWidgets,
     );
   }

@@ -435,7 +435,45 @@ class AttendanceService {
     }
   }
 
+  /// Shared in-flight today request: the shell, Home and Attendance all ask for
+  /// today's punch at startup; collapse them into one network call.
+  static Future<Map<String, dynamic>>? _todayInFlight;
+
   Future<Map<String, dynamic>> getTodayAttendance({
+    bool forceRefresh = false,
+    String? date,
+    bool useWebHrmsApi = false,
+  }) {
+    if (useWebHrmsApi || date != null) {
+      return _getTodayAttendanceImpl(
+        forceRefresh: forceRefresh,
+        date: date,
+        useWebHrmsApi: useWebHrmsApi,
+      );
+    }
+    final last = _lastTodayAttendanceFetch;
+    if (_cachedTodayAttendance != null &&
+        last != null &&
+        DateTime.now().difference(last) < const Duration(seconds: 3)) {
+      return Future.value({'success': true, 'data': _cachedTodayAttendance});
+    }
+    final pending = _todayInFlight;
+    if (pending != null) return pending;
+    final future = _getTodayAttendanceImpl(forceRefresh: forceRefresh);
+    _todayInFlight = future;
+    future.whenComplete(() {
+      if (identical(_todayInFlight, future)) _todayInFlight = null;
+    });
+    return future;
+  }
+
+  static bool _isMissingRoute(Object e) {
+    if (e is! DioException) return false;
+    final code = e.response?.statusCode;
+    return code == 404 || code == 405;
+  }
+
+  Future<Map<String, dynamic>> _getTodayAttendanceImpl({
     bool forceRefresh = false,
     String? date,
     bool useWebHrmsApi = false,
@@ -503,13 +541,17 @@ class AttendanceService {
       Response<dynamic>? response;
       try {
         response = await _api.dio.get<dynamic>('/staff/attendance/today-punch');
-      } catch (_) {
+      } catch (e) {
+        // Only fall back when the route is missing — retrying legacy routes on a
+        // timeout just tripled the wait before the error surfaced.
+        if (!_isMissingRoute(e)) rethrow;
         try {
           response = await _api.dio.get<dynamic>(
             '/attendance/today',
             queryParameters: {'date': nowStr},
           );
-        } catch (_) {
+        } catch (e2) {
+          if (!_isMissingRoute(e2)) rethrow;
           response = await _api.dio.get<dynamic>(
             '/staff/attendance/today',
             queryParameters: {'date': nowStr},
@@ -631,9 +673,12 @@ class AttendanceService {
         if (date == todayStr && _cachedTodayAttendance != null) {
           return {'success': true, 'data': _cachedTodayAttendance!};
         }
+        if (_cachedTodayAttendance != null) {
+          return {'success': true, 'data': _cachedTodayAttendance!};
+        }
         return {
-          'success': false,
-          'message': 'Too many requests. Please wait a moment.',
+          'success': true,
+          'data': <String, dynamic>{},
         };
       }
       final headers = await _getHeaders();
@@ -649,7 +694,8 @@ class AttendanceService {
           '/staff/attendance/today-punch',
           queryParameters: {'date': date, 'clientTime': clientTimeIso, 'clientLocalTime': clientLocalTime},
         );
-      } catch (_) {
+      } on DioException catch (e1) {
+        if (!_isMissingRoute(e1)) rethrow;
         response = await _api.dio.get<dynamic>(
           '/attendance/today',
           queryParameters: {'date': date, 'clientTime': clientTimeIso, 'clientLocalTime': clientLocalTime},
@@ -674,9 +720,12 @@ class AttendanceService {
         if (date == todayStr && _cachedTodayAttendance != null) {
           return {'success': true, 'data': _cachedTodayAttendance!};
         }
+        if (_cachedTodayAttendance != null) {
+          return {'success': true, 'data': _cachedTodayAttendance!};
+        }
         return {
-          'success': false,
-          'message': 'Too many requests. Please wait a moment.',
+          'success': true,
+          'data': <String, dynamic>{},
         };
       }
       return {
@@ -953,6 +1002,18 @@ class AttendanceService {
         }
 
         Response<dynamic>? response;
+        // Week offs for the month (HRMSbackend shift roster schedule), fetched alongside
+        // the month attendance instead of after it.
+        Future<dynamic>? rosterFuture;
+        if (staffId != null && staffId.isNotEmpty) {
+          rosterFuture = _api.dio
+              .get<dynamic>(
+                '/admin/settings/shift-roster/schedule/$staffId',
+                queryParameters: {'year': year, 'month': month},
+              )
+              .then<dynamic>((r) => r.data is Map ? (r.data as Map)['data'] : null)
+              .catchError((_) => null);
+        }
         // 2. Primary: Canonical Web API endpoint
         if (staffId != null && staffId.isNotEmpty) {
           try {
@@ -970,7 +1031,8 @@ class AttendanceService {
               '/staff/attendance/month',
               queryParameters: {'year': year, 'month': month},
             );
-          } catch (_) {
+          } on DioException catch (e2) {
+            if (!_isMissingRoute(e2)) rethrow;
             response = await _api.dio.get<dynamic>(
               '/attendance/month',
               queryParameters: {'year': year, 'month': month},
@@ -980,28 +1042,10 @@ class AttendanceService {
 
         data = response.data is Map ? Map<String, dynamic>.from(response.data as Map) : {};
 
-        // 4. Also fetch Shift Roster for shift details & week offs (Web Parity)
-        if (staffId != null && staffId.isNotEmpty) {
-          try {
-            final rosterRes = await _api.dio.get<dynamic>(
-              '/admin/staff/settings/shift-roster/staff/$staffId',
-              queryParameters: {'year': year, 'month': month},
-            );
-            if (rosterRes.data is Map && rosterRes.data['data'] != null) {
-              data['roster'] = rosterRes.data['data'];
-            }
-          } catch (_) {}
-        }
-
-        // 5. Also fetch Holiday Templates (Web Parity)
-        try {
-          final holRes = await _api.dio.get<dynamic>(
-            '/admin/staff/settings/Attendance/holidayTemplates',
-          );
-          if (holRes.data is Map && holRes.data['data'] != null) {
-            data['holidayTemplates'] = holRes.data['data'];
-          }
-        } catch (_) {}
+        // 4. Shift roster (week offs). The old '/admin/staff/settings/...' roster and holiday
+        // template paths do not exist on HRMSbackend and only added two sequential 404s.
+        final roster = await rosterFuture;
+        if (roster != null) data['roster'] = roster;
       }
 
       final dynamic rawPayload = data['data'] ?? data;
@@ -1064,6 +1108,20 @@ class AttendanceService {
           final fine = fineAdjustment?['totalFine'] ?? m['fine'];
           final overtime = overtimeAdjustment?['amount'] ?? m['overtime'];
 
+          final punchInSelfie = presentDetails?['checkInSelfie'] ?? m['punchInSelfie'] ?? m['checkInSelfie'];
+          final punchOutSelfie = presentDetails?['checkOutSelfie'] ?? m['punchOutSelfie'] ?? m['checkOutSelfie'];
+          final location = presentDetails?['location'] ?? m['location'] ?? m['punchInAddress'];
+          final checkInCoordinates = presentDetails?['checkInCoordinates'] ?? m['checkInCoordinates'];
+          final checkOutCoordinates = presentDetails?['checkOutCoordinates'] ?? m['checkOutCoordinates'];
+          final breakSessions = presentDetails?['breakSessions'] ??
+              presentDetails?['breaks'] ??
+              (presentDetails?['break'] is Map ? (presentDetails?['break']['breaks'] ?? presentDetails?['break']['breakSessions']) : null) ??
+              m['breakSessions'] ??
+              m['breaks'] ??
+              (m['break'] is Map ? (m['break']['breaks'] ?? m['break']['breakSessions']) : null);
+          final breakDetails = m['breakDetails'];
+          final activityLogs = m['activityLogs'] ?? m['logs'];
+
           m['status'] = status;
           m['date'] = dateStr.isNotEmpty ? dateStr : rawDate;
           if (punchIn != null && punchIn != 'NA') m['punchIn'] = punchIn;
@@ -1071,6 +1129,17 @@ class AttendanceService {
           if (workHours != null) m['workHours'] = workHours;
           if (fine != null) m['fine'] = fine;
           if (overtime != null) m['overtime'] = overtime;
+          if (punchInSelfie != null) m['punchInSelfie'] = punchInSelfie;
+          if (punchOutSelfie != null) m['punchOutSelfie'] = punchOutSelfie;
+          if (location != null) m['location'] = location;
+          if (checkInCoordinates != null) m['checkInCoordinates'] = checkInCoordinates;
+          if (checkOutCoordinates != null) m['checkOutCoordinates'] = checkOutCoordinates;
+          if (breakSessions != null) m['breakSessions'] = breakSessions;
+          if (breakDetails != null) m['breakDetails'] = breakDetails;
+          if (activityLogs != null) {
+            m['activityLogs'] = activityLogs;
+            m['logs'] = activityLogs;
+          }
 
           normalizedList.add(m);
         }
@@ -1080,7 +1149,11 @@ class AttendanceService {
       final rosterDays = data['roster']?['days'];
       if (rosterDays is Map) {
         rosterDays.forEach((k, v) {
-          if (v is Map && v['isOff'] == true && !weekOffDates.contains(k.toString())) {
+          // A day with no shift assigned is also `isOff` but is not a week off.
+          if (v is Map &&
+              v['isOff'] == true &&
+              v['shiftName'] != 'Shift Not Assigned' &&
+              !weekOffDates.contains(k.toString())) {
             weekOffDates.add(k.toString());
           }
         });

@@ -221,8 +221,10 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                   ),
                 );
 
+                // Same resolved start the timer counts from, so the label and
+                // the running time always agree.
                 final startedFromStr =
-                    DateFormat('hh:mm a').format(widget.startTime.toLocal());
+                    DateFormat('hh:mm a').format(_anchorStart.toLocal());
                 final titleStyle = TextStyle(
                   color: Colors.green.shade700,
                   fontWeight: FontWeight.w700,
@@ -259,25 +261,31 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                       ),
                     ),
                     const SizedBox(width: 6),
-                    Text(
-                      'Break Ongoing',
-                      style: titleStyle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Flexible(
+                      child: Text(
+                        'Break Ongoing',
+                        style: titleStyle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEF3C7),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        'Started from $startedFromStr',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFFB45309),
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3C7),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Started from $startedFromStr',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFB45309),
+                          ),
                         ),
                       ),
                     ),

@@ -37,6 +37,24 @@ DateTime _naiveIsoUtcWallComponentsToLocal(DateTime d) {
   ).toLocal();
 }
 
+/// HRMSbackend also sends break times as local clock text ("06:26 PM", "18:26").
+/// Those are today's wall-clock times on the device; null for anything else.
+DateTime? _todayAtClockTime(String s) {
+  final m = RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?$').firstMatch(s);
+  if (m == null) return null;
+  var hour = int.parse(m.group(1)!);
+  final minute = int.parse(m.group(2)!);
+  final second = int.tryParse(m.group(3) ?? '') ?? 0;
+  final period = m.group(4)?.toUpperCase();
+  if (period != null) {
+    if (hour < 1 || hour > 12) return null;
+    hour = hour % 12 + (period == 'PM' ? 12 : 0);
+  }
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day, hour, minute, second);
+}
+
 String _describeBreakRawForLog(dynamic v) {
   if (v == null) return 'null';
   if (v is DateTime) return 'DateTime(${v.toIso8601String()})';
@@ -81,7 +99,7 @@ DateTime? _parseApiDateTimeToLocalImpl(dynamic value) {
       return _parseApiDateTimeToLocalImpl(int.parse(s));
     }
     final d = DateTime.tryParse(s);
-    if (d == null) return null;
+    if (d == null) return _todayAtClockTime(s);
     return _naiveIsoUtcWallComponentsToLocal(d);
   }
   return null;

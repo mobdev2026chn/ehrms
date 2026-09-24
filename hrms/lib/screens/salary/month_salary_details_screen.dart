@@ -566,14 +566,17 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.black87,
-              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.black87,
+                fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+              ),
             ),
           ),
+          const SizedBox(width: 8),
           Text(
             value,
             style: TextStyle(

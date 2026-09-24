@@ -12,7 +12,7 @@ class FadeSlideIn extends StatefulWidget {
     super.key,
     required this.child,
     this.delay = Duration.zero,
-    this.duration = const Duration(milliseconds: 400),
+    this.duration = const Duration(milliseconds: 250),
     this.offsetY = 16,
     this.curve = Curves.easeOutCubic,
   });
@@ -30,9 +30,10 @@ class FadeSlideIn extends StatefulWidget {
   /// lists don't feel sluggish.
   static List<Widget> staggered(
     List<Widget> children, {
-    Duration stepDelay = const Duration(milliseconds: 60),
-    Duration maxStagger = const Duration(milliseconds: 480),
-    Duration duration = const Duration(milliseconds: 400),
+    Duration stepDelay = const Duration(milliseconds: 30),
+    // Kept short: content should feel instant once data has arrived.
+    Duration maxStagger = const Duration(milliseconds: 150),
+    Duration duration = const Duration(milliseconds: 250),
     double offsetY = 16,
   }) {
     final out = <Widget>[];

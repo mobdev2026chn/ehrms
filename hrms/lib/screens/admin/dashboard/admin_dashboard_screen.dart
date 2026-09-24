@@ -567,16 +567,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: const [
-                  Icon(Icons.assignment_turned_in_outlined, size: 18, color: Color(0xFFD97706)),
-                  SizedBox(width: 8),
-                  Text(
-                    'Pending Approvals',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-                  ),
-                ],
+              Flexible(
+                child: Row(
+                  children: const [
+                    Icon(Icons.assignment_turned_in_outlined, size: 18, color: Color(0xFFD97706)),
+                    SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Pending Approvals',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
@@ -1035,49 +1042,65 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(6)),
-                    child: const Icon(Icons.domain_rounded, size: 16, color: Color(0xFFD97706)),
-                  ),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'By Department',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(6)),
+                      child: const Icon(Icons.domain_rounded, size: 16, color: Color(0xFFD97706)),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'By Department',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                          ),
+                          Text(
+                            '$_activeStaff employees across ${_deptCounts.length} departments',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+                          ),
+                        ],
                       ),
-                      Text(
-                        '$_activeStaff employees across ${_deptCounts.length} departments',
-                        style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              // Department Filter Dropdown
-              Container(
-                height: 32,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                  ],
                 ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _selectedChartDept,
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
-                    items: ['All Departments', ..._deptCounts.keys]
-                        .map((d) => DropdownMenuItem(value: d, child: Text(d)))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) setState(() => _selectedChartDept = v);
-                    },
+              ),
+              const SizedBox(width: 8),
+              // Department Filter Dropdown
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 130),
+                child: Container(
+                  height: 32,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedChartDept,
+                      isExpanded: true,
+                      icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                      items: ['All Departments', ..._deptCounts.keys]
+                          .map((d) => DropdownMenuItem(
+                                value: d,
+                                child: Text(d, maxLines: 1, overflow: TextOverflow.ellipsis),
+                              ))
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => _selectedChartDept = v);
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -1095,7 +1118,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 final heightFactor = (d.value / maxCount).clamp(0.1, 1.0);
                 final isSelected = _selectedChartDept == 'All Departments' || _selectedChartDept == d.key;
 
-                return InkWell(
+                return Expanded(
+                  child: InkWell(
                   onTap: () {
                     Navigator.push(
                       context,
@@ -1107,6 +1131,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     children: [
                       Text(
                         '${d.value}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
@@ -1116,7 +1142,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       const SizedBox(height: 4),
                       Container(
                         width: 22,
-                        height: 100 * heightFactor,
+                        height: 90 * heightFactor,
                         decoration: BoxDecoration(
                           color: isSelected ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
@@ -1125,6 +1151,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       const SizedBox(height: 6),
                       Text(
                         d.key,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
@@ -1132,6 +1161,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         ),
                       ),
                     ],
+                  ),
                   ),
                 );
               }).toList(),

@@ -60,6 +60,28 @@ class DashboardScreen extends StatefulWidget {
   final int? initialIndex;
   const DashboardScreen({super.key, this.initialIndex});
 
+  /// The shell living at the bottom of the navigator stack (if any).
+  static _DashboardScreenState? _rootShell;
+
+  /// Go back to the dashboard shell and open [index] (same codes as
+  /// [initialIndex]). Reuses the root shell instead of stacking a second one —
+  /// a new shell re-ran every tab's startup fetches and a second break poll.
+  static void goToTab(BuildContext context, int index) {
+    final root = _rootShell;
+    final nav = Navigator.of(context);
+    if (root != null && root.mounted) {
+      nav.popUntil((r) => r.isFirst);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (root.mounted) root._openFromOutside(index);
+      });
+      return;
+    }
+    nav.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => DashboardScreen(initialIndex: index)),
+      (r) => false,
+    );
+  }
+
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
@@ -213,7 +235,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     // Attendance tab (which is what _normalizeTabIndex(5) resolves to).
     _openPunchAfterBuild = widget.initialIndex == 5;
     unawaited(_refreshSalaryOverviewAccess());
-    _attendanceService.clearCachesForRefresh();
+    // Keep the month cache: Home and Attendance read it right after this.
+    _attendanceService.clearCachesForRefresh(clearMonth: false);
     _fetchPunchStatusForNavBar();
     _fetchActiveBreak();
     // Refresh the break card whenever a break is started/ended anywhere —
@@ -226,6 +249,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     _breakReconcileTimer =
         Timer.periodic(const Duration(seconds: 15), (_) {
       if (!mounted) return;
+      // No point polling while the app is in the background; resume refreshes.
+      if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+        return;
+      }
       unawaited(_fetchActiveBreak());
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -242,7 +269,29 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (ModalRoute.of(context)?.isFirst == true) {
+      DashboardScreen._rootShell = this;
+    }
+  }
+
+  /// Handles [DashboardScreen.goToTab] on the existing root shell.
+  void _openFromOutside(int index) {
+    if (index == 5) {
+      unawaited(_startPunchFlow());
+    } else if (index == 6) {
+      unawaited(_openRequestedBreakFlow());
+    } else {
+      _onDrawerNavigateToIndex(index.clamp(0, 4));
+    }
+  }
+
+  @override
   void dispose() {
+    if (identical(DashboardScreen._rootShell, this)) {
+      DashboardScreen._rootShell = null;
+    }
     WidgetsBinding.instance.removeObserver(this);
     BreakService.stateRevision.removeListener(_onBreakStateChanged);
     _breakReconcileTimer?.cancel();
@@ -336,7 +385,21 @@ class _DashboardScreenState extends State<DashboardScreen>
     } catch (_) {}
   }
 
+  DateTime? _lastPunchNavFetchAt;
+
+  /// Tab switches only re-check punch status when the last check is stale;
+  /// punch/break events still call [_fetchPunchStatusForNavBar] directly.
+  void _maybeRefreshPunchStatus() {
+    final last = _lastPunchNavFetchAt;
+    if (last != null &&
+        DateTime.now().difference(last) < const Duration(seconds: 30)) {
+      return;
+    }
+    unawaited(_fetchPunchStatusForNavBar());
+  }
+
   Future<void> _fetchPunchStatusForNavBar() async {
+    _lastPunchNavFetchAt = DateTime.now();
     final res = await _attendanceService.getTodayAttendance(forceRefresh: true);
     if (!mounted) return;
     final data = res['data'] as Map<String, dynamic>?;
@@ -1219,33 +1282,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         final userStr = prefs.getString('user');
         if (userStr != null) {
           final user = jsonDecode(userStr) as Map<String, dynamic>;
-          final staffRaw = user['staffData'] ?? user['staff'];
-          Map<String, dynamic>? staffMap;
-          if (staffRaw is Map) {
-            staffMap = Map<String, dynamic>.from(staffRaw);
-            final s = staffMap['salaryDetailsAccessEnabled'];
-            _logSalaryAccessTest(
-              '_loadSalaryDetailsAccessEnabled prefs | '
-              'staffData.salaryDetailsAccessEnabled raw=$s (${s.runtimeType})',
-            );
-            if (s == true) {
-              return result(true, 'prefs:staffData==true');
-            }
-          }
-          final flat = user['salaryDetailsAccessEnabled'];
+          final cached = salaryDetailsAccessFromProfile(user);
           _logSalaryAccessTest(
-            '_loadSalaryDetailsAccessEnabled prefs | '
-            'user.salaryDetailsAccessEnabled raw=$flat (${flat.runtimeType})',
+            '_loadSalaryDetailsAccessEnabled prefs | cached access=$cached',
           );
-          if (flat == true) {
-            return result(true, 'prefs:user_root==true');
-          }
-          if (staffMap != null &&
-              staffMap['salaryDetailsAccessEnabled'] == false) {
-            return result(false, 'prefs:staffData==false');
-          }
-          if (flat == false) {
-            return result(false, 'prefs:user_root==false');
+          if (cached != null) {
+            return result(cached, 'prefs:cached salary access');
           }
         } else {
           _logSalaryAccessTest(
@@ -1271,18 +1313,19 @@ class _DashboardScreenState extends State<DashboardScreen>
       if (res['success'] == true && res['data'] is Map) {
         final data = Map<String, dynamic>.from(res['data'] as Map);
         final staffRaw = data['staffData'];
-        if (staffRaw is Map) {
-          final staff = Map<String, dynamic>.from(staffRaw);
-          _updateSalaryConfigured(staff);
-          final raw = staff['salaryDetailsAccessEnabled'];
-          final enabled = raw == true;
+        // HRMSbackend `/staff/profile` returns the staff record without a `staffData` wrapper.
+        final staff = staffRaw is Map
+            ? Map<String, dynamic>.from(staffRaw)
+            : (data['_id'] != null ? data : null);
+        if (staff != null) {
+          // Only the app_backend shape carries `salary`; do not dim Punch for HRMSbackend records.
+          if (staffRaw is Map) _updateSalaryConfigured(staff);
+          final enabled = salaryDetailsAccessFromProfile(data) == true;
           _logSalaryAccessTest(
-            '_loadSalaryDetailsAccessEnabled profile | '
-            'staffData.salaryDetailsAccessEnabled raw=$raw (${raw.runtimeType}) '
-            '=> strictTrue=$enabled',
+            '_loadSalaryDetailsAccessEnabled profile | access=$enabled',
           );
-          await _persistSalaryAccessOnUser(raw);
-          return result(enabled, 'profile:staffData strict equality == true');
+          await _persistSalaryAccessOnUser(enabled);
+          return result(enabled, 'profile: salary access == true');
         }
         _logSalaryAccessTest(
           '_loadSalaryDetailsAccessEnabled profile | staffData missing or not a Map',
@@ -1335,7 +1378,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     final normalized = _normalizeTabIndex(index);
     if (index >= 0 && (index <= 4 || index == 5)) {
       setState(() => _currentIndex = normalized);
-      unawaited(_fetchPunchStatusForNavBar());
+      _maybeRefreshPunchStatus();
     }
   }
 
@@ -1349,7 +1392,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       if (index == 1) _requestsSubTabIndex = subTabIndex;
       if (normalized == 4) _attendanceSubTabIndex = subTabIndex;
     });
-    unawaited(_fetchPunchStatusForNavBar());
+    _maybeRefreshPunchStatus();
   }
 
   void _onRequestsTabIndexChanged(int index) {
@@ -1389,9 +1432,22 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
       }
       position = await getQuickPositionForUi();
-      final resolved = await AddressResolutionService.reverseGeocodeForUi(
+      Map<String, dynamic>? branch;
+      try {
+        final stored = await AttendanceTemplateStore.loadTemplateDetails();
+        final b = stored?['branch'];
+        if (b is Map<String, dynamic>) {
+          branch = b;
+        } else if (b is Map) {
+          branch = Map<String, dynamic>.from(b);
+        }
+      } catch (_) {}
+
+      final resolved =
+          await AddressResolutionService.resolvePunchLocationAddress(
         position.latitude,
         position.longitude,
+        branchData: branch,
       );
       if (resolved != null) {
         area = resolved.area;
@@ -1429,7 +1485,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     final identityFuture = FaceIdentityGuard.verify(selfie);
 
     final results = await Future.wait([
-      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      // Fail closed: an error must never count as a verified face.
+      verifyFuture.catchError((_) => <String, dynamic>{
+        'success': false,
+        'match': false,
+        'message': 'Face verification failed. Please try again.',
+      }),
       identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
     ]);
 
@@ -2058,13 +2119,17 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    message,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.4,
-                      color: Colors.white.withOpacity(0.8),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Text(
+                        message,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.4,
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -2200,13 +2265,17 @@ class _DashboardScreenState extends State<DashboardScreen>
                         ),
                       ],
                       const SizedBox(height: 12),
-                      Text(
-                        fullMessage,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.4,
-                          color: Colors.white.withOpacity(0.8),
+                      Flexible(
+                        child: SingleChildScrollView(
+                          child: Text(
+                            fullMessage,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 14,
+                              height: 1.4,
+                              color: Colors.white.withOpacity(0.8),
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -3247,7 +3316,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     final identityFuture = FaceIdentityGuard.verify(selfie);
 
     final results = await Future.wait([
-      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      // Fail closed: an error must never count as a verified face.
+      verifyFuture.catchError((_) => <String, dynamic>{
+        'success': false,
+        'match': false,
+        'message': 'Face verification failed. Please try again.',
+      }),
       identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
     ]);
 
@@ -3552,8 +3626,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
+  /// Tabs that have been shown at least once (kept alive by the IndexedStack).
+  final Set<int> _visitedTabs = <int>{};
+
   @override
   Widget build(BuildContext context) {
+    _visitedTabs.add(_currentIndex.clamp(0, 4));
     final List<Widget> screens = [
       HomeDashboardScreen(
         onNavigate: _onDashboardNavigate,
@@ -3596,7 +3674,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         onNavigateToIndex: _onDrawerNavigateToIndex,
       ),
       AttendanceScreen(
-        key: ValueKey('Attendance_$_attendanceSubTabIndex'),
+        // Stable key: a changing key recreated the whole screen (full reload).
+        key: const ValueKey('Attendance'),
         initialTabIndex: _attendanceSubTabIndex,
         dashboardTabIndex: _currentIndex,
         onNavigateToIndex: _onDrawerNavigateToIndex,
@@ -3725,7 +3804,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         child: Scaffold(
           body: IndexedStack(
             index: _currentIndex.clamp(0, screens.length - 1),
-            children: screens,
+            children: [
+              // Build a tab only after its first visit: building all five up
+              // front fired every tab's startup fetches alongside Home.
+              for (var i = 0; i < screens.length; i++)
+                _visitedTabs.contains(i) ? screens[i] : const SizedBox.shrink(),
+            ],
           ),
           bottomNavigationBar: AppBottomNavigationBar(
             currentIndex: _bottomBarSelectedIndex(),
@@ -3763,7 +3847,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               }
               final normalized = _mapBottomNavIndexToScreenIndex(index);
               setState(() => _currentIndex = normalized);
-              unawaited(_fetchPunchStatusForNavBar());
+              _maybeRefreshPunchStatus();
             },
           ),
         ),

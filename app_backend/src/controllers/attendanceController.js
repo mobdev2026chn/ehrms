@@ -337,6 +337,11 @@ function scheduleDeferredAttendanceSelfieUpload(attendanceId, imageInput, req, c
                 const url = await uploadAttendanceSelfie(imageInput, req, companyId, employeeName, punchType);
                 if (url) {
                     await Attendance.findByIdAndUpdate(id, { [fieldKey]: url });
+                    const action = fieldKey === 'punchOutSelfie' ? 'PUNCH_OUT' : 'PUNCH_IN';
+                    await AttendanceLog.updateMany(
+                        { attendanceId: id, action: { $in: [action, action.replace('_', '')] } },
+                        { $set: { selfieUrl: url, image: url, selfie: url } }
+                    ).catch(err => console.warn('[Attendance] AttendanceLog selfie update failed:', err?.message));
                     // Roll the face-validation reference forward to this punch image so
                     // the next punch validates against the most recent selfie (seeds the
                     // first-image + profile photo on the very first capture).
@@ -2191,7 +2196,7 @@ const checkIn = async (req, res) => {
                     performedByEmail: staff.email || undefined,
                     selfieUrl: undefined,
                     punchInDateTime: punchInAt,
-                    punchInAddress: buildAddressString(address, area, city, pincode) || undefined,
+                    punchInAddress: buildAddressString(address, area, city, pincode) || (userLat && userLng ? `${userLat}, ${userLng}` : undefined),
                     timestamp: now
                 }),
                 insertAttendanceTracking(staffId, staff.name, userLat, userLng, 'in_office', 'checked_in', movementType, address, area, city, pincode)
@@ -2406,7 +2411,7 @@ const checkIn = async (req, res) => {
                 performedByEmail: staff.email || undefined,
                 selfieUrl: undefined,
                 punchInDateTime: punchInAt,
-                punchInAddress: buildAddressString(address, area, city, pincode) || undefined,
+                punchInAddress: buildAddressString(address, area, city, pincode) || (userLat && userLng ? `${userLat}, ${userLng}` : undefined),
                 timestamp: now
             }),
             insertAttendanceTracking(staffId, staff.name, userLat, userLng, 'in_office', 'checked_in', movementType, address, area, city, pincode)
@@ -3219,7 +3224,7 @@ async function processCheckOut(attendance, req, res, staff, now, data, template 
             punchInDateTime: attendance.punchIn || undefined,
             punchOutDateTime: punchOutAt,
             punchInAddress: (attendance.location?.punchIn && buildAddressString(attendance.location.punchIn.address, attendance.location.punchIn.area, attendance.location.punchIn.city, attendance.location.punchIn.pincode)) || undefined,
-            punchOutAddress: buildAddressString(address, area, city, pincode) || undefined,
+            punchOutAddress: buildAddressString(address, area, city, pincode) || (userLat && userLng ? `${userLat}, ${userLng}` : undefined),
             timestamp: now
         }),
         (userLat !== 0 || userLng !== 0)
@@ -3992,6 +3997,25 @@ const getAttendanceHistory = async (req, res) => {
         const total = await Attendance.countDocuments(query);
         const data = await enrichWithLeaveDetails(attendance, req.staff._id);
 
+        try {
+            const Company = require('../models/Company');
+            const company = await Company.findById(req.staff.businessId).lean();
+            const { getShiftTimings } = require('../utils/leaveAttendanceHelper');
+            for (const doc of data) {
+                try {
+                    const st = company ? getShiftTimings(company, req.staff, doc.date ? new Date(doc.date) : new Date(), req.staff?.joiningDate, null, doc.appliedShiftId || null) : {};
+                    if (st) {
+                        if (st.effectiveShiftName && !doc.shiftName) doc.shiftName = st.effectiveShiftName;
+                        if (st.startTime && !doc.shiftStartTime) doc.shiftStartTime = st.startTime;
+                        if (st.endTime && !doc.shiftEndTime) doc.shiftEndTime = st.endTime;
+                        if (st.shiftType && !doc.shiftType) doc.shiftType = st.shiftType;
+                        if (st.openWorkHours != null && doc.openWorkHours == null) doc.openWorkHours = st.openWorkHours;
+                        if (!doc.appliedShiftId && st.effectiveShiftId) doc.appliedShiftId = st.effectiveShiftId;
+                    }
+                } catch (_) {}
+            }
+        } catch (_) {}
+
         res.json({
             data,
             pagination: {
@@ -4256,6 +4280,16 @@ const getMonthAttendance = async (req, res) => {
                 // never a later reassignment (spec: future shift changes must not
                 // alter past attendance/fine).
                 const shiftTimings = companyForFine && staffWithSalary ? getShiftTimings(companyForFine, staffWithSalary, doc.date ? new Date(doc.date) : new Date(), staffWithSalary?.joiningDate, null, doc.appliedShiftId || null) : {};
+                if (shiftTimings) {
+                    if (shiftTimings.effectiveShiftName && !doc.shiftName) doc.shiftName = shiftTimings.effectiveShiftName;
+                    if (shiftTimings.startTime && !doc.shiftStartTime) doc.shiftStartTime = shiftTimings.startTime;
+                    if (shiftTimings.endTime && !doc.shiftEndTime) doc.shiftEndTime = shiftTimings.endTime;
+                    if (shiftTimings.shiftType && !doc.shiftType) doc.shiftType = shiftTimings.shiftType;
+                    if (shiftTimings.openWorkHours != null && doc.openWorkHours == null) doc.openWorkHours = shiftTimings.openWorkHours;
+                    if (!doc.appliedShiftId && shiftTimings.effectiveShiftId) {
+                        doc.appliedShiftId = shiftTimings.effectiveShiftId;
+                    }
+                }
                 // Open shifts have no fixed window — their "shift hours" are the required
                 // daily work hours, not (end − start). Using start/end there would fabricate
                 // a 9h window and skew the per-hour rate.
@@ -4381,7 +4415,7 @@ const getMonthAttendance = async (req, res) => {
         // joining date must not be counted (working days) or marked absent/week-off/holiday.
         // firstCountableDay is the first day of THIS month that is on/after the joining date.
         let firstCountableDay = 1;
-        const joiningDateRaw = staffWithSalary?.joiningDate || staffForCalendar?.joiningDate;
+        const joiningDateRaw = staffWithSalary?.onboardingDate || staffForCalendar?.onboardingDate || staffWithSalary?.joiningDate || staffForCalendar?.joiningDate;
         if (joiningDateRaw) {
             const joinD = new Date(joiningDateRaw);
             if (!Number.isNaN(joinD.getTime())) {
@@ -4708,22 +4742,36 @@ const getMonthAttendance = async (req, res) => {
                     .filter(Boolean)
             );
             const staffIdAsString = String(req.staff._id);
-            // The two AttendanceLog reads (logs-by-attendanceId and the orphan break-log fallback)
-            // are independent queries — run them concurrently instead of one after the other.
-            const [logs, orphanBreakLogs] = await Promise.all([
+            const Break = require('../models/Break');
+
+            // Fetch AttendanceLog rows, orphan break logs, and all Break collection records for the month concurrently
+            const [logs, orphanBreakLogs, monthBreaks] = await Promise.all([
                 AttendanceLog.find({
                     attendanceId: { $in: attendanceIds },
                     timestamp: { $gte: startOfMonth, $lte: endOfMonth }
                 }).sort({ timestamp: 1 }).lean(),
                 AttendanceLog.find({
-                    action: { $in: ['BREAK_START', 'BREAK_END'] },
+                    action: { $in: ['BREAK_START', 'BREAK_END', 'START_BREAK', 'END_BREAK'] },
                     timestamp: { $gte: startOfMonth, $lte: endOfMonth },
                     $or: [
                         { performedBy: req.staff._id },
+                        ...(req.staff.userId ? [{ performedBy: req.staff.userId }] : []),
                         { 'newValue.employeeID': req.staff._id },
-                        { 'newValue.employeeID': staffIdAsString }
+                        { 'newValue.employeeID': staffIdAsString },
+                        ...(req.staff.userId ? [{ 'newValue.employeeID': req.staff.userId }, { 'newValue.employeeID': String(req.staff.userId) }] : [])
                     ]
-                }).sort({ timestamp: 1 }).lean()
+                }).sort({ timestamp: 1 }).lean(),
+                Break.find({
+                    $or: [
+                        { employeeID: req.staff._id },
+                        { employeeID: staffIdAsString },
+                        ...(req.staff.userId ? [{ employeeID: req.staff.userId }, { employeeID: String(req.staff.userId) }] : [])
+                    ],
+                    startTime: { $gte: startOfMonth, $lte: endOfMonth }
+                }).sort({ startTime: 1 }).lean().catch(err => {
+                    console.warn('[getMonthAttendance] Break.find failed:', err?.message);
+                    return [];
+                })
             ]);
 
             const logsByAttendanceId = {};
@@ -4763,9 +4811,170 @@ const getMonthAttendance = async (req, res) => {
                 logsByAttendanceId[mappedAttendanceId].push(log);
             });
 
+            // Index external Break collection documents by calendar day
+            const breaksByDateKey = {};
+            if (Array.isArray(monthBreaks)) {
+                monthBreaks.forEach(b => {
+                    if (!b.startTime) return;
+                    const dKey = formatAttendanceCalendarDay(b.startTime);
+                    if (!dKey) return;
+                    if (!breaksByDateKey[dKey]) breaksByDateKey[dKey] = [];
+                    breaksByDateKey[dKey].push({
+                        startTime: b.startTime,
+                        endTime: b.endTime,
+                        durationMinutes: b.breakMin ?? (b.totalSeconds ? Math.round(b.totalSeconds / 60) : 0),
+                        duration: b.breakMin ?? (b.totalSeconds ? Math.round(b.totalSeconds / 60) : 0),
+                        totalBreakSeconds: b.totalSeconds ?? (b.breakMin ? b.breakMin * 60 : 0),
+                        BreakCount: b.breakCount ?? 1,
+                        breakFineMins: b.breakFineMins,
+                        breakFineAmount: b.breakFineAmount,
+                        breakStartSelfie: b.breakStartSelfie,
+                        breakEndSelfie: b.breakEndSelfie,
+                        location: b.breakStartLocation?.address || b.breakEndLocation?.address,
+                        startAddress: b.breakStartLocation?.address,
+                        endAddress: b.breakEndLocation?.address
+                    });
+                });
+            }
+
             attendance.forEach(a => {
                 const id = a._id?.toString?.() ?? String(a._id);
                 a.logs = id ? (logsByAttendanceId[id] || []) : [];
+                const dKey = formatAttendanceCalendarDay(a.date);
+                const docBreaks = (a.break && Array.isArray(a.break.breaks)) ? a.break.breaks : [];
+                const externalBreaks = dKey ? (breaksByDateKey[dKey] || []) : [];
+
+                // Combine and deduplicate break sessions
+                const combinedBreakMap = new Map();
+                docBreaks.forEach(b => {
+                    const st = b.startTime ? new Date(b.startTime).toISOString() : '';
+                    if (st) {
+                        combinedBreakMap.set(st, {
+                            startTime: b.startTime,
+                            endTime: b.endTime,
+                            durationMinutes: b.duration ?? (b.totalSeconds ? Math.round(b.totalSeconds / 60) : 0),
+                            duration: b.duration ?? (b.totalSeconds ? Math.round(b.totalSeconds / 60) : 0),
+                            totalBreakSeconds: (b.duration ? b.duration * 60 : (b.totalSeconds || 0)),
+                            BreakCount: b.BreakCount,
+                            breakFineMins: b.breakFineMins,
+                            breakFineAmount: b.breakFineAmount
+                        });
+                    }
+                });
+                externalBreaks.forEach(b => {
+                    const st = b.startTime ? new Date(b.startTime).toISOString() : '';
+                    if (st && !combinedBreakMap.has(st)) {
+                        combinedBreakMap.set(st, b);
+                    }
+                });
+
+                const allBreaks = Array.from(combinedBreakMap.values());
+                a.breakSessions = allBreaks;
+
+                // Synthesize missing BREAK_START and BREAK_END logs into a.logs
+                allBreaks.forEach(b => {
+                    const hasStartLog = a.logs.some(l => {
+                        const act = String(l.action || '').toUpperCase().replace('-', '_');
+                        if (act !== 'BREAK_START' && act !== 'START_BREAK' && act !== 'BREAKSTART') return false;
+                        const t1 = l.breakStartDateTime || l.startTime || l.timestamp;
+                        return t1 && b.startTime && new Date(t1).getTime() === new Date(b.startTime).getTime();
+                    });
+                    if (!hasStartLog && b.startTime) {
+                        a.logs.push({
+                            action: 'BREAK_START',
+                            timestamp: b.startTime,
+                            breakStartDateTime: b.startTime,
+                            startTime: b.startTime,
+                            selfieUrl: b.breakStartSelfie || undefined,
+                            image: b.breakStartSelfie || undefined,
+                            selfie: b.breakStartSelfie || undefined,
+                            breakStartAddress: b.startAddress || b.location || undefined,
+                            location: b.location || b.startAddress || undefined
+                        });
+                    }
+
+                    const hasEndLog = a.logs.some(l => {
+                        const act = String(l.action || '').toUpperCase().replace('-', '_');
+                        if (act !== 'BREAK_END' && act !== 'END_BREAK' && act !== 'BREAKEND') return false;
+                        const t2 = l.breakEndDateTime || l.endTime || l.timestamp;
+                        return t2 && b.endTime && new Date(t2).getTime() === new Date(b.endTime).getTime();
+                    });
+                    if (!hasEndLog && b.endTime) {
+                        a.logs.push({
+                            action: 'BREAK_END',
+                            timestamp: b.endTime,
+                            breakEndDateTime: b.endTime,
+                            endTime: b.endTime,
+                            totalBreakSeconds: b.totalBreakSeconds ?? (b.durationMinutes ? b.durationMinutes * 60 : 0),
+                            durationMinutes: b.durationMinutes ?? b.duration,
+                            duration: b.durationMinutes ?? b.duration,
+                            selfieUrl: b.breakEndSelfie || undefined,
+                            image: b.breakEndSelfie || undefined,
+                            selfie: b.breakEndSelfie || undefined,
+                            breakEndAddress: b.endAddress || b.location || undefined,
+                            location: b.location || b.endAddress || undefined
+                        });
+                    }
+                });
+
+                // Sort logs chronologically
+                a.logs.sort((l1, l2) => {
+                    const t1 = new Date(l1.timestamp || l1.time || l1.createdAt || 0).getTime();
+                    const t2 = new Date(l2.timestamp || l2.time || l2.createdAt || 0).getTime();
+                    return t1 - t2;
+                });
+
+                if ((!a.punchIn || a.punchIn === '' || a.punchIn === '-') && Array.isArray(a.logs) && a.logs.length > 0) {
+                    const pInLog = a.logs.find(l => {
+                        const act = String(l.action || '').toUpperCase().replace('-', '_');
+                        return act === 'PUNCH_IN' || act === 'PUNCHIN' || act === 'CHECK_IN' || act === 'CHECKIN';
+                    });
+                    if (pInLog) {
+                        a.punchIn = pInLog.punchInDateTime || pInLog.timestamp || pInLog.time || pInLog.createdAt;
+                    }
+                }
+                if ((!a.punchOut || a.punchOut === '' || a.punchOut === '-') && Array.isArray(a.logs) && a.logs.length > 0) {
+                    const pOutLogs = a.logs.filter(l => {
+                        const act = String(l.action || '').toUpperCase().replace('-', '_');
+                        return act === 'PUNCH_OUT' || act === 'PUNCHOUT' || act === 'CHECK_OUT' || act === 'CHECKOUT';
+                    });
+                    if (pOutLogs.length > 0) {
+                        const lastOut = pOutLogs[pOutLogs.length - 1];
+                        a.punchOut = lastOut.punchOutDateTime || lastOut.timestamp || lastOut.time || lastOut.createdAt;
+                    }
+                }
+                if (Array.isArray(a.logs) && a.logs.length > 0) {
+                    const fallbackPunchInAddr = buildAddressString(a.location?.punchIn?.address, a.location?.punchIn?.area, a.location?.punchIn?.city, a.location?.punchIn?.pincode)
+                        || buildAddressString(a.location?.address, a.location?.area, a.location?.city, a.location?.pincode)
+                        || (a.location?.punchIn?.latitude && a.location?.punchIn?.longitude ? `${a.location.punchIn.latitude}, ${a.location.punchIn.longitude}` : '')
+                        || (a.location?.latitude && a.location?.longitude ? `${a.location.latitude}, ${a.location.longitude}` : '');
+                    const fallbackPunchOutAddr = buildAddressString(a.location?.punchOut?.address, a.location?.punchOut?.area, a.location?.punchOut?.city, a.location?.punchOut?.pincode)
+                        || (a.location?.punchOut?.latitude && a.location?.punchOut?.longitude ? `${a.location.punchOut.latitude}, ${a.location.punchOut.longitude}` : '');
+
+                    a.logs.forEach(l => {
+                        const act = String(l.action || '').toUpperCase().replace('-', '_');
+                        if (act === 'PUNCH_IN' || act === 'PUNCHIN' || act === 'CHECK_IN' || act === 'CHECKIN') {
+                            if ((!l.selfieUrl || l.selfieUrl === '') && a.punchInSelfie) {
+                                l.selfieUrl = a.punchInSelfie;
+                                l.image = a.punchInSelfie;
+                                l.selfie = a.punchInSelfie;
+                            }
+                            if (!l.punchInAddress && fallbackPunchInAddr) l.punchInAddress = fallbackPunchInAddr;
+                            if (!l.address && fallbackPunchInAddr) l.address = fallbackPunchInAddr;
+                            if (!l.location && fallbackPunchInAddr) l.location = fallbackPunchInAddr;
+                        }
+                        if (act === 'PUNCH_OUT' || act === 'PUNCHOUT' || act === 'CHECK_OUT' || act === 'CHECKOUT') {
+                            if ((!l.selfieUrl || l.selfieUrl === '') && a.punchOutSelfie) {
+                                l.selfieUrl = a.punchOutSelfie;
+                                l.image = a.punchOutSelfie;
+                                l.selfie = a.punchOutSelfie;
+                            }
+                            if (!l.punchOutAddress && fallbackPunchOutAddr) l.punchOutAddress = fallbackPunchOutAddr;
+                            if (!l.address && fallbackPunchOutAddr) l.address = fallbackPunchOutAddr;
+                            if (!l.location && fallbackPunchOutAddr) l.location = fallbackPunchOutAddr;
+                        }
+                    });
+                }
             });
         }
 
@@ -4773,6 +4982,29 @@ const getMonthAttendance = async (req, res) => {
         const attendanceForResponse = attendance.map(a => {
             const aObj = (a && typeof a.toObject === 'function') ? a.toObject() : { ...a };
             aObj.date = formatAttendanceCalendarDay(a.date);
+            if (a.shiftName && !aObj.shiftName) aObj.shiftName = a.shiftName;
+            if (a.shiftStartTime && !aObj.shiftStartTime) aObj.shiftStartTime = a.shiftStartTime;
+            if (a.shiftEndTime && !aObj.shiftEndTime) aObj.shiftEndTime = a.shiftEndTime;
+            if (a.shiftType && !aObj.shiftType) aObj.shiftType = a.shiftType;
+            if (a.openWorkHours != null && aObj.openWorkHours == null) aObj.openWorkHours = a.openWorkHours;
+            if (a.appliedShiftId && !aObj.appliedShiftId) aObj.appliedShiftId = a.appliedShiftId;
+            if (a.punchIn && (!aObj.punchIn || aObj.punchIn === '' || aObj.punchIn === '-')) aObj.punchIn = a.punchIn;
+            if (a.punchOut && (!aObj.punchOut || aObj.punchOut === '' || aObj.punchOut === '-')) aObj.punchOut = a.punchOut;
+            if (a.punchInSelfie && (!aObj.punchInSelfie || aObj.punchInSelfie === '')) aObj.punchInSelfie = a.punchInSelfie;
+            if (a.punchOutSelfie && (!aObj.punchOutSelfie || aObj.punchOutSelfie === '')) aObj.punchOutSelfie = a.punchOutSelfie;
+            if (a.logs && !aObj.logs) aObj.logs = a.logs;
+            if (a.breakSessions && !aObj.breakSessions) aObj.breakSessions = a.breakSessions;
+            if (a.breakSessions && !aObj.breaks) aObj.breaks = a.breakSessions;
+            if (!aObj.punchInAddress) {
+                aObj.punchInAddress = buildAddressString(a.location?.punchIn?.address, a.location?.punchIn?.area, a.location?.punchIn?.city, a.location?.punchIn?.pincode)
+                    || buildAddressString(a.location?.address, a.location?.area, a.location?.city, a.location?.pincode)
+                    || (a.location?.punchIn?.latitude && a.location?.punchIn?.longitude ? `${a.location.punchIn.latitude}, ${a.location.punchIn.longitude}` : undefined)
+                    || (a.location?.latitude && a.location?.longitude ? `${a.location.latitude}, ${a.location.longitude}` : undefined);
+            }
+            if (!aObj.punchOutAddress) {
+                aObj.punchOutAddress = buildAddressString(a.location?.punchOut?.address, a.location?.punchOut?.area, a.location?.punchOut?.city, a.location?.punchOut?.pincode)
+                    || (a.location?.punchOut?.latitude && a.location?.punchOut?.longitude ? `${a.location.punchOut.latitude}, ${a.location.punchOut.longitude}` : undefined);
+            }
             return aObj;
         });
 
@@ -4802,17 +5034,37 @@ const getMonthAttendance = async (req, res) => {
             console.warn(`[getMonthAttendance][EMPTY] ${year}-${month} returned no attendance/present/absent/holiday for staff=${req.staff && req.staff._id} business=${req.staff && req.staff.businessId} — investigate (range ${startOfMonth.toISOString()}..${endOfMonth.toISOString()})`);
         }
 
+        let filteredAttendance = attendanceForResponse;
+        let filteredAbsentDates = absentDates;
+        let filteredWeekOffDates = weekOffDates;
+        let filteredHolidayDates = holidayDates;
+        let filteredLeaveDates = leaveDates;
+
+        if (joiningDateRaw) {
+            const joinD = new Date(joiningDateRaw);
+            if (!Number.isNaN(joinD.getTime())) {
+                const joinDateStr = `${joinD.getFullYear()}-${String(joinD.getMonth() + 1).padStart(2, '0')}-${String(joinD.getDate()).padStart(2, '0')}`;
+                filteredAttendance = attendanceForResponse.filter(a => String(a.date) >= joinDateStr);
+                filteredAbsentDates = absentDates.filter(d => String(d) >= joinDateStr);
+                filteredWeekOffDates = weekOffDates.filter(d => String(d) >= joinDateStr);
+                filteredHolidayDates = holidayDates.filter(d => String(d) >= joinDateStr);
+                filteredLeaveDates = leaveDates.filter(d => String(d) >= joinDateStr);
+            }
+        }
+
         res.json({
             data: {
-                attendance: attendanceForResponse,
+                attendance: filteredAttendance,
                 businessShifts,
                 holidays,
-                weekOffDates: weekOffDates,
+                weekOffDates: filteredWeekOffDates,
                 alternateWorkDatesInMonth,
-                absentDates,
+                absentDates: filteredAbsentDates,
                 presentDates,
-                holidayDates,
-                leaveDates,
+                holidayDates: filteredHolidayDates,
+                leaveDates: filteredLeaveDates,
+                joiningDate: joiningDateRaw,
+                onboardingDate: joiningDateRaw,
                 settings: {
                     weeklyOffPattern,
                     weeklyHolidays

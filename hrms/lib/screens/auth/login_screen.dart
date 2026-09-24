@@ -737,8 +737,9 @@ class _LoginScreenState extends State<LoginScreen>
             const SizedBox(height: 12),
 
             // Resend OTP
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 Text(
                   "Didn't receive the OTP? ",

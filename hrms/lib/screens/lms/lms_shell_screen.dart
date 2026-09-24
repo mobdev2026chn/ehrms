@@ -22,10 +22,7 @@ class LmsShellScreen extends StatelessWidget {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-          (route) => route.isFirst,
-        );
+        DashboardScreen.goToTab(context, 0);
       },
       child: Scaffold(
         backgroundColor: AppColors.background,
@@ -47,11 +44,7 @@ class LmsShellScreen extends StatelessWidget {
         bottomNavigationBar: AppBottomNavigationBar(
           currentIndex: -1,
           onTap: (index) {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(
-                  builder: (_) => DashboardScreen(initialIndex: index)),
-              (route) => route.isFirst,
-            );
+            DashboardScreen.goToTab(context, index);
           },
         ),
       ),

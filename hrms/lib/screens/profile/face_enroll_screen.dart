@@ -58,11 +58,15 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
       final res = await _authService.enrollFace([dataUrl], imageFile: result);
       debugPrint('[FaceEnroll] API response: $res');
       if (!mounted) return;
-      final ok = res['success'] == true;
+      // Already registered on the server (e.g. from another phone) — nothing to do.
+      final already = res['alreadyEnrolled'] == true;
+      final ok = res['success'] == true || already;
       SnackBarUtils.showSnackBar(
         context,
-        res['message']?.toString() ??
-            (ok ? 'Face registered.' : 'Registration failed.'),
+        already
+            ? 'Your face is already registered.'
+            : res['message']?.toString() ??
+                (ok ? 'Face registered.' : 'Registration failed.'),
         isError: !ok,
       );
       if (ok) {

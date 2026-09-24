@@ -18,6 +18,9 @@ Future<void> clearStoredAuthSession() async {
   await prefs.remove('taskSettings');
   await prefs.remove('businessId');
   await prefs.remove(AppConstants.interactionAccessTokenPrefsKey);
+  // Legacy device-wide "face registered" flag: it made the next user on this phone
+  // look registered. Registration now lives on the server per staff member.
+  await prefs.remove('face_enrolled_selfie');
   // Drop any in-memory screen caches so one session's data can't leak into the next.
   SwrCache.clearAll();
   DioClient().clearAuthToken();
@@ -30,8 +33,9 @@ const _kLogDioTraffic = false;
 class RetryOnRateLimitInterceptor extends Interceptor {
   RetryOnRateLimitInterceptor(this.dio);
   final Dio dio;
-  static const int maxRetries = 3;
-  static const List<int> backoffDelaysSeconds = [2, 4, 6];
+  // Keep this short: long back-offs park screens behind a spinner for 10s+.
+  static const int maxRetries = 1;
+  static const List<int> backoffDelaysSeconds = [1];
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) async {
@@ -58,7 +62,8 @@ class RetryOnRateLimitInterceptor extends Interceptor {
     if (retryAfter != null && retryAfter.isNotEmpty) {
       final parsed = int.tryParse(retryAfter);
       if (parsed != null && parsed > 0) {
-        waitSeconds = parsed > 120 ? 120 : parsed;
+        // Never park a screen behind a long Retry-After; give up and surface the error.
+        waitSeconds = parsed > 2 ? 2 : parsed;
       }
     }
     await Future<void>.delayed(Duration(seconds: waitSeconds));
@@ -278,10 +283,10 @@ class DioClient {
     dio = Dio(
       BaseOptions(
         baseUrl: baseUrl,
-        // Production mobile networks can have short jitter spikes; keep
-        // timeouts tolerant to avoid false "server timed out" UX.
-        connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 45),
+        // Long enough for mobile jitter, short enough that one stalled call does
+        // not hold a screen's loader for a minute. Uploads keep a long send timeout.
+        connectTimeout: const Duration(seconds: 12),
+        receiveTimeout: const Duration(seconds: 25),
         sendTimeout: const Duration(seconds: 45),
         headers: {
           'Content-Type': 'application/json',

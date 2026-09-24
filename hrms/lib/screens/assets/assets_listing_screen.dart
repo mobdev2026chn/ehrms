@@ -220,7 +220,7 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
                           Icons.apps_outlined)
                     else
                       SizedBox(
-                        height: 168,
+                        height: 190,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
                           itemCount: _software.length,
@@ -527,7 +527,7 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
                 color: AppColors.textPrimary,
                 height: 1.2,
               ),
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 2),

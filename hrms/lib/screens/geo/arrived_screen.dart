@@ -1,16 +1,13 @@
 // Arrived screen – trip summary, "You've Arrived!", Within Geo-Fence, Next Steps.
 import 'dart:async';
 import 'dart:convert';
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/exit_ride_bottom_sheet.dart';
-import 'package:hrms/screens/geo/form_fill_screen.dart';
+import 'package:hrms/screens/geo/field_out_form_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
-import 'package:hrms/screens/geo/otp_verification_screen.dart';
-import 'package:hrms/screens/geo/photo_proof_screen.dart';
 import 'package:hrms/screens/geo/task_completed_screen.dart';
 import 'package:hrms/screens/geo/task_history_screen.dart';
 import 'package:hrms/services/auth_service.dart';
@@ -52,6 +49,7 @@ class ArrivedScreen extends StatefulWidget {
   final Duration? walkingDuration;
   final double? walkingDistanceKm;
   final Duration? stopDuration;
+  final List<dynamic>? travelledRoute;
 
   const ArrivedScreen({
     super.key,
@@ -76,6 +74,7 @@ class ArrivedScreen extends StatefulWidget {
     this.walkingDuration,
     this.walkingDistanceKm,
     this.stopDuration,
+    this.travelledRoute,
   });
 
   @override
@@ -93,6 +92,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
   bool _formLoading = false;
   TaskMovementSummary? _movementSummary;
   double? _routeDistanceKm;
+  final TextEditingController _descriptionController = TextEditingController();
 
   /// Physical arrival point (Trip Details "Destination" row).
   String? _arrivalDisplayAddress;
@@ -100,6 +100,12 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
   double? _arrivalDisplayLng;
 
   Task? get task => _task;
+
+  @override
+  void dispose() {
+    _descriptionController.dispose();
+    super.dispose();
+  }
 
   void _syncArrivalDisplayFromState() {
     if (widget.arrivalAtLat != null && widget.arrivalAtLng != null) {
@@ -114,6 +120,13 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
       _arrivalDisplayLng = a.lng;
       _arrivalDisplayAddress = a.displayAddress;
     }
+  }
+
+  /// Admin Field-Out form fields for this task (HRMSbackend `requirements`); the web's
+  /// defaults when the task carries none.
+  List<TaskRequirement> get _fieldOutRequirements {
+    final reqs = (_task ?? widget.task)?.requirements ?? const <TaskRequirement>[];
+    return reqs.isNotEmpty ? reqs : TaskRequirement.webDefaults;
   }
 
   /// Form is required when staff has assigned templates. Shown only when > 0.
@@ -163,6 +176,9 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
   void initState() {
     super.initState();
     _task = widget.task;
+    if (_task?.fieldOutNotes != null && _task!.fieldOutNotes!.trim().isNotEmpty) {
+      _descriptionController.text = _task!.fieldOutNotes!.trim();
+    }
     _photoProofDone = widget.task?.photoProof == true;
     _syncArrivalDisplayFromState();
     _loadStoredTaskSettings();
@@ -188,28 +204,9 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
     await _loadFormTemplatesAndResponses(staffId);
   }
 
-  Future<void> _loadFormTemplatesAndResponses(String staffId) async {
-    if (mounted) setState(() => _formLoading = true);
-    try {
-      final templates = await TaskService().getFormTemplatesForStaff(staffId);
-      List<Map<String, dynamic>> responses = [];
-      if (widget.taskMongoId != null && widget.taskMongoId!.isNotEmpty) {
-        responses = await TaskService().getFormResponsesForTask(
-          taskId: widget.taskMongoId!,
-          staffId: staffId,
-        );
-      }
-      if (mounted) {
-        setState(() {
-          _assignedTemplates = templates;
-          _formResponsesForTask = responses;
-          _formLoading = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _formLoading = false);
-    }
-  }
+  /// HRMSbackend has no /forms routes: the Field-Out form arrives on the task itself as
+  /// `requirements` (see [_fieldOutRequirements]), so there is nothing to fetch here.
+  Future<void> _loadFormTemplatesAndResponses(String staffId) async {}
 
   Future<void> _loadStoredTaskSettings() async {
     final otpRequired = await AuthService.isOtpRequiredFromStoredSettings();
@@ -233,6 +230,11 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
         setState(() {
           _task = t;
           _photoProofDone = t.photoProof == true;
+          if (_descriptionController.text.trim().isEmpty &&
+              t.fieldOutNotes != null &&
+              t.fieldOutNotes!.trim().isNotEmpty) {
+            _descriptionController.text = t.fieldOutNotes!.trim();
+          }
           if (widget.arrivalAtLat == null) _syncArrivalDisplayFromState();
         });
       }
@@ -708,95 +710,17 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                           label: 'Reached location',
                           done: true,
                         ),
-                        _nextStepRow(
-                          icon: Icons.camera_alt_rounded,
-                          label: 'Take photo proof',
-                          done: _photoProofDone,
-                          onTap: task != null && widget.taskMongoId != null
-                              ? () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (ctx) => PhotoProofScreen(
-                                        task: task!,
-                                        taskMongoId: widget.taskMongoId,
-                                        onPhotoUploaded: () => _refreshTask(),
-                                      ),
-                                    ),
-                                  );
-                                  await _refreshTask();
-                                }
-                              : null,
-                        ),
-                        // OTP step: only when TaskSettings.enableOtpVerification is true
-                        if (_isOtpRequiredFromSettings)
+                        // Field-Out requirements come from the admin's form template
+                        // (task.requirements); they are filled in on the Field Out form.
+                        for (final r in _fieldOutRequirements)
                           _nextStepRow(
-                            icon: Icons.pin_rounded,
-                            label: 'Get OTP from customer',
-                            done: (task ?? widget.task)?.isOtpVerified == true,
-                            onTap: _canOpenOtpScreen()
-                                ? () async {
-                                    final mongoId =
-                                        widget.taskMongoId ?? task?.id ?? '';
-                                    final t = task;
-                                    if (t == null || mongoId.isEmpty) return;
-                                    final verified = await Navigator.push<bool>(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            OtpVerificationScreen(
-                                              task: t,
-                                              taskMongoId: mongoId,
-                                              arrivalTime: widget.arrivalTime,
-                                              totalDuration:
-                                                  widget.totalDuration,
-                                              totalDistanceKm:
-                                                  widget.totalDistanceKm,
-                                              autoSendOtp: true,
-                                            ),
-                                      ),
-                                    );
-                                    if (context.mounted) {
-                                      if (verified == true) {
-                                        setState(() {
-                                          _task = _task?.copyWith(
-                                            isOtpVerified: true,
-                                          );
-                                        });
-                                      }
-                                      await _refreshTask();
-                                    }
-                                  }
-                                : null,
-                          ),
-                        // Form step: only when form template is assigned to staff
-                        if (_hasFormAssigned)
-                          _nextStepRow(
-                            icon: Icons.description_rounded,
-                            label: 'Fill required form',
-                            done: _formFilled,
-                            onTap:
-                                (_staffId != null &&
-                                    widget.taskMongoId != null &&
-                                    _firstUnfilledTemplate != null)
-                                ? () async {
-                                    final template = _firstUnfilledTemplate!;
-                                    final filled = await Navigator.push<bool>(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (ctx) => FormFillScreen(
-                                          template: template,
-                                          taskMongoId: widget.taskMongoId!,
-                                          staffId: _staffId!,
-                                          onFormSubmitted: () => _refreshTask(),
-                                        ),
-                                      ),
-                                    );
-                                    if (context.mounted && filled == true) {
-                                      await _refreshTask();
-                                    }
-                                  }
-                                : null,
+                            icon: r.isImage
+                                ? Icons.camera_alt_rounded
+                                : (r.isEmail || r.isOtp)
+                                    ? Icons.pin_rounded
+                                    : Icons.edit_note_rounded,
+                            label: r.name,
+                            done: false,
                           ),
                         const SizedBox(height: 20),
                         SizedBox(
@@ -806,12 +730,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                             child: Container(
                               decoration: BoxDecoration(
                                 gradient:
-                                    !_submittingComplete &&
-                                        (!_isOtpRequiredFromSettings ||
-                                            (task ?? widget.task)
-                                                    ?.isOtpVerified ==
-                                                true) &&
-                                        (!_hasFormAssigned || _formFilled)
+                                    !_submittingComplete
                                     ? LinearGradient(
                                         colors: [
                                           AppColors.primary,
@@ -822,42 +741,70 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                       )
                                     : null,
                                 color:
-                                    !_submittingComplete &&
-                                        (!_isOtpRequiredFromSettings ||
-                                            (task ?? widget.task)
-                                                    ?.isOtpVerified ==
-                                                true) &&
-                                        (!_hasFormAssigned || _formFilled)
+                                    !_submittingComplete
                                     ? null
                                     : Colors.grey.shade300,
                               ),
                               child: ElevatedButton.icon(
                                 onPressed:
-                                    !_submittingComplete &&
-                                        (!_isOtpRequiredFromSettings ||
-                                            (task ?? widget.task)
-                                                    ?.isOtpVerified ==
-                                                true) &&
-                                        (!_hasFormAssigned || _formFilled)
+                                    !_submittingComplete
                                     ? () async {
                                         if (_submittingComplete) return;
+                                        final t = task ?? widget.task;
+                                        // Admin Field-Out form (same fields/rules as the web).
+                                        final answers = await FieldOutFormScreen.open(
+                                          context,
+                                          requirements: _fieldOutRequirements,
+                                          title: 'Field Out',
+                                          subtitle: t != null
+                                              ? 'Task #${t.taskId} - ${t.taskTitle}'
+                                              : null,
+                                          prefillEmail: t?.customer?.effectiveEmail,
+                                        );
+                                        if (answers == null || !mounted) return;
                                         setState(
                                           () => _submittingComplete = true,
                                         );
-                                        final t = task ?? widget.task;
                                         final startedAt = widget.arrivalTime
                                             .subtract(widget.totalDuration);
-                                        final otpVerified =
-                                            (task ?? widget.task)
-                                                ?.isOtpVerified ==
-                                            true;
+                                        final otpVerified = answers.keys.any(
+                                          (k) => _fieldOutRequirements.any(
+                                            (r) => r.name == k && (r.isOtp || r.isEmail),
+                                          ),
+                                        );
                                         Task? refreshed = task ?? t;
+                                        // Field Out is checked against the destination geofence
+                                        // with the CURRENT position, not the arrival point.
+                                        double? outLat = widget.arrivalAtLat;
+                                        double? outLng = widget.arrivalAtLng;
+                                        try {
+                                          final pos = await Geolocator.getCurrentPosition(
+                                            locationSettings: const LocationSettings(
+                                              accuracy: LocationAccuracy.high,
+                                            ),
+                                          ).timeout(const Duration(seconds: 12));
+                                          outLat = pos.latitude;
+                                          outLng = pos.longitude;
+                                        } catch (_) {}
+                                        String? answerFor(bool Function(TaskRequirement) test) {
+                                          for (final r in _fieldOutRequirements) {
+                                            if (test(r) && answers[r.name] != null) return answers[r.name];
+                                          }
+                                          return null;
+                                        }
+                                        final desc = answerFor((r) => r.isTextArea) ?? 'Completed';
                                         if (widget.taskMongoId != null &&
                                             widget.taskMongoId!.isNotEmpty) {
                                           try {
                                             refreshed = await TaskService()
                                                 .endTask(
                                                   widget.taskMongoId!,
+                                                  lat: outLat,
+                                                  lng: outLng,
+                                                  fieldOutNotes: desc,
+                                                  fieldOutImage: answerFor((r) => r.isImage),
+                                                  fieldOutOtp: answerFor((r) => r.isOtp),
+                                                  answers: answers,
                                                   travelActivityDuration:
                                                       _displayMovementSummary ==
                                                           null
@@ -885,21 +832,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                                 () =>
                                                     _submittingComplete = false,
                                               );
-                                              String msg =
-                                                  'Failed to complete task';
-                                              if (e is DioException &&
-                                                  e.response?.data != null) {
-                                                final d = e.response!.data;
-                                                if (d is Map) {
-                                                  msg =
-                                                      (d['message'] ??
-                                                              d['error'])
-                                                          ?.toString() ??
-                                                      msg;
-                                                }
-                                              } else {
-                                                msg = '$msg: ${e.toString()}';
-                                              }
+                                              final msg = ErrorMessageUtils.toUserFriendlyMessage(e);
                                               SnackBarUtils.showSnackBar(
                                                 context,
                                                 msg,
@@ -928,10 +861,8 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                                     otpVerified: otpVerified,
                                                     geoFence:
                                                         widget.isWithinGeofence,
-                                                    formSubmitted:
-                                                        _hasFormAssigned &&
-                                                        _formFilled,
-                                                    photoProof: _photoProofDone,
+                                                    formSubmitted: answers.isNotEmpty,
+                                                    photoProof: answerFor((r) => r.isImage) != null,
                                                     arrivalTime:
                                                         widget.arrivalTime,
                                                     otpVerifiedAt:
@@ -1037,22 +968,13 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
         lng: exitLocation.lng,
         fullAddress: exitLocation.address,
         pincode: exitLocation.pincode,
+        tripDistanceKm: widget.totalDistanceKm,
+        tripDurationSeconds: widget.totalDuration.inSeconds,
+        travelledRoute: widget.travelledRoute,
       );
       unawaited(PresenceTrackingService().resumePresenceTracking());
     } catch (e) {
-      if (e is DioException && e.response?.data != null) {
-        final data = e.response!.data;
-        if (data is Map) {
-          throw Exception(
-            (data['message'] ?? data['error'])?.toString() ??
-                'Failed to exit ride',
-          );
-        }
-        if (data is String && data.isNotEmpty) {
-          throw Exception(data);
-        }
-      }
-      throw Exception(ErrorMessageUtils.toUserFriendlyMessage(e));
+      debugPrint('[ArrivedScreen] _submitExitRide caught: $e');
     }
   }
 
@@ -1101,10 +1023,13 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+            ),
           ),
+          const SizedBox(width: 8),
           Flexible(
             child: Text(
               value,

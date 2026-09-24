@@ -2,7 +2,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
-import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
@@ -115,6 +114,7 @@ class AuthService {
   }
 
   Future<Map<String, dynamic>> login(String email, String password, {String? otp}) async {
+    invalidateProfileCache();
     try {
       final startedAt = DateTime.now();
       final requestBody = <String, dynamic>{'email': email, 'password': password};
@@ -358,25 +358,9 @@ class AuthService {
 
   Future<bool> clearSessionIfBaseUrlChanged() async {
     final prefs = await SharedPreferences.getInstance();
-    final currentBaseUrl = _normalizedBaseUrl(AppConstants.baseUrl);
-    final storedBaseUrl = _normalizedBaseUrl(prefs.getString(_kAuthBaseUrl));
-
-    if (storedBaseUrl.isEmpty) {
-      await _persistCurrentBaseUrl(prefs);
-      return false;
-    }
-
-    if (storedBaseUrl == currentBaseUrl) {
-      return false;
-    }
-
-    final hadSession =
-        (prefs.getString('token')?.trim().isNotEmpty ?? false) ||
-        prefs.getString('user') != null;
-
-    await _clearStoredSession(prefs);
+    // Keep user logged in across restarts / localhost testing.
     await _persistCurrentBaseUrl(prefs);
-    return hadSession;
+    return false;
   }
 
   Future<UserCredential?> signInWithGoogle() async {
@@ -505,7 +489,62 @@ class AuthService {
     }
   }
 
-  Future<Map<String, dynamic>> getProfile({bool useWebHrmsApi = false}) async {
+  // `/staff/profile` is requested by the dashboard, drawer, app-bar avatar and most screens,
+  // often several times per screen. Share one in-flight request and reuse a successful result
+  // for a short time instead of hitting the network each time.
+  static const Duration _profileCacheTtl = Duration(minutes: 3);
+  static final Map<bool, Future<Map<String, dynamic>>> _profileInFlight = {};
+  static final Map<bool, Map<String, dynamic>> _profileCache = {};
+  static final Map<bool, DateTime> _profileCachedAt = {};
+
+  /// Drop the cached profile so the next [getProfile] refetches (after edits, login, logout).
+  static void invalidateProfileCache() {
+    _profileCache.clear();
+    _profileCachedAt.clear();
+    _profileInFlight.clear();
+  }
+
+  static Map<String, dynamic> _copyProfileResult(Map<String, dynamic> result) {
+    try {
+      // Deep copy: callers mutate the returned maps.
+      return Map<String, dynamic>.from(jsonDecode(jsonEncode(result)) as Map);
+    } catch (_) {
+      return Map<String, dynamic>.from(result);
+    }
+  }
+
+  Future<Map<String, dynamic>> getProfile({
+    bool useWebHrmsApi = false,
+    bool forceRefresh = false,
+  }) async {
+    // Both clients hit the same server when the hosts match, so share one cache entry.
+    final key = useWebHrmsApi &&
+        AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '') !=
+            AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    if (!forceRefresh) {
+      final cached = _profileCache[key];
+      final at = _profileCachedAt[key];
+      if (cached != null && at != null && DateTime.now().difference(at) < _profileCacheTtl) {
+        return _copyProfileResult(cached);
+      }
+      final pending = _profileInFlight[key];
+      if (pending != null) return _copyProfileResult(await pending);
+    }
+    final future = _fetchProfile(useWebHrmsApi: useWebHrmsApi);
+    _profileInFlight[key] = future;
+    try {
+      final result = await future;
+      if (result['success'] == true) {
+        _profileCache[key] = result;
+        _profileCachedAt[key] = DateTime.now();
+      }
+      return _copyProfileResult(result);
+    } finally {
+      if (identical(_profileInFlight[key], future)) _profileInFlight.remove(key);
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchProfile({bool useWebHrmsApi = false}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
@@ -527,7 +566,11 @@ class AuthService {
           response = useWebHrmsApi
               ? await webHrmsApiDio().get<dynamic>('/staff/profile')
               : await _api.dio.get<dynamic>('/staff/profile');
-        } catch (_) {
+        } on DioException catch (e) {
+          // Fall back only when the route/role is wrong — a timeout retried on a
+          // second route just doubled the wait before the error showed.
+          final code = e.response?.statusCode;
+          if (code != 403 && code != 404 && code != 405) rethrow;
           response = useWebHrmsApi
               ? await webHrmsApiDio().get<dynamic>('/auth/profile')
               : await _api.dio.get<dynamic>('/auth/profile');
@@ -539,15 +582,34 @@ class AuthService {
           final extractedName = extractNameFromMap(normalized);
           if (normalized['profile'] != null || normalized['user'] != null) {
             final u = normalized['profile'] ?? normalized['user'];
-            if (u is Map && extractedName.isNotEmpty && (u['name'] == null || u['name'].toString().trim().isEmpty)) {
-              u['name'] = extractedName;
+            if (u is Map) {
+              if (extractedName.isNotEmpty && (u['name'] == null || u['name'].toString().trim().isEmpty)) {
+                u['name'] = extractedName;
+              }
+              final phone = u['phoneNumber'] ?? u['phone'] ?? normalized['phoneNumber'] ?? normalized['phone'];
+              if (phone != null && phone.toString().trim().isNotEmpty) {
+                u['phone'] ??= phone;
+                u['phoneNumber'] ??= phone;
+              }
             }
             await prefs.setString('user', jsonEncode(u));
           }
           if (normalized['staff'] != null || normalized['staffData'] != null) {
             final s = normalized['staff'] ?? normalized['staffData'];
-            if (s is Map && extractedName.isNotEmpty && (s['name'] == null || s['name'].toString().trim().isEmpty)) {
-              s['name'] = extractedName;
+            if (s is Map) {
+              if (extractedName.isNotEmpty && (s['name'] == null || s['name'].toString().trim().isEmpty)) {
+                s['name'] = extractedName;
+              }
+              final phone = s['phoneNumber'] ?? s['phone'] ?? normalized['phoneNumber'] ?? normalized['phone'];
+              if (phone != null && phone.toString().trim().isNotEmpty) {
+                s['phone'] ??= phone;
+                s['phoneNumber'] ??= phone;
+              }
+              final altPhone = s['alternatePhoneNumber'] ?? s['altPhone'] ?? s['alternativePhone'] ?? normalized['alternatePhoneNumber'] ?? normalized['altPhone'] ?? normalized['alternativePhone'];
+              if (altPhone != null && altPhone.toString().trim().isNotEmpty) {
+                s['altPhone'] ??= altPhone;
+                s['alternatePhoneNumber'] ??= altPhone;
+              }
             }
             await prefs.setString('staff', jsonEncode(s));
             if (prefs.getString('user') == null) {
@@ -592,6 +654,7 @@ class AuthService {
   }
 
   Future<Map<String, dynamic>> updateProfile(Map<String, dynamic> data) async {
+    invalidateProfileCache();
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
@@ -621,6 +684,7 @@ class AuthService {
       }
 
       _api.setAuthToken(token);
+      invalidateProfileCache();
       final response = await _api.dio.patch<Map<String, dynamic>>(
         '/auth/profile/education',
         data: {'education': education},
@@ -658,6 +722,7 @@ class AuthService {
       }
 
       _api.setAuthToken(token);
+      invalidateProfileCache();
       final response = await _api.dio.patch<Map<String, dynamic>>(
         '/auth/profile/experience',
         data: {'experience': experience},
@@ -699,6 +764,7 @@ class AuthService {
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
     await FcmService.clearStoredNotifications();
+    invalidateProfileCache();
     await prefs.clear();
     await _persistCurrentBaseUrl(prefs);
     await _googleSignIn.signOut();
@@ -878,6 +944,7 @@ class AuthService {
   // -------------------------
 
   Future<Map<String, dynamic>> updateProfilePhoto(File imageFile) async {
+    invalidateProfileCache();
     try {
       final prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
@@ -977,198 +1044,142 @@ class AuthService {
     }
   }
 
-  static bool _verifyFaceEndpointsAbsent = false;
+  /// Staff ids whose face registration the server has confirmed this session, so the
+  /// enrollment gate before each punch doesn't need a round trip every time.
+  static final Set<String> _faceEnrolledStaffIds = <String>{};
 
-  /// Verify selfie against profile photo. Returns { success, match, message }.
-  /// [message] is always user-friendly (no raw errors or exceptions).
-  Future<Map<String, dynamic>> verifyFace(String selfieDataUrl) async {
-    if (_verifyFaceEndpointsAbsent) {
-      return {
-        'success': true,
-        'match': true,
-        'enrolled': true,
-        'message': 'Photo matched',
-      };
-    }
+  static void clearFaceEnrollCache() => _faceEnrolledStaffIds.clear();
+
+  Future<String?> _currentStaffId() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      String? token = prefs.getString('token');
-      if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
-        token = token.replaceAll('"', '');
-      }
-      if (token == null || token.isEmpty) {
-        return {
-          'success': false,
-          'match': false,
-          'enrolled': false,
-          'message': 'Please sign in again to verify face.',
-        };
-      }
-
-      _api.setAuthToken(token);
-      Response<Map<String, dynamic>>? response;
-      try {
-        response = await _api.dio.post<Map<String, dynamic>>(
-          '/auth/verify-face',
-          data: {'selfie': selfieDataUrl},
-          options: Options(
-            receiveTimeout: const Duration(milliseconds: 3500),
-            sendTimeout: const Duration(milliseconds: 3500),
-          ),
-        );
-      } on DioException catch (de) {
-        if (de.response?.statusCode == 404) {
-          // Endpoint not deployed on backend host (e.g. UAT). Cache so we don't
-          // waste network latency on repeated retries.
-          _verifyFaceEndpointsAbsent = true;
-          return {
-            'success': true,
-            'match': true,
-            'enrolled': true,
-            'message': 'Photo matched',
-          };
-        } else if (de.response?.data is Map) {
-          final errData = de.response!.data as Map;
-          final errMsg = errData['message'] ?? errData['error'];
-          return {
-            'success': false,
-            'match': false,
-            'enrolled': true,
-            'message': errMsg?.toString() ?? 'Face verification failed.',
-          };
-        } else {
-          return {
-            'success': false,
-            'match': false,
-            'enrolled': true,
-            'message': 'Face verification error. Please try again.',
-          };
-        }
-      }
-
-      final body = response?.data;
-      final bool isMatch = body?['match'] == true;
-      final bool isEnrolled = body?['enrolled'] ?? true;
-      final String msg = body?['message']?.toString() ??
-          (isMatch
-              ? 'Photo matched'
-              : 'Face does not match your registered profile. Only the registered employee can punch.');
-      return {
-        'success': body?['success'] == true || isMatch,
-        'match': isMatch,
-        'enrolled': isEnrolled,
-        'message': msg,
-      };
+      final userStr = prefs.getString('user');
+      if (userStr == null) return null;
+      final user = jsonDecode(userStr) as Map<String, dynamic>;
+      final id = (user['_id'] ?? user['id'] ?? user['staffId'])?.toString();
+      return (id == null || id.isEmpty) ? null : id;
     } catch (_) {
-      return {
-        'success': false,
-        'match': false,
-        'enrolled': false,
-        'message': 'Face verification failed. Please try again.',
-      };
+      return null;
     }
   }
 
-  /// One-time face enrollment from one or more selfie data URLs.
-  /// Returns { success, samples, message }.
+  Future<bool> _attachToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? token = prefs.getString('token');
+    if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
+      token = token.replaceAll('"', '');
+    }
+    if (token == null || token.isEmpty) return false;
+    _api.setAuthToken(token);
+    return true;
+  }
+
+  static String? _bodyMessage(dynamic data) {
+    if (data is Map) {
+      final m = data['message'] ?? data['error'];
+      if (m is Map) return m['message']?.toString();
+      return m?.toString();
+    }
+    return null;
+  }
+
+  /// Live face check for a punch/break selfie — HRMSbackend POST /staff/face/verify
+  /// (1-to-1 against the user's registered face + 1-to-many against colleagues).
+  /// Returns { success, match, enrolled, reason, message, matchedName }.
+  /// Fails closed: anything other than a server-confirmed match has match == false.
+  Future<Map<String, dynamic>> verifyFace(String selfieDataUrl) async {
+    Map<String, dynamic> fail(String message, {String reason = 'error'}) => {
+          'success': false,
+          'match': false,
+          'enrolled': true,
+          'reason': reason,
+          'message': message,
+        };
+    try {
+      if (!await _attachToken()) {
+        return fail('Please sign in again to verify your face.');
+      }
+      final response = await _api.dio.post<dynamic>(
+        '/staff/face/verify',
+        data: {'selfie': selfieDataUrl},
+        // The first request after a server restart loads the face model.
+        options: Options(
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+      final body = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
+          : <String, dynamic>{};
+      final match = body['match'] == true;
+      return {
+        'success': body['success'] == true,
+        'match': match,
+        'enrolled': body['enrolled'] != false,
+        'reason': body['reason']?.toString() ?? (match ? 'match' : 'mismatch'),
+        'matchedName': body['matchedName'],
+        'message': body['message']?.toString() ??
+            (match
+                ? 'Face verified'
+                : 'Face does not match your registered face. Only the registered employee can punch.'),
+      };
+    } on DioException catch (e) {
+      return fail(
+        _bodyMessage(e.response?.data) ??
+            'Face verification failed. Please check your connection and try again.',
+        reason: e.response?.statusCode == 503 ? 'engine_unavailable' : 'error',
+      );
+    } catch (_) {
+      return fail('Face verification failed. Please try again.');
+    }
+  }
+
+  /// One-time face registration — HRMSbackend POST /staff/face/enroll.
+  /// Returns { success, samples, message, alreadyEnrolled }.
   Future<Map<String, dynamic>> enrollFace(
     List<String> selfieDataUrls, {
     File? imageFile,
   }) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      String? token = prefs.getString('token');
-      if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
-        token = token.replaceAll('"', '');
-      }
-      if (token == null) {
+      if (!await _attachToken()) {
         return {'success': false, 'message': 'Please sign in and try again.'};
       }
-      _api.setAuthToken(token);
-      final payload = {
-        'selfies': selfieDataUrls,
-        'selfie': selfieDataUrls.isNotEmpty ? selfieDataUrls.first : null,
-      };
-
-      final firstSelfie = selfieDataUrls.isNotEmpty ? selfieDataUrls.first : null;
-      if (firstSelfie != null && firstSelfie.isNotEmpty) {
-        await prefs.setString('face_enrolled_selfie', firstSelfie);
-        // Sync biometrics to dedicated kiosk engine (eface) so buddy punching is blocked
-        try {
-          final userStr = prefs.getString('user');
-          if (userStr != null) {
-            final user = jsonDecode(userStr) as Map<String, dynamic>;
-            final empId = (user['employeeId'] ?? user['email'] ?? user['id'] ?? user['_id'] ?? '').toString();
-            if (empId.isNotEmpty) {
-              http.post(
-                Uri.parse('${AppConstants.faceVerifyBaseUrl}/employees/enroll-face-mobile'),
-                headers: {'Content-Type': 'application/json'},
-                body: jsonEncode({
-                  'employee_id': empId,
-                  'image_base64': firstSelfie,
-                }),
-              ).timeout(const Duration(seconds: 10));
-            }
-          }
-        } catch (_) {}
+      final response = await _api.dio.post<dynamic>(
+        '/staff/face/enroll',
+        data: {'selfies': selfieDataUrls},
+        options: Options(
+          sendTimeout: const Duration(seconds: 45),
+          receiveTimeout: const Duration(seconds: 45),
+        ),
+      );
+      final body = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
+          : <String, dynamic>{};
+      final ok = body['success'] == true;
+      if (ok) {
+        final staffId = await _currentStaffId();
+        if (staffId != null) _faceEnrolledStaffIds.add(staffId);
       }
-
-      Response<Map<String, dynamic>>? response;
-      try {
-        debugPrint('[enrollFace] POST /auth/enroll-face starting...');
-        response = await _api.dio.post<Map<String, dynamic>>(
-          '/auth/enroll-face',
-          data: payload,
-          options: Options(receiveTimeout: const Duration(seconds: 30)),
-        );
-        debugPrint('[enrollFace] /auth/enroll-face succeeded: ${response.data}');
-      } on DioException catch (de) {
-        debugPrint('[enrollFace] /auth/enroll-face failed: status=${de.response?.statusCode}');
-        if (de.response?.statusCode == 404) {
-          try {
-            debugPrint('[enrollFace] Trying /staff/attendance/enroll-face...');
-            response = await _api.dio.post<Map<String, dynamic>>(
-              '/staff/attendance/enroll-face',
-              data: payload,
-              options: Options(receiveTimeout: const Duration(seconds: 30)),
-            );
-          } on DioException catch (de2) {
-            debugPrint('[enrollFace] /staff/attendance/enroll-face failed: status=${de2.response?.statusCode}');
-            if (de2.response?.statusCode == 404 && imageFile != null) {
-              debugPrint('[enrollFace] Trying updateProfilePhoto...');
-              try {
-                final photoRes = await updateProfilePhoto(imageFile);
-                if (photoRes['success'] == true) {
-                  return {
-                    'success': true,
-                    'samples': 1,
-                    'message': 'Face registered successfully.',
-                  };
-                }
-              } catch (_) {}
-            }
-          }
-        }
-      }
-
-      final body = response?.data ?? {};
-      final ok = body['success'] == true || (firstSelfie != null && firstSelfie.isNotEmpty);
       return {
         'success': ok,
-        'samples': body['samples'] ?? 1,
-        'message': body['message']?.toString() ?? 'Face registered successfully.',
+        'samples': body['samples'] ?? 0,
+        'message': body['message']?.toString() ??
+            (ok ? 'Face registered successfully.' : 'Could not register your face.'),
       };
-    } catch (e) {
-      final prefs = await SharedPreferences.getInstance();
-      final firstSelfie = selfieDataUrls.isNotEmpty ? selfieDataUrls.first : null;
-      if (firstSelfie != null && firstSelfie.isNotEmpty) {
-        await prefs.setString('face_enrolled_selfie', firstSelfie);
-        return {
-          'success': true,
-          'samples': 1,
-          'message': 'Face registered successfully.',
-        };
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      final already = data is Map && data['alreadyEnrolled'] == true;
+      if (already) {
+        final staffId = await _currentStaffId();
+        if (staffId != null) _faceEnrolledStaffIds.add(staffId);
       }
+      return {
+        'success': false,
+        'alreadyEnrolled': already,
+        'message': _bodyMessage(data) ??
+            'Could not register your face. Please check your connection and try again.',
+      };
+    } catch (_) {
       return {
         'success': false,
         'message': 'Face capture failed. Please try again.',
@@ -1176,73 +1187,32 @@ class AuthService {
     }
   }
 
-  /// Whether the current user has registered their face. Returns { enrolled, samples }.
+  /// Whether the logged-in staff member has registered their face — HRMSbackend
+  /// GET /staff/face/status. Returns { ok, enrolled, samples }; ok == false means the
+  /// status could not be read (the gate then asks again instead of letting it pass).
   Future<Map<String, dynamic>> faceEnrollStatus() async {
+    final staffId = await _currentStaffId();
+    if (staffId != null && _faceEnrolledStaffIds.contains(staffId)) {
+      return {'ok': true, 'enrolled': true, 'samples': 1};
+    }
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final localSelfie = prefs.getString('face_enrolled_selfie');
-      if (localSelfie != null && localSelfie.isNotEmpty) {
-        return {'enrolled': true, 'samples': 1, 'ok': true};
-      }
-      String? token = prefs.getString('token');
-      if (token != null && (token.startsWith('"') || token.endsWith('"'))) {
-        token = token.replaceAll('"', '');
-      }
-      if (token == null) return {'enrolled': false, 'samples': 0};
-      _api.setAuthToken(token);
-      Response<Map<String, dynamic>>? response;
-      try {
-        response = await _api.dio.get<Map<String, dynamic>>(
-          '/auth/face-enroll-status',
-          options: Options(receiveTimeout: const Duration(seconds: 15)),
-        );
-      } on DioException catch (de) {
-        if (de.response?.statusCode == 404) {
-          try {
-            response = await _api.dio.get<Map<String, dynamic>>(
-              '/attendance/face-enroll-status',
-              options: Options(receiveTimeout: const Duration(seconds: 15)),
-            );
-          } on DioException catch (de2) {
-            if (de2.response?.statusCode == 404) {
-              try {
-                response = await _api.dio.get<Map<String, dynamic>>(
-                  '/staff/attendance/face-enroll-status',
-                  options: Options(receiveTimeout: const Duration(seconds: 15)),
-                );
-              } catch (_) {}
-            }
-          }
-        }
-      }
-      final body = response?.data ?? {};
-      final data = body['data'] is Map ? body['data'] : body;
-      if (data['enrolled'] == true) {
-        return {
-          'enrolled': true,
-          'samples': data['samples'] ?? 0,
-        };
-      }
-      // Check if user has avatar or photoUrl
-      final userStr = prefs.getString('user');
-      if (userStr != null) {
-        try {
-          final user = jsonDecode(userStr) as Map<String, dynamic>;
-          final photo = user['photoUrl'] ?? user['avatar'];
-          if (photo != null && photo.toString().trim().isNotEmpty) {
-            return {'enrolled': true, 'samples': 1};
-          }
-        } catch (_) {}
-      }
+      if (!await _attachToken()) return {'ok': false, 'enrolled': false, 'samples': 0};
+      final response = await _api.dio.get<dynamic>(
+        '/staff/face/status',
+        options: Options(receiveTimeout: const Duration(seconds: 15)),
+      );
+      final body = response.data is Map ? response.data as Map : const {};
+      final enrolled = body['enrolled'] == true;
+      if (enrolled && staffId != null) _faceEnrolledStaffIds.add(staffId);
       return {
-        'enrolled': false,
-        'samples': data['samples'] ?? 0,
+        'ok': body['success'] == true,
+        'enrolled': enrolled,
+        'samples': body['samples'] ?? 0,
       };
     } catch (_) {
-      return {'enrolled': false, 'samples': 0};
+      return {'ok': false, 'enrolled': false, 'samples': 0};
     }
   }
-
   /// Maps backend/exception text to clear, short text for the user.
   String _userFriendlyVerifyMessage(String? raw, bool matched) {
     if (matched) return 'Photo matched';

@@ -868,12 +868,14 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                     color: widget.accent.withValues(alpha: 0.9),
                                   ),
                                   const SizedBox(width: 6),
-                                  Text(
-                                    'Published: $dateStr',
-                                    style: TextStyle(
-                                      color: widget.accent.withValues(alpha: 0.9),
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
+                                  Expanded(
+                                    child: Text(
+                                      'Published: $dateStr',
+                                      style: TextStyle(
+                                        color: widget.accent.withValues(alpha: 0.9),
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
                                     ),
                                   ),
                                 ],

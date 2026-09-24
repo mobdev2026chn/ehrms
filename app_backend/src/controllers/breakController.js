@@ -184,7 +184,10 @@ async function getAttendanceIdForDate(employeeId, eventDate) {
     const dayEnd = new Date(dayStart);
     dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
     const attendanceDoc = await Attendance.findOne({
-        employeeId,
+        $or: [
+            { employeeId },
+            { user: employeeId }
+        ],
         date: { $gte: dayStart, $lt: dayEnd }
     }).select('_id').lean();
     return attendanceDoc?._id || null;
@@ -951,7 +954,10 @@ exports.endBreak = async (req, res) => {
             doc.save(),
             Attendance.updateOne(
                 {
-                    employeeId: staff._id,
+                    $or: [
+                        { employeeId: staff._id },
+                        { user: staff._id }
+                    ],
                     date: { $gte: dayStart, $lt: dayEnd }
                 },
                 {

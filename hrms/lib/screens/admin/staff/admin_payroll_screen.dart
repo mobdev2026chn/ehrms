@@ -763,9 +763,11 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _metricItem('GROSS', '₹${r.gross.toStringAsFixed(2)}', const Color(0xFF1E293B)),
-                _metricItem('DEDUCTIONS', '₹${r.deductions.toStringAsFixed(2)}', const Color(0xFFDC2626)),
-                _metricItem('NET PAY', '₹${r.netPay.toStringAsFixed(2)}', const Color(0xFF16A34A)),
+                Expanded(child: _metricItem('GROSS', '₹${r.gross.toStringAsFixed(2)}', const Color(0xFF1E293B))),
+                const SizedBox(width: 6),
+                Expanded(child: _metricItem('DEDUCTIONS', '₹${r.deductions.toStringAsFixed(2)}', const Color(0xFFDC2626))),
+                const SizedBox(width: 6),
+                Expanded(child: _metricItem('NET PAY', '₹${r.netPay.toStringAsFixed(2)}', const Color(0xFF16A34A))),
               ],
             ),
           ),
@@ -778,9 +780,13 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+        Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
         const SizedBox(height: 2),
-        Text(value, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: color)),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(value, maxLines: 1, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: color)),
+        ),
       ],
     );
   }

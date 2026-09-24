@@ -274,31 +274,43 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
         // Action buttons
         Row(
           children: [
-            OutlinedButton(
-              onPressed: () => Navigator.pop(context),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                side: BorderSide(color: AppColors.primary),
+            Flexible(
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: BorderSide(color: AppColors.primary),
+                ),
+                child: const Text(
+                  'Back to Reviews',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              child: const Text('Back to Reviews'),
             ),
             if (canSubmitSelfReview) ...[
               const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          SelfAssessmentFormScreen(reviewId: widget.reviewId),
-                    ),
-                  ).then((_) => _fetchReview());
-                },
-                icon: const Icon(Icons.edit_document, size: 18),
-                label: const Text('Submit Self Review'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.success,
-                  foregroundColor: Colors.white,
+              Flexible(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            SelfAssessmentFormScreen(reviewId: widget.reviewId),
+                      ),
+                    ).then((_) => _fetchReview());
+                  },
+                  icon: const Icon(Icons.edit_document, size: 18),
+                  label: const Text(
+                    'Submit Self Review',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.success,
+                    foregroundColor: Colors.white,
+                  ),
                 ),
               ),
             ],

@@ -454,9 +454,22 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
         accuracyM: position.accuracy,
       );
 
-      final resolved = await AddressResolutionService.reverseGeocodeForUi(
+      Map<String, dynamic>? branch = _branchData;
+      if (branch == null) {
+        final stored = await AttendanceTemplateStore.loadTemplateDetails();
+        final b = stored?['branch'];
+        if (b is Map<String, dynamic>) {
+          branch = b;
+        } else if (b is Map) {
+          branch = Map<String, dynamic>.from(b);
+        }
+      }
+
+      final resolved =
+          await AddressResolutionService.resolvePunchLocationAddress(
         position.latitude,
         position.longitude,
+        branchData: branch,
       );
 
       if (resolved != null) {
@@ -572,7 +585,12 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     final identityFuture = FaceIdentityGuard.verify(selfie);
 
     final results = await Future.wait([
-      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      // Fail closed: an error must never count as a verified face.
+      verifyFuture.catchError((_) => <String, dynamic>{
+        'success': false,
+        'match': false,
+        'message': 'Face verification failed. Please try again.',
+      }),
       identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
     ]);
 
@@ -1248,11 +1266,15 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                                     _isCheckedIn ? Icons.fingerprint : Icons.fingerprint,
                                   ),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    buttonText,
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
+                                  Flexible(
+                                    child: Text(
+                                      buttonText,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                   ),
                                 ],

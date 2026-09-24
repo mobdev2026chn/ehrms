@@ -10,7 +10,10 @@ const staffSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     phone: { type: String },
+    phoneNumber: { type: String },
     alternativePhone: { type: String },
+    alternatePhoneNumber: { type: String },
+    altPhone: { type: String },
     countryCode: { type: String, trim: true },
     designation: { type: String },
     department: { type: String },
@@ -40,6 +43,7 @@ const staffSchema = new mongoose.Schema({
     weeklyHolidayTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'WeeklyHolidayTemplate' },
     status: { type: String, default: 'Active' },
     joiningDate: { type: Date, default: Date.now },
+    onboardingDate: { type: Date },
     avatar: { type: String },
     // Face-validation images. faceFirstImage = the very first selfie ever captured
     // (punch/break/permission), set once and never overwritten. faceReferenceImage =
@@ -99,6 +103,9 @@ const staffSchema = new mongoose.Schema({
 
     // Tasks module visibility – when true, show Tasks in app drawer
     locationAccess: { type: Boolean, default: false },
+
+    // Timeline / live tracking toggle for this employee (managed in Admin GEO settings)
+    tracking: { type: Boolean, default: false },
 
     // Device/app location permission snapshot from the mobile app.
     isGpsEnabled: { type: Boolean },

@@ -146,8 +146,8 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
         borderRadius: BorderRadius.circular(6),
       ),
       tabs: const [
-        Tab(text: 'Upcoming', icon: Icon(Icons.event_outlined, size: 20)),
-        Tab(text: 'Ended', icon: Icon(Icons.check_circle_outline, size: 20)),
+        Tab(height: 48, iconMargin: EdgeInsets.only(bottom: 2), text: 'Upcoming', icon: Icon(Icons.event_outlined, size: 20)),
+        Tab(height: 48, iconMargin: EdgeInsets.only(bottom: 2), text: 'Ended', icon: Icon(Icons.check_circle_outline, size: 20)),
       ],
     );
 
@@ -230,12 +230,7 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
       bottomNavigationBar: AppBottomNavigationBar(
         currentIndex: -1,
         onTap: (index) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(
-              builder: (_) => DashboardScreen(initialIndex: index),
-            ),
-            (route) => route.isFirst,
-          );
+          DashboardScreen.goToTab(context, index);
         },
       ),
     );
@@ -557,7 +552,13 @@ class _SessionCard extends StatelessWidget {
               children: [
                 const Icon(Icons.person_outline, size: 16),
                 const SizedBox(width: 8),
-                Text(host.toString()),
+                Flexible(
+                  child: Text(
+                    host.toString(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
                 const SizedBox(width: 16),
                 Text('${session['duration'] ?? 60} min'),
               ],

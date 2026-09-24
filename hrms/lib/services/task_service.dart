@@ -1,9 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:hrms/config/constants.dart';
+import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
+import 'package:hrms/services/auth_service.dart';
+import 'package:hrms/services/customer_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hrms/services/geo/live_tracking_service.dart';
 import 'package:hrms/services/geo/movement_classification_service.dart';
@@ -178,7 +183,11 @@ class TaskService {
               '[Trackings] offline_sync sending taskId=$taskId lat=${lat?.toStringAsFixed(6) ?? "-"} lng=${lng?.toStringAsFixed(6) ?? "-"} ts=${record['timestamp'] ?? "-"}',
             );
           }
-          await sender._api.dio.post<dynamic>('/tracking/store', data: record);
+          try {
+            await sender._api.dio.post<dynamic>('/staff/geo-task/live-tracking/record', data: record);
+          } catch (_) {
+            await sender._api.dio.post<dynamic>('/tracking/store', data: record);
+          }
           final id = record['_offlineId']?.toString();
           if (id != null && id.isNotEmpty) syncedIds.add(id);
           if (kDebugMode && AppConstants.logTrackingsToConsole) {
@@ -286,13 +295,37 @@ class TaskService {
     if (destinationLocation != null) {
       body['destinationLocation'] = destinationLocation;
     }
-    final response = await _api.dio.post<Map<String, dynamic>>(
-      '/tasks',
-      data: body,
-    );
-    final data = response.data;
-    if (data == null) throw Exception('Failed to create task');
-    return Task.fromJson(data);
+
+    // HRMSbackend createStaffTask (POST /staff/geo-task/tasks) reads title, startDate,
+    // endDate, customerId and an optional destination override (customerAddress, latitude,
+    // longitude, radius). The legacy keys above are kept for the old backend.
+    String dateOnly(DateTime d) =>
+        '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    body['title'] = taskTitle;
+    body['startDate'] = dateOnly(earliestCompletionDate ?? DateTime.now());
+    body['endDate'] = dateOnly(latestCompletionDate ?? expectedCompletionDate);
+    if (destinationLocation != null) {
+      final addr = (destinationLocation['fullAddress'] ?? destinationLocation['address'])?.toString();
+      if (addr != null && addr.isNotEmpty) body['customerAddress'] = addr;
+      final lat = destinationLocation['lat'] ?? destinationLocation['latitude'];
+      final lng = destinationLocation['lng'] ?? destinationLocation['longitude'];
+      if (lat is num && lng is num) {
+        body['latitude'] = lat;
+        body['longitude'] = lng;
+      }
+    }
+
+    Response<dynamic> response;
+    try {
+      response = await _api.dio.post<dynamic>('/staff/geo-task/tasks', data: body);
+    } on DioException catch (e) {
+      if (!_isMissingRoute(e)) rethrow;
+      response = await _api.dio.post<dynamic>('/tasks', data: body);
+    }
+    final raw = response.data;
+    if (raw is! Map) throw Exception('Failed to create task');
+    final payload = raw['data'] is Map ? raw['data'] as Map : raw;
+    return Task.fromJson(Map<String, dynamic>.from(payload));
   }
 
   Future<List<Task>> getAllTasks() async {
@@ -314,12 +347,17 @@ class TaskService {
           } else if (body is Map && body['tasks'] is List) {
             rawList = body['tasks'] as List;
           }
-          if (rawList != null && rawList.isNotEmpty) {
+          // A valid (even empty) list is the answer; only a failed call tries the next path.
+          if (rawList != null) {
             return rawList
                 .whereType<Map>()
                 .map((j) => Task.fromJson(Map<String, dynamic>.from(j)))
                 .toList();
           }
+        } on DioException catch (e) {
+          // Try the legacy routes only when this one is missing; a timeout or
+          // auth error would just repeat on each of them.
+          if (!_isMissingRoute(e)) break;
         } catch (_) {}
       }
       return <Task>[];
@@ -332,8 +370,9 @@ class TaskService {
     try {
       await _setToken();
       for (final path in [
-        '/tasks/staff/$staffId',
+        // HRMSbackend serves the signed-in staff member's tasks here.
         '/staff/geo-task/tasks',
+        '/tasks/staff/$staffId',
         '/tasks',
         '/admin/hrms-geo/task',
       ]) {
@@ -348,12 +387,16 @@ class TaskService {
           } else if (body is Map && body['tasks'] is List) {
             rawList = body['tasks'] as List;
           }
-          if (rawList != null && rawList.isNotEmpty) {
+          if (rawList != null) {
             return rawList
                 .whereType<Map>()
                 .map((j) => Task.fromJson(Map<String, dynamic>.from(j)))
                 .toList();
           }
+        } on DioException catch (e) {
+          // Try the legacy routes only when this one is missing; a timeout or
+          // auth error would just repeat on each of them.
+          if (!_isMissingRoute(e)) break;
         } catch (_) {}
       }
       return <Task>[];
@@ -430,17 +473,30 @@ class TaskService {
   }
 
   Future<Task> getTaskById(String id) async {
+    await _setToken();
+
+    // 1. Primary: staff GEO task endpoint
     try {
-      await _setToken();
+      final response = await _api.dio.get<dynamic>('/staff/geo-task/$id');
+      final data = response.data;
+      if (data is Map && data['data'] != null) {
+        return Task.fromJson(Map<String, dynamic>.from(data['data'] as Map));
+      } else if (data is Map) {
+        return Task.fromJson(Map<String, dynamic>.from(data));
+      }
+    } catch (_) {}
+
+    // 2. Fallback: legacy tasks endpoint
+    try {
       final response = await _api.dio.get<Map<String, dynamic>>('/tasks/$id');
       final data = response.data;
-      if (data == null) throw Exception('Failed to load task');
-      return Task.fromJson(data);
+      if (data != null) return Task.fromJson(data);
     } on DioException catch (e) {
       throw Exception(
         'Failed to load task: ${e.response?.statusCode ?? e.message}',
       );
     }
+    throw Exception('Failed to load task: not found');
   }
 
   /// GPS points from Tracking until Arrived (for task detail map polyline).
@@ -451,14 +507,44 @@ class TaskService {
   }) async {
     try {
       await _setToken();
+      // Primary: query live tracking trail from HRMSbackend
+      final trailRes = await _api.dio.get<dynamic>(
+        '/staff/geo-task/live-tracking/trail/$taskMongoId',
+      );
+      final trailData = trailRes.data;
+      List<dynamic> path = [];
+      if (trailData is Map && trailData['data'] is List) {
+        path = trailData['data'] as List<dynamic>;
+      } else if (trailData is List) {
+        path = trailData;
+      }
+      if (path.isNotEmpty) {
+        final filtered = _filterTrackingPathUntilArrived(path, arrivalTime);
+        if (filtered.isNotEmpty) return filtered;
+      }
+    } catch (_) {}
+
+    try {
+      await _setToken();
       final response = await _api.dio.get<Map<String, dynamic>>(
         '/tasks/$taskMongoId/tracking-path',
       );
       final path = response.data?['path'] as List<dynamic>? ?? [];
-      return _filterTrackingPathUntilArrived(path, arrivalTime);
-    } catch (_) {
-      return [];
-    }
+      if (path.isNotEmpty) {
+        final filtered = _filterTrackingPathUntilArrived(path, arrivalTime);
+        if (filtered.isNotEmpty) return filtered;
+      }
+    } catch (_) {}
+
+    // Fallback: Check if task document itself has stored travelledRoute
+    try {
+      final task = await getTaskById(taskMongoId);
+      if (task.travelledRoute != null && task.travelledRoute!.isNotEmpty) {
+        return task.travelledRoute!;
+      }
+    } catch (_) {}
+
+    return [];
   }
 
   static List<Map<String, double>> _filterTrackingPathUntilArrived(
@@ -477,8 +563,8 @@ class TaskService {
     final rows = <Map<String, dynamic>>[];
     for (final r in path) {
       if (r is! Map) continue;
-      final lat = (r['latitude'] as num?)?.toDouble();
-      final lng = (r['longitude'] as num?)?.toDouble();
+      final lat = (r['lat'] ?? r['latitude'] as num?)?.toDouble();
+      final lng = (r['lng'] ?? r['longitude'] as num?)?.toDouble();
       if (lat == null || lng == null) continue;
       rows.add({
         'lat': lat,
@@ -498,11 +584,15 @@ class TaskService {
       }
     }
     if (endExclusive == rows.length && arrivalTime != null) {
-      endExclusive = 0;
+      final cutOff = arrivalTime.add(const Duration(minutes: 5));
+      int matchedCount = 0;
       for (var i = 0; i < rows.length; i++) {
         final t = rows[i]['ts'] as DateTime;
-        if (t.isAfter(arrivalTime)) break;
-        endExclusive = i + 1;
+        if (t.isAfter(cutOff)) break;
+        matchedCount = i + 1;
+      }
+      if (matchedCount > 0) {
+        endExclusive = matchedCount;
       }
     }
 
@@ -518,19 +608,97 @@ class TaskService {
 
   /// Fetch full task completion report: task, timeline, route points from DB.
   Future<TaskCompletionReport> getTaskCompletionReport(String taskId) async {
+    await _setToken();
+
+    // 1. Try dedicated completion-report endpoints
+    final candidateEndpoints = [
+      '/staff/geo-task/$taskId/completion-report',
+      '/tasks/$taskId/completion-report',
+    ];
+
+    for (final endpoint in candidateEndpoints) {
+      try {
+        final response = await _api.dio.get<dynamic>(endpoint);
+        final data = response.data;
+        if (data is Map && (data['task'] != null || data['data'] != null)) {
+          final reportMap = data['data'] is Map
+              ? Map<String, dynamic>.from(data['data'] as Map)
+              : Map<String, dynamic>.from(data);
+          if (reportMap['task'] != null) {
+            return TaskCompletionReport.fromJson(reportMap);
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. Robust fallback: Fetch task by ID from staff GEO route
+    final task = await getTaskById(taskId);
+
+    // 3. Fetch live tracking trail for breadcrumb route points
+    List<RoutePoint> routePoints = [];
     try {
-      await _setToken();
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/tasks/$taskId/completion-report',
-      );
-      final data = response.data;
-      if (data == null) throw Exception('Failed to load completion report');
-      return TaskCompletionReport.fromJson(data);
-    } on DioException catch (e) {
-      throw Exception(
-        'Failed to load report: ${e.response?.statusCode ?? e.message}',
+      final trailRes = await _api.dio.get<dynamic>('/staff/geo-task/live-tracking/trail/$taskId');
+      if (trailRes.data is Map && trailRes.data['data'] is List) {
+        routePoints = (trailRes.data['data'] as List)
+            .whereType<Map>()
+            .map((e) => RoutePoint.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+    } catch (_) {}
+
+    if (routePoints.isEmpty && task.travelledRoute != null && task.travelledRoute!.isNotEmpty) {
+      routePoints = task.travelledRoute!
+          .map((p) => RoutePoint(
+                lat: p['lat'] ?? 0,
+                lng: p['lng'] ?? 0,
+              ))
+          .toList();
+    }
+
+    // 4. Build timeline events from available milestone timestamps
+    final timeline = <TimelineEvent>[];
+    if (task.startTime != null) {
+      timeline.add(
+        TimelineEvent(
+          type: 'start',
+          label: 'Start',
+          time: task.startTime,
+          address: task.sourceLocation?.displayAddress,
+          lat: task.sourceLocation?.lat,
+          lng: task.sourceLocation?.lng,
+        ),
       );
     }
+    if (task.arrivalTime != null) {
+      timeline.add(
+        TimelineEvent(
+          type: 'arrived',
+          label: 'Arrived',
+          time: task.arrivalTime,
+          address: task.arrivalLocation?.displayAddress ?? task.destinationLocation?.displayAddress,
+          lat: task.arrivalLocation?.lat ?? task.destinationLocation?.lat,
+          lng: task.arrivalLocation?.lng ?? task.destinationLocation?.lng,
+        ),
+      );
+    }
+    if (task.completedDate != null) {
+      timeline.add(
+        TimelineEvent(
+          type: 'completed',
+          label: 'Completed',
+          time: task.completedDate,
+          address: task.destinationLocation?.displayAddress,
+          lat: task.destinationLocation?.lat,
+          lng: task.destinationLocation?.lng,
+        ),
+      );
+    }
+
+    return TaskCompletionReport(
+      task: task,
+      timeline: timeline,
+      routePoints: routePoints,
+    );
   }
 
   Future<Task> updateTask(
@@ -552,7 +720,6 @@ class TaskService {
       if (status != null) body['status'] = status;
       if (startTime != null) {
         body['startTime'] = startTime.toUtc().toIso8601String();
-        body['actualFieldInTime'] = startTime.toLocal().toIso8601String();
       }
       if (startLat != null && startLng != null) {
         final now = DateTime.now().toUtc();
@@ -579,7 +746,44 @@ class TaskService {
         body['arrivalTime'] = arrivalTime.toUtc().toIso8601String();
       }
 
-      // 1. Try PATCH /tasks/:id
+      // In HRMSbackend, the official staff endpoint is /staff/geo-task/:id
+      final staffBody = Map<String, dynamic>.from(body);
+      if (staffBody['status'] == 'in_progress') staffBody['status'] = 'Started';
+      if (startLat != null && startLng != null) {
+        staffBody['latitude'] = startLat;
+        staffBody['longitude'] = startLng;
+      }
+      if (status == 'in_progress' || status == 'Started') {
+        staffBody['fieldInTime'] = startTime != null
+            ? '${startTime.toLocal().hour.toString().padLeft(2, '0')}:${startTime.toLocal().minute.toString().padLeft(2, '0')}'
+            : '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}';
+      }
+
+      // 1. Try PUT /staff/geo-task/:id (primary HRMSbackend staff route)
+      try {
+        final response = await _api.dio.put<dynamic>('/staff/geo-task/$id', data: staffBody);
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          final data = response.data;
+          final payload = (data is Map && data['data'] != null)
+              ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
+              : (data is Map ? data as Map<String, dynamic> : null);
+          if (payload != null) return Task.fromJson(payload);
+        }
+      } on DioException catch (e) {
+        // If backend returned a 400 validation error (e.g. location/geofence refusal), propagate it immediately!
+        if (e.response != null && e.response?.statusCode == 400) {
+          final msg = (e.response?.data is Map)
+              ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
+              : null;
+          throw Exception(msg ?? 'Location validation failed');
+        }
+      } catch (e) {
+        if (e is Exception && !e.toString().contains('DioException')) {
+          rethrow;
+        }
+      }
+
+      // 2. Fallback to PATCH /tasks/:id (legacy)
       try {
         final response = await _api.dio.patch<dynamic>('/tasks/$id', data: body);
         if (response.statusCode == 200 || response.statusCode == 201) {
@@ -591,21 +795,7 @@ class TaskService {
         }
       } catch (_) {}
 
-      // 2. Try PUT /staff/geo-task/:id
-      try {
-        final altBody = Map<String, dynamic>.from(body);
-        if (altBody['status'] == 'in_progress') altBody['status'] = 'Started';
-        final response = await _api.dio.put<dynamic>('/staff/geo-task/$id', data: altBody);
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          final data = response.data;
-          final payload = (data is Map && data['data'] != null)
-              ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
-              : (data is Map ? data as Map<String, dynamic> : null);
-          if (payload != null) return Task.fromJson(payload);
-        }
-      } catch (_) {}
-
-      // 3. Try PUT /admin/hrms-geo/task/:id
+      // 3. Fallback to PUT /admin/hrms-geo/task/:id
       try {
         final altBody = Map<String, dynamic>.from(body);
         if (altBody['status'] == 'in_progress') altBody['status'] = 'Started';
@@ -627,8 +817,11 @@ class TaskService {
       if (data == null) throw Exception('Failed to update task');
       return Task.fromJson(data);
     } catch (e) {
+      if (e is Exception && !e.toString().contains('DioException')) {
+        rethrow;
+      }
       final msg = (e is DioException && e.response?.data is Map)
-          ? (e.response!.data as Map)['message']?.toString()
+          ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
           : null;
       throw Exception(
         msg ?? 'Failed to update task',
@@ -649,6 +842,10 @@ class TaskService {
     String? area,
     String? pincode,
   }) async {
+    // HRMSbackend has no /tasks/:id/location; the same point is already recorded by
+    // [storeTracking] (POST /staff/geo-task/live-tracking/record). Only the legacy
+    // backend (different host) serves this route.
+    if (AppConstants.baseUrl.contains('ektahr.com')) return;
     await _setToken();
     final body = <String, dynamic>{
       'lat': lat,
@@ -729,7 +926,11 @@ class TaskService {
     if (pincode != null && pincode.isNotEmpty) body['pincode'] = pincode;
     try {
       await _startOfflineSyncTimerIfNeeded();
-      await _api.dio.post<dynamic>('/tracking/store', data: body);
+      try {
+        await _api.dio.post<dynamic>('/staff/geo-task/live-tracking/record', data: body);
+      } catch (_) {
+        await _api.dio.post<dynamic>('/tracking/store', data: body);
+      }
       await LiveTrackingService.persistStoredTrackingPoint(
         taskMongoId,
         lat,
@@ -795,7 +996,89 @@ class TaskService {
     return Task.fromJson(data);
   }
 
+  static bool _isMissingRoute(DioException e) =>
+      e.response?.statusCode == 404 && !_isTaskNotFound(e);
+
+  /// HRMSbackend answers 404 with this message when the route exists but the task does not.
+  static bool _isTaskNotFound(DioException e) {
+    final body = e.response?.data;
+    final msg = body is Map ? (body['message'] ?? '').toString().toLowerCase() : '';
+    return msg.contains('task not found');
+  }
+
+  static String? _serverMessage(DioException e) {
+    final body = e.response?.data;
+    final msg = body is Map ? body['message']?.toString() : null;
+    return (msg != null && msg.trim().isNotEmpty) ? msg.trim() : null;
+  }
+
+  /// Today's punch state (HRMSbackend `GET /staff/attendance/today-punch`).
+  /// Returns null when it cannot be determined (network error) so callers can fail open.
+  Future<({bool punchedIn, bool punchedOut})?> getTodayPunchState() async {
+    await _setToken();
+    try {
+      final res = await _api.dio.get<dynamic>('/staff/attendance/today-punch');
+      final d = res.data is Map ? (res.data as Map)['data'] : null;
+      if (d is! Map) return null;
+      return (punchedIn: d['isPunchedIn'] == true, punchedOut: d['isPunchedOut'] == true);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Upload an image for a Field-Out form answer. HRMSbackend `POST /staff/geo-task/upload`
+  /// takes a base64 data URL and returns the stored file's URL.
+  Future<String> uploadFieldOutImage(String filePath) async {
+    await _setToken();
+    final bytes = await FlutterImageCompress.compressWithFile(
+          filePath,
+          minWidth: 1280,
+          minHeight: 1280,
+          quality: 75,
+        ) ??
+        await File(filePath).readAsBytes();
+    try {
+      final res = await _api.dio.post<dynamic>(
+        '/staff/geo-task/upload',
+        data: {'file': 'data:image/jpeg;base64,${base64Encode(bytes)}'},
+        options: Options(sendTimeout: const Duration(seconds: 60)),
+      );
+      final url = res.data is Map ? (res.data as Map)['url']?.toString() : null;
+      if (url == null || url.isEmpty) throw Exception('Photo upload failed. Please try again.');
+      return url;
+    } on DioException catch (e) {
+      throw Exception(_serverMessage(e) ?? 'Photo upload failed. Please try again.');
+    }
+  }
+
+  /// Email OTP for a Field-Out form's Email field (`POST /staff/geo-task/otp/send`).
+  Future<void> sendEmailOtp(String email) async {
+    await _setToken();
+    try {
+      await _api.dio.post<dynamic>('/staff/geo-task/otp/send', data: {'email': email.trim()});
+    } on DioException catch (e) {
+      throw Exception(_serverMessage(e) ?? 'Could not send the OTP. Please try again.');
+    }
+  }
+
+  /// Verify the emailed OTP (`POST /staff/geo-task/otp/verify`). Field Out is then accepted
+  /// for that email address.
+  Future<void> verifyEmailOtp(String email, String otp) async {
+    await _setToken();
+    try {
+      await _api.dio.post<dynamic>(
+        '/staff/geo-task/otp/verify',
+        data: {'email': email.trim(), 'otp': otp.trim()},
+      );
+    } on DioException catch (e) {
+      throw Exception(_serverMessage(e) ?? 'Invalid OTP or OTP expired');
+    }
+  }
+
   /// Upload photo proof for task. Returns updated task.
+  ///
+  /// HRMSbackend: `POST /staff/geo-task/upload` takes the image as a base64 data URL and
+  /// returns its URL, which `PUT /staff/geo-task/:id` stores as the task's proof image.
   Future<Task> uploadPhotoProof(
     String taskMongoId,
     String filePath, {
@@ -805,6 +1088,35 @@ class TaskService {
     String? fullAddress,
   }) async {
     await _setToken();
+    try {
+      // Keep the JSON body well under the server's 10 MB limit for this route.
+      final bytes = await FlutterImageCompress.compressWithFile(
+            filePath,
+            minWidth: 1280,
+            minHeight: 1280,
+            quality: 75,
+          ) ??
+          await File(filePath).readAsBytes();
+      final dataUrl = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+      final upload = await _api.dio.post<dynamic>(
+        '/staff/geo-task/upload',
+        data: {'file': dataUrl},
+        options: Options(sendTimeout: const Duration(seconds: 60)),
+      );
+      final url = upload.data is Map ? (upload.data as Map)['url']?.toString() : null;
+      if (url == null || url.isEmpty) throw Exception('Photo upload failed. Please try again.');
+      await _api.dio.put<dynamic>('/staff/geo-task/$taskMongoId', data: {
+        'fieldOutImage': url,
+        if (description != null && description.trim().isNotEmpty) 'fieldOutNotes': description.trim(),
+      });
+      return getTaskById(taskMongoId);
+    } on DioException catch (e) {
+      if (!_isMissingRoute(e)) {
+        throw Exception(_serverMessage(e) ?? 'Photo upload failed. Please try again.');
+      }
+    }
+
+    // Legacy app_backend route.
     final formData = FormData.fromMap({
       'photo': await MultipartFile.fromFile(filePath, filename: 'photo.jpg'),
       if (description != null && description.isNotEmpty)
@@ -862,9 +1174,84 @@ class TaskService {
     return Task.fromJson(data);
   }
 
+  /// Email the OTP was last sent to, per task, so verify checks the same address.
+  static final Map<String, String> _otpEmailByTask = {};
+
+  /// HRMSbackend's task payload carries no customer email, so fall back to the staff
+  /// customer list (which does) and match on phone, then name.
+  Future<String?> _resolveCustomerEmail(Customer? customer) async {
+    final direct = customer?.effectiveEmail?.trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+    if (customer == null) return null;
+    try {
+      final customers = await CustomerService().getAllCustomers();
+      String digits(String? s) => (s ?? '').replaceAll(RegExp(r'\D'), '');
+      final phone = digits(customer.customerNumber);
+      final name = customer.customerName.trim().toLowerCase();
+      Customer? match;
+      if (phone.length >= 6) {
+        for (final c in customers) {
+          final p = digits(c.customerNumber);
+          if (p.isNotEmpty && (p.endsWith(phone) || phone.endsWith(p))) {
+            match = c;
+            break;
+          }
+        }
+      }
+      if (match == null && name.isNotEmpty) {
+        for (final c in customers) {
+          if (c.customerName.trim().toLowerCase() == name) {
+            match = c;
+            break;
+          }
+        }
+      }
+      final email = match?.effectiveEmail?.trim();
+      return (email != null && email.isNotEmpty) ? email : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Send OTP to customer email. Returns { success: true/false, message: string } for user-friendly success/failure feedback.
-  Future<Map<String, dynamic>> sendOtp(String taskMongoId) async {
+  Future<Map<String, dynamic>> sendOtp(String taskMongoId, {Customer? customer}) async {
     await _setToken();
+    final email = await _resolveCustomerEmail(customer);
+    if (email != null) {
+      try {
+        // HRMSbackend: POST /staff/geo-task/otp/send { email }
+        final response = await _api.dio.post<dynamic>(
+          '/staff/geo-task/otp/send',
+          data: {'email': email},
+        );
+        final data = response.data;
+        final success = data is Map && data['success'] == true;
+        if (success) _otpEmailByTask[taskMongoId] = email;
+        return {
+          'success': success,
+          'email': email,
+          'message': (data is Map ? data['message']?.toString() : null) ??
+              (success ? 'OTP sent to customer email' : 'Failed to send OTP'),
+        };
+      } on DioException catch (e) {
+        if (!_isMissingRoute(e)) {
+          return {
+            'success': false,
+            'message': _serverMessage(e) ??
+                'We couldn\'t deliver the OTP to the customer email. Please try again.',
+          };
+        }
+      } catch (_) {
+        return {'success': false, 'message': 'Failed to send OTP. Please try again.'};
+      }
+    } else if (customer != null) {
+      return {
+        'success': false,
+        'message': 'This customer has no email address. Add an email to the customer to send an OTP.',
+      };
+    }
+
+    // Legacy app_backend route.
     try {
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/tasks/$taskMongoId/send-otp',
@@ -905,8 +1292,27 @@ class TaskService {
     double? lat,
     double? lng,
     String? fullAddress,
+    Customer? customer,
   }) async {
     await _setToken();
+    final email = _otpEmailByTask[taskMongoId] ?? await _resolveCustomerEmail(customer);
+    if (email != null) {
+      try {
+        // HRMSbackend: POST /staff/geo-task/otp/verify { email, otp }, then record it on the task.
+        await _api.dio.post<dynamic>(
+          '/staff/geo-task/otp/verify',
+          data: {'email': email, 'otp': otp},
+        );
+        await _api.dio.put<dynamic>('/staff/geo-task/$taskMongoId', data: {'fieldOutOtp': otp});
+        return getTaskById(taskMongoId);
+      } on DioException catch (e) {
+        if (!_isMissingRoute(e)) {
+          throw Exception(_serverMessage(e) ?? 'Verification failed');
+        }
+      }
+    }
+
+    // Legacy app_backend route.
     final payload = <String, dynamic>{'otp': otp};
     if (lat != null) payload['lat'] = lat;
     if (lng != null) payload['lng'] = lng;
@@ -932,20 +1338,45 @@ class TaskService {
     double? lng,
     String? fullAddress,
     String? pincode,
+    double? tripDistanceKm,
+    int? tripDurationSeconds,
+    Map<String, dynamic>? travelActivityDuration,
+    List<dynamic>? travelledRoute,
   }) async {
     await _setToken();
     final data = <String, dynamic>{
       'taskId': taskMongoId,
+      'status': exitType == 'hold' ? 'hold' : 'exited',
       'exitReason': exitReason,
       'exitType': exitType,
     };
-    if (lat != null) data['lat'] = lat;
-    if (lng != null) data['lng'] = lng;
+    if (lat != null) {
+      data['lat'] = lat;
+      data['latitude'] = lat;
+    }
+    if (lng != null) {
+      data['lng'] = lng;
+      data['longitude'] = lng;
+    }
     if (fullAddress != null && fullAddress.isNotEmpty) {
       data['fullAddress'] = fullAddress;
+      data['address'] = fullAddress;
     }
     if (pincode != null && pincode.isNotEmpty) data['pincode'] = pincode;
-    await _api.dio.post<dynamic>('/tracking/exit', data: data);
+    if (tripDistanceKm != null) data['tripDistanceKm'] = tripDistanceKm;
+    if (tripDurationSeconds != null) data['tripDurationSeconds'] = tripDurationSeconds;
+    if (travelActivityDuration != null) data['travelActivityDuration'] = travelActivityDuration;
+    if (travelledRoute != null && travelledRoute.isNotEmpty) data['travelledRoute'] = travelledRoute;
+
+    try {
+      await _api.dio.post<dynamic>('/staff/geo-task/live-tracking/status', data: data);
+    } catch (_) {
+      try {
+        await _api.dio.post<dynamic>('/tracking/exit', data: data);
+      } catch (e) {
+        debugPrint('[exitRide] endpoint fallback caught: $e');
+      }
+    }
   }
 
   /// Arrived at destination: record in tasks + trackings, set status arrived.
@@ -960,8 +1391,49 @@ class TaskService {
     int? tripDurationSeconds,
     Map<String, dynamic>? sourceLocation,
     Map<String, dynamic>? travelActivityDuration,
+    List<dynamic>? travelledRoute,
   }) async {
     await _setToken();
+    final nowTime = '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}';
+    final updatePayload = <String, dynamic>{
+      'actualFieldInTime': nowTime,
+      'latitude': lat,
+      'longitude': lng,
+      if (tripDistanceKm != null) 'tripDistanceKm': tripDistanceKm,
+      if (tripDurationSeconds != null) 'tripDurationSeconds': tripDurationSeconds,
+      if (travelledRoute != null && travelledRoute.isNotEmpty) 'travelledRoute': travelledRoute,
+    };
+
+    // Primary: update task on staff GEO route (which validates Field In geofence for internal branch visits)
+    try {
+      await _api.dio.put<dynamic>('/staff/geo-task/$taskMongoId', data: updatePayload);
+    } on DioException catch (e) {
+      if (e.response != null && e.response?.statusCode == 400) {
+        final msg = (e.response?.data is Map)
+            ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
+            : null;
+        throw Exception(msg ?? 'Field In location verification failed');
+      }
+    } catch (e) {
+      if (e is Exception && !e.toString().contains('DioException')) {
+        rethrow;
+      }
+    }
+
+    // Update live tracking status
+    try {
+      await _api.dio.post<dynamic>('/staff/geo-task/live-tracking/status', data: {
+        'taskId': taskMongoId,
+        'status': 'arrived',
+        'latitude': lat,
+        'longitude': lng,
+        if (tripDistanceKm != null) 'tripDistanceKm': tripDistanceKm,
+        if (tripDurationSeconds != null) 'tripDurationSeconds': tripDurationSeconds,
+        if (travelActivityDuration != null) 'travelActivityDuration': travelActivityDuration,
+        if (travelledRoute != null && travelledRoute.isNotEmpty) 'travelledRoute': travelledRoute,
+      });
+    } catch (_) {}
+
     final data = <String, dynamic>{
       'taskId': taskMongoId,
       'lat': lat,
@@ -982,7 +1454,9 @@ class TaskService {
     if (travelActivityDuration != null) {
       data['travelActivityDuration'] = travelActivityDuration;
     }
-    await _api.dio.post<dynamic>('/tracking/arrived', data: data);
+    try {
+      await _api.dio.post<dynamic>('/tracking/arrived', data: data);
+    } catch (_) {}
   }
 
   /// Restart task after exit: record in tasks_restarted, set status in_progress.
@@ -994,6 +1468,42 @@ class TaskService {
     String? pincode,
   }) async {
     await _setToken();
+
+    // HRMSbackend has no restart route: resuming puts the task back into its in-progress
+    // status with PUT /staff/geo-task/:id - 'Arrived' when Field In was already done
+    // before the exit, otherwise 'Started'.
+    try {
+      var resumeStatus = 'Started';
+      try {
+        final current = await _api.dio.get<dynamic>('/staff/geo-task/$taskMongoId');
+        final d = current.data is Map ? (current.data as Map)['data'] : null;
+        if (d is Map && d['actualFieldInTime'] != null) resumeStatus = 'Arrived';
+      } catch (_) {}
+      await _api.dio.put<dynamic>('/staff/geo-task/$taskMongoId', data: {
+        'status': resumeStatus,
+        if (lat != null) 'latitude': lat,
+        if (lng != null) 'longitude': lng,
+      });
+      // Resume point on the tracking trail.
+      unawaited(
+        _api.dio
+            .post<dynamic>('/staff/geo-task/live-tracking/status', data: {
+              'taskId': taskMongoId,
+              'status': 'active',
+              if (lat != null) 'latitude': lat,
+              if (lng != null) 'longitude': lng,
+              if (fullAddress != null && fullAddress.isNotEmpty) 'address': fullAddress,
+            })
+            .then((_) {}, onError: (_) {}),
+      );
+      return;
+    } on DioException catch (e) {
+      if (!_isMissingRoute(e)) {
+        throw Exception(_serverMessage(e) ?? 'Could not resume the task. Please try again.');
+      }
+    }
+
+    // Legacy app_backend route.
     final data = <String, dynamic>{'taskId': taskMongoId};
     if (lat != null) data['lat'] = lat;
     if (lng != null) data['lng'] = lng;
@@ -1008,17 +1518,195 @@ class TaskService {
   Future<Task> endTask(
     String taskMongoId, {
     Map<String, dynamic>? travelActivityDuration,
+    double? lat,
+    double? lng,
+    String? fieldOutNotes,
+    String? fieldOutOtp,
+    String? fieldOutImage,
+    Map<String, dynamic>? answers,
   }) async {
     await _setToken();
-    final response = await _api.dio.post<Map<String, dynamic>>(
-      '/tasks/$taskMongoId/end',
-      data: travelActivityDuration == null
-          ? null
-          : {'travelActivityDuration': travelActivityDuration},
-    );
-    final data = response.data;
-    if (data == null) throw Exception('Failed to end task');
-    return Task.fromJson(data);
+    final nowTime = '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}';
+    final resolvedAnswers = answers != null ? Map<String, dynamic>.from(answers) : <String, dynamic>{};
+    final effectiveNotes = (fieldOutNotes != null && fieldOutNotes.trim().isNotEmpty)
+        ? fieldOutNotes.trim()
+        : (resolvedAnswers['Description']?.toString() ?? 'Completed');
+    if (!resolvedAnswers.containsKey('Description') ||
+        resolvedAnswers['Description'] == null ||
+        resolvedAnswers['Description'].toString().trim().isEmpty) {
+      resolvedAnswers['Description'] = effectiveNotes;
+    }
+
+    final completePayload = <String, dynamic>{
+      'status': 'Completed',
+      'fieldOutTime': nowTime,
+      if (lat != null) 'latitude': lat,
+      if (lng != null) 'longitude': lng,
+      'fieldOutNotes': effectiveNotes,
+      if (fieldOutOtp != null) 'fieldOutOtp': fieldOutOtp,
+      if (fieldOutImage != null) 'fieldOutImage': fieldOutImage,
+      'answers': resolvedAnswers,
+    };
+
+    // 1. Primary: Complete task via /staff/geo-task/:id (runs Field Out geofence check for internal tasks)
+    try {
+      final response = await _api.dio.put<dynamic>('/staff/geo-task/$taskMongoId', data: completePayload);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = response.data;
+        final payload = (data is Map && data['data'] != null)
+            ? (data['data'] is Map ? data['data'] as Map<String, dynamic> : data as Map<String, dynamic>)
+            : (data is Map ? data as Map<String, dynamic> : null);
+        if (payload != null) return Task.fromJson(payload);
+      }
+    } on DioException catch (e) {
+      if (e.response != null && e.response?.statusCode == 400) {
+        final msg = (e.response?.data is Map)
+            ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
+            : null;
+        throw Exception(msg ?? 'Field Out location verification failed');
+      }
+    } catch (e) {
+      if (e is Exception && !e.toString().contains('DioException')) {
+        rethrow;
+      }
+    }
+
+    // 2. Legacy fallback
+    try {
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/tasks/$taskMongoId/end',
+        data: travelActivityDuration == null
+            ? null
+            : {'travelActivityDuration': travelActivityDuration},
+      );
+      final data = response.data;
+      if (data != null) return Task.fromJson(data);
+    } catch (_) {}
+
+    return getTaskById(taskMongoId);
+  }
+
+  /// Fetch travel allowances for the logged-in staff
+  Future<List<Map<String, dynamic>>> getStaffAllowances() async {
+    await _setToken();
+    try {
+      final response = await _api.dio.get<dynamic>('/staff/geo-task/allowances');
+      final body = response.data;
+      if (body is Map && body['data'] is List) {
+        return (body['data'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Fetch task history for staff member
+  Future<List<Task>> getStaffTaskHistory({String? date}) async {
+    await _setToken();
+    try {
+      final query = <String, dynamic>{};
+      if (date != null && date.isNotEmpty) query['date'] = date;
+      final response = await _api.dio.get<dynamic>('/staff/geo-task/history', queryParameters: query);
+      final body = response.data;
+      if (body is Map && body['data'] is List) {
+        return (body['data'] as List)
+            .whereType<Map>()
+            .map((e) => Task.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Get active field journey status for external staff
+  Future<Map<String, dynamic>?> getJourneyStatus() async {
+    await _setToken();
+    try {
+      final response = await _api.dio.get<dynamic>('/staff/geo-task/journey');
+      if (response.data is Map && response.data['data'] != null) {
+        return Map<String, dynamic>.from(response.data['data'] as Map);
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Start a self-logged field journey (External staff)
+  Future<Map<String, dynamic>> journeyFieldIn({
+    required double latitude,
+    required double longitude,
+    String? address,
+  }) async {
+    await _setToken();
+    try {
+      final response = await _api.dio.post<dynamic>(
+        '/staff/geo-task/journey/field-in',
+        data: {
+          'latitude': latitude,
+          'longitude': longitude,
+          if (address != null) 'address': address,
+        },
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (e) {
+      final msg = (e.response?.data is Map)
+          ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
+          : null;
+      throw Exception(msg ?? 'Failed to perform Field In');
+    }
+  }
+
+  /// Complete a self-logged field journey (External staff)
+  Future<Map<String, dynamic>> journeyFieldOut({
+    required double latitude,
+    required double longitude,
+    String? address,
+    String? fieldOutNotes,
+    String? fieldOutImage,
+    String? fieldOutOtp,
+    Map<String, dynamic>? answers,
+  }) async {
+    await _setToken();
+    final resolvedAnswers = answers != null ? Map<String, dynamic>.from(answers) : <String, dynamic>{};
+    final effectiveNotes = (fieldOutNotes != null && fieldOutNotes.trim().isNotEmpty)
+        ? fieldOutNotes.trim()
+        : (resolvedAnswers['Description']?.toString() ?? 'Completed');
+    if (!resolvedAnswers.containsKey('Description') ||
+        resolvedAnswers['Description'] == null ||
+        resolvedAnswers['Description'].toString().trim().isEmpty) {
+      resolvedAnswers['Description'] = effectiveNotes;
+    }
+    if (fieldOutImage != null && fieldOutImage.isNotEmpty && !resolvedAnswers.containsKey('Proof Photo')) {
+      resolvedAnswers['Proof Photo'] = fieldOutImage;
+    }
+    if (fieldOutOtp != null && fieldOutOtp.isNotEmpty && !resolvedAnswers.containsKey('OTP')) {
+      resolvedAnswers['OTP'] = fieldOutOtp;
+    }
+
+    try {
+      final response = await _api.dio.post<dynamic>(
+        '/staff/geo-task/journey/field-out',
+        data: {
+          'latitude': latitude,
+          'longitude': longitude,
+          if (address != null) 'address': address,
+          'fieldOutNotes': effectiveNotes,
+          if (fieldOutImage != null) 'fieldOutImage': fieldOutImage,
+          if (fieldOutOtp != null) 'fieldOutOtp': fieldOutOtp,
+          'answers': resolvedAnswers,
+        },
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (e) {
+      final msg = (e.response?.data is Map)
+          ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
+          : null;
+      throw Exception(msg ?? 'Failed to perform Field Out');
+    }
   }
 
   // ─── Form (arrived screen) ───────────────────────────────────────────────
@@ -1073,5 +1761,24 @@ class TaskService {
         'responses': responses,
       },
     );
+  }
+
+  /// Fetch the current staff member's field type ('Internal Field Employee' or 'External Field Employee')
+  Future<String?> getStaffFieldType() async {
+    try {
+      // Shared, cached profile instead of another raw /staff/profile round trip.
+      final res = await AuthService().getProfile();
+      final data = res['data'];
+      if (data is Map) {
+        final staff = data['staffData'] is Map ? data['staffData'] as Map : data;
+        final fieldType = staff['fieldType']?.toString();
+        if (fieldType != null && fieldType.isNotEmpty) {
+          return fieldType;
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 }

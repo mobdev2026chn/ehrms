@@ -416,12 +416,7 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
     return AppBottomNavigationBar(
       currentIndex: -1,
       onTap: (index) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (_) => DashboardScreen(initialIndex: index),
-          ),
-          (route) => route.isFirst,
-        );
+        DashboardScreen.goToTab(context, index);
       },
     );
   }

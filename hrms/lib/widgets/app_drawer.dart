@@ -133,7 +133,7 @@ class _AppDrawerState extends State<AppDrawer> {
           if (nav.canPop()) nav.popUntil((r) => r.isFirst);
         }
       } else if (mounted && context.mounted) {
-        _push(DashboardScreen(initialIndex: index));
+        DashboardScreen.goToTab(context, index);
       }
     });
   }

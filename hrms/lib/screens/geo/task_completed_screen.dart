@@ -641,14 +641,17 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      Text(
-                        _isWaitingForApproval
-                            ? 'Awaiting Admin Approval'
-                            : 'Task Completed Successfully',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade800,
+                      Flexible(
+                        child: Text(
+                          _isWaitingForApproval
+                              ? 'Awaiting Admin Approval'
+                              : 'Task Completed Successfully',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade800,
+                          ),
                         ),
                       ),
                     ],
@@ -729,16 +732,22 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+            ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade800,
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade800,
+              ),
             ),
           ),
         ],

@@ -183,10 +183,7 @@ class _SalaryStructureDetailScreenState
   /// Leave the (empty) salary screen and return to the dashboard.
   void _goToDashboard() {
     if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const DashboardScreen()),
-      (route) => route.isFirst,
-    );
+    DashboardScreen.goToTab(context, 0);
   }
 
   @override

@@ -262,13 +262,17 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text(
-                              'TOTAL OT HOURS',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF64748B),
-                                letterSpacing: 0.5,
+                            const Expanded(
+                              child: Text(
+                                'TOTAL OT HOURS',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF64748B),
+                                  letterSpacing: 0.5,
+                                ),
                               ),
                             ),
                             Container(
@@ -328,13 +332,17 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text(
-                              'OT REQUESTS',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF64748B),
-                                letterSpacing: 0.5,
+                            const Expanded(
+                              child: Text(
+                                'OT REQUESTS',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF64748B),
+                                  letterSpacing: 0.5,
+                                ),
                               ),
                             ),
                             Container(
@@ -614,11 +622,15 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                               color: Color(0xFF64748B),
                             ),
                             const SizedBox(width: 6),
-                            Text(
-                              'Requested by: $requestedBy',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF475569),
+                            Expanded(
+                              child: Text(
+                                'Requested by: $requestedBy',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF475569),
+                                ),
                               ),
                             ),
                           ],

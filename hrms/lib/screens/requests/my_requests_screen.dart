@@ -1121,8 +1121,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     // Date filter is single-date only; start unfiltered (no range).
     _startDate = null;
     _endDate = null;
-    _fetchLeaves();
-    _fetchLeaveBalances();
+    _fetchLeaves(); // also loads balances
   }
 
   Future<void> _fetchLeaveBalances() async {
@@ -1806,13 +1805,17 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Leave Requests',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F172A),
-                      letterSpacing: -0.3,
+                  const Flexible(
+                    child: Text(
+                      'Leave Requests',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
+                        letterSpacing: -0.3,
+                      ),
                     ),
                   ),
                   Container(
@@ -1948,7 +1951,10 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             .toList(),
                         onChanged: (val) {
                           if (val != null) {
-                            setState(() => _selectedStatus = val);
+                            setState(() {
+                          _selectedStatus = val;
+                          _currentPage = 1;
+                        });
                             _fetchLeaves();
                           }
                         },
@@ -2067,11 +2073,15 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       children: [
                         const Icon(Icons.date_range_outlined, size: 14, color: Color(0xFF94A3B8)),
                         const SizedBox(width: 6),
-                        Text(
-                          '$start ➔ $end',
-                          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                        Expanded(
+                          child: Text(
+                            '$start ➔ $end',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                          ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                           decoration: BoxDecoration(
@@ -2938,43 +2948,51 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFFBEB),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(
-                          Icons.description_rounded,
-                          size: 20,
-                          color: Color(0xFFEFAA1F),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Apply for Leave',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF0F172A),
-                            ),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          Text(
-                            _assignedTemplate?['name']?.toString() ?? 'leaves',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF94A3B8),
-                            ),
+                          child: const Icon(
+                            Icons.description_rounded,
+                            size: 20,
+                            color: Color(0xFFEFAA1F),
                           ),
-                        ],
-                      ),
-                    ],
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Apply for Leave',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                              Text(
+                                _assignedTemplate?['name']?.toString() ?? 'leaves',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
@@ -3159,10 +3177,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: const Color(0xFFFDE68A)),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  // Wrap (not Row) so the two halves drop to a second line on narrow phones.
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 4,
                     children: [
                       Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           const Text(
                             'Available Balance: ',
@@ -3309,19 +3332,25 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFFEFAA1F)),
-                            const SizedBox(width: 8),
-                            Text(
-                              _startDate != null ? DateFormat('MMM dd, yyyy').format(_startDate!) : 'Select Date',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
-                                color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFFEFAA1F)),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _startDate != null ? DateFormat('MMM dd, yyyy').format(_startDate!) : 'Select Date',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
+                                    color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                         const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
                       ],
@@ -3359,19 +3388,25 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFFEFAA1F)),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        _startDate != null ? DateFormat('MMM dd, yyyy').format(_startDate!) : 'Select Date',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
-                                          color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFFEFAA1F)),
+                                        const SizedBox(width: 6),
+                                        Flexible(
+                                          child: Text(
+                                            _startDate != null ? DateFormat('MMM dd, yyyy').format(_startDate!) : 'Select Date',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
+                                              color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                   const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
                                 ],
@@ -3410,19 +3445,25 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFFEFAA1F)),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        _endDate != null ? DateFormat('MMM dd, yyyy').format(_endDate!) : 'Select Date',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: _endDate != null ? FontWeight.w800 : FontWeight.w500,
-                                          color: _endDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFFEFAA1F)),
+                                        const SizedBox(width: 6),
+                                        Flexible(
+                                          child: Text(
+                                            _endDate != null ? DateFormat('MMM dd, yyyy').format(_endDate!) : 'Select Date',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: _endDate != null ? FontWeight.w800 : FontWeight.w500,
+                                              color: _endDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                   const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
                                 ],
@@ -3998,7 +4039,10 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                                 .toList(),
                             onChanged: (val) {
                               if (val != null) {
-                                setState(() => _selectedStatus = val);
+                                setState(() {
+                          _selectedStatus = val;
+                          _currentPage = 1;
+                        });
                                 _fetchLoans();
                               }
                             },
@@ -5225,28 +5269,34 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'TOTAL REIMBURSED',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.9),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'TOTAL REIMBURSED',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${_formatAmount(reimbursed)}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 30,
-                      fontWeight: FontWeight.bold,
+                    const SizedBox(height: 6),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '${_formatAmount(reimbursed)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 30,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               Container(
                 padding: const EdgeInsets.all(8),
@@ -5269,27 +5319,34 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Pending Amount',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.9),
-                      fontSize: 12,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pending Amount',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontSize: 12,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${_formatAmount(pending)}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                    const SizedBox(height: 2),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '${_formatAmount(pending)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 14,
@@ -5488,7 +5545,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                         .toList(),
                     onChanged: (val) {
                       if (val != null) {
-                        setState(() => _selectedStatus = val);
+                        setState(() {
+                          _selectedStatus = val;
+                          _currentPage = 1;
+                        });
                         _fetchExpenses();
                       }
                     },
@@ -5550,38 +5610,47 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFFBEB),
-                            borderRadius: BorderRadius.circular(8),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFBEB),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(_expenseIcon(type), color: const Color(0xFFEFAA1F), size: 18),
                           ),
-                          child: Icon(_expenseIcon(type), color: const Color(0xFFEFAA1F), size: 18),
-                        ),
-                        const SizedBox(width: 10),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              type,
-                              style: const TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF0F172A),
-                              ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  type,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  date,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                                ),
+                              ],
                             ),
-                            Text(
-                              date,
-                              style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
-                            ),
-                          ],
-                        ),
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
@@ -6041,12 +6110,15 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
   }
 
   Future<void> _pickDate() async {
-    final DateTime initial = _date ?? DateTime.now();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final DateTime initial = _date ?? today;
     final DateTime? picked = await _showWebStyledDatePicker(
       context: context,
-      initialDate: initial,
+      initialDate: initial.isAfter(today) ? today : initial,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      // An expense can only be claimed for a day that has already happened.
+      lastDate: today,
     );
 
     if (picked != null) {
@@ -6100,11 +6172,14 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.chevron_left_rounded, size: 22, color: Color(0xFF64748B)),
-                          onPressed: () {
-                            setDialogState(() {
-                              navDate = DateTime(navDate.year, navDate.month - 1, 1);
-                            });
-                          },
+                          onPressed: DateTime(navDate.year, navDate.month)
+                                  .isAfter(DateTime(firstDate.year, firstDate.month))
+                              ? () {
+                                  setDialogState(() {
+                                    navDate = DateTime(navDate.year, navDate.month - 1, 1);
+                                  });
+                                }
+                              : null,
                         ),
                         Text(
                           DateFormat('MMMM yyyy').format(navDate),
@@ -6116,11 +6191,14 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0xFF64748B)),
-                          onPressed: () {
-                            setDialogState(() {
-                              navDate = DateTime(navDate.year, navDate.month + 1, 1);
-                            });
-                          },
+                          onPressed: DateTime(navDate.year, navDate.month)
+                                  .isBefore(DateTime(lastDate.year, lastDate.month))
+                              ? () {
+                                  setDialogState(() {
+                                    navDate = DateTime(navDate.year, navDate.month + 1, 1);
+                                  });
+                                }
+                              : null,
                         ),
                       ],
                     ),
@@ -6159,9 +6237,15 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                             selectedDate!.year == currentDay.year &&
                             selectedDate!.month == currentDay.month &&
                             selectedDate!.day == currentDay.day;
+                        final isEnabled = !currentDay.isBefore(
+                              DateTime(firstDate.year, firstDate.month, firstDate.day),
+                            ) &&
+                            !currentDay.isAfter(
+                              DateTime(lastDate.year, lastDate.month, lastDate.day),
+                            );
 
                         return InkWell(
-                          onTap: () => Navigator.pop(ctx, currentDay),
+                          onTap: isEnabled ? () => Navigator.pop(ctx, currentDay) : null,
                           borderRadius: BorderRadius.circular(100),
                           child: Container(
                             alignment: Alignment.center,
@@ -6174,7 +6258,11 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                               style: TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
-                                color: isSelected ? Colors.white : const Color(0xFF1E293B),
+                                color: isSelected
+                                    ? Colors.white
+                                    : isEnabled
+                                        ? const Color(0xFF1E293B)
+                                        : const Color(0xFFCBD5E1),
                               ),
                             ),
                           ),
@@ -6203,6 +6291,13 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
 
     if (_date == null) {
       setState(() => _errorMessage = 'Please select a date.');
+      return;
+    }
+
+    final now = DateTime.now();
+    if (DateTime(_date!.year, _date!.month, _date!.day)
+        .isAfter(DateTime(now.year, now.month, now.day))) {
+      setState(() => _errorMessage = 'Expense date cannot be in the future.');
       return;
     }
 
@@ -6764,6 +6859,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
 
+  /// First month the month filter may show: the employee's onboarding month
+  /// (joining date as fallback). Null until known — no lower bound then.
+  DateTime? _onboardingMonth;
+
   // Cached today's punch session, used to surface the out-of-session gating
   // message as a tap-tooltip on the Request Permission button (parity with the
   // fine-notice tooltip). Null until resolved (fail open → no gate tooltip).
@@ -6805,6 +6904,50 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     _fetchRequests();
     _fetchBalance();
     _refreshSession();
+    _loadOnboardingMonth();
+  }
+
+  static DateTime? _onboardingMonthFrom(dynamic source) {
+    if (source is! Map) return null;
+    for (final m in [source['staffData'], source['staff'], source]) {
+      if (m is! Map) continue;
+      final raw = m['onboardingDate'] ?? m['joiningDate'] ?? m['dateOfJoining'];
+      final parsed = raw == null ? null : DateTime.tryParse(raw.toString());
+      if (parsed != null) {
+        // Stored as local midnight in UTC (1 Sep IST -> 31 Aug 18:30Z); read it back locally.
+        final local = parsed.isUtc ? parsed.toLocal() : parsed;
+        return DateTime(local.year, local.month);
+      }
+    }
+    return null;
+  }
+
+  Future<void> _loadOnboardingMonth() async {
+    DateTime? month;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      for (final key in ['user', 'staff']) {
+        final s = prefs.getString(key);
+        if (s == null) continue;
+        month = _onboardingMonthFrom(jsonDecode(s));
+        if (month != null) break;
+      }
+      if (month == null) {
+        final res = await AuthService().getProfile();
+        if (res['success'] == true) month = _onboardingMonthFrom(res['data']);
+      }
+    } catch (_) {}
+    if (!mounted || month == null) return;
+    setState(() => _onboardingMonth = month);
+  }
+
+  /// Months before onboarding or after the current month have no permission data.
+  bool _isMonthSelectable(int year, int month) {
+    final m = DateTime(year, month);
+    final now = DateTime.now();
+    if (m.isAfter(DateTime(now.year, now.month))) return false;
+    final start = _onboardingMonth;
+    return start == null || !m.isBefore(start);
   }
 
   /// Caches today's punch session so the button's gating tooltip is accurate
@@ -6875,8 +7018,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
 
   Future<void> _pickMonth() async {
     final now = DateTime.now();
-    final firstYear = now.year - 2;
-    final lastYear = now.year + 2;
+    final firstYear = _onboardingMonth?.year ?? now.year - 2;
+    final lastYear = now.year;
 
     final picked = await showModalBottomSheet<DateTime>(
       context: context,
@@ -6978,15 +7121,19 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                           final month = i + 1;
                           final selected =
                               month == selMonth && viewYear == selYear;
+                          final enabled = _isMonthSelectable(viewYear, month);
                           return Material(
                             color: selected
                                 ? AppColors.primary
-                                : AppColors.primary.withValues(alpha: 0.08),
+                                : enabled
+                                    ? AppColors.primary.withValues(alpha: 0.08)
+                                    : const Color(0xFFF1F5F9),
                             borderRadius: BorderRadius.circular(12),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(12),
-                              onTap: () =>
-                                  Navigator.pop(ctx, DateTime(viewYear, month)),
+                              onTap: enabled
+                                  ? () => Navigator.pop(ctx, DateTime(viewYear, month))
+                                  : null,
                               child: Center(
                                 child: Text(
                                   monthNames[i],
@@ -6997,7 +7144,9 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                                         : FontWeight.w500,
                                     color: selected
                                         ? Colors.white
-                                        : AppColors.textPrimary,
+                                        : enabled
+                                            ? AppColors.textPrimary
+                                            : const Color(0xFFCBD5E1),
                                   ),
                                 ),
                               ),
@@ -7557,7 +7706,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                         .toList(),
                     onChanged: (val) {
                       if (val != null) {
-                        setState(() => _selectedStatus = val);
+                        setState(() {
+                          _selectedStatus = val;
+                          _currentPage = 1;
+                        });
                         _fetchRequests();
                       }
                     },
@@ -7633,35 +7785,42 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Text(
-                          dateStr,
-                          style: const TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: typeBg,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: typeBorder),
-                          ),
-                          child: Text(
-                            type,
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w800,
-                              color: typeText,
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              dateStr,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF0F172A),
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: typeBg,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: typeBorder),
+                            ),
+                            child: Text(
+                              type,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                color: typeText,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                       decoration: BoxDecoration(
@@ -7900,7 +8059,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
 
     final filtered = _requests.where((r) {
       if (_selectedStatus != 'All Status') {
-        if (r['status'] != _selectedStatus) return false;
+        if ((r['status'] ?? '').toString().toLowerCase() != _selectedStatus.toLowerCase()) return false;
       }
       final q = _searchController.text.trim().toLowerCase();
       if (q.isNotEmpty) {
@@ -8183,9 +8342,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   @override
   void initState() {
     super.initState();
-    // Default to tomorrow as per Web App validation
+    // Default to today; the web app accepts today or a future date.
     final now = DateTime.now();
-    _permDate = DateTime(now.year, now.month, now.day + 1);
+    _permDate = DateTime(now.year, now.month, now.day);
   }
 
   @override
@@ -8199,12 +8358,15 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   }
 
   Future<void> _pickDate() async {
-    final DateTime initial = _permDate ?? DateTime.now().add(const Duration(days: 1));
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final DateTime initial = _permDate ?? today;
     final DateTime? picked = await _showWebStyledDatePicker(
       context: context,
-      initialDate: initial,
-      firstDate: DateTime.now().subtract(const Duration(days: 30)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: initial.isBefore(today) ? today : initial,
+      // Same rule as the web: today or a future date.
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 365)),
     );
 
     if (picked != null) {
@@ -8258,11 +8420,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.chevron_left_rounded, size: 22, color: Color(0xFF64748B)),
-                          onPressed: () {
-                            setDialogState(() {
-                              navDate = DateTime(navDate.year, navDate.month - 1, 1);
-                            });
-                          },
+                          onPressed: DateTime(navDate.year, navDate.month)
+                                  .isAfter(DateTime(firstDate.year, firstDate.month))
+                              ? () {
+                                  setDialogState(() {
+                                    navDate = DateTime(navDate.year, navDate.month - 1, 1);
+                                  });
+                                }
+                              : null,
                         ),
                         Text(
                           DateFormat('MMMM yyyy').format(navDate),
@@ -8274,11 +8439,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0xFF64748B)),
-                          onPressed: () {
-                            setDialogState(() {
-                              navDate = DateTime(navDate.year, navDate.month + 1, 1);
-                            });
-                          },
+                          onPressed: DateTime(navDate.year, navDate.month)
+                                  .isBefore(DateTime(lastDate.year, lastDate.month))
+                              ? () {
+                                  setDialogState(() {
+                                    navDate = DateTime(navDate.year, navDate.month + 1, 1);
+                                  });
+                                }
+                              : null,
                         ),
                       ],
                     ),
@@ -8317,11 +8485,15 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             selectedDate!.year == currentDay.year &&
                             selectedDate!.month == currentDay.month &&
                             selectedDate!.day == currentDay.day;
+                        final isEnabled = !currentDay.isBefore(
+                              DateTime(firstDate.year, firstDate.month, firstDate.day),
+                            ) &&
+                            !currentDay.isAfter(
+                              DateTime(lastDate.year, lastDate.month, lastDate.day),
+                            );
 
                         return InkWell(
-                          onTap: () {
-                            Navigator.pop(ctx, currentDay);
-                          },
+                          onTap: isEnabled ? () => Navigator.pop(ctx, currentDay) : null,
                           borderRadius: BorderRadius.circular(100),
                           child: Container(
                             alignment: Alignment.center,
@@ -8334,7 +8506,11 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                               style: TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
-                                color: isSelected ? Colors.white : const Color(0xFF1E293B),
+                                color: isSelected
+                                    ? Colors.white
+                                    : isEnabled
+                                        ? const Color(0xFF1E293B)
+                                        : const Color(0xFFCBD5E1),
                               ),
                             ),
                           ),
@@ -8538,19 +8714,25 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFFEFAA1F)),
-                          const SizedBox(width: 8),
-                          Text(
-                            _permDate != null ? DateFormat('MMM dd, yyyy').format(_permDate!) : 'Select Date',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: _permDate != null ? FontWeight.w800 : FontWeight.w500,
-                              color: _permDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFFEFAA1F)),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                _permDate != null ? DateFormat('MMM dd, yyyy').format(_permDate!) : 'Select Date',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: _permDate != null ? FontWeight.w800 : FontWeight.w500,
+                                  color: _permDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                       const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
                     ],
@@ -9784,7 +9966,10 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                         .toList(),
                     onChanged: (val) {
                       if (val != null) {
-                        setState(() => _selectedStatus = val);
+                        setState(() {
+                          _selectedStatus = val;
+                          _currentPage = 1;
+                        });
                         _fetchRequests();
                       }
                     },
@@ -9857,38 +10042,47 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 34,
-                          height: 34,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFFBEB),
-                            borderRadius: BorderRadius.circular(8),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 34,
+                            height: 34,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFBEB),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.receipt_long_rounded, color: Color(0xFFEFAA1F), size: 18),
                           ),
-                          child: const Icon(Icons.receipt_long_rounded, color: Color(0xFFEFAA1F), size: 18),
-                        ),
-                        const SizedBox(width: 10),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              periodText,
-                              style: const TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF0F172A),
-                              ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  periodText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  'Applied: $appliedDate',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                                ),
+                              ],
                             ),
-                            Text(
-                              'Applied: $appliedDate',
-                              style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
-                            ),
-                          ],
-                        ),
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(

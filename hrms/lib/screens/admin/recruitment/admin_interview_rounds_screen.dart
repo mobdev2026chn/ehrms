@@ -299,7 +299,8 @@ class _AdminInterviewRoundsScreenState extends State<AdminInterviewRoundsScreen>
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(item.candidateName, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+                Expanded(child: Text(item.candidateName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)))),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(color: stBg, borderRadius: BorderRadius.circular(20)),

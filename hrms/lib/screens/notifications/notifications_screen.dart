@@ -1,6 +1,10 @@
 // lib/screens/notifications/notifications_screen.dart
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_colors.dart';
 import '../../config/app_route_observer.dart';
 import '../../services/api_client.dart';
@@ -20,6 +24,8 @@ class NotificationItemModel {
   final String message;
   final String staffSubtitle;
   final String type; // 'leave' | 'permission' | 'reimbursement' | 'payslip' | 'punch' | 'system'
+  /// Staff notifications (HRMSbackend): 'requests' | 'tasks' | 'profile' | 'exit'.
+  final String module;
   final String timeAgo;
   final DateTime createdAt;
   bool isRead;
@@ -30,6 +36,7 @@ class NotificationItemModel {
     required this.message,
     required this.staffSubtitle,
     required this.type,
+    this.module = '',
     required this.timeAgo,
     required this.createdAt,
     this.isRead = false,
@@ -39,18 +46,19 @@ class NotificationItemModel {
     final title = (json['title'] ?? 'Notification').toString();
     final message = (json['message'] ?? '').toString();
     final type = (json['type'] ?? 'leave').toString().toLowerCase();
+    final module = (json['module'] ?? '').toString().toLowerCase();
     final isRead = json['status'] == 'read' || json['isRead'] == true;
 
     final createdDateStr = (json['createdAt'] ?? '').toString();
-    DateTime created = DateTime.tryParse(createdDateStr) ?? DateTime.now();
+    final parsed = DateTime.tryParse(createdDateStr);
+    DateTime created = parsed?.toLocal() ?? DateTime.now();
 
-    // Compute relative time
-    final diff = DateTime.now().difference(created);
+    // Same style as the web: relative within a day, then a short date ("4 Sep").
+    final now = DateTime.now();
+    final diff = now.difference(created);
     String timeAgo = 'Just now';
-    if (diff.inDays >= 30) {
-      timeAgo = '${(diff.inDays / 30).floor()}mo ago';
-    } else if (diff.inDays >= 1) {
-      timeAgo = '${diff.inDays}d ago';
+    if (diff.inHours >= 24) {
+      timeAgo = DateFormat(created.year == now.year ? 'd MMM' : 'd MMM yyyy').format(created);
     } else if (diff.inHours >= 1) {
       timeAgo = '${diff.inHours}h ago';
     } else if (diff.inMinutes >= 1) {
@@ -59,13 +67,14 @@ class NotificationItemModel {
 
     final staffObj = json['staffId'] is Map ? json['staffId'] : json;
     final sName = (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString();
-    final empId = (staffObj['employeeId'] ?? 'EMP-015').toString();
-    final dept = (staffObj['department'] is Map ? staffObj['department']['name'] : (staffObj['department'] ?? 'Engineering')).toString();
+    final empId = (staffObj['employeeId'] ?? '').toString();
+    final dept = (staffObj['department'] is Map ? staffObj['department']['name'] : (staffObj['department'] ?? '')).toString();
 
-    String staffSubtitle = sName.isNotEmpty ? '$sName • $empId • $dept' : '';
+    String staffSubtitle = sName.isNotEmpty
+        ? [sName, empId, dept].where((s) => s.trim().isNotEmpty).join(' • ')
+        : '';
     if (staffSubtitle.isEmpty && message.contains('has requested')) {
-      final parts = message.split(' has requested');
-      staffSubtitle = '${parts[0]} • EMP-015 • Engineering';
+      staffSubtitle = message.split(' has requested')[0];
     }
 
     return NotificationItemModel(
@@ -74,6 +83,7 @@ class NotificationItemModel {
       message: message,
       staffSubtitle: staffSubtitle,
       type: type,
+      module: module,
       timeAgo: timeAgo,
       createdAt: created,
       isRead: isRead,
@@ -96,8 +106,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   List<NotificationItemModel> _notifications = [];
   bool _isLoading = true;
   String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
   String _statusFilter = 'All'; // 'All' | 'Unread' | 'Read'
-  String _typeFilter = 'All Types'; // 'All Types' | 'Leave' | 'Permission' | 'Reimbursement' | 'Payslip'
+  String _typeFilter = 'all'; // 'all' or a key from [_categoryFilters]
   int _displayedCount = 10;
 
   ModalRoute<void>? _route;
@@ -124,6 +135,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -139,25 +151,48 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     }
   }
 
+  /// HRMSbackend keeps staff and admin notifications apart: a staff login must use
+  /// `/staff/notifications`, admins `/admin/notifications`.
+  bool _isAdmin = false;
+  String get _base => _isAdmin ? '/admin/notifications' : '/staff/notifications';
+
+  Future<void> _resolveRole() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userStr = prefs.getString('user');
+      if (userStr == null) return;
+      final user = jsonDecode(userStr);
+      if (user is! Map) return;
+      final role = (user['role'] ?? '').toString().toLowerCase().replaceAll(' ', '');
+      _isAdmin = role == 'admin' || role == 'superadmin';
+    } catch (_) {}
+  }
+
+  static bool _ok(Response<dynamic> res) => res.data is Map && res.data['success'] == true;
+
   Future<void> _load({bool showLoader = true}) async {
     if (showLoader && mounted) setState(() => _isLoading = true);
+    await _resolveRole();
 
     try {
-      final res = await _api.request('/admin/notifications');
-      if (res.data is Map && res.data['success'] == true) {
+      final res = await _api.request<dynamic>(_base, queryParameters: {'limit': 100});
+      if (_ok(res)) {
         final list = (res.data['data'] as List?) ?? [];
-        if (list.isNotEmpty && mounted) {
+        if (mounted) {
           setState(() {
-            _notifications = list.map((e) => NotificationItemModel.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+            _notifications = list
+                .whereType<Map>()
+                .map((e) => NotificationItemModel.fromJson(Map<String, dynamic>.from(e)))
+                .toList();
           });
-        } else {
-          _setMockNotifications();
         }
-      } else {
-        _setMockNotifications();
+      } else if (showLoader && mounted) {
+        SnackBarUtils.showSnackBar(context, 'Failed to load notifications', isError: true);
       }
     } catch (_) {
-      _setMockNotifications();
+      if (showLoader && mounted) {
+        SnackBarUtils.showSnackBar(context, 'Failed to load notifications', isError: true);
+      }
     }
 
     await FcmService.markNotificationsSeen();
@@ -167,97 +202,30 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     }
   }
 
-  void _setMockNotifications() {
-    _notifications = [
-      NotificationItemModel(
-        id: 'notif_1',
-        title: 'New Leave Request',
-        message: 'sarannn saran has requested 0.5 day(s) of leave (Unpaid).',
-        staffSubtitle: 'sarannn saran • EMP-015 • Engineering',
-        type: 'leave',
-        timeAgo: '2h ago',
-        createdAt: DateTime.now().subtract(const Duration(hours: 2)),
-        isRead: false,
-      ),
-      NotificationItemModel(
-        id: 'notif_2',
-        title: 'New Leave Request',
-        message: 'sarannn saran has requested 0.5 day(s) of leave (Unpaid).',
-        staffSubtitle: 'sarannn saran • EMP-015 • Engineering',
-        type: 'leave',
-        timeAgo: '2h ago',
-        createdAt: DateTime.now().subtract(const Duration(hours: 2)),
-        isRead: false,
-      ),
-      NotificationItemModel(
-        id: 'notif_3',
-        title: 'New Expense Claim',
-        message: 'James fernado has submitted an expense claim of ₹200 for Meals.',
-        staffSubtitle: 'James fernado • EMP-002 • IT',
-        type: 'reimbursement',
-        timeAgo: '3h ago',
-        createdAt: DateTime.now().subtract(const Duration(hours: 3)),
-        isRead: false,
-      ),
-      NotificationItemModel(
-        id: 'notif_4',
-        title: 'New Leave Request',
-        message: 'James fernado has requested 1 day(s) of leave (sick).',
-        staffSubtitle: 'James fernado • EMP-002 • IT',
-        type: 'leave',
-        timeAgo: '3h ago',
-        createdAt: DateTime.now().subtract(const Duration(hours: 3)),
-        isRead: false,
-      ),
-      NotificationItemModel(
-        id: 'notif_5',
-        title: 'New Payslip Request',
-        message: 'personal notouch has requested their payslip for February 2026.',
-        staffSubtitle: 'personal notouch • EMP-007 • Engineering',
-        type: 'payslip',
-        timeAgo: '1d ago',
-        createdAt: DateTime.now().subtract(const Duration(days: 1)),
-        isRead: false,
-      ),
-      NotificationItemModel(
-        id: 'notif_6',
-        title: 'New Payslip Request',
-        message: 'personal notouch has requested their payslip for January 2026.',
-        staffSubtitle: 'personal notouch • EMP-007 • Engineering',
-        type: 'payslip',
-        timeAgo: '1d ago',
-        createdAt: DateTime.now().subtract(const Duration(days: 1)),
-        isRead: false,
-      ),
-      NotificationItemModel(
-        id: 'notif_7',
-        title: 'New Permission Request',
-        message: 'hp hai th has requested a Late permission for 1 hr on 8/25/2026.',
-        staffSubtitle: 'hp hai th • EMP-006 • IT',
-        type: 'permission',
-        timeAgo: '5d ago',
-        createdAt: DateTime.now().subtract(const Duration(days: 5)),
-        isRead: false,
-      ),
-      NotificationItemModel(
-        id: 'notif_8',
-        title: 'New Permission Request',
-        message: 'hp hai th has requested a Late permission for 1 hr on 8/25/2026.',
-        staffSubtitle: 'hp hai th • EMP-006 • IT',
-        type: 'permission',
-        timeAgo: '5d ago',
-        createdAt: DateTime.now().subtract(const Duration(days: 5)),
-        isRead: false,
-      ),
-    ];
-  }
-
   int get _unreadCount => _notifications.where((n) => !n.isRead).length;
 
-  int _countForType(String type) {
-    if (type == 'all') return _notifications.length;
-    return _notifications.where((n) => n.type.toLowerCase() == type.toLowerCase()).length;
+  /// Category chips: staff notifications are grouped by `module`, admin ones by `type`.
+  List<({String label, String key, IconData icon})> get _categoryFilters => _isAdmin
+      ? const [
+          (label: 'Leave', key: 'leave', icon: Icons.calendar_month_outlined),
+          (label: 'Permission', key: 'permission', icon: Icons.access_time_rounded),
+          (label: 'Reimbursement', key: 'reimbursement', icon: Icons.receipt_long_outlined),
+          (label: 'Payslip', key: 'payslip', icon: Icons.description_outlined),
+        ]
+      : const [
+          (label: 'Requests', key: 'requests', icon: Icons.assignment_outlined),
+          (label: 'Tasks', key: 'tasks', icon: Icons.task_alt_rounded),
+          (label: 'Profile', key: 'profile', icon: Icons.person_outline_rounded),
+          (label: 'Exit', key: 'exit', icon: Icons.logout_rounded),
+        ];
+
+  String _categoryOf(NotificationItemModel n) {
+    if (!_isAdmin) return n.module;
+    return n.type == 'expense' ? 'reimbursement' : n.type;
   }
+
+  int _countForCategory(String key) =>
+      _notifications.where((n) => _categoryOf(n) == key).length;
 
   List<NotificationItemModel> get _filteredNotifications {
     return _notifications.where((n) {
@@ -270,11 +238,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           (_statusFilter == 'Unread' && !n.isRead) ||
           (_statusFilter == 'Read' && n.isRead);
 
-      final matchesType = _typeFilter == 'All Types' ||
-          (_typeFilter == 'Leave' && n.type == 'leave') ||
-          (_typeFilter == 'Permission' && n.type == 'permission') ||
-          (_typeFilter == 'Reimbursement' && (n.type == 'reimbursement' || n.type == 'expense')) ||
-          (_typeFilter == 'Payslip' && n.type == 'payslip');
+      final matchesType = _typeFilter == 'all' || _categoryOf(n) == _typeFilter;
 
       return matchesSearch && matchesStatus && matchesType;
     }).toList();
@@ -287,19 +251,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       }
     });
     try {
-      await _api.request('/admin/notifications', method: 'PUT');
+      await _api.request<dynamic>(_base, method: 'PUT');
     } catch (_) {}
     if (mounted) SnackBarUtils.showSnackBar(context, 'All notifications marked as read');
-  }
-
-  Future<void> _handleClearAll() async {
-    setState(() {
-      _notifications.clear();
-    });
-    try {
-      await _api.request('/admin/notifications/clear', method: 'DELETE');
-    } catch (_) {}
-    if (mounted) SnackBarUtils.showSnackBar(context, 'All notifications cleared');
   }
 
   void _handleNotificationTap(NotificationItemModel item) {
@@ -307,11 +261,12 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     setState(() {
       item.isRead = true;
     });
-    try {
-      _api.request('/admin/notifications/${item.id}/read', method: 'PUT');
-    } catch (_) {}
+    _api.request<dynamic>('$_base/${item.id}/read', method: 'PUT').catchError(
+      (_) => Response<dynamic>(requestOptions: RequestOptions()),
+    );
 
-    // Direct module click navigation
+    // Admin approval screens only apply to admin notifications.
+    if (!_isAdmin) return;
     final type = item.type.toLowerCase();
     if (type == 'leave') {
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminLeaveApprovalsScreen()));
@@ -326,14 +281,22 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     }
   }
 
-  void _handleDeleteSingle(NotificationItemModel item) {
+  Future<void> _handleDeleteSingle(NotificationItemModel item) async {
+    final index = _notifications.indexWhere((n) => n.id == item.id);
     setState(() {
       _notifications.removeWhere((n) => n.id == item.id);
     });
+    var removed = false;
     try {
-      _api.request('/admin/notifications/${item.id}', method: 'DELETE');
+      removed = _ok(await _api.request<dynamic>('$_base/${item.id}', method: 'DELETE'));
     } catch (_) {}
-    if (mounted) SnackBarUtils.showSnackBar(context, 'Notification removed');
+    if (!mounted) return;
+    if (removed) {
+      SnackBarUtils.showSnackBar(context, 'Notification removed');
+    } else {
+      setState(() => _notifications.insert(index < 0 ? 0 : index.clamp(0, _notifications.length), item));
+      SnackBarUtils.showSnackBar(context, 'Failed to remove notification', isError: true);
+    }
   }
 
   @override
@@ -358,6 +321,16 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         backgroundColor: Colors.white,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
+        actions: [
+          if (unread > 0)
+            TextButton.icon(
+              onPressed: _handleMarkAllAsRead,
+              icon: const Icon(Icons.done_all_rounded, size: 18),
+              label: const Text('Mark all read', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+              style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+            ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: _isLoading
           ? const Center(child: AppTabLoader())
@@ -367,132 +340,78 @@ class _NotificationsScreenState extends State<NotificationsScreen>
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  // Header Banner (Screenshot 1, 2, 3)
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFF1F5F9)),
-                    ),
-                    child: Column(
+                  // Filters: search, status tabs, type chips (no header card)
+                  Column(
                       children: [
-                        Row(
-                          children: [
-                            Stack(
-                              children: [
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(12)),
-                                  child: const Icon(Icons.notifications_none_rounded, color: Color(0xFFD97706), size: 22),
-                                ),
-                                if (unread > 0)
-                                  Positioned(
-                                    top: 0,
-                                    right: 0,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                      decoration: BoxDecoration(color: const Color(0xFFEFAA1F), borderRadius: BorderRadius.circular(8)),
-                                      child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.w900)),
+                        // Search bar (full width)
+                        SizedBox(
+                          height: 42,
+                          child: TextField(
+                            controller: _searchController,
+                            onChanged: (v) => setState(() => _searchQuery = v),
+                            textAlignVertical: TextAlignVertical.center,
+                            style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              hintText: 'Search title or message...',
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              prefixIcon: const Icon(Icons.search_rounded, size: 20, color: Color(0xFF94A3B8)),
+                              prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                              suffixIcon: _searchQuery.isEmpty
+                                  ? null
+                                  : IconButton(
+                                      icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF94A3B8)),
+                                      splashRadius: 18,
+                                      onPressed: () {
+                                        _searchController.clear();
+                                        setState(() => _searchQuery = '');
+                                      },
                                     ),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text('Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                                  const SizedBox(height: 2),
-                                  Text('$unread unread of $total notifications', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                                ],
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.4),
                               ),
                             ),
-                            OutlinedButton.icon(
-                              onPressed: unread > 0 ? _handleMarkAllAsRead : null,
-                              icon: const Icon(Icons.check_rounded, size: 13),
-                              label: const Text('Mark all read', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700)),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFF475569),
-                                side: const BorderSide(color: Color(0xFFE2E8F0)),
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            OutlinedButton.icon(
-                              onPressed: _notifications.isNotEmpty ? _handleClearAll : null,
-                              icon: const Icon(Icons.delete_outline_rounded, size: 13, color: Color(0xFFDC2626)),
-                              label: const Text('Clear', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFFDC2626))),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(color: Color(0xFFFECACA)),
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-
-                        // Search Bar + Status Tabs
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                height: 36,
-                                decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                                child: TextField(
-                                  onChanged: (v) => setState(() => _searchQuery = v),
-                                  decoration: const InputDecoration(
-                                    hintText: 'Search title or message...',
-                                    hintStyle: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                                    prefixIcon: Icon(Icons.search_rounded, size: 15, color: Color(0xFF94A3B8)),
-                                    border: InputBorder.none,
-                                    contentPadding: EdgeInsets.symmetric(vertical: 8),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-
-                            // Tabs: All | Unread | Read
-                            Container(
-                              height: 36,
-                              decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(8)),
-                              padding: const EdgeInsets.all(2),
-                              child: Row(
-                                children: [
-                                  _statusTabItem('All', null),
-                                  _statusTabItem('Unread', unread),
-                                  _statusTabItem('Read', null),
-                                ],
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                         const SizedBox(height: 10),
 
-                        // Type Filter Chips (Screenshot 1 & 2)
+                        // Tabs: All | Unread | Read (full width, equal segments)
+                        Container(
+                          height: 38,
+                          decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.all(3),
+                          child: Row(
+                            children: [
+                              Expanded(child: _statusTabItem('All', null)),
+                              Expanded(child: _statusTabItem('Unread', unread)),
+                              Expanded(child: _statusTabItem('Read', null)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+
+                        // Category filter chips
                         SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           child: Row(
                             children: [
-                              _typeChip('All Types', total, Icons.layers_outlined, const Color(0xFFEFAA1F), const Color(0xFFFEF3C7)),
-                              const SizedBox(width: 6),
-                              _typeChip('Leave', _countForType('leave'), Icons.calendar_month_outlined, const Color(0xFF2563EB), const Color(0xFFEFF6FF)),
-                              const SizedBox(width: 6),
-                              _typeChip('Permission', _countForType('permission'), Icons.access_time_rounded, const Color(0xFF7C3AED), const Color(0xFFF3E8FF)),
-                              const SizedBox(width: 6),
-                              _typeChip('Reimbursement', _countForType('reimbursement'), Icons.receipt_long_outlined, const Color(0xFF16A34A), const Color(0xFFDCFCE7)),
-                              const SizedBox(width: 6),
-                              _typeChip('Payslip', _countForType('payslip'), Icons.description_outlined, const Color(0xFF0284C7), const Color(0xFFE0F2FE)),
+                              _typeChip('all', 'All', total, Icons.layers_outlined),
+                              for (final f in _categoryFilters) ...[
+                                const SizedBox(width: 6),
+                                _typeChip(f.key, f.label, _countForCategory(f.key), f.icon),
+                              ],
                             ],
                           ),
                         ),
                       ],
-                    ),
                   ),
                   const SizedBox(height: 14),
 
@@ -511,9 +430,22 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                       ),
                     )
                   else ...[
-                    ..._filteredNotifications
-                        .take(_displayedCount)
-                        .map((item) => _buildNotificationCard(item)),
+                    Container(
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        children: [
+                          for (final (i, item) in _filteredNotifications.take(_displayedCount).indexed) ...[
+                            if (i > 0) const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+                            _buildNotificationCard(item),
+                          ],
+                        ],
+                      ),
+                    ),
                     if (_filteredNotifications.length > _displayedCount)
                       Padding(
                         padding: const EdgeInsets.only(top: 8, bottom: 16),
@@ -558,21 +490,28 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     final isSelected = _statusFilter == label;
     return InkWell(
       onTap: () => setState(() => _statusFilter = label),
+      borderRadius: BorderRadius.circular(8),
       child: Container(
+        alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(8),
           boxShadow: isSelected ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4)] : null,
         ),
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
-                color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                  color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                ),
               ),
             ),
             if (badgeCount != null && badgeCount > 0) ...[
@@ -589,10 +528,13 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
-  Widget _typeChip(String label, int count, IconData icon, Color color, Color bg) {
-    final isSelected = _typeFilter == label;
+  Widget _typeChip(String key, String label, int count, IconData icon) {
+    const color = Color(0xFFEFAA1F);
+    const bg = Color(0xFFFFFBEB);
+    final isSelected = _typeFilter == key;
     return InkWell(
-      onTap: () => setState(() => _typeFilter = label),
+      onTap: () => setState(() => _typeFilter = key),
+      borderRadius: BorderRadius.circular(8),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -626,118 +568,85 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
+  /// One row, styled like the web notification dropdown: unread rows are tinted with an
+  /// amber dot; tap marks read (and opens the module for admins); swipe left deletes.
   Widget _buildNotificationCard(NotificationItemModel item) {
-    IconData icon;
-    Color iconColor;
-    Color iconBg;
-
-    final type = item.type.toLowerCase();
-    if (type == 'leave') {
-      icon = Icons.calendar_today_outlined;
-      iconColor = const Color(0xFF2563EB);
-      iconBg = const Color(0xFFEFF6FF);
-    } else if (type == 'reimbursement' || type == 'expense') {
-      icon = Icons.receipt_long_outlined;
-      iconColor = const Color(0xFF16A34A);
-      iconBg = const Color(0xFFDCFCE7);
-    } else if (type == 'permission') {
-      icon = Icons.access_time_rounded;
-      iconColor = const Color(0xFF7C3AED);
-      iconBg = const Color(0xFFF3E8FF);
-    } else {
-      icon = Icons.description_outlined;
-      iconColor = const Color(0xFF0284C7);
-      iconBg = const Color(0xFFE0F2FE);
-    }
-
-    return InkWell(
-      onTap: () => _handleNotificationTap(item),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: item.isRead ? const Color(0xFFF1F5F9) : const Color(0xFFFEF3C7)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Left Icon with Unread Dot
-            Stack(
+    return Dismissible(
+      key: ValueKey('notif_${item.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        color: const Color(0xFFFEE2E2),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        child: const Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626)),
+      ),
+      onDismissed: (_) => _handleDeleteSingle(item),
+      child: Material(
+        color: item.isRead ? Colors.white : const Color(0xFFFFFBEB),
+        child: InkWell(
+          onTap: () => _handleNotificationTap(item),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 16, 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(10)),
-                  child: Icon(icon, size: 18, color: iconColor),
-                ),
-                if (!item.isRead)
-                  Positioned(
-                    top: 2,
-                    left: 2,
-                    child: Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(color: Color(0xFFEFAA1F), shape: BoxShape.circle),
-                    ),
+                SizedBox(
+                  width: 18,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: item.isRead
+                        ? null
+                        : Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFEFAA1F),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
                   ),
-              ],
-            ),
-            const SizedBox(width: 10),
-
-            // Content
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(item.title, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 2),
-                  Text(item.message, style: const TextStyle(fontSize: 11, color: Color(0xFF334155))),
-                  if (item.staffSubtitle.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(item.staffSubtitle, style: const TextStyle(fontSize: 10, color: Color(0xFF64748B))),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-
-            // Time & Actions
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(item.timeAgo, style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8))),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (!item.isRead)
-                      InkWell(
-                        onTap: () {
-                          setState(() => item.isRead = true);
-                          try {
-                            _api.request('/admin/notifications/${item.id}/read', method: 'PUT');
-                          } catch (_) {}
-                        },
-                        child: const Padding(
-                          padding: EdgeInsets.all(2),
-                          child: Icon(Icons.check_rounded, size: 15, color: Color(0xFF94A3B8)),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.title,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
                         ),
                       ),
-                    const SizedBox(width: 4),
-                    InkWell(
-                      onTap: () => _handleDeleteSingle(item),
-                      child: const Padding(
-                        padding: EdgeInsets.all(2),
-                        child: Icon(Icons.delete_outline_rounded, size: 15, color: Color(0xFF94A3B8)),
+                      if (item.message.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          item.message,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            height: 1.4,
+                            color: Color(0xFF334155),
+                          ),
+                        ),
+                      ],
+                      if (_isAdmin && item.staffSubtitle.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          item.staffSubtitle,
+                          style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                        ),
+                      ],
+                      const SizedBox(height: 6),
+                      Text(
+                        item.timeAgo,
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
-          ],
+          ),
         ),
       ),
     );

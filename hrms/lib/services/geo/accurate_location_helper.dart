@@ -31,13 +31,22 @@ Future<Position> getPositionForTrackings({
     );
   }
 
-  final samples = <Position>[initial];
+  bool isFresh(Position p, {int maxAgeSeconds = 25}) {
+    final age = DateTime.now().difference(p.timestamp).abs();
+    return age.inSeconds <= maxAgeSeconds;
+  }
 
-  // If the very first fix is already accurate enough, return immediately
+  final samples = <Position>[];
+  if (isFresh(initial, maxAgeSeconds: 30)) {
+    samples.add(initial);
+  }
+
+  // If the very first fix is fresh and already accurate enough, return immediately
   // instead of waiting out the whole sample window — this is the common case
   // outdoors and removes several seconds of "Getting location…" on every punch.
   final initialAcc = initial.accuracy;
-  if (initialAcc.isFinite &&
+  if (isFresh(initial, maxAgeSeconds: 25) &&
+      initialAcc.isFinite &&
       initialAcc > 0 &&
       initialAcc <= stopEarlyWhenAccuracyMeters) {
     return initial;
@@ -52,6 +61,7 @@ Future<Position> getPositionForTrackings({
     ).listen((p) {
       final a = p.accuracy;
       if (!a.isFinite || a <= 0 || a > 120) return;
+      if (!isFresh(p, maxAgeSeconds: 25)) return;
       samples.add(p);
       if (samples.length > maxSamples) {
         samples.removeAt(0);
@@ -71,11 +81,13 @@ Future<Position> getPositionForTrackings({
     await sub?.cancel();
   }
 
-  final usable = samples
+  final freshSamples = samples.where((p) => isFresh(p, maxAgeSeconds: 35)).toList();
+  final pool = freshSamples.isNotEmpty ? freshSamples : (samples.isNotEmpty ? samples : [initial]);
+  final usable = pool
       .where((p) => p.accuracy.isFinite && p.accuracy > 0 && p.accuracy <= 55)
       .toList();
   if (usable.length < 3) {
-    return _bestByAccuracy(samples.isEmpty ? [initial] : samples);
+    return _bestByAccuracy(pool);
   }
 
   if (_isStationaryCluster(usable)) {
@@ -96,10 +108,10 @@ Future<Position> getAccuratePositionForUi() => getPositionForTrackings(
 
 /// Attendance/check-in needs a responsive fix more than a heavily sampled one.
 Future<Position> getQuickPositionForUi() => getPositionForTrackings(
-      primaryTimeout: const Duration(seconds: 10),
-      sampleWindow: const Duration(seconds: 4),
+      primaryTimeout: const Duration(seconds: 16),
+      sampleWindow: const Duration(seconds: 8),
       stopEarlyWhenAccuracyMeters: 15,
-      maxSamples: 8,
+      maxSamples: 10,
     );
 
 LocationSettings _primarySettings(Duration timeout) {

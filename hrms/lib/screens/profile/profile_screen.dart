@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_colors.dart';
 import '../../services/auth_service.dart';
+import '../../services/web_hrms_api_dio.dart';
+import '../../services/api_client.dart';
 import '../../services/onboarding_service.dart';
 import '../../services/staff_custom_fields_service.dart';
 import '../../widgets/app_drawer.dart';
@@ -70,6 +72,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     'bank': false,
   };
   bool _isSavingSection = false;
+  static final Map<String, String> _branchNameCache = {};
 
   @override
   void initState() {
@@ -92,18 +95,18 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Future<void> _loadProfile() async {
+    // Token is a local read; then profile + custom fields load in parallel
+    // (custom fields used to wait for the profile to finish first).
+    final token = await _authService.getToken();
+    final hasToken = token != null && token.trim().isNotEmpty;
     final loaded = await Future.wait<dynamic>([
       _authService.getProfile(),
-      _authService.getToken(),
+      hasToken
+          ? _staffCustomFieldsService.fetchActiveStaffCustomFields(token: token)
+          : Future.value(<Map<String, dynamic>>[]),
     ]);
     final result = loaded[0] as Map<String, dynamic>;
-    final token = loaded[1] as String?;
-    List<Map<String, dynamic>> customFields = [];
-    if (token != null && token.trim().isNotEmpty) {
-      customFields = await _staffCustomFieldsService.fetchActiveStaffCustomFields(
-        token: token,
-      );
-    }
+    final customFields = loaded[1] as List<Map<String, dynamic>>;
     String? cachedUrl;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -125,19 +128,32 @@ class _ProfileScreenState extends State<ProfileScreen>
         if (result['success']) {
           final data = result['data'];
           if (data is Map) {
-            _userData = Map<String, dynamic>.from(data);
-            _formData = _mapDataToForm(_userData);
-            // Update stored user with branchName so app drawer shows branch
-            final branchName =
-                data['branchName']?.toString() ??
-                (data['staffData'] is Map
-                    ? ((data['staffData'] as Map)['branchId'] is Map
-                          ? ((data['staffData'] as Map)['branchId']
-                                    as Map)['branchName']
-                                ?.toString()
-                          : null)
-                    : null);
-            if (branchName != null && branchName.isNotEmpty) {
+            final userData = Map<String, dynamic>.from(data);
+            _userData = userData;
+            _formData = _mapDataToForm(userData);
+
+            final rawBranch = userData['branch'] ??
+                userData['branchId'] ??
+                (userData['staffData'] is Map
+                    ? (userData['staffData']['branch'] ?? userData['staffData']['branchId'])
+                    : null) ??
+                _formData['branch'];
+
+            final mappedBranch = _formData['branch']?.toString().trim() ?? '';
+            if (mappedBranch.isEmpty || RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(mappedBranch)) {
+              _fetchAndResolveBranch(rawBranch, userData);
+            }
+
+            if (_formData['shiftTemplate'] == 'None (Not Assigned)') {
+              final staffMap = userData['staffData'] is Map ? userData['staffData'] as Map : userData;
+              final staffId = (staffMap['_id'] ?? staffMap['id'])?.toString();
+              if (staffId != null && staffId.isNotEmpty) _fetchActiveShiftTemplate(staffId);
+            }
+
+            // Update stored user with branchName so app drawer shows branch.
+            // Staff `branchName` from HRMSbackend is the bank branch, so only trust a populated branch ref.
+            final branchName = rawBranch is Map ? rawBranch['branchName']?.toString() : null;
+            if (branchName != null && branchName.isNotEmpty && !RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(branchName)) {
               _updateStoredUserBranchName(branchName);
             }
           } else {
@@ -154,6 +170,167 @@ class _ProfileScreenState extends State<ProfileScreen>
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _fetchAndResolveBranch(dynamic rawBranch, Map<String, dynamic> userData) async {
+    String? branchId;
+    if (rawBranch is Map) {
+      final name = (rawBranch['branchName'] ?? rawBranch['name'] ?? rawBranch['title'])?.toString().trim();
+      if (name != null && name.isNotEmpty && !RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(name)) {
+        final id = rawBranch['_id']?.toString() ?? rawBranch['id']?.toString();
+        if (id != null && id.isNotEmpty) _branchNameCache[id] = name;
+        if (mounted && _formData['branch'] != name) {
+          setState(() => _formData['branch'] = name);
+        }
+        return;
+      }
+      branchId = rawBranch['_id']?.toString() ?? rawBranch['id']?.toString();
+    } else if (rawBranch != null) {
+      branchId = rawBranch.toString().trim();
+    }
+
+    if (branchId == null || branchId.isEmpty) return;
+
+    if (!RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(branchId)) {
+      _branchNameCache[branchId] = branchId;
+      if (mounted && _formData['branch'] != branchId) {
+        setState(() => _formData['branch'] = branchId);
+      }
+      return;
+    }
+
+    if (_branchNameCache.containsKey(branchId)) {
+      final cached = _branchNameCache[branchId]!;
+      if (mounted && _formData['branch'] != cached) {
+        setState(() => _formData['branch'] = cached);
+      }
+      return;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final diskCached = prefs.getString('cached_branch_$branchId');
+      if (diskCached != null && diskCached.trim().isNotEmpty) {
+        _branchNameCache[branchId] = diskCached.trim();
+        if (mounted && _formData['branch'] != diskCached.trim()) {
+          setState(() => _formData['branch'] = diskCached.trim());
+        }
+        return;
+      }
+    } catch (_) {}
+
+    String? resolvedName;
+
+    // Call A: GET /admin/settings/attendance/branches/:id from HRMSbackend
+    try {
+      final dio = webHrmsApiDio();
+      final res = await dio.get<dynamic>('/admin/settings/attendance/branches/$branchId');
+      final body = res.data is Map ? (res.data as Map) : {};
+      final bData = body['data'] is Map
+          ? (body['data']['branch'] ?? body['data'])
+          : (body['branch'] ?? body['data']);
+      if (bData is Map) {
+        final bName = (bData['branchName'] ?? bData['name'])?.toString().trim();
+        if (bName != null && bName.isNotEmpty && !RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(bName)) {
+          resolvedName = bName;
+        }
+      }
+    } catch (_) {}
+
+    // Call B: GET /admin/settings/attendance/branches (list) from HRMSbackend
+    if (resolvedName == null) {
+      try {
+        final dio = webHrmsApiDio();
+        final res = await dio.get<dynamic>('/admin/settings/attendance/branches');
+        final body = res.data is Map ? (res.data as Map) : {};
+        final list = body['data'] is List
+            ? (body['data'] as List)
+            : (res.data is List ? res.data as List : []);
+        for (final item in list) {
+          if (item is Map) {
+            final id = (item['_id'] ?? item['id'])?.toString();
+            final bName = (item['branchName'] ?? item['name'])?.toString().trim();
+            if (id != null && bName != null && bName.isNotEmpty) {
+              _branchNameCache[id] = bName;
+              if (id == branchId) {
+                resolvedName = bName;
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Call C: GET /admin/staff/setup from HRMSbackend
+    if (resolvedName == null) {
+      try {
+        final dio = webHrmsApiDio();
+        final res = await dio.get<dynamic>('/admin/staff/setup');
+        final body = res.data is Map ? (res.data as Map) : {};
+        final setupData = body['data'] is Map ? body['data'] as Map : body;
+        final branches = setupData['branches'] is List ? setupData['branches'] as List : [];
+        for (final item in branches) {
+          if (item is Map) {
+            final id = (item['_id'] ?? item['id'])?.toString();
+            final bName = (item['branchName'] ?? item['name'])?.toString().trim();
+            if (id != null && bName != null && bName.isNotEmpty) {
+              _branchNameCache[id] = bName;
+              if (id == branchId) {
+                resolvedName = bName;
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Call D: Fallback via ApiClient().dio
+    if (resolvedName == null) {
+      try {
+        final res = await ApiClient().dio.get<dynamic>('/admin/settings/attendance/branches/$branchId');
+        final body = res.data is Map ? (res.data as Map) : {};
+        final bData = body['data'] is Map
+            ? (body['data']['branch'] ?? body['data'])
+            : (body['branch'] ?? body['data']);
+        if (bData is Map) {
+          final bName = (bData['branchName'] ?? bData['name'])?.toString().trim();
+          if (bName != null && bName.isNotEmpty && !RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(bName)) {
+            resolvedName = bName;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (resolvedName != null && resolvedName.isNotEmpty) {
+      _branchNameCache[branchId] = resolvedName;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('cached_branch_$branchId', resolvedName);
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _formData['branch'] = resolvedName;
+        });
+      }
+      _updateStoredUserBranchName(resolvedName);
+    }
+  }
+
+  /// Shifts assigned from the Shift Roster live in StaffShiftAssignment, not on
+  /// `staff.shiftTemplate`, so HRMSbackend `/staff/profile` leaves the field empty.
+  Future<void> _fetchActiveShiftTemplate(String staffId) async {
+    try {
+      final res = await webHrmsApiDio().get<dynamic>('/admin/settings/shift-roster/active/$staffId');
+      final body = res.data is Map ? res.data as Map : const {};
+      final data = body['data'] is Map ? body['data'] as Map : const {};
+      final assignment = data['assignment'];
+      if (assignment is! Map) return;
+      final template = assignment['shiftTemplateId'];
+      if (template is! Map) return;
+      final name = template['name']?.toString().trim();
+      if (name == null || name.isEmpty) return;
+      if (mounted) setState(() => _formData['shiftTemplate'] = name);
+    } catch (_) {}
   }
 
   Future<void> _updateStoredUserBranchName(String branchName) async {
@@ -437,18 +614,56 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
 
     // Contact
-    mapped['contact'] = profile['email'] ?? staffData['email'] ?? data['email'] ?? data['contact'] ?? '';
-    mapped['phone'] = staffData['phone'] ??
-        staffData['phoneNumber'] ??
-        profile['phone'] ??
+    mapped['contact'] = profile['email'] ??
+        staffData['email'] ??
+        data['email'] ??
+        data['contact'] ??
+        '';
+
+    final candidate = (staffData['candidateId'] is Map
+        ? staffData['candidateId'] as Map
+        : (data['candidateId'] is Map ? data['candidateId'] as Map : null));
+    final userObj = data['user'] is Map ? data['user'] as Map : null;
+
+    final rawPhone = staffData['phoneNumber'] ??
+        staffData['phone'] ??
         profile['phoneNumber'] ??
+        profile['phone'] ??
+        data['phoneNumber'] ??
         data['phone'] ??
-        '';
-    mapped['altPhone'] = staffData['altPhone'] ??
-        staffData['alternatePhoneNumber'] ??
+        data['mobile'] ??
+        data['mobileNumber'] ??
+        candidate?['phoneNumber'] ??
+        candidate?['phone'] ??
+        candidate?['mobile'] ??
+        userObj?['phoneNumber'] ??
+        userObj?['phone'];
+
+    final rawAltPhone = staffData['alternatePhoneNumber'] ??
+        staffData['altPhone'] ??
+        staffData['alternativePhone'] ??
+        staffData['alternatePhone'] ??
+        profile['alternatePhoneNumber'] ??
         profile['altPhone'] ??
+        profile['alternativePhone'] ??
+        profile['alternatePhone'] ??
+        data['alternatePhoneNumber'] ??
         data['altPhone'] ??
-        '';
+        data['alternativePhone'] ??
+        data['alternatePhone'] ??
+        candidate?['alternatePhoneNumber'] ??
+        candidate?['altPhone'] ??
+        candidate?['alternativePhone'];
+
+    mapped['phone'] = (rawPhone != null && rawPhone.toString().trim().isNotEmpty)
+        ? rawPhone.toString().trim()
+        : '';
+    mapped['phoneNumber'] = mapped['phone'];
+    mapped['altPhone'] = (rawAltPhone != null && rawAltPhone.toString().trim().isNotEmpty)
+        ? rawAltPhone.toString().trim()
+        : '';
+    mapped['alternatePhoneNumber'] = mapped['altPhone'];
+    mapped['alternativePhone'] = mapped['altPhone'];
 
     // Current Address
     final currAddr = staffData['currentAddress'] ?? data['currentAddress'];
@@ -516,18 +731,31 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
 
     // Branch
+    final objectIdPattern = RegExp(r'^[0-9a-fA-F]{24}$');
+    // HRMSbackend `/staff/profile` returns `branch` as an ObjectId; the name is resolved in
+    // [_fetchAndResolveBranch]. Staff `branchName` there is the bank branch, so it is not used here.
     final br = staffData['branchId'] ?? data['branchId'] ?? staffData['branch'] ?? data['branch'];
     if (br is Map) {
-      mapped['branch'] = br['branchName'] ?? br['name'] ?? br['_id'] ?? '';
+      mapped['branch'] = br['branchName'] ?? br['name'] ?? br['_id']?.toString() ?? '';
     } else {
-      mapped['branch'] = br?.toString() ?? '';
+      final brId = br?.toString().trim() ?? '';
+      mapped['branch'] = objectIdPattern.hasMatch(brId) ? (_branchNameCache[brId] ?? brId) : brId;
     }
 
-    // Work Mode
-    mapped['workMode'] = staffData['workMode'] ?? data['workMode'] ?? 'WFH';
+    // Work Mode (web HRMS stores it as { mode, address, latitude, longitude, radius })
+    final rawWorkMode = staffData['workMode'] ?? data['workMode'];
+    final workModeMap = rawWorkMode is Map ? rawWorkMode : null;
+    mapped['workMode'] = workModeMap != null
+        ? (workModeMap['mode']?.toString() ?? '')
+        : (rawWorkMode?.toString() ?? 'WFH');
 
     // WFH Location
-    final wfhLoc = staffData['wfhLocation'] ?? staffData['workFromHomeLocation'] ?? data['workFromHomeLocation'];
+    final hasWorkModeLocation = workModeMap != null &&
+        (workModeMap['address'] != null || workModeMap['latitude'] != null || workModeMap['longitude'] != null);
+    final wfhLoc = staffData['wfhLocation'] ??
+        staffData['workFromHomeLocation'] ??
+        data['workFromHomeLocation'] ??
+        (hasWorkModeLocation ? workModeMap : null);
     if (wfhLoc is Map) {
       mapped['wfhLocation'] = wfhLoc['address'] ?? wfhLoc['name'] ?? '';
       mapped['latitude'] = wfhLoc['latitude']?.toString() ?? '';
@@ -579,7 +807,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     mapped['breakTemplate'] = _extractTemplateName(staffData['breakTemplate'] ?? data['breakTemplate']);
     mapped['attendanceTemplate'] = _extractTemplateName(staffData['attendanceTemplate'] ?? data['attendanceTemplate']);
     mapped['weeklyOffTemplate'] = _extractTemplateName(staffData['weeklyOffTemplate'] ?? data['weeklyOffTemplate']);
-    mapped['geofenceTemplate'] = _extractTemplateName(staffData['geofenceTemplate'] ?? data['geofenceTemplate']);
 
     return mapped;
   }
@@ -1009,7 +1236,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       title: 'Personal Information',
       icon: Icons.person_outline_rounded,
       sectionKey: 'personal',
-      isEditable: true,
+      isEditable: false,
       children: [
         _buildFieldRow(
           _buildWebField(label: 'Employee ID', fieldKey: 'employeeId', isReadOnly: true),
@@ -1089,7 +1316,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       title: 'Contact Details',
       icon: Icons.shield_outlined,
       sectionKey: 'contact',
-      isEditable: true,
+      isEditable: false,
       children: [
         _buildWebField(
           label: 'Email ID',
@@ -1122,7 +1349,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       title: 'Address Details',
       icon: Icons.location_on_outlined,
       sectionKey: 'address',
-      isEditable: true,
+      isEditable: false,
       children: [
         _buildWebField(label: 'Current Address', fieldKey: 'currentAddress', isEditing: isEditing),
         _buildFieldRow3(
@@ -1204,7 +1431,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       title: 'Bank & Statutory Details',
       icon: Icons.credit_card_outlined,
       sectionKey: 'bank',
-      isEditable: true,
+      isEditable: false,
       children: [
         _buildFieldRow(
           _buildWebField(label: 'PAN Number', fieldKey: 'pan', isEditing: isEditing),
@@ -1260,7 +1487,6 @@ class _ProfileScreenState extends State<ProfileScreen>
           _buildWebField(label: 'Attendance Template', fieldKey: 'attendanceTemplate', isEditing: false),
         ),
         _buildWebField(label: 'Weekly Off Template', fieldKey: 'weeklyOffTemplate', isEditing: false),
-        _buildWebField(label: 'Geofence Template', fieldKey: 'geofenceTemplate', isEditing: false),
       ],
     );
   }
@@ -1283,7 +1509,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     required String title,
     required IconData icon,
     required String sectionKey,
-    bool isEditable = true,
+    bool isEditable = false,
     required List<Widget> children,
   }) {
     final isEditing = _editingSections[sectionKey] ?? false;
@@ -1321,19 +1547,25 @@ class _ProfileScreenState extends State<ProfileScreen>
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Row(
-                          children: [
-                            Icon(icon, size: 18, color: const Color(0xFFEFAA1F)),
-                            const SizedBox(width: 8),
-                            Text(
-                              title,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF1E293B),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Icon(icon, size: 18, color: const Color(0xFFEFAA1F)),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF1E293B),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                         if (isEditable) ...[
                           if (isEditing)
@@ -1973,7 +2205,13 @@ class _ProfileScreenState extends State<ProfileScreen>
     final name = _profile?['name']?.toString() ?? 'N/A';
     final empId = _staffData?['employeeId']?.toString() ?? 'N/A';
     final email = _profile?['email']?.toString() ?? 'N/A';
-    final phone = _profile?['phone']?.toString() ?? _staffData?['phone']?.toString() ?? 'N/A';
+    final phone = _profile?['phoneNumber']?.toString() ??
+        _profile?['phone']?.toString() ??
+        _staffData?['phoneNumber']?.toString() ??
+        _staffData?['phone']?.toString() ??
+        _formData['phoneNumber']?.toString() ??
+        _formData['phone']?.toString() ??
+        'N/A';
 
     return _buildCardSection(
       icon: Icons.person_outline,
@@ -2094,7 +2332,13 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   Widget _buildContactCard() {
     final email = _profile?['email']?.toString() ?? '';
-    final phone = _profile?['phone']?.toString() ?? '';
+    final phone = _profile?['phoneNumber']?.toString() ??
+        _profile?['phone']?.toString() ??
+        _staffData?['phoneNumber']?.toString() ??
+        _staffData?['phone']?.toString() ??
+        _formData['phoneNumber']?.toString() ??
+        _formData['phone']?.toString() ??
+        '';
 
     return Container(
       width: double.infinity,
@@ -4664,7 +4908,9 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
     final d = widget.userData;
     _nameController = TextEditingController(text: d['name']);
     _emailController = TextEditingController(text: d['email'] ?? '');
-    _phoneController = TextEditingController(text: d['phone']);
+    _phoneController = TextEditingController(
+      text: (d['phoneNumber'] ?? d['phone'] ?? '').toString(),
+    );
     _genderController = TextEditingController(text: d['gender']);
 
     // Parse DOB for date picker

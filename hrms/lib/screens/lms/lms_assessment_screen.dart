@@ -276,8 +276,10 @@ class _LmsAssessmentScreenState extends State<LmsAssessmentScreen> {
                       ],
                     ),
                     const SizedBox(height: 24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 12,
+                      runSpacing: 8,
                       children: [
                         ElevatedButton.icon(
                           onPressed: () {
@@ -296,16 +298,9 @@ class _LmsAssessmentScreenState extends State<LmsAssessmentScreen> {
                             foregroundColor: Colors.white,
                           ),
                         ),
-                        const SizedBox(width: 12),
                         OutlinedButton(
                           onPressed: () {
-                            Navigator.of(context).pushAndRemoveUntil(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    DashboardScreen(initialIndex: 2),
-                              ),
-                              (r) => r.isFirst,
-                            );
+                            DashboardScreen.goToTab(context, 2);
                           },
                           child: const Text('Dashboard'),
                         ),
@@ -504,22 +499,29 @@ class _LmsAssessmentScreenState extends State<LmsAssessmentScreen> {
                         'Question ${_currentIndex + 1} of ${_flatQuestions.length}',
                         style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          question['lessonTitle']?.toString() ?? '',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.primary,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              question['lessonTitle']?.toString() ?? '',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.primary,
+                              ),
+                            ),
                           ),
                         ),
                       ),

@@ -33,9 +33,13 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
     try {
       final result = await _repo.getAttendanceByDate(event.date);
       if (result['success'] != true || !result.containsKey('data')) {
+        final now = DateTime.now();
+        final todayStr = now.toIso8601String().split('T')[0];
         emit(
-          AttendanceFailure(
-            message: result['message'] as String? ?? 'Failed to load attendance',
+          AttendanceStatusLoaded(
+            isCheckedIn: false,
+            isCompleted: false,
+            isToday: event.date == todayStr,
           ),
         );
         return;
@@ -85,8 +89,10 @@ class AttendanceBloc extends Bloc<AttendanceEvent, AttendanceState> {
       );
     } catch (_) {
       emit(
-        const AttendanceFailure(
-          message: 'Failed to load attendance. Please try again.',
+        const AttendanceStatusLoaded(
+          isCheckedIn: false,
+          isCompleted: false,
+          isToday: false,
         ),
       );
     }

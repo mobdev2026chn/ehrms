@@ -29,6 +29,30 @@ class StaffSalaryBundle {
   final bool salaryDetailsAccessEnabled;
 }
 
+/// Salary Details Access from a profile payload. HRMSbackend `/staff/profile` returns the
+/// staff record itself with `salaryDetailsAccess`; app_backend nests it as
+/// `staffData.salaryDetailsAccessEnabled`. Null when neither is present.
+bool? salaryDetailsAccessFromProfile(Map? data) {
+  if (data == null) return null;
+  for (final m in [data['staffData'], data['staff'], data]) {
+    if (m is! Map) continue;
+    final v = m['salaryDetailsAccessEnabled'] ?? m['salaryDetailsAccess'];
+    if (v is bool) return v;
+  }
+  return null;
+}
+
+/// Current-month salary visibility. HRMSbackend has no separate switch, so granted
+/// Salary Details Access covers the current cycle too.
+bool currentCycleSalaryAccessFromProfile(Map? data) {
+  for (final m in [data?['staffData'], data?['staff'], data]) {
+    if (m is Map && m['allowCurrentCycleSalaryAccess'] is bool) {
+      return m['allowCurrentCycleSalaryAccess'] as bool;
+    }
+  }
+  return salaryDetailsAccessFromProfile(data) == true;
+}
+
 final AuthService _salaryAuthServiceForAppPerDay = AuthService();
 
 /// Per-day salary in SharedPreferences (fines, check-in preview). Written from web preview [salaryBasis].
@@ -669,7 +693,7 @@ class SalaryService {
       revisionHistory: history,
       employeeName: name,
       employeeId: m['employeeId']?.toString(),
-      phone: m['phone']?.toString(),
+      phone: (m['phoneNumber'] ?? m['phone'])?.toString(),
       staffType: m['staffType']?.toString(),
       salaryDetailsAccessEnabled: m['salaryDetailsAccessEnabled'] == true,
     );

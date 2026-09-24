@@ -1,5 +1,6 @@
 const Staff = require('../models/Staff');
 const Tracking = require('../models/Tracking');
+const LiveTracking = require('../models/LiveTracking');
 const Task = require('../models/Task');
 const TaskDetails = require('../models/TaskDetails');
 const Customer = require('../models/Customer');
@@ -39,9 +40,9 @@ function haversineDistanceM(lat1, lng1, lat2, lng2) {
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) *
+    Math.sin(dLng / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
@@ -317,6 +318,11 @@ async function computePresenceStatusForOffice(lat, lng, branchId, accuracyM = 0)
  * Track ONLY IF: punchIn exists AND punchOut does NOT exist AND leaveType is null/empty/not present.
  */
 async function validateAttendanceForPresence(staffId) {
+  const staff = await Staff.findById(staffId).select('tracking').lean();
+  if (!staff || staff.tracking !== true) {
+    return { canTrack: false, reason: 'timeline_tracking_disabled' };
+  }
+
   const now = new Date();
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth();
@@ -537,6 +543,27 @@ exports.storePresenceTracking = async (req, res) => {
       );
     }
 
+    // Seamlessly mirror into dedicated LiveTracking collection
+    LiveTracking.create({
+      adminId: req.staff?.adminId || req.staff?.companyId,
+      staffId: staffId,
+      staffName: doc.staffName,
+      latitude: doc.latitude,
+      longitude: doc.longitude,
+      accuracy: doc.accuracy,
+      batteryPercent: doc.batteryPercent,
+      movementType: doc.movementType,
+      address: doc.address,
+      fullAddress: doc.fullAddress || doc.address,
+      city: doc.city,
+      area: doc.area,
+      pincode: doc.pincode,
+      status: doc.status || 'active',
+      appStatus: doc.appStatus || 'active',
+      presenceStatus: resolvedPresenceStatus,
+      timestamp: doc.timestamp,
+    }).catch((err) => console.error('[LiveTracking] Mirror presence error:', err.message));
+
     res.status(201).json({ success: true, data: { _id: saved._id } });
   } catch (error) {
     console.error('[PresenceTracking] Error storing:', error.message);
@@ -556,7 +583,7 @@ exports.getPresenceTrackingStatus = async (req, res) => {
     await markLatestPresenceTrackingInactiveForStaff(staffId);
     const validation = await validateAttendanceForPresence(staffId);
     const staff = await Staff.findById(staffId)
-      .select('branchId')
+      .select('branchId tracking')
       .populate('branchId', 'branchName latitude longitude radius geofence')
       .lean();
 
@@ -589,6 +616,7 @@ exports.getPresenceTrackingStatus = async (req, res) => {
       success: true,
       data: {
         canTrack: validation.canTrack,
+        trackingEnabled: staff?.tracking === true,
         reason: validation.reason,
         branchGeofence,
       },
@@ -754,6 +782,33 @@ exports.storeTracking = async (req, res) => {
       batteryPercent: trackingDoc.batteryPercent,
       timestamp: trackingDoc.timestamp,
     });
+
+    // Seamlessly mirror into dedicated LiveTracking collection
+    LiveTracking.create({
+      adminId: task.adminId || req.user?.adminId,
+      staffId: trackingDoc.staffId,
+      staffName: trackingDoc.staffName,
+      taskId: task._id,
+      taskIdStr: task.taskId,
+      taskType: task.taskType,
+      latitude: trackingDoc.latitude,
+      longitude: trackingDoc.longitude,
+      accuracy: trackingDoc.accuracy,
+      batteryPercent: trackingDoc.batteryPercent,
+      movementType: trackingDoc.movementType,
+      destinationLat: trackingDoc.destinationLat,
+      destinationLng: trackingDoc.destinationLng,
+      address: trackingDoc.address,
+      fullAddress: trackingDoc.fullAddress || trackingDoc.address,
+      city: trackingDoc.city,
+      area: trackingDoc.area,
+      pincode: trackingDoc.pincode,
+      status: trackingDoc.status || 'in_progress',
+      appStatus: trackingDoc.appStatus || 'active',
+      presenceStatus: trackingDoc.presenceStatus || 'task',
+      timestamp: trackingDoc.timestamp,
+    }).catch((err) => console.error('[LiveTracking] Mirror task tracking error:', err.message));
+
     res.status(201).json({ success: true, data: { _id: saved._id } });
   } catch (error) {
     console.error('[Tracking] Error storing:', error.message);

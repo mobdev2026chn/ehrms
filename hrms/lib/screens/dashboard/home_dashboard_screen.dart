@@ -39,6 +39,7 @@ import '../../services/interaction_service.dart';
 import '../../services/break_service.dart';
 import '../../services/performance_service.dart';
 import '../../services/task_service.dart';
+import '../../services/web_hrms_api_dio.dart';
 import '../../models/task.dart';
 import '../geo/my_tasks_screen.dart';
 import '../../models/break_summary.dart';
@@ -182,6 +183,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   double _overallMonthlyNetSalary = 0;
   double _overallMonthlyGrossSalary = 0;
   double _totalCTC = 0;
+
+  // Current-month attendance summary from HRMSbackend (see _fetchAttendanceSummary).
+  num? _presentCountMonth;
+  num? _payableDaysMonth;
+  num? _totalPayableDaysMonth;
 
   // ignore: unused_field - kept for when Present Days / salary breakdown is shown again
   int _workingDaysForSalary =
@@ -713,7 +719,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final identityFuture = FaceIdentityGuard.verify(selfie);
 
     final results = await Future.wait([
-      verifyFuture.catchError((_) => <String, dynamic>{'success': true, 'match': true}),
+      // Fail closed: an error must never count as a verified face.
+      verifyFuture.catchError((_) => <String, dynamic>{
+        'success': false,
+        'match': false,
+        'message': 'Face verification failed. Please try again.',
+      }),
       identityFuture.catchError((_) => const FaceIdentityVerdict(true)),
     ]);
 
@@ -1070,6 +1081,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final monthFuture = _fetchMonthAttendance(forceRefresh: true);
       final loansFuture = _fetchActiveLoans();
       final tasksFuture = _fetchTasks();
+      unawaited(_fetchAttendanceSummary());
       final breakFuture = _fetchBreakSummary();
       final activeBreakFuture = _fetchLocalActiveBreak();
       final permissionFuture = _fetchTodayPermission();
@@ -1091,8 +1103,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           dashboardLoadTimeout,
           onTimeout: () => {'success': false, 'data': null},
         ),
+        // Local file read — never let it hold the dashboard loader.
         fcmFuture.timeout(
-          dashboardLoadTimeout,
+          const Duration(seconds: 3),
           onTimeout: () => <Map<String, dynamic>>[],
         ),
       ]);
@@ -1180,7 +1193,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     .toList()
               : <dynamic>[];
           if (announcementsList.isEmpty) {
-            announcementsList = await _tryLoadAnnouncementsFromInteractionApi();
+            // Fallback source loads after the dashboard is shown, not before.
+            unawaited(() async {
+              final fallback = await _tryLoadAnnouncementsFromInteractionApi();
+              if (!mounted || fallback.isEmpty) return;
+              setState(() => _todayAnnouncements = fallback);
+            }());
           }
           if (!mounted) return;
           setState(() {
@@ -1207,16 +1225,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _upcomingCelebrations = data['upcomingCelebrations'] is List
                 ? data['upcomingCelebrations'] as List
                 : [];
-            if (_todayCelebrations.isEmpty && _upcomingCelebrations.isEmpty) {
-              _todayCelebrations = [
-                {
-                  'name': 'Anirithavalli S',
-                  'type': 'Work Anniversary',
-                  'displayDate': 'Today',
-                  'yearsOfService': 1,
-                }
-              ];
-            }
             if (kDebugMode) {
               debugPrint(
                 '[Celebrations] today: ${_todayCelebrations.length} items',
@@ -1737,6 +1745,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       }
     } catch (_) {
       // Ignore — card stays in its "not evaluated" placeholder state.
+    }
+  }
+
+  /// Present / payable days for the current month from HRMSbackend
+  /// `GET /admin/staff/attendance/staff/:staffId` — the same summary the web
+  /// staff Attendance page shows (Working Days = `totalPayableDays`).
+  Future<void> _fetchAttendanceSummary() async {
+    try {
+      // Same /admin/staff/attendance/staff/:id month payload the calendar card
+      // loads — reuse the shared (in-flight deduped) month fetch instead of a
+      // second identical request.
+      final now = DateTime.now();
+      final res = await _attendanceService.getMonthAttendance(
+        now.year,
+        now.month,
+      );
+      final summary = res['success'] == true ? res['data'] : null;
+      if (summary is! Map || !mounted) return;
+      setState(() {
+        _presentCountMonth = summary['presentCount'] as num?;
+        _payableDaysMonth = summary['payableDays'] as num?;
+        _totalPayableDaysMonth = summary['totalPayableDays'] as num?;
+      });
+    } catch (_) {
+      // Keep the stats-based fallback on the card.
     }
   }
 
@@ -2292,20 +2325,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _buildWebWelcomeCard(),
             const SizedBox(height: 14),
 
-            // 1.5 Active Break Card (like old ekta app) - Most prominent when break ongoing!
-            if (_isCurrentBreakActive) ...[
-              BreakStatusCard(
-                startTime: _activeBreakStartTime() ??
-                    BreakService.lastKnownBreakStartTime ??
-                    DateTime.now(),
-                onEndBreak: widget.onEndBreakTap ?? () => widget.onNavigate?.call(2),
-                isBusy: widget.isBreakActionInProgress,
-                completedBreakSecondsToday: widget.completedBreakSecondsToday ??
-                    _breakSummary?.completedBreakSeconds,
-                showSuccessBanner: false,
-              ),
-              const SizedBox(height: 14),
-            ],
+            // Active break card removed from the top of Home: the bottom bar
+            // already shows the ongoing break with End Break.
 
             // 2. Quick Actions Card (Web styled 5 actions)
             _buildWebQuickActionsCard(),
@@ -2676,25 +2697,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Initial Circle Avatar
-          Container(
-            width: 48,
-            height: 48,
-            decoration: const BoxDecoration(
-              color: Color(0xFFFEF3C7),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              initial,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFFD97706),
-              ),
-            ),
+          // Menu on the left, avatar on the right.
+          _buildHeaderIconButton(
+            icon: Icons.menu_rounded,
+            tooltip: 'Menu',
+            iconColor: const Color(0xFF1E293B),
+            bgColor: const Color(0xFFF1F5F9),
+            onTap: () => _dashboardScaffoldKey.currentState?.openDrawer(),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           // Greeting & Name
           Expanded(
             child: Column(
@@ -2759,13 +2770,24 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             bgColor: const Color(0xFFF1F5F9),
             onTap: _openNotifications,
           ),
-          const SizedBox(width: 4),
-          _buildHeaderIconButton(
-            icon: Icons.menu_rounded,
-            tooltip: 'Menu',
-            iconColor: const Color(0xFF1E293B),
-            bgColor: const Color(0xFFF1F5F9),
-            onTap: () => _dashboardScaffoldKey.currentState?.openDrawer(),
+          const SizedBox(width: 8),
+          // Initial Circle Avatar
+          Container(
+            width: 44,
+            height: 44,
+            decoration: const BoxDecoration(
+              color: Color(0xFFFEF3C7),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              initial,
+              style: const TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFFD97706),
+              ),
+            ),
           ),
         ],
       ),
@@ -2814,18 +2836,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   icon: Icons.monetization_on_outlined,
                   label: 'Request Payslip',
                   onTap: () => widget.onNavigate?.call(1, subTabIndex: 3),
-                ),
-                const SizedBox(width: 14),
-                _buildWebQuickActionItem(
-                  icon: Icons.account_balance_wallet_outlined,
-                  label: 'Request Loan',
-                  onTap: () => widget.onNavigate?.call(1, subTabIndex: 4),
-                ),
-                const SizedBox(width: 14),
-                _buildWebQuickActionItem(
-                  icon: Icons.more_horiz_rounded,
-                  label: 'Explore More',
-                  onTap: () => widget.onNavigate?.call(1),
                 ),
               ],
             ),
@@ -3016,12 +3026,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             children: [
               const Icon(Icons.location_on_outlined, size: 13, color: Color(0xFF94A3B8)),
               const SizedBox(width: 4),
-              Text(
-                branchName.toLowerCase(),
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF94A3B8),
-                  fontWeight: FontWeight.w500,
+              Expanded(
+                child: Text(
+                  branchName.toLowerCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF94A3B8),
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ],
@@ -3368,34 +3382,49 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   Widget _buildWebPunchTimeCol(String label, String value, {Color? valueColor}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11,
-            color: Color(0xFF94A3B8),
-            fontWeight: FontWeight.w500,
+    // Flexible so the spaceBetween row of 3-4 columns can't overflow on narrow phones.
+    return Flexible(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Color(0xFF94A3B8),
+              fontWeight: FontWeight.w500,
+            ),
           ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: valueColor ?? const Color(0xFF0F172A),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: valueColor ?? const Color(0xFF0F172A),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   Widget _buildWebKpiCards(String mtdNetStr, int presentDaysCount, int workingDaysCount) {
-    final double attendancePct = workingDaysCount > 0
-        ? (presentDaysCount / workingDaysCount * 100).clamp(0.0, 100.0)
+    String fmtDays(num n) => n == n.roundToDouble() ? n.toInt().toString() : n.toStringAsFixed(1);
+    // Prefer the HRMSbackend monthly summary; fall back to the dashboard stats.
+    final num present = _presentCountMonth ?? presentDaysCount;
+    final num working = _totalPayableDaysMonth ?? workingDaysCount;
+    final num? payable = _payableDaysMonth;
+    final double attendancePct = working > 0
+        ? (present / working * 100).clamp(0.0, 100.0).toDouble()
         : 0.0;
+    final String attendanceSubtitle = payable != null
+        ? 'Payable: ${fmtDays(payable)} days'
+        : '${attendancePct.toStringAsFixed(1)}% this month';
     final dynamic availableLeavesRaw = _stats?['availableLeaves'] ??
         _stats?['leaveBalance'] ??
         _stats?['pendingLeaves'] ??
@@ -3426,8 +3455,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               child: _buildWebKpiItem(
                 title: 'ATTENDANCE',
                 icon: Icons.bar_chart_rounded,
-                value: '$presentDaysCount / $workingDaysCount',
-                subtitle: '${attendancePct.toStringAsFixed(1)}% this month',
+                value: '${fmtDays(present)} / ${fmtDays(working)}',
+                subtitle: attendanceSubtitle,
                 onTap: () => widget.onNavigate?.call(4, subTabIndex: 0),
               ),
             ),
@@ -3834,15 +3863,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                _tasks.isNotEmpty
-                                    ? '${_tasks.length} tasks'
-                                    : '10 tasks',
-                                style: const TextStyle(fontSize: 9.5, color: Colors.white54),
+                              Flexible(
+                                child: Text(
+                                  _tasks.isNotEmpty
+                                      ? '${_tasks.length} tasks'
+                                      : '10 tasks',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 9.5, color: Colors.white54),
+                                ),
                               ),
-                              const Text(
-                                'Show More',
-                                style: TextStyle(fontSize: 10.5, color: Color(0xFFF59E0B), fontWeight: FontWeight.w700),
+                              const Flexible(
+                                child: Text(
+                                  'Show More',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 10.5, color: Color(0xFFF59E0B), fontWeight: FontWeight.w700),
+                                ),
                               ),
                             ],
                           ),
@@ -4057,12 +4094,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 child: const Icon(Icons.currency_rupee_rounded, size: 16, color: Color(0xFFD97706)),
               ),
               const SizedBox(width: 8),
-              Text(
-                'Salary Overview — $periodStr',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF0F172A),
+              Expanded(
+                child: Text(
+                  'Salary Overview — $periodStr',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF0F172A),
+                  ),
                 ),
               ),
             ],
