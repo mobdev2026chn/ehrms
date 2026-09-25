@@ -51,7 +51,7 @@ function readJsonl(file) {
 // ================= SCREENSHOTS =================
 
 // Saves a JPEG (base64 data URL or raw base64 / Buffer) to disk and returns its metadata
-async function saveScreenshot({ deviceId, hostname, currentUser, businessId, timestamp, idleSeconds, image }) {
+async function saveScreenshot({ deviceId, hostname, currentUser, businessId, timestamp, idleSeconds, trigger, image }) {
   let buffer = Buffer.isBuffer(image) ? image : null;
   if (!buffer) {
     const base64 = String(image || '').replace(/^data:image\/\w+;base64,/, '');
@@ -81,6 +81,9 @@ async function saveScreenshot({ deviceId, hostname, currentUser, businessId, tim
     businessId: biz,
     timestamp: when.toISOString(),
     idleSeconds: Number(idleSeconds) || 0,
+    // scheduled = 5-min capture, idle = 5-min capture while idle, idle_start = captured when idle crossed 5 min
+    trigger: ['scheduled', 'idle', 'idle_start'].includes(trigger) ? trigger : 'scheduled',
+    isIdle: trigger === 'idle' || trigger === 'idle_start' || (Number(idleSeconds) || 0) >= 300,
     sizeKB: Math.round(buffer.length / 1024),
     imageUrl: `/api/v1/screenshots/file/${encodeURIComponent(biz)}/${encodeURIComponent(dev)}/${day}/${file}`
   };

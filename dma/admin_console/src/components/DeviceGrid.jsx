@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Monitor, Eye, MousePointer, User, Wifi, RefreshCw, LayoutGrid, List, Search, Camera, X, Download } from 'lucide-react';
 import { getServerBaseUrl } from '../config';
+import { IdleBadge } from './ActivityReport';
 
 
 // Screenshots are JPEG files on the DMA server; <img> can't send headers, so the admin token rides in the URL
@@ -642,11 +643,14 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
                       onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none'; }}
                     >
-                      <img
+                      <div style={{ position: 'relative' }}>
+                        <img
                         src={screenshotSrc(ss)}
                         alt="Desktop Screenshot"
                         style={{ width: '100%', height: '145px', objectFit: 'cover', display: 'block' }}
                       />
+                        <IdleBadge ss={ss} />
+                      </div>
                       <div style={{ padding: '10px 12px', fontSize: '0.78rem', color: '#475569', background: '#ffffff', borderTop: '1px solid #f1f5f9' }}>
                         <div style={{ fontWeight: 600, color: '#0f172a' }}>
                           {new Date(ss.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}

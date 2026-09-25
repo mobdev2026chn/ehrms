@@ -66,9 +66,10 @@ async function postScreenshot(req, res) {
       businessId: data.businessId,
       timestamp: data.timestamp,
       idleSeconds: data.idleSeconds,
+      trigger: data.trigger,
       image: data.imageBase64 || data.image
     });
-    console.log(`[Screenshot] Saved ${saved.businessId}/${saved.deviceId}/${saved.file} (${saved.sizeKB} KB)`);
+    console.log(`[Screenshot] Saved ${saved.businessId}/${saved.deviceId}/${saved.file} (${saved.sizeKB} KB, ${saved.trigger}${saved.isIdle ? `, idle ${saved.idleSeconds}s` : ''})`);
     res.json({ success: true, screenshot: saved });
   } catch (err) {
     console.error('[Device] Error storing screenshot:', err.message);

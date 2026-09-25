@@ -46,6 +46,22 @@ const screenshotSrc = (ss) => {
   return `${getServerBaseUrl()}${ss.imageUrl}?token=${encodeURIComponent(token)}`;
 };
 
+// Red/amber badge on screenshots taken while the employee was idle (5+ min without input)
+export function IdleBadge({ ss, style }) {
+  const idle = ss && (ss.isIdle || (ss.idleSeconds || 0) >= 300);
+  if (!idle) return null;
+  const label = ss.trigger === 'idle_start' ? `Went idle · ${formatDuration(ss.idleSeconds)}` : `Idle ${formatDuration(ss.idleSeconds)}`;
+  return (
+    <span style={{
+      position: 'absolute', top: '6px', left: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px',
+      padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 700, color: '#ffffff',
+      background: ss.trigger === 'idle_start' ? '#dc2626' : '#d97706', boxShadow: '0 1px 4px rgba(0,0,0,0.3)', ...style
+    }}>
+      <Coffee size={11} /> {label}
+    </span>
+  );
+}
+
 async function apiGet(path) {
   const token = localStorage.getItem('ektahr_token') || '';
   const res = await fetch(`${getServerBaseUrl()}${path}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -99,6 +115,7 @@ function EmployeeDetail({ employee, date, onDateChange, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null);
+  const [idleOnly, setIdleOnly] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,18 +183,28 @@ function EmployeeDetail({ employee, date, onDateChange, onBack }) {
 
             {/* Screenshots */}
             <div style={cardStyle}>
-              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a', marginBottom: '12px' }}>Screenshots</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>
+                  Screenshots <span style={{ fontWeight: 500, color: '#64748b', fontSize: '0.8rem' }}>(every 5 min · {data.screenshots.filter(x => x.isIdle || (x.idleSeconds || 0) >= 300).length} while idle)</span>
+                </h3>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#475569', fontWeight: 600, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={idleOnly} onChange={() => setIdleOnly(v => !v)} /> Idle only
+                </label>
+              </div>
               {data.screenshots.length === 0 ? (
                 <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>No screenshots captured on this day.</p>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '12px' }}>
-                  {data.screenshots.map(ss => (
+                  {data.screenshots.filter(x => !idleOnly || x.isIdle || (x.idleSeconds || 0) >= 300).map(ss => (
                     <button
                       key={ss.id}
                       onClick={() => setPreview(ss)}
-                      style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', padding: 0, background: '#f8fafc', cursor: 'zoom-in', textAlign: 'left' }}
+                      style={{ border: (ss.isIdle || (ss.idleSeconds || 0) >= 300) ? '2px solid #f59e0b' : '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', padding: 0, background: '#f8fafc', cursor: 'zoom-in', textAlign: 'left' }}
                     >
-                      <img src={screenshotSrc(ss)} alt={`Screenshot ${formatTime(ss.timestamp)}`} loading="lazy" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block', background: '#e2e8f0' }} />
+                      <div style={{ position: 'relative' }}>
+                        <img src={screenshotSrc(ss)} alt={`Screenshot ${formatTime(ss.timestamp)}`} loading="lazy" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block', background: '#e2e8f0' }} />
+                        <IdleBadge ss={ss} />
+                      </div>
                       <div style={{ padding: '6px 8px', fontSize: '0.75rem', color: '#334155', display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ fontWeight: 600 }}>{formatTime(ss.timestamp)}</span>
                         <span style={{ color: '#94a3b8' }}>{ss.hostname}</span>
@@ -195,6 +222,7 @@ function EmployeeDetail({ employee, date, onDateChange, onBack }) {
         <div onClick={() => setPreview(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.85)', zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
           <div style={{ color: '#ffffff', marginBottom: '10px', fontSize: '0.9rem', display: 'flex', gap: '16px', alignItems: 'center' }}>
             <span>{employee.fullName} · {formatDayLabel(date)} · {formatTime(preview.timestamp)} · {preview.hostname}</span>
+            <IdleBadge ss={preview} style={{ position: 'static' }} />
             <X size={20} style={{ cursor: 'pointer' }} />
           </div>
           <img src={screenshotSrc(preview)} alt="Screenshot preview" style={{ maxWidth: '100%', maxHeight: '85vh', borderRadius: '8px', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }} />
@@ -307,7 +335,7 @@ export default function ActivityReport() {
                     <td style={{ ...td, fontWeight: 700, color: e.totalIdleSec > 3600 ? '#b45309' : '#0f172a' }}>{formatDuration(e.totalIdleSec)}</td>
                     <td style={td}>{e.idleCount}</td>
                     <td style={td}>{e.longestIdleSec ? formatDuration(e.longestIdleSec) : '—'}</td>
-                    <td style={td}>{e.screenshotCount}</td>
+                    <td style={td}>{e.screenshotCount}{e.idleScreenshotCount ? <span style={{ color: '#d97706', fontWeight: 600 }}> ({e.idleScreenshotCount} idle)</span> : null}</td>
                     <td style={{ ...td, textAlign: 'right' }}>
                       <button
                         className="glass-button"

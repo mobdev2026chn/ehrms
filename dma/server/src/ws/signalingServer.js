@@ -4,7 +4,6 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { registerOrUpdateDevice, markDeviceOffline, getDevicesList } = require('../db/mongo');
-const { saveScreenshot } = require('../storage/fileStore');
 const idleTracker = require('../db/idleTracker');
 const { allowLanUpgrade } = require('../lanGuard');
 
@@ -197,20 +196,7 @@ function handleAgentConnection(ws, query, request) {
     const isJpegFrame = isBuffer && (message.length > 200 || (message[0] === 0xFF && message[1] === 0xD8));
 
     if (isJpegFrame) {
-      // While an admin is watching, keep one frame per minute on disk (owner known from heartbeats)
-      const now = Date.now();
-      if (ws.businessId && ws.currentUser && (!ws.lastSnapTs || (now - ws.lastSnapTs > 60000))) {
-        ws.lastSnapTs = now;
-        saveScreenshot({
-          deviceId: ws.deviceId,
-          hostname: ws.hostname,
-          currentUser: ws.currentUser,
-          businessId: ws.businessId,
-          timestamp: new Date().toISOString(),
-          image: message
-        }).catch(e => console.error('[Screenshot] Failed to save stream frame:', e.message));
-      }
-
+      // Live frames are relayed only; saved screenshots come from the agent (every 5 min + when idle > 5 min)
       const targetViewers = await getViewerSocketsForAgentAsync(ws);
       for (const viewerWs of targetViewers) {
         if (viewerWs.readyState === WebSocket.OPEN) {

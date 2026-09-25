@@ -69,6 +69,7 @@ async function getActivitySummary(req, res) {
       const row = ensure(ss.currentUser);
       if (!row) continue;
       row.screenshotCount += 1;
+      if (ss.isIdle) row.idleScreenshotCount = (row.idleScreenshotCount || 0) + 1;
       if (!row.firstActivityAt || ss.timestamp < row.firstActivityAt) row.firstActivityAt = ss.timestamp;
       if (!row.lastActivityAt || ss.timestamp > row.lastActivityAt) row.lastActivityAt = ss.timestamp;
       if (ss.hostname && !row.devices.includes(ss.hostname)) row.devices.push(ss.hostname);

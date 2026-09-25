@@ -974,70 +974,83 @@ namespace EktaDMAAgent
 
             while (!token.IsCancellationRequested && IsLoggedIn)
             {
-                try
-                {
-                    // Capture 5-minute automated screenshot (JPEG quality 85L)
-                    byte[] jpegBytes = CaptureScreenJpeg(85L);
-                    if (jpegBytes != null && jpegBytes.Length > 0)
-                    {
-                        string base64Image = Convert.ToBase64String(jpegBytes);
-                        string hostname = Environment.MachineName;
-                        string devId = "WIN-PC-" + hostname.ToUpper();
-
-                        string body = "{" +
-                            "\"deviceId\":\"" + EscapeJson(devId) + "\"," +
-                            "\"hostname\":\"" + EscapeJson(hostname) + "\"," +
-                            "\"currentUser\":\"" + EscapeJson(LoggedUser) + "\"," +
-                            "\"businessId\":\"" + EscapeJson(BusinessId) + "\"," +
-                            "\"idleSeconds\":" + IdleSeconds + "," +
-                            "\"timestamp\":\"" + DateTime.UtcNow.ToString("o") + "\"," +
-                            "\"imageBase64\":\"data:image/jpeg;base64," + base64Image + "\"" +
-                            "}";
-
-                        byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
-
-                        List<string> endpointList = new List<string>();
-                        if (!string.IsNullOrEmpty(ServerWsUrl))
-                        {
-                            string wsHttp = ServerWsUrl.Replace("ws://", "http://").Replace("wss://", "https://").TrimEnd('/') + "/api/v1/device/screenshot";
-                            if (!endpointList.Contains(wsHttp)) endpointList.Add(wsHttp);
-                        }
-                        if (!string.IsNullOrEmpty(ServerHttpUrl))
-                        {
-                            string httpUrl = ServerHttpUrl.TrimEnd('/') + "/api/v1/device/screenshot";
-                            if (!endpointList.Contains(httpUrl)) endpointList.Add(httpUrl);
-                        }
-                        endpointList.Add("http://127.0.0.1:2005/api/v1/device/screenshot");
-                        endpointList.Add("http://127.0.0.1:9000/api/v1/device/screenshot");
-
-                        for (int i = 0; i < endpointList.Count; i++)
-                        {
-                            try
-                            {
-                                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(endpointList[i]);
-                                req.Method = "POST";
-                                req.ContentType = "application/json";
-                                req.Timeout = 10000;
-                                req.ContentLength = bodyBytes.Length;
-
-                                using (Stream rs = req.GetRequestStream())
-                                {
-                                    rs.Write(bodyBytes, 0, bodyBytes.Length);
-                                }
-                                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse()) { }
-
-                                TotalScreenshots++;
-                                LastCaptureTime = DateTime.Now.ToString("hh:mm tt");
-                                break;
-                            }
-                            catch { }
-                        }
-                    }
-                }
-                catch { }
+                // Every 5 minutes, whether the employee is active or idle (idle ones carry idleSeconds for the badge)
+                CaptureAndUploadScreenshot(IdleSeconds >= 300 ? "idle" : "scheduled");
 
                 // Wait exactly 5 minutes (300,000 ms) for next periodic screenshot
                 await Task.Delay(300000, token);
+            }
+        }
+
+        private static readonly object screenshotUploadLock = new object();
+
+        // Captures the screen and uploads it to the DMA server. trigger: "scheduled" | "idle" | "idle_start"
+        public static void CaptureAndUploadScreenshot(string trigger)
+        {
+            if (!IsLoggedIn) return;
+            lock (screenshotUploadLock)
+            {
+                try
+                {
+                    // JPEG quality 85L
+                    byte[] jpegBytes = CaptureScreenJpeg(85L);
+                    if (jpegBytes == null || jpegBytes.Length == 0) return;
+
+                    string base64Image = Convert.ToBase64String(jpegBytes);
+                    string hostname = Environment.MachineName;
+                    string devId = "WIN-PC-" + hostname.ToUpper();
+
+                    string body = "{" +
+                        "\"deviceId\":\"" + EscapeJson(devId) + "\"," +
+                        "\"hostname\":\"" + EscapeJson(hostname) + "\"," +
+                        "\"currentUser\":\"" + EscapeJson(LoggedUser) + "\"," +
+                        "\"businessId\":\"" + EscapeJson(BusinessId) + "\"," +
+                        "\"idleSeconds\":" + IdleSeconds + "," +
+                        "\"trigger\":\"" + EscapeJson(trigger) + "\"," +
+                        "\"timestamp\":\"" + DateTime.UtcNow.ToString("o") + "\"," +
+                        "\"imageBase64\":\"data:image/jpeg;base64," + base64Image + "\"" +
+                        "}";
+
+                    byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
+
+                    List<string> endpointList = new List<string>();
+                    if (!string.IsNullOrEmpty(ServerWsUrl))
+                    {
+                        string wsHttp = ServerWsUrl.Replace("ws://", "http://").Replace("wss://", "https://").TrimEnd('/') + "/api/v1/device/screenshot";
+                        if (!endpointList.Contains(wsHttp)) endpointList.Add(wsHttp);
+                    }
+                    if (!string.IsNullOrEmpty(ServerHttpUrl))
+                    {
+                        string httpUrl = ServerHttpUrl.TrimEnd('/') + "/api/v1/device/screenshot";
+                        if (!endpointList.Contains(httpUrl)) endpointList.Add(httpUrl);
+                    }
+                    endpointList.Add("http://127.0.0.1:2005/api/v1/device/screenshot");
+                    endpointList.Add("http://127.0.0.1:9000/api/v1/device/screenshot");
+
+                    for (int i = 0; i < endpointList.Count; i++)
+                    {
+                        try
+                        {
+                            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(endpointList[i]);
+                            req.Method = "POST";
+                            req.ContentType = "application/json";
+                            req.Timeout = 10000;
+                            req.ContentLength = bodyBytes.Length;
+
+                            using (Stream rs = req.GetRequestStream())
+                            {
+                                rs.Write(bodyBytes, 0, bodyBytes.Length);
+                            }
+                            using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse()) { }
+
+                            TotalScreenshots++;
+                            LastCaptureTime = DateTime.Now.ToString("hh:mm tt");
+                            break;
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
             }
         }
 
@@ -1081,6 +1094,8 @@ namespace EktaDMAAgent
                         AgentStatus = "Idle";
                         SendInstantStatusUpdate("IDLE");
                         ShowIdleTrayNotification(true);
+                        // Idle for 5+ minutes: capture the screen at that moment (idle badge in Admin Console)
+                        Task.Run(() => CaptureAndUploadScreenshot("idle_start"));
                     }
                     else if (!isSystemIdle && wasIdleState)
                     {
