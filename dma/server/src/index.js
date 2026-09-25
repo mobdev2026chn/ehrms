@@ -9,6 +9,7 @@ const { connectMongo } = require('./db/mongo');
 const { login, logout, verifyTokenMiddleware, requireAdminRole } = require('./controllers/authController');
 const { getAllDevices, getLanAgents, postScreenshot, getScreenshots, serveScreenshotFile, downloadAgent } = require('./controllers/deviceController');
 const { startRetentionJob, STORAGE_DIR } = require('./storage/fileStore');
+const { getActivitySummary, getEmployeeActivity } = require('./controllers/activityController');
 const { initWebSocketServer } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
 
@@ -52,6 +53,9 @@ app.get('/api/v1/idle-logs', verifyTokenMiddleware, requireAdminRole, async (req
     res.status(500).json({ success: false, error: 'Failed to fetch idle logs' });
   }
 });
+// Date-wise employee activity (idle time + screenshots) for the Admin Console "Activity Report"
+app.get('/api/v1/activity/summary', verifyTokenMiddleware, requireAdminRole, getActivitySummary);
+app.get('/api/v1/activity/employee', verifyTokenMiddleware, requireAdminRole, getEmployeeActivity);
 app.get('/api/v1/idle-logs/summary', verifyTokenMiddleware, requireAdminRole, async (req, res) => {
   try {
     const tz = req.query.tz || 'Asia/Kolkata';

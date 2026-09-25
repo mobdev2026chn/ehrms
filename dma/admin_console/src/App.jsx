@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import LoginModal from './components/LoginModal';
 import DeviceGrid from './components/DeviceGrid';
 import RemoteViewer from './components/RemoteViewer';
-import { LogOut, Monitor, Activity, Wifi, RefreshCw } from 'lucide-react';
+import ActivityReport from './components/ActivityReport';
+import { LogOut, Monitor, Activity, Wifi, RefreshCw, CalendarDays } from 'lucide-react';
 
 import { getServerBaseUrl } from './config';
 
@@ -20,6 +21,7 @@ export default function App() {
   const [lanAgents, setLanAgents] = useState([]);
   const [lanScan, setLanScan] = useState({ state: 'scanning', at: null });
   const [showAllStaff, setShowAllStaff] = useState(false);
+  const [activeTab, setActiveTab] = useState('LIVE');
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [sessionMode, setSessionMode] = useState('VIEW_ONLY');
 
@@ -212,7 +214,40 @@ export default function App() {
           </div>
         </div>
 
-        {/* Device Grid Component */}
+        {/* Tabs: Live devices | Date-wise activity report */}
+        <div style={{ display: 'inline-flex', background: '#f1f5f9', padding: '4px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '18px' }}>
+          {[
+            { key: 'LIVE', label: 'Live Devices', icon: <Monitor size={16} /> },
+            { key: 'ACTIVITY', label: 'Activity Report', icon: <CalendarDays size={16} /> }
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              style={{
+                background: activeTab === t.key ? '#ffffff' : 'transparent',
+                color: activeTab === t.key ? '#d97706' : '#64748b',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontWeight: 600,
+                fontSize: '0.88rem',
+                boxShadow: activeTab === t.key ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+              }}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'ACTIVITY' ? (
+          <ActivityReport />
+        ) : (
+        /* Device Grid Component */
         <DeviceGrid
           devices={visibleDevices}
           onRefresh={refreshAll}
@@ -224,6 +259,7 @@ export default function App() {
             setSessionMode(mode);
           }}
         />
+        )}
       </main>
 
       {/* Remote Screen Overlay Viewer */}

@@ -121,6 +121,23 @@ async function getIdleLogs({ businessId, userEmail, deviceId, from, to, limit = 
   return logs.slice(0, Math.min(Number(limit) || 500, 5000));
 }
 
+// Idle periods that started on one day (yyyy-mm-dd, office timezone), optionally for one employee
+function getIdleLogsForDay({ businessId, date, userEmail }) {
+  const isSuper = isSuperAdminScope(businessId);
+  const email = userEmail ? userEmail.trim().toLowerCase() : null;
+  const logs = [
+    ...readIdleLogs({ businessId, fromDay: date, toDay: date }),
+    ...openPeriodsFor(businessId, isSuper).filter(p => dayKey(p.startAt) === date)
+  ].filter(l => !email || l.userEmail === email);
+
+  return logs
+    .map(l => ({
+      ...l,
+      durationSec: l.durationSec != null ? l.durationSec : Math.round((Date.now() - new Date(l.startAt)) / 1000)
+    }))
+    .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+}
+
 // Total idle time per user for one day (open periods are counted up to now)
 async function getDailyIdleSummary({ businessId, date }) {
   const isSuper = isSuperAdminScope(businessId);
@@ -144,4 +161,4 @@ async function getDailyIdleSummary({ businessId, date }) {
   return [...byUser.values()].sort((a, b) => b.totalIdleSec - a.totalIdleSec);
 }
 
-module.exports = { initIdleTracker, trackStatus, closeForDevice, getIdleLogs, getDailyIdleSummary };
+module.exports = { initIdleTracker, trackStatus, closeForDevice, getIdleLogs, getIdleLogsForDay, getDailyIdleSummary };

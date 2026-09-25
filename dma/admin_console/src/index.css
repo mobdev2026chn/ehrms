@@ -108,3 +108,7 @@ body {
 
 @keyframes ektaSpin { to { transform: rotate(360deg); } }
 .spin { animation: ektaSpin 1s linear infinite; }
+
+@media (max-width: 860px) {
+  .activity-detail-grid { grid-template-columns: 1fr !important; }
+}

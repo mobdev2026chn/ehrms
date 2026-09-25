@@ -113,6 +113,26 @@ function listScreenshots({ deviceId, businessId, days = 7, limit = 200 }) {
   return results.slice(0, Math.min(Number(limit) || 200, 2000));
 }
 
+// All screenshots taken on one day (yyyy-mm-dd), optionally for one employee, newest first
+function listScreenshotsByDay({ businessId, day, userEmail }) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day || '')) return [];
+  const businesses = isSuperScope(businessId) ? listDirs(SCREENSHOT_DIR) : [safeSegment(businessId)];
+  const email = userEmail ? userEmail.trim().toLowerCase() : null;
+  const results = [];
+
+  for (const biz of businesses) {
+    for (const dev of listDirs(path.join(SCREENSHOT_DIR, biz))) {
+      const entries = readJsonl(path.join(SCREENSHOT_DIR, biz, dev, day, 'index.jsonl'));
+      for (const e of entries) {
+        if (!email || (e.currentUser || '').trim().toLowerCase() === email) results.push(e);
+      }
+    }
+  }
+
+  results.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return results;
+}
+
 // Absolute path of a screenshot file, or null if the request is outside the admin's business
 function resolveScreenshotFile({ businessId, fileBusinessId, deviceId, day, file }) {
   const biz = safeSegment(fileBusinessId);
@@ -201,6 +221,7 @@ module.exports = {
   dayKey,
   saveScreenshot,
   listScreenshots,
+  listScreenshotsByDay,
   resolveScreenshotFile,
   startRetentionJob,
   appendIdleLog,
