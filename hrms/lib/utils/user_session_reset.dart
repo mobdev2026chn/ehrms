@@ -2,6 +2,7 @@ import '../services/attendance_service.dart';
 import '../services/auth_service.dart';
 import '../services/break_service.dart';
 import '../services/request_service.dart';
+import '../services/staff_interaction_service.dart';
 import 'swr_cache.dart';
 
 /// Clears everything the app keeps IN MEMORY about the signed-in user.
@@ -20,4 +21,6 @@ void resetUserScopedState() {
   AuthService.invalidateProfileCache();
   AuthService.clearFaceEnrollCache();
   SwrCache.clearAll();
+  // Chat socket is authenticated as the old user; drop it (reconnects on open).
+  StaffInteractionService.instance.reset();
 }

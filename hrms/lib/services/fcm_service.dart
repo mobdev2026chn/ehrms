@@ -22,7 +22,7 @@ import '../screens/announcements/announcements_screen.dart';
 import '../screens/announcements/announcement_detail_screen.dart';
 import '../screens/salary/all_payslips_screen.dart';
 import '../screens/grievance/grievance_shell_screen.dart';
-import '../screens/interaction/interaction_shell_screen.dart';
+import '../screens/interaction/staff/staff_interaction_screen.dart';
 import '../screens/assets/assets_listing_screen.dart';
 import '../screens/lms/lms_shell_screen.dart';
 import '../screens/geo/my_tasks_screen.dart';
@@ -1370,9 +1370,10 @@ class FcmService {
       case 'chats':
       case 'message':
       case 'messages':
+        return const StaffInteractionScreen();
       case 'poll':
       case 'polls':
-        return const InteractionShellScreen();
+        return const StaffInteractionScreen(initialTab: 1);
       case 'asset':
       case 'assets':
       case 'license':
@@ -1602,9 +1603,12 @@ class FcmService {
         type.startsWith('chat') ||
         type.startsWith('message') ||
         type.startsWith('poll')) {
-      _log('handleNotificationData: navigating to InteractionShellScreen');
+      _log('handleNotificationData: navigating to StaffInteractionScreen');
+      final isPoll = effModule == 'poll' || type.startsWith('poll');
       navPush(
-        MaterialPageRoute<void>(builder: (_) => const InteractionShellScreen()),
+        MaterialPageRoute<void>(
+          builder: (_) => StaffInteractionScreen(initialTab: isPoll ? 1 : 0),
+        ),
       );
       return true;
     }
