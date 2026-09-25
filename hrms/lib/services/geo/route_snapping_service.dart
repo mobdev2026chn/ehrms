@@ -24,7 +24,10 @@ class RouteSnappingService {
   static const int _maxPointsPerRequest = 100;
 
   /// Drop a point if it is closer than this to the previous kept point.
-  static const double _minSeparationMeters = 5;
+  static const double _minSeparationMeters = 8;
+
+  /// Drop points recorded with worse GPS accuracy than this.
+  static const double _maxAccuracyMeters = 30;
 
   /// Reject a point as an outlier if reaching it would require this speed.
   static const double _maxPlausibleSpeedKmh = 200;
@@ -38,8 +41,17 @@ class RouteSnappingService {
     final cleaned = <LatLng>[];
     RoutePoint? lastKept;
 
-    for (final p in raw) {
+    // The trail mixes the dense ride recording with periodic/background points;
+    // draw them in the order they were recorded.
+    final ordered = List<RoutePoint>.from(raw);
+    if (ordered.every((p) => p.timestamp != null)) {
+      ordered.sort((a, b) => a.timestamp!.compareTo(b.timestamp!));
+    }
+
+    for (final p in ordered) {
       if (!_isValidCoordinate(p.lat, p.lng)) continue;
+      // A fix this imprecise lands on the wrong street; it only adds zig-zags.
+      if (p.accuracy != null && p.accuracy! > _maxAccuracyMeters) continue;
 
       if (lastKept != null) {
         final distanceM = gl.Geolocator.distanceBetween(
@@ -126,6 +138,62 @@ class RouteSnappingService {
       }
       return cleaned;
     }
+  }
+
+  /// Tracking was not running across a gap this long (hold/resume, app killed),
+  /// so the two sides are separate legs — the gap itself is not travel.
+  static const Duration _legBreakGap = Duration(minutes: 5);
+
+  /// Distance actually travelled along [raw] tracking points, in km.
+  ///
+  /// Same cleaning as the drawn route (accuracy, jitter, impossible jumps),
+  /// split into legs where tracking paused, each leg snapped to the roads when
+  /// the Roads API answers (straight segments between the dense points
+  /// otherwise), then summed. This is what the travel allowance should use.
+  static Future<double> travelledDistanceKm(List<RoutePoint> raw) async {
+    final ordered = List<RoutePoint>.from(raw)
+        .where((p) =>
+            _isValidCoordinate(p.lat, p.lng) &&
+            (p.accuracy == null || p.accuracy! <= _maxAccuracyMeters))
+        .toList();
+    if (ordered.every((p) => p.timestamp != null)) {
+      ordered.sort((a, b) => a.timestamp!.compareTo(b.timestamp!));
+    }
+
+    final legs = <List<RoutePoint>>[];
+    var leg = <RoutePoint>[];
+    for (final p in ordered) {
+      final last = leg.isNotEmpty ? leg.last : null;
+      if (last != null &&
+          last.timestamp != null &&
+          p.timestamp != null &&
+          p.timestamp!.difference(last.timestamp!) > _legBreakGap) {
+        legs.add(leg);
+        leg = <RoutePoint>[];
+      }
+      leg.add(p);
+    }
+    if (leg.isNotEmpty) legs.add(leg);
+
+    var meters = 0.0;
+    for (final l in legs) {
+      final path = await buildExactRoute(l);
+      meters += _pathLengthMeters(path);
+    }
+    return meters / 1000;
+  }
+
+  static double _pathLengthMeters(List<LatLng> path) {
+    var m = 0.0;
+    for (var i = 1; i < path.length; i++) {
+      m += gl.Geolocator.distanceBetween(
+        path[i - 1].latitude,
+        path[i - 1].longitude,
+        path[i].latitude,
+        path[i].longitude,
+      );
+    }
+    return m;
   }
 
   static Future<List<LatLng>> _snapToRoads(List<LatLng> points) async {

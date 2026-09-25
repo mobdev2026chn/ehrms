@@ -7,6 +7,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:hrms/config/constants.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
+import 'package:hrms/services/geo/route_snapping_service.dart';
 import 'package:hrms/services/auth_service.dart';
 import 'package:hrms/services/customer_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -563,9 +564,12 @@ class TaskService {
     final rows = <Map<String, dynamic>>[];
     for (final r in path) {
       if (r is! Map) continue;
-      final lat = (r['lat'] ?? r['latitude'] as num?)?.toDouble();
-      final lng = (r['lng'] ?? r['longitude'] as num?)?.toDouble();
+      final lat = ((r['lat'] ?? r['latitude']) as num?)?.toDouble();
+      final lng = ((r['lng'] ?? r['longitude']) as num?)?.toDouble();
       if (lat == null || lng == null) continue;
+      // Imprecise fixes land on the wrong street and zig-zag the drawn route.
+      final acc = (r['accuracy'] as num?)?.toDouble();
+      if (acc != null && acc > 30) continue;
       rows.add({
         'lat': lat,
         'lng': lng,
@@ -604,6 +608,29 @@ class TaskService {
       });
     }
     return out;
+  }
+
+  /// Distance actually travelled on [taskMongoId], in km, from its saved GPS
+  /// trail (see RouteSnappingService.travelledDistanceKm). Null when the trail
+  /// can't be read or has too few points — callers keep their own figure then.
+  Future<double?> getTravelledDistanceKm(String taskMongoId) async {
+    try {
+      await _setToken();
+      final res = await _api.dio.get<dynamic>(
+        '/staff/geo-task/live-tracking/trail/$taskMongoId',
+      );
+      final data = res.data is Map ? (res.data as Map)['data'] : res.data;
+      if (data is! List) return null;
+      final points = data
+          .whereType<Map>()
+          .map((e) => RoutePoint.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      if (points.length < 2) return null;
+      final km = await RouteSnappingService.travelledDistanceKm(points);
+      return km > 0 ? km : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Fetch full task completion report: task, timeline, route points from DB.

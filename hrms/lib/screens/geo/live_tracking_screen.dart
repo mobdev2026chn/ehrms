@@ -18,6 +18,7 @@ import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/services/geo/live_tracking_service.dart';
+import 'package:hrms/services/geo/route_recorder.dart';
 import 'package:hrms/services/geo/movement_classification_service.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/arrived_screen.dart';
@@ -291,7 +292,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     _locationUploadTimer = Timer.periodic(captureInterval, (_) {
       if (!mounted) return;
       _sendLocationToDb();
+      // Upload the dense route recorded since the last tick.
+      unawaited(RouteRecorder.flush(widget.taskMongoId!));
     });
+    // Anything left from an earlier ride that couldn't upload (offline, app killed).
+    unawaited(RouteRecorder.flushAll());
   }
 
   Future<void> _enablePipOnMinimize() async {
@@ -353,6 +358,19 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           mapController?.animateCamera(CameraUpdate.newLatLng(newLatLng));
 
           _updateRoutePolyline(newLatLng, accuracyM: location.accuracy);
+          // Dense, accurate route for the saved trail (uploaded in batches).
+          final tid = widget.taskMongoId;
+          if (tid != null && tid.isNotEmpty) {
+            unawaited(RouteRecorder.add(
+              taskId: tid,
+              lat: location.latitude!,
+              lng: location.longitude!,
+              accuracyM: location.accuracy,
+              speedMps: location.speed,
+              heading: location.bearing,
+              movementType: _currentActivity,
+            ));
+          }
 
           if (_lastLocation != null) {
             final distance = gl.Geolocator.distanceBetween(
@@ -1025,12 +1043,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             lng = _lastLocation!.longitude;
           }
         }
-        final totalKm = _totalDistanceCovered / 1000;
         final durationSeconds = _elapsedDuration.inSeconds;
         final routeCoords = _routePolyline?.points
             .map((p) => {'lat': p.latitude, 'lng': p.longitude})
             .toList();
 
+        await RouteRecorder.flush(resolvedMongoId);
+        await RouteRecorder.resetAnchor(resolvedMongoId);
+        final totalKm = await _travelledKm(resolvedMongoId);
         await TaskService().exitRide(
           resolvedMongoId,
           reason,
@@ -1084,9 +1104,24 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     }
   }
 
+  /// Distance travelled on this task, from its full saved GPS trail (covers
+  /// background tracking and app restarts). Falls back to this screen's live
+  /// odometer when the trail can't be read in time.
+  Future<double> _travelledKm(String taskMongoId) async {
+    final odometerKm = _totalDistanceCovered / 1000;
+    try {
+      final trailKm = await TaskService()
+          .getTravelledDistanceKm(taskMongoId)
+          .timeout(const Duration(seconds: 20));
+      if (trailKm != null && trailKm > 0) return double.parse(trailKm.toStringAsFixed(2));
+    } catch (_) {}
+    return odometerKm;
+  }
+
   Future<void> _onArrived() async {
     if (_submittingArrived || _arrivedSent) return;
-    final totalKm = _totalDistanceCovered / 1000;
+    // Replaced by the saved-trail distance once the route is uploaded (below).
+    var totalKm = _totalDistanceCovered / 1000;
     final arrival = DateTime.now();
     final durationSeconds = _elapsedDuration.inSeconds;
     Task? arrivedTask = _task;
@@ -1106,6 +1141,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         lat != null &&
         lng != null) {
       if (mounted) setState(() => _submittingArrived = true);
+      // Close the recorded route at the arrival point and upload it before the
+      // task is marked Arrived, so the saved trail is complete.
+      await RouteRecorder.add(
+        taskId: widget.taskMongoId!,
+        lat: lat,
+        lng: lng,
+        movementType: 'stop',
+      );
+      await RouteRecorder.flush(widget.taskMongoId!);
+      await RouteRecorder.resetAnchor(widget.taskMongoId!);
+      totalKm = await _travelledKm(widget.taskMongoId!);
       try {
         // Arrival lat/lng = staff GPS here (above). Do not send destination as fullAddress —
         // DB arrival fields must describe this point; backend reverse-geocodes lat/lng.

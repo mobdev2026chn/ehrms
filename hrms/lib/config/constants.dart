@@ -46,9 +46,11 @@ class AppConstants {
 
   /// Google Maps key — enable **Geocoding API** for reverse geocode (lat/lng → address in app).
   /// Also Maps SDK, Places, Directions as needed. Restrict by app + APIs in Google Cloud Console.
+  // Old key (project without billing — Directions/Roads refused):
+  // static const String googleMapsApiKey =
+  //     'AIzaSyBcoj_g5hxrsv3mEJCVF1Uev_JZRcFO0F8';
   static const String googleMapsApiKey =
-      'AIzaSyBcoj_g5hxrsv3mEJCVF1Uev_JZRcFO0F8';
-     // AIzaSyBcoj_g5hxrsv3mEJCVF1Uev_JZRcFO0F8
+      'AIzaSyA8MUZlm5WZKJ6vP-5O1vM5ct3lGJnpvBs';
 
   /// Privacy policy URL (required for Play Store).
   static const String privacyPolicyUrl =

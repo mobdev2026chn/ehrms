@@ -9,7 +9,8 @@ import background_location_tracker
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GMSServices.provideAPIKey("AIzaSyBcoj_g5hxrsv3mEJCVF1Uev_JZRcFO0F8")
+    // Old Maps key: GMSServices.provideAPIKey("AIzaSyBcoj_g5hxrsv3mEJCVF1Uev_JZRcFO0F8")
+    GMSServices.provideAPIKey("AIzaSyA8MUZlm5WZKJ6vP-5O1vM5ct3lGJnpvBs")
     GeneratedPluginRegistrant.register(with: self)
     BackgroundLocationTrackerPlugin.setPluginRegistrantCallback { registry in
       GeneratedPluginRegistrant.register(with: registry)

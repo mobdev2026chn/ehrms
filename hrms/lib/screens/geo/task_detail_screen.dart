@@ -15,6 +15,7 @@ import 'package:hrms/services/customer_service.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:hrms/services/task_service.dart';
+import 'package:hrms/services/geo/directions_service.dart';
 import 'package:hrms/services/geo/route_snapping_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/utils/error_message_utils.dart';
@@ -304,23 +305,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       return;
     }
 
-    // Use stored source for "current" marker when available, else use GPS
-    if (task.sourceLocation != null &&
-        (task.sourceLocation!.lat != 0 || task.sourceLocation!.lng != 0)) {
-      position = Position(
-        latitude: task.sourceLocation!.lat,
-        longitude: task.sourceLocation!.lng,
-        timestamp: DateTime.now(),
-        accuracy: 0,
-        altitude: 0,
-        altitudeAccuracy: 0,
-        heading: 0,
-        headingAccuracy: 0,
-        speed: 0,
-        speedAccuracy: 0,
-      );
-      if (mounted) setState(() => _currentPosition = position);
-    }
+    // "My location" is the live GPS fix; the task's saved start point is only a
+    // fallback when GPS is unavailable (handled above). Replacing a real fix
+    // with the saved point made "km away" and the Start Ride location wrong.
 
     setState(() {
       _destinationLatLng = destLatLng;
@@ -412,19 +399,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         return;
       }
     }
-    final meters = Geolocator.distanceBetween(
-      currentPos.latitude,
-      currentPos.longitude,
-      dest.latitude,
-      dest.longitude,
+    // Road distance and drive time from Google Directions (same as Google Maps);
+    // the service falls back to a straight line if Directions is unavailable.
+    final road = await DirectionsService.getRouteBetweenCoordinates(
+      originLat: currentPos.latitude,
+      originLng: currentPos.longitude,
+      destLat: dest.latitude,
+      destLng: dest.longitude,
     );
-    final km = meters / 1000;
-    final min = (km / 30 * 60).round().clamp(0, 999);
-    final eta = min > 60 ? '~${min ~/ 60} h' : '~$min min';
     if (!mounted) return;
     setState(() {
-      _distanceKm = km;
-      _durationText = eta;
+      _distanceKm = road.distanceKm;
+      _durationText = road.durationText;
       _loadingMap = false;
       _markers = {
         Marker(
@@ -445,6 +431,21 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         ),
       };
       _polylines.clear();
+      // Suggested road route to the destination (not drawn for the 2-point
+      // straight-line fallback, which would look like a real route).
+      if (road.points.length > 2) {
+        _polylines.add(
+          Polyline(
+            polylineId: const PolylineId('toDestination'),
+            points: road.points,
+            color: AppColors.primary.withOpacity(0.8),
+            width: 4,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+            jointType: JointType.round,
+          ),
+        );
+      }
     });
   }
 

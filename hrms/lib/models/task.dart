@@ -951,12 +951,16 @@ class RoutePoint {
   final String? movementType;
   final String? address;
 
+  /// GPS accuracy in metres when the point was recorded (null if unknown).
+  final double? accuracy;
+
   const RoutePoint({
     required this.lat,
     required this.lng,
     this.timestamp,
     this.movementType,
     this.address,
+    this.accuracy,
   });
 
   factory RoutePoint.fromJson(Map<String, dynamic> json) {
@@ -971,12 +975,14 @@ class RoutePoint {
         time = DateTime.tryParse(ts[r'$date'].toString());
       }
     }
+    // Completion report sends lat/lng; the live-tracking trail sends latitude/longitude.
     return RoutePoint(
-      lat: (json['lat'] as num?)?.toDouble() ?? 0,
-      lng: (json['lng'] as num?)?.toDouble() ?? 0,
+      lat: ((json['lat'] ?? json['latitude']) as num?)?.toDouble() ?? 0,
+      lng: ((json['lng'] ?? json['longitude']) as num?)?.toDouble() ?? 0,
       timestamp: time,
       movementType: json['movementType'] as String?,
       address: json['address'] as String?,
+      accuracy: (json['accuracy'] as num?)?.toDouble(),
     );
   }
 }
