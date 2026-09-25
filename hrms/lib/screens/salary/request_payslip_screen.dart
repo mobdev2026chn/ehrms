@@ -636,7 +636,12 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
       for (final req in items)
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
-          child: PayslipRequestCard(req: req, onDownload: _onRecentDownload),
+          child: PayslipRequestCard(
+            req: req,
+            onDownload: _onRecentDownload,
+            onDownloadPayroll: (id, period) =>
+                openPayslipPdfForPayrollId(context, id, period: period),
+          ),
         ),
     ];
   }

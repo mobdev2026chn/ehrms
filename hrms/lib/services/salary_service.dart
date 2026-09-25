@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -203,7 +204,8 @@ class SalaryService {
       _salaryLog('[SalaryService] getSalaryStructure webHrmsApiDio error: $e');
     }
 
-    // 2. Fallback to main _api client
+    // 2. Fallback to main _api client (only when it is a different host).
+    if (_mainAndWebHostsAreSame) return null;
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token')?.replaceAll('"', '');
@@ -222,252 +224,571 @@ class SalaryService {
     return null;
   }
 
-  /// Last [getSalaryStats] outcome for logs: `web_hrms`, `geo_main`, `empty`, `error`.
+
+  // ---------------------------------------------------------------------------
+  // HRMSbackend payroll adapters
+  //
+  // HRMSbackend has no `/payroll`, `/payroll/stats` or `/payroll/preview`. A staff
+  // member's month-wise salary lives in the Salary Overview record
+  // (`GET /admin/staff/overview/detail/:staffId?month=September 2026`), the issued
+  // payslip is a PayRoll document found through the staff's own payslip requests
+  // (`GET /staff/requests/payslip/my-requests` → `payrollId`, set only once Paid) and
+  // rendered by `GET /admin/staff/payroll/statement/:id/view?download=true`.
+  // The methods below keep the response shapes the salary screens were written
+  // against (`payrolls[]` rows, `stats` envelope) and fill them from those routes.
+  // ---------------------------------------------------------------------------
+
+  /// Last [getSalaryStats] outcome for logs: `hrmsbackend`, `empty`, `error`.
   static String lastPayrollStatsHostUsed = '';
 
-  /// When web `/payroll/stats` is not used, short reason (HTTP, body shape, unusable stats).
+  /// When stats could not be built, short reason (logs only).
   static String lastPayrollStatsWebRejectReason = '';
 
-  static bool get _mainAndWebHostsAreSame {
-    final main = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
-    final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
-    return main == web;
+  static const List<String> _monthNames = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+
+  /// Oldest month the payroll history scans back to, counted from the current month.
+  static const int _maxHistoryMonths = 24;
+  static const Duration _hrmsCacheTtl = Duration(seconds: 20);
+
+  static final Map<String, _TimedValue<Map<String, dynamic>?>> _overviewCache = {};
+  static final Map<String, Future<Map<String, dynamic>?>> _overviewInFlight = {};
+  static _TimedValue<Map<String, String>>? _payslipIdCache;
+  static final Map<String, _TimedValue<Map<String, dynamic>?>> _structureCache = {};
+
+  /// HRMSbackend month key: `"September 2026"`.
+  static String hrmsMonthLabel(int month, int year) =>
+      '${_monthNames[(month - 1).clamp(0, 11)]} $year';
+
+  static double? _num(dynamic v) {
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v.trim());
+    return null;
   }
 
-  /// Web HRMS often returns `{ stats: null }` when the JWT staff is not linked there;
-  /// geo [AppConstants.baseUrl] still has payroll stats for the same employee.
-  static bool _statNumLike(dynamic v) {
-    if (v is num) return true;
-    if (v is String && v.trim().isNotEmpty) {
-      return double.tryParse(v.trim()) != null;
-    }
-    return false;
-  }
-
-  static bool _payrollStatsEnvelopeHasUsableStats(Map<String, dynamic> envelope) {
-    final st = envelope['stats'];
-    if (st is! Map) return false;
-    final sm = Map<String, dynamic>.from(st);
-    if (_statNumLike(sm['thisMonthNet']) || _statNumLike(sm['thisMonthGross'])) {
-      return true;
-    }
-    if (_statNumLike(sm['grossSalary']) || _statNumLike(sm['netSalary'])) {
-      return true;
-    }
-    if (_statNumLike(sm['deductions'])) return true;
-    final er = sm['earnings'];
-    if (er is List && er.isNotEmpty) return true;
-    final dr = sm['deductionComponents'];
-    if (dr is List && dr.isNotEmpty) return true;
-    final att = sm['attendance'];
-    if (att is Map) {
-      final a = Map<String, dynamic>.from(att);
-      if (a['workingDays'] is num ||
-          a['workingDaysFullMonth'] is num ||
-          _statNumLike(a['workingDays']) ||
-          _statNumLike(a['workingDaysFullMonth'])) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// Why [envelope] from `/payroll/stats` `data` is or is not usable (Salary Overview debug).
-  static String _diagnoseStatsEnvelope(Map<String, dynamic> envelope) {
-    if (!envelope.containsKey('stats')) {
-      final keys = envelope.keys.take(14).join(',');
-      return 'no_stats_key(envelopeKeys=$keys)';
-    }
-    final st = envelope['stats'];
-    if (st == null) return 'stats_is_null';
-    if (st is! Map) return 'stats_wrong_type(${st.runtimeType})';
-    if (!_payrollStatsEnvelopeHasUsableStats(envelope)) {
-      final sm = Map<String, dynamic>.from(st);
-      return 'stats_present_but_unusable(keys=${sm.keys.join(",")})';
-    }
-    return 'usable';
-  }
-
-  Future<Map<String, dynamic>> _fetchPayrollStatsFromDio(
-    Dio dio, {
-    int? month,
-    int? year,
-  }) async {
-    final host = dio.options.baseUrl;
+  /// Staff record from the cached profile: HRMSbackend `/staff/profile` returns the
+  /// staff document itself; app_backend nests it under `staffData`.
+  Future<Map<String, dynamic>?> _currentStaffRecord() async {
     try {
-      final response = await dio.get<Map<String, dynamic>>(
-        '/payroll/stats',
-        queryParameters: {
-          if (month != null) 'month': month,
-          if (year != null) 'year': year,
-        },
+      final res = await _authService.getProfile();
+      final data = res['data'];
+      if (res['success'] == true && data is Map) {
+        final sd = data['staffData'];
+        if (sd is Map && sd['_id'] != null) return Map<String, dynamic>.from(sd);
+        if (data['_id'] != null) return Map<String, dynamic>.from(data);
+      }
+    } catch (_) {}
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('user');
+      if (raw != null && raw.trim().isNotEmpty) {
+        final m = jsonDecode(raw);
+        if (m is Map) {
+          final id = m['_id'] ?? m['id'];
+          if (id != null) return {...Map<String, dynamic>.from(m), '_id': id};
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<String?> _currentStaffId() async {
+    final s = await _currentStaffRecord();
+    final id = s?['_id']?.toString().trim();
+    return (id == null || id.isEmpty) ? null : id;
+  }
+
+  /// `GET /admin/staff/overview/detail/:staffId?month=` — recalculated Salary Overview
+  /// for one month (earnings/deductions breakdown, attendance counts, status
+  /// `Pending` / `On Hold` / `Released`, `isGenerated`). Null when the month has no
+  /// salary structure (backend 404) or the call fails.
+  Future<Map<String, dynamic>?> _getSalaryOverviewDetail(
+    String staffId,
+    int month,
+    int year,
+  ) {
+    final label = hrmsMonthLabel(month, year);
+    final key = '$staffId|$label';
+    final cached = _overviewCache[key];
+    if (cached != null && cached.isFresh(_hrmsCacheTtl)) {
+      return Future.value(cached.value);
+    }
+    final pending = _overviewInFlight[key];
+    if (pending != null) return pending;
+    final future = () async {
+      try {
+        final response = await webHrmsApiDio().get<Map<String, dynamic>>(
+          '/admin/staff/overview/detail/$staffId',
+          queryParameters: {'month': label},
+          options: Options(
+            sendTimeout: _salaryRequestTimeout,
+            receiveTimeout: _salaryRequestTimeout,
+            extra: const {'disable_429_retry': true},
+          ),
+        );
+        final body = response.data;
+        final data = body?['data'];
+        final out = (body != null && body['success'] == true && data is Map)
+            ? Map<String, dynamic>.from(data)
+            : null;
+        _overviewCache[key] = _TimedValue(out);
+        return out;
+      } on DioException catch (e) {
+        final code = e.response?.statusCode;
+        _salaryLog(
+          '[SalaryHrms] GET /admin/staff/overview/detail month="$label" http=$code',
+        );
+        // 404 = no salary structure effective for that month: a real "no data".
+        if (code == 404) _overviewCache[key] = _TimedValue(null);
+        return null;
+      } catch (e) {
+        _salaryLog('[SalaryHrms] overview detail error: $e');
+        return null;
+      }
+    }();
+    _overviewInFlight[key] = future;
+    return future.whenComplete(() => _overviewInFlight.remove(key));
+  }
+
+  /// Payroll ids of issued payslips, keyed by lower-cased `"september 2026"`.
+  ///
+  /// `GET /staff/requests/payslip/my-requests` (staff-scoped) returns
+  /// `payrollId` only when that month's payroll is Paid — the payslip is released
+  /// on approval (HRMSbackend creates the approved request itself).
+  Future<Map<String, String>> _getIssuedPayslipIds() async {
+    final cached = _payslipIdCache;
+    if (cached != null && cached.isFresh(_hrmsCacheTtl)) return cached.value;
+    final out = <String, String>{};
+    try {
+      final response = await webHrmsApiDio().get<Map<String, dynamic>>(
+        '/staff/requests/payslip/my-requests',
         options: Options(
           sendTimeout: _salaryRequestTimeout,
           receiveTimeout: _salaryRequestTimeout,
           extra: const {'disable_429_retry': true},
         ),
       );
-      final data = response.data;
-      final http = response.statusCode;
-      final innerData =
-          (data != null && data['success'] == true) ? data['data'] : null;
-      Map<String, dynamic> out;
-      String note = '';
-      if (innerData is Map) {
-        out = Map<String, dynamic>.from(innerData);
-      } else {
-        out = _getEmptySalaryData();
-        final body = response.data;
-        if (body != null) {
-          final d = Map<String, dynamic>.from(body);
-          final err = d['error'];
-          if (err is Map && err['message'] != null) {
-            note = 'apiError=${err['message']}';
-          } else if (d['message'] != null) {
-            note = 'apiMessage=${d['message']}';
-          } else {
-            note = 'success_false_or_data_not_map';
+      final data = response.data?['data'];
+      final list = data is Map ? data['requests'] : (data is List ? data : null);
+      if (list is List) {
+        for (final r in list.whereType<Map>()) {
+          final pid = r['payrollId'];
+          final id = pid is Map ? pid['_id']?.toString() : pid?.toString();
+          if (id == null || id.isEmpty || id == 'null') continue;
+          final m = r['month'];
+          final y = r['year']?.toString().trim() ?? '';
+          String? monthName;
+          if (m is num && m >= 1 && m <= 12) {
+            monthName = _monthNames[m.toInt() - 1];
+          } else if (m != null) {
+            final s = m.toString().trim();
+            final asInt = int.tryParse(s);
+            monthName = (asInt != null && asInt >= 1 && asInt <= 12)
+                ? _monthNames[asInt - 1]
+                : s;
           }
-        } else {
-          note = 'response_body_null';
+          if (monthName == null || monthName.isEmpty || y.isEmpty) continue;
+          out['${monthName.toLowerCase()} $y'] = id;
         }
       }
-      final usable = _payrollStatsEnvelopeHasUsableStats(out);
-      final diag = _diagnoseStatsEnvelope(out);
-      final topSuccess = data != null && data['success'] == true;
-      _salaryLog(
-        '[SalaryWebApi] GET /payroll/stats host=$host http=$http apiSuccess=$topSuccess '
-        'parsedUsable=$usable diag=$diag${note.isEmpty ? "" : " $note"}',
+      _payslipIdCache = _TimedValue(out);
+    } catch (e) {
+      _salaryLog('[SalaryHrms] GET /staff/requests/payslip/my-requests error: $e');
+    }
+    return out;
+  }
+
+  /// Raw `{ structure, history }` from the salary structure route, cached briefly.
+  Future<Map<String, dynamic>?> _getStructureCached(String staffId) async {
+    final cached = _structureCache[staffId];
+    if (cached != null && cached.isFresh(_hrmsCacheTtl)) return cached.value;
+    final data = await getSalaryStructure(staffId);
+    _structureCache[staffId] = _TimedValue(data);
+    return data;
+  }
+
+  /// All salary structures (active + history), newest `effectiveFrom` first.
+  static List<Map<String, dynamic>> _allStructures(Map<String, dynamic>? data) {
+    if (data == null) return const [];
+    final out = <Map<String, dynamic>>[];
+    final active = data['structure'];
+    if (active is Map) out.add(Map<String, dynamic>.from(active));
+    final hist = data['history'];
+    if (hist is List) {
+      out.addAll(hist.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
+    }
+    DateTime eff(Map<String, dynamic> s) =>
+        DateTime.tryParse(s['effectiveFrom']?.toString() ?? '') ?? DateTime(1970);
+    out.sort((a, b) => eff(b).compareTo(eff(a)));
+    return out;
+  }
+
+  static List<Map<String, dynamic>> _componentList(dynamic raw) {
+    if (raw is! Map) return const [];
+    final out = <Map<String, dynamic>>[];
+    raw.forEach((k, v) {
+      if (v is Map) {
+        out.add({
+          'name': k.toString(),
+          'monthly': _num(v['month']) ?? 0.0,
+          'yearly': _num(v['year']) ?? 0.0,
+        });
+      }
+    });
+    return out;
+  }
+
+  /// Staff `salary` map (legacy shape the salary screens read) from one HRMSbackend
+  /// SalaryStructure document. `gross` / `net` / `ctcYearly` are the backend's own
+  /// totals (so [calculatedSalaryFromLegacyStaffMap] reproduces them exactly), and
+  /// `structure` carries every component line for the breakdown screens.
+  static Map<String, dynamic>? salaryMapFromHrmsStructure(
+    Map<String, dynamic>? struct,
+  ) {
+    if (struct == null) return null;
+    double monthOf(dynamic v) =>
+        v is Map ? (_num(v['month']) ?? 0.0) : (_num(v) ?? 0.0);
+    final gross = monthOf(struct['grossSalary']);
+    final net = monthOf(struct['netSalary']);
+    final ctc = _num(struct['totalCTC']) ?? 0.0;
+    if (gross <= 0 && net <= 0 && ctc <= 0) return null;
+    return {
+      'gross': gross,
+      'net': net,
+      'ctcYearly': ctc > 0 ? ctc : gross * 12,
+      'effectiveFrom': struct['effectiveFrom'],
+      'source': 'hrmsbackend_salary_structure',
+      'structure': {
+        'basicMonthly': monthOf(struct['basicSalary']),
+        'grossMonthly': gross,
+        'grossYearly': struct['grossSalary'] is Map
+            ? (_num(struct['grossSalary']['year']) ?? gross * 12)
+            : gross * 12,
+        'netMonthly': net,
+        'netYearly': struct['netSalary'] is Map
+            ? (_num(struct['netSalary']['year']) ?? net * 12)
+            : net * 12,
+        'totalCTC': ctc,
+        'earnings': _componentList(struct['Earnings']),
+        'allowances': _componentList(struct['Allowances']),
+        'deductions': _componentList(struct['deductions']),
+        'benefits': _componentList(struct['Benefits']),
+        'variables': _componentList(struct['Variables']),
+      },
+    };
+  }
+
+  /// Active salary as a legacy `salary` map for [staffId], or null when HRMSbackend
+  /// has no structure for the staff.
+  Future<Map<String, dynamic>?> getSalaryMapForStaff(String staffId) async {
+    if (staffId.trim().isEmpty) return null;
+    final data = await _getStructureCached(staffId);
+    final all = _allStructures(data);
+    final active = data?['structure'] is Map
+        ? Map<String, dynamic>.from(data!['structure'] as Map)
+        : (all.isNotEmpty ? all.last : null);
+    return salaryMapFromHrmsStructure(active);
+  }
+
+  /// `payrolls[]` row (shape the salary screens use) from a Salary Overview record.
+  Map<String, dynamic> _payrollRowFromOverview(
+    Map<String, dynamic> ov, {
+    required int month,
+    required int year,
+    String? payrollId,
+  }) {
+    final rawStatus = ov['status']?.toString().trim() ?? '';
+    final hasPayslip = payrollId != null && payrollId.isNotEmpty;
+    final String status;
+    if (hasPayslip) {
+      status = 'Paid';
+    } else if (rawStatus.toLowerCase().contains('hold')) {
+      status = 'Hold';
+    } else {
+      status = 'Pending';
+    }
+    final components = <Map<String, dynamic>>[];
+    final earnings = ov['earningsBreakdown'];
+    if (earnings is List) {
+      for (final e in earnings.whereType<Map>()) {
+        components.add({
+          'name': e['label']?.toString() ?? 'Earning',
+          'amount': _num(e['earned']) ?? 0.0,
+          'fixedAmount': _num(e['fixed']) ?? 0.0,
+          'type': 'earning',
+        });
+      }
+    }
+    final deductions = ov['deductionsBreakdown'];
+    if (deductions is List) {
+      for (final d in deductions.whereType<Map>()) {
+        components.add({
+          'name': d['label']?.toString() ?? 'Deduction',
+          'amount': _num(d['value']) ?? 0.0,
+          'type': 'deduction',
+        });
+      }
+    }
+    return {
+      // `_id` is the PayRoll id and is only set once a payslip exists, so the
+      // screens' "has payslip" checks (`_id` / `payslipUrl`) stay truthful.
+      if (hasPayslip) '_id': payrollId,
+      if (hasPayslip) 'payrollId': payrollId,
+      'overviewId': ov['_id']?.toString(),
+      'month': month,
+      'year': year,
+      'monthLabel': hrmsMonthLabel(month, year),
+      'duration': ov['duration'],
+      'status': status,
+      'rawStatus': rawStatus,
+      'isGenerated': ov['isGenerated'] == true,
+      'payslipAvailable': hasPayslip,
+      'payslipUrl': '',
+      'grossSalary': _num(ov['gross']) ?? 0.0,
+      'netPay': _num(ov['net']) ?? 0.0,
+      'deductions': _num(ov['deductions']) ?? 0.0,
+      'payableDays': _num(ov['payableDays']),
+      'presentDays': _num(ov['presentDays']),
+      'absentDays': _num(ov['absentDays']),
+      'halfDays': _num(ov['halfDays']),
+      'leaves': _num(ov['leaves']),
+      'hoursWorked': ov['hoursWorked'],
+      'otHours': ov['otHours'],
+      'totalFineHours': ov['totalFineHours'],
+      'components': components,
+    };
+  }
+
+  /// Month-wise payroll for the signed-in staff member, in the legacy
+  /// `{ success, data: { payrolls: [...], pagination } }` shape.
+  ///
+  /// With [month] + [year]: that month only. Without: the history, newest first,
+  /// from the current month back to the first salary structure (max
+  /// [_maxHistoryMonths] months), paged by [page] / [limit]. Every month with a
+  /// salary structure is listed whatever its status (Pending / Hold / Paid).
+  Future<Map<String, dynamic>> getPayrolls({
+    int? page,
+    int? limit,
+    int? month,
+    int? year,
+  }) async {
+    final p = (page ?? 1) < 1 ? 1 : (page ?? 1);
+    final l = (limit ?? 10) < 1 ? 10 : (limit ?? 10);
+    Map<String, dynamic> envelope(List<Map<String, dynamic>> rows, int total) => {
+          'success': true,
+          'data': {
+            'payrolls': rows,
+            'pagination': {
+              'page': p,
+              'limit': l,
+              'total': total,
+              'pages': total == 0 ? 0 : ((total + l - 1) ~/ l),
+            },
+          },
+        };
+
+    final staffId = await _currentStaffId();
+    if (staffId == null) throw Exception('No staff session found');
+
+    if (month != null && year != null) {
+      final results = await Future.wait<dynamic>([
+        _getSalaryOverviewDetail(staffId, month, year),
+        _getIssuedPayslipIds(),
+      ]);
+      final ov = results[0] as Map<String, dynamic>?;
+      final ids = results[1] as Map<String, String>;
+      if (ov == null) return envelope(const [], 0);
+      final row = _payrollRowFromOverview(
+        ov,
+        month: month,
+        year: year,
+        payrollId: ids[hrmsMonthLabel(month, year).toLowerCase()],
       );
-      return out;
+      _salaryLog(
+        '[SalaryHrms] payroll month=${row['monthLabel']} status=${row['status']} '
+        'gross=${row['grossSalary']} net=${row['netPay']} payslip=${row['payslipAvailable']}',
+      );
+      return envelope([row], 1);
+    }
+
+    // History: every month from the earliest salary structure up to now.
+    final structures = _allStructures(await _getStructureCached(staffId));
+    if (structures.isEmpty) return envelope(const [], 0);
+    final earliest = structures
+        .map((s) => DateTime.tryParse(s['effectiveFrom']?.toString() ?? ''))
+        .whereType<DateTime>()
+        .map((d) => d.toLocal())
+        .fold<DateTime?>(null, (a, b) => a == null || b.isBefore(a) ? b : a);
+    final now = DateTime.now();
+    final months = <DateTime>[];
+    var cursor = DateTime(now.year, now.month);
+    final floor = earliest == null ? null : DateTime(earliest.year, earliest.month);
+    while (months.length < _maxHistoryMonths &&
+        (floor == null || !cursor.isBefore(floor))) {
+      months.add(cursor);
+      cursor = DateTime(cursor.year, cursor.month - 1);
+    }
+    final start = (p - 1) * l;
+    if (start >= months.length) return envelope(const [], months.length);
+    final slice = months.sublist(start, (start + l).clamp(0, months.length));
+    final ids = await _getIssuedPayslipIds();
+    final overviews = await Future.wait(
+      slice.map((d) => _getSalaryOverviewDetail(staffId, d.month, d.year)),
+    );
+    final rows = <Map<String, dynamic>>[];
+    for (var i = 0; i < slice.length; i++) {
+      final ov = overviews[i];
+      if (ov == null) continue;
+      final d = slice[i];
+      rows.add(
+        _payrollRowFromOverview(
+          ov,
+          month: d.month,
+          year: d.year,
+          payrollId: ids[hrmsMonthLabel(d.month, d.year).toLowerCase()],
+        ),
+      );
+    }
+    _salaryLog(
+      '[SalaryHrms] payroll history page=$p limit=$l months=${months.length} rows=${rows.length}',
+    );
+    return envelope(rows, months.length);
+  }
+
+  /// Payslip PDF for a PayRoll id:
+  /// `GET /admin/staff/payroll/statement/:id/view?download=true` (HRMSbackend renders
+  /// the payslip HTML to PDF). Null when unavailable; [download] only affects how
+  /// the caller handles the bytes.
+  Future<List<int>?> getPayslipPdfBytes(
+    String payrollId, {
+    required bool download,
+  }) async {
+    final token = await _authService.getToken();
+    if (token == null || payrollId.trim().isEmpty) return null;
+    try {
+      final response = await webHrmsApiDio().get<List<int>>(
+        '/admin/staff/payroll/statement/$payrollId/view',
+        queryParameters: {'download': 'true'},
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: {'Accept': 'application/pdf'},
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+      );
+      final data = response.data;
+      if (data != null &&
+          data.length >= 4 &&
+          data[0] == 0x25 &&
+          data[1] == 0x50 &&
+          data[2] == 0x44 &&
+          data[3] == 0x46) {
+        return List<int>.from(data);
+      }
+      return null;
     } on DioException catch (e) {
       _salaryLog(
-        '[SalaryWebApi] GET /payroll/stats host=$host DioException '
-        'http=${e.response?.statusCode} type=${e.type} message=${e.message} '
-        'responseBody=${e.response?.data}',
+        '[SalaryHrms] payslip PDF http=${e.response?.statusCode} ${e.message}',
       );
-      rethrow;
+      return null;
     }
   }
 
+  /// `stats` envelope the salary screens read (`thisMonthGross/Net`, `earnings`,
+  /// `deductionComponents`, contract gross/net/CTC), built from the month's Salary
+  /// Overview plus the active salary structure. Defaults to the current month.
   Future<Map<String, dynamic>> getSalaryStats({int? month, int? year}) async {
     lastPayrollStatsHostUsed = '';
     lastPayrollStatsWebRejectReason = '';
-    final token = await _authService.getToken();
-    if (token == null) {
-      lastPayrollStatsWebRejectReason = 'no_auth_token';
+    final now = DateTime.now();
+    final m = month ?? now.month;
+    final y = year ?? now.year;
+    final staffId = await _currentStaffId();
+    if (staffId == null) {
       lastPayrollStatsHostUsed = 'empty';
+      lastPayrollStatsWebRejectReason = 'no_staff_session';
       return _getEmptySalaryData();
     }
-
-    Future<Map<String, dynamic>> tryWeb() async {
-      _salaryLog(
-        '[SalaryOverview] GET ${AppConstants.webBaseUrl}/payroll/stats month=$month year=$year',
-      );
-      return _fetchPayrollStatsFromDio(
-        webHrmsApiDio(),
-        month: month,
-        year: year,
-      );
-    }
-
-    Future<Map<String, dynamic>> tryMain() async {
-      if (_mainAndWebHostsAreSame) return _getEmptySalaryData();
-      _salaryLog(
-        '[SalaryOverview] GET ${AppConstants.baseUrl}/payroll/stats (fallback) month=$month year=$year',
-      );
-      _api.setAuthToken(token);
-      return _fetchPayrollStatsFromDio(
-        _api.dio,
-        month: month,
-        year: year,
-      );
-    }
-
     try {
-      Map<String, dynamic> envelope = await tryWeb();
-      if (_payrollStatsEnvelopeHasUsableStats(envelope)) {
-        lastPayrollStatsHostUsed = 'web_hrms';
-        lastPayrollStatsWebRejectReason = '';
-        _salaryLog(
-          '[SalaryWebApi] payroll/stats CHOSEN=web_hrms (${AppConstants.webBaseUrl}) '
-          'month=$month year=$year',
-        );
-        _logPayrollStatsForTest(data: envelope, month: month, year: year);
-        return envelope;
-      }
-      lastPayrollStatsWebRejectReason = _diagnoseStatsEnvelope(envelope);
-      _salaryLog(
-        '[SalaryWebApi] payroll/stats web NOT used: $lastPayrollStatsWebRejectReason '
-        '— trying geo API=${AppConstants.baseUrl}',
+      final results = await Future.wait<dynamic>([
+        _getSalaryOverviewDetail(staffId, m, y),
+        _getStructureCached(staffId),
+        _getIssuedPayslipIds(),
+      ]);
+      final ov = results[0] as Map<String, dynamic>?;
+      final structData = results[1] as Map<String, dynamic>?;
+      final ids = results[2] as Map<String, String>;
+      final salary = salaryMapFromHrmsStructure(
+        structData?['structure'] is Map
+            ? Map<String, dynamic>.from(structData!['structure'] as Map)
+            : null,
       );
-      if (kDebugMode) {
-        _salaryLog(
-          '[SalaryOverview] payroll/stats web payload has no usable stats — trying main API',
-        );
-      }
-      if (_mainAndWebHostsAreSame) {
+      if (ov == null && salary == null) {
         lastPayrollStatsHostUsed = 'empty';
-        _salaryLog(
-          '[SalaryWebApi] payroll/stats geo fallback SKIPPED (webBaseUrl == baseUrl same host)',
+        lastPayrollStatsWebRejectReason = 'no_overview_and_no_structure';
+        return {..._getEmptySalaryData(), 'month': m, 'year': y, 'stats': null};
+      }
+      final stats = <String, dynamic>{
+        if (salary != null) ...{
+          'grossSalary': salary['gross'],
+          'netSalary': salary['net'],
+          'ctc': salary['ctcYearly'],
+          'monthlyContractGrossSalary': salary['gross'],
+          'monthlyContractNetSalary': salary['net'],
+        },
+      };
+      if (ov != null) {
+        final row = _payrollRowFromOverview(
+          ov,
+          month: m,
+          year: y,
+          payrollId: ids[hrmsMonthLabel(m, y).toLowerCase()],
         );
-        _logPayrollStatsForTest(data: envelope, month: month, year: year);
-        return envelope;
+        final comps = (row['components'] as List).cast<Map<String, dynamic>>();
+        stats.addAll({
+          'thisMonthGross': row['grossSalary'],
+          'thisMonthNet': row['netPay'],
+          'deductions': row['deductions'],
+          'status': row['status'],
+          'earnings': comps
+              .where((c) => c['type'] == 'earning')
+              .map((c) => {'name': c['name'], 'amount': c['amount']})
+              .toList(),
+          'deductionComponents': comps
+              .where((c) => c['type'] == 'deduction')
+              .map((c) => {'name': c['name'], 'amount': c['amount']})
+              .toList(),
+          'attendance': {
+            'presentDays': row['presentDays'],
+            'absentDays': row['absentDays'],
+            'halfDays': row['halfDays'],
+            'leaves': row['leaves'],
+            'payableDays': row['payableDays'],
+          },
+        });
       }
-      envelope = await tryMain();
-      if (_payrollStatsEnvelopeHasUsableStats(envelope)) {
-        lastPayrollStatsHostUsed = 'geo_main';
-        _salaryLog(
-          '[SalaryWebApi] payroll/stats CHOSEN=geo_main (${AppConstants.baseUrl}) '
-          'month=$month year=$year (web issue: $lastPayrollStatsWebRejectReason)',
-        );
-        _logPayrollStatsForTest(data: envelope, month: month, year: year);
-        return envelope;
-      }
-      lastPayrollStatsHostUsed = 'empty';
-      _salaryLog(
-        '[SalaryWebApi] payroll/stats CHOSEN=none both_hosts_unusable '
-        'webDiag=$lastPayrollStatsWebRejectReason geoDiag=${_diagnoseStatsEnvelope(envelope)}',
-      );
-      _logPayrollStatsForTest(data: envelope, month: month, year: year);
-      return envelope;
-    } on DioException catch (e) {
-      lastPayrollStatsWebRejectReason =
-          'web_dio http=${e.response?.statusCode} ${e.message} body=${e.response?.data}';
-      _salaryLog(
-        '[SalaryWebApi] payroll/stats web FAILED — $lastPayrollStatsWebRejectReason '
-        '— trying geo API=${AppConstants.baseUrl}',
-      );
-      if (kDebugMode) {
-        _salaryLog(
-          '[SalaryOverview] payroll/stats web DioException ${e.response?.statusCode} — trying main API',
-        );
-      }
-      try {
-        Map<String, dynamic> envelope = await tryMain();
-        if (_payrollStatsEnvelopeHasUsableStats(envelope)) {
-          lastPayrollStatsHostUsed = 'geo_main';
-          _salaryLog(
-            '[SalaryWebApi] payroll/stats CHOSEN=geo_main after_web_dio_error month=$month year=$year',
-          );
-        } else {
-          lastPayrollStatsHostUsed = 'empty';
-          _salaryLog(
-            '[SalaryWebApi] payroll/stats CHOSEN=none geo_after_web_error '
-            'geoDiag=${_diagnoseStatsEnvelope(envelope)}',
-          );
-        }
-        _logPayrollStatsForTest(data: envelope, month: month, year: year);
-        return envelope;
-      } catch (_) {
-        lastPayrollStatsHostUsed = 'error';
-        if (e.response?.statusCode == 404) return _getEmptySalaryData();
-        return _getEmptySalaryData();
-      }
+      lastPayrollStatsHostUsed = 'hrmsbackend';
+      return {
+        'month': m,
+        'year': y,
+        'isProcessed': ov != null && ids.containsKey(hrmsMonthLabel(m, y).toLowerCase()),
+        'stats': stats,
+      };
     } catch (e) {
       lastPayrollStatsHostUsed = 'error';
       lastPayrollStatsWebRejectReason = 'unexpected:$e';
-      _salaryLog('[SalaryWebApi] payroll/stats FATAL $e');
+      _salaryLog('[SalaryHrms] getSalaryStats error: $e');
       return _getEmptySalaryData();
     }
   }
@@ -485,168 +806,19 @@ class SalaryService {
     };
   }
 
-  Future<Map<String, dynamic>> getPayrolls({
-    int? page,
-    int? limit,
-    int? month,
-    int? year,
-  }) async {
-    final token = await _authService.getToken();
-    if (token == null) throw Exception('No token found');
-    try {
-      final q = <String, dynamic>{
-        'page': page ?? 1,
-        'limit': limit ?? 10,
-      };
-      if (month != null) q['month'] = month;
-      if (year != null) q['year'] = year;
-      _salaryLog(
-        '[SalaryOverview] GET ${AppConstants.webBaseUrl}/payroll query=$q',
-      );
-      final response = await webHrmsApiDio().get<Map<String, dynamic>>(
-        '/payroll',
-        queryParameters: q,
-        options: Options(
-          sendTimeout: _salaryRequestTimeout,
-          receiveTimeout: _salaryRequestTimeout,
-          extra: const {'disable_429_retry': true},
-        ),
-      );
-      final data = response.data;
-      if (data != null) {
-        final list = data['data'];
-        final payrolls = list is Map ? list['payrolls'] : null;
-        final n = payrolls is List ? payrolls.length : -1;
-        _salaryLog(
-          '[SalaryWebApi] GET /payroll list host=${AppConstants.webBaseUrl} '
-          'http=${response.statusCode} success=${data['success']} rowCount=$n',
-        );
-        return data;
-      }
-      return {
-        'success': true,
-        'data': {
-          'payrolls': <dynamic>[],
-          'pagination': {
-            'page': page ?? 1,
-            'limit': limit ?? 10,
-            'total': 0,
-            'pages': 0,
-          },
-        },
-      };
-    } on DioException catch (e) {
-      _salaryLog(
-        '[SalaryWebApi] GET /payroll list FAILED host=${AppConstants.webBaseUrl} '
-        'http=${e.response?.statusCode} message=${e.message} body=${e.response?.data}',
-      );
-      if (e.response?.statusCode == 404) {
-        return {
-          'success': true,
-          'data': {
-            'payrolls': <dynamic>[],
-            'pagination': {
-              'page': page ?? 1,
-              'limit': limit ?? 10,
-              'total': 0,
-              'pages': 0,
-            },
-          },
-        };
-      }
-      throw Exception('Error fetching payrolls: ${e.message}');
-    }
-  }
-
-  /// Web RTK `viewPayslip` / `downloadPayslip` — GET PDF bytes by payroll id.
-  /// Returns null if the route is missing (404) or the body is not usable; callers fall back to [payslipUrl].
-  Future<List<int>?> getPayslipPdfBytes(
-    String payrollId, {
-    required bool download,
-  }) async {
-    final token = await _authService.getToken();
-    if (token == null) return null;
-    try {
-      final path = download
-          ? '/payroll/$payrollId/payslip/download'
-          : '/payroll/$payrollId/payslip/view';
-      _salaryLog(
-        '[SalaryOverview] GET ${AppConstants.webBaseUrl}$path',
-      );
-      final response = await webHrmsApiDio().get<dynamic>(
-        path,
-        options: Options(responseType: ResponseType.bytes),
-      );
-      final data = response.data;
-      if (data is List<int>) return List<int>.from(data);
-      return null;
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 404) return null;
-      _salaryLog('[SalaryOverview] getPayslipPdfBytes: ${e.message}');
-      return null;
-    }
-  }
-
-  /// Web RTK `previewPayroll` / EmployeeSalaryOverview: tier 2 MTD (after processed payroll).
-  /// Always calls [AppConstants.webBaseUrl] so the payload matches the web HRMS
-  /// (`salaryBasis`, per-day rates, `fullMonthWorkingDays`, etc.).
+  /// HRMSbackend has no payroll preview route; month figures come from the Salary
+  /// Overview record via [getPayrolls] / [getSalaryStats] instead. Kept so callers
+  /// compile and fall back without a network round-trip.
   Future<Map<String, dynamic>> previewPayroll({
     required String employeeId,
     required int month,
     required int year,
   }) async {
-    final body = <String, dynamic>{
-      'employeeId': employeeId,
-      'month': month,
-      'year': year,
+    return {
+      'success': false,
+      'data': null,
+      'message': 'Payroll preview is not available; using the salary overview record.',
     };
-
-    Map<String, dynamic> parseResponse(Response<Map<String, dynamic>>? r) {
-      final data = r?.data;
-      if (data != null) return Map<String, dynamic>.from(data);
-      return {'success': false, 'data': null};
-    }
-
-    try {
-      _salaryLog(
-        '[SalaryOverview] POST ${AppConstants.webBaseUrl}/payroll/preview '
-        'month=$month year=$year employeeId=$employeeId',
-      );
-      final r = await webHrmsApiDio().post<Map<String, dynamic>>(
-        '/payroll/preview',
-        data: body,
-        options: Options(
-          sendTimeout: _salaryRequestTimeout,
-          receiveTimeout: _salaryRequestTimeout,
-          extra: const {'disable_429_retry': true},
-        ),
-      );
-      final out = parseResponse(r);
-      _logPreviewSalaryNetGrossForTest(
-        response: out,
-        source: 'webHrms',
-        employeeId: employeeId,
-        month: month,
-        year: year,
-      );
-      unawaited(
-        syncPerDaySalaryPrefsFromPayrollPreview(
-          out,
-          month: month,
-          year: year,
-        ),
-      );
-      return out;
-    } on DioException catch (e) {
-      _salaryLog(
-        '[SalaryWebApi] POST /payroll/preview host=${AppConstants.webBaseUrl} '
-        'http=${e.response?.statusCode} message=${e.message} '
-        'body=${e.response?.data} '
-        '(expected 400 when payroll row already exists for month)',
-      );
-      _salaryLog('[SalaryOverview] previewPayroll web error: ${e.message}');
-      return {'success': false, 'data': null};
-    }
   }
 
   Future<Map<String, dynamic>?> getStaffSalaryDetails() async {
@@ -658,6 +830,8 @@ class SalaryService {
           return staffData['salary'] as Map<String, dynamic>;
         }
       }
+      final staffId = await _currentStaffId();
+      if (staffId != null) return getSalaryMapForStaff(staffId);
       return null;
     } catch (e) {
       return null;
@@ -695,11 +869,62 @@ class SalaryService {
       employeeId: m['employeeId']?.toString(),
       phone: (m['phoneNumber'] ?? m['phone'])?.toString(),
       staffType: m['staffType']?.toString(),
-      salaryDetailsAccessEnabled: m['salaryDetailsAccessEnabled'] == true,
+      salaryDetailsAccessEnabled: salaryDetailsAccessFromProfile(data) == true,
     );
   }
 
-  /// Staff `salary` + `salaryRevisionHistory` from GET profile (geo backend, then web HRMS if needed).
+  /// HRMSbackend: the profile is the staff record itself (no `salary`), so the
+  /// structure comes from `GET /admin/staff/salary-structures/staff/:id` and the
+  /// revision history from its `history` list (each entry paired with the one it
+  /// replaced). Salary is not fetched at all while access is off.
+  Future<StaffSalaryBundle?> _hrmsStaffSalaryBundle(
+    Map<String, dynamic> staff,
+  ) async {
+    final staffId = staff['_id']?.toString() ?? '';
+    if (staffId.isEmpty) return null;
+    final access = salaryDetailsAccessFromProfile(staff) == true;
+    final name = (staff['name']?.toString().trim().isNotEmpty ?? false)
+        ? staff['name'].toString().trim()
+        : '${staff['firstName'] ?? ''} ${staff['lastName'] ?? ''}'.trim();
+    StaffSalaryBundle bundle(Map<String, dynamic> salary,
+            List<Map<String, dynamic>> history) =>
+        StaffSalaryBundle(
+          salary: salary,
+          revisionHistory: history,
+          employeeName: name.isEmpty ? null : name,
+          employeeId: staff['employeeId']?.toString(),
+          phone: (staff['phoneNumber'] ?? staff['phone'])?.toString(),
+          staffType: staff['staffType']?.toString(),
+          salaryDetailsAccessEnabled: access,
+        );
+    if (!access) return bundle(const {}, const []);
+
+    final data = await _getStructureCached(staffId);
+    final all = _allStructures(data);
+    final activeRaw = data?['structure'] is Map
+        ? Map<String, dynamic>.from(data!['structure'] as Map)
+        : (all.isNotEmpty ? all.last : null);
+    final salary = salaryMapFromHrmsStructure(activeRaw);
+    if (salary == null) return null;
+    final history = <Map<String, dynamic>>[];
+    for (var i = 0; i < all.length; i++) {
+      final revised = salaryMapFromHrmsStructure(all[i]);
+      if (revised == null) continue;
+      final previous =
+          i + 1 < all.length ? salaryMapFromHrmsStructure(all[i + 1]) : null;
+      history.add({
+        'effectiveFrom': all[i]['effectiveFrom'],
+        'revisedAt': all[i]['revisedAt'],
+        'note': all[i]['note'],
+        'revisedSalary': revised,
+        if (previous != null) 'previousSalary': previous,
+      });
+    }
+    return bundle(salary, history);
+  }
+
+  /// Staff `salary` + `salaryRevisionHistory` from GET profile (geo backend, then web HRMS if needed);
+  /// on HRMSbackend, from the salary structure route.
   Future<StaffSalaryBundle?> getStaffSalaryBundle() async {
     try {
       Future<StaffSalaryBundle?> tryParse(Future<Map<String, dynamic>> future) async {
@@ -707,9 +932,14 @@ class SalaryService {
         if (profileResult['success'] != true) return null;
         final data = profileResult['data'];
         if (data is! Map) return null;
-        return staffSalaryBundleFromProfileData(
-          Map<String, dynamic>.from(data),
-        );
+        final map = Map<String, dynamic>.from(data);
+        final legacy = staffSalaryBundleFromProfileData(map);
+        if (legacy != null) return legacy;
+        final staff = map['staffData'] is Map && (map['staffData'] as Map)['_id'] != null
+            ? Map<String, dynamic>.from(map['staffData'] as Map)
+            : (map['_id'] != null ? map : null);
+        if (staff == null) return null;
+        return _hrmsStaffSalaryBundle(staff);
       }
 
       var bundle = await tryParse(_authService.getProfile());
@@ -721,108 +951,17 @@ class SalaryService {
       return null;
     }
   }
-}
 
-/// Debug: log preview MTD + contract month + working days (app_backend + web HRMS).
-void _logPreviewSalaryNetGrossForTest({
-  required Map<String, dynamic> response,
-  required String source,
-  required String employeeId,
-  required int month,
-  required int year,
-}) {
-  if (!kDebugMode) return;
-  try {
-    final data = response['data'];
-    if (data is! Map) {
-      _salaryLog(
-        '[PreviewSalary][test] source=$source employeeId=$employeeId '
-        'month=$month year=$year success=${response['success']} data=missing',
-      );
-      return;
-    }
-    final d = Map<String, dynamic>.from(data);
-    final p = d['preview'];
-    if (p is! Map) {
-      _salaryLog(
-        '[PreviewSalary][test] source=$source employeeId=$employeeId '
-        'month=$month year=$year preview=null (no payroll preview in body)',
-      );
-      return;
-    }
-    final preview = Map<String, dynamic>.from(p);
-    final mtdGross = preview['grossSalary'] ?? preview['gross'];
-    final mtdNet =
-        preview['netPay'] ?? preview['net'] ?? preview['netSalary'];
-
-    num? monthGross;
-    num? monthNet;
-    final sb = preview['salaryBasis'];
-    if (sb is Map) {
-      final basis = Map<String, dynamic>.from(sb);
-      monthGross = basis['monthlyGrossSalary'] as num?;
-      monthNet = basis['monthlyNetSalary'] as num?;
-    }
-
-    int? workingDaysFullMonth;
-    int? workingDaysTillDate;
-    final att = preview['attendance'];
-    if (att is Map) {
-      final a = Map<String, dynamic>.from(att);
-      workingDaysFullMonth =
-          (a['fullMonthWorkingDays'] as num?)?.toInt() ??
-              (a['workingDays'] as num?)?.toInt();
-      workingDaysTillDate =
-          (a['workingDaysTillCurrentDate'] as num?)?.toInt();
-    }
-
-    _salaryLog(
-      '[PreviewSalary][test] source=$source employeeId=$employeeId '
-      'month=$month year=$year '
-      'mtdGross=$mtdGross mtdNet=$mtdNet '
-      'monthGross=$monthGross monthNet=$monthNet '
-      'workingDaysFullMonth=$workingDaysFullMonth '
-      'workingDaysTillDate=$workingDaysTillDate',
-    );
-  } catch (e) {
-    _salaryLog('[PreviewSalary][test] parse error: $e');
+  static bool get _mainAndWebHostsAreSame {
+    final main = AppConstants.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final web = AppConstants.webBaseUrl.replaceAll(RegExp(r'/+$'), '');
+    return main == web;
   }
 }
 
-/// Debug: full month + MTD + attendance working days from GET /payroll/stats.
-void _logPayrollStatsForTest({
-  required Map<String, dynamic> data,
-  int? month,
-  int? year,
-}) {
-  if (!kDebugMode) return;
-  try {
-    final m = month ?? (data['month'] as num?)?.toInt();
-    final y = year ?? (data['year'] as num?)?.toInt();
-    final stats = data['stats'];
-    if (stats is! Map) {
-      _salaryLog(
-        '[PayrollStats][test] month=$m year=$y stats=null '
-        'isProcessed=${data['isProcessed']}',
-      );
-      return;
-    }
-    final s = Map<String, dynamic>.from(stats);
-    int? wdTill;
-    int? wdFull;
-    final att = s['attendance'];
-    if (att is Map) {
-      final a = Map<String, dynamic>.from(att);
-      wdTill = (a['workingDays'] as num?)?.toInt();
-      wdFull = (a['workingDaysFullMonth'] as num?)?.toInt();
-    }
-    _salaryLog(
-      '[PayrollStats][test] month=$m year=$y '
-      'monthGross=${s['grossSalary']} monthNet=${s['netSalary']} '
-      'mtdGross=${s['thisMonthGross']} mtdNet=${s['thisMonthNet']} '
-      'workingDaysTillToday=$wdTill workingDaysFullMonth=$wdFull',
-    );
-  } catch (e) {
-    _salaryLog('[PayrollStats][test] parse error: $e');
-  }
+class _TimedValue<T> {
+  _TimedValue(this.value) : at = DateTime.now();
+  final T value;
+  final DateTime at;
+  bool isFresh(Duration ttl) => DateTime.now().difference(at) < ttl;
 }

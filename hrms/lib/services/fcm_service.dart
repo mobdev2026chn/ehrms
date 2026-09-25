@@ -105,7 +105,7 @@ Future<void> _showBackgroundNotification({
   final id = FcmService.notificationIdFromData(data);
   final plugin = FlutterLocalNotificationsPlugin();
   const androidSettings = AndroidInitializationSettings(
-    '@drawable/ic_notification',
+    '@drawable/ic_stat_ektahr',
   );
   const iosSettings = DarwinInitializationSettings(
     requestAlertPermission: false,
@@ -136,7 +136,7 @@ Future<void> _showBackgroundNotification({
     channelDescription: 'Notifications for leave, attendance, requests, etc.',
     importance: Importance.high,
     priority: Priority.high,
-    icon: '@drawable/ic_notification',
+    icon: '@drawable/ic_stat_ektahr',
     tag: tag.isNotEmpty ? tag : null,
   );
   const iosDetails = DarwinNotificationDetails(
@@ -427,7 +427,7 @@ class FcmService {
 
   static Future<void> _initLocalNotifications() async {
     const androidSettings = AndroidInitializationSettings(
-      '@drawable/ic_notification',
+      '@drawable/ic_stat_ektahr',
     );
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
@@ -793,7 +793,7 @@ class FcmService {
             'Notifications for leave, attendance, requests, etc.',
         importance: Importance.high,
         priority: Priority.high,
-        icon: '@drawable/ic_notification',
+        icon: '@drawable/ic_stat_ektahr',
       );
       const iosDetails = DarwinNotificationDetails(
         presentAlert: true,
@@ -955,7 +955,7 @@ class FcmService {
             'Notifications for leave, attendance, requests, etc.',
         importance: Importance.high,
         priority: Priority.high,
-        icon: '@drawable/ic_notification',
+        icon: '@drawable/ic_stat_ektahr',
         tag: tag.isNotEmpty ? tag : null,
       );
       const iosDetails = DarwinNotificationDetails(

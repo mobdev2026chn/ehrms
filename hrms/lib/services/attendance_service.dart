@@ -51,6 +51,19 @@ class AttendanceService {
 
   // Shared across all instances so Selfie Check-in (via BLoC) can use cache from Attendance tab.
   static Map<String, dynamic>? _cachedTodayAttendance;
+
+  /// Drop every cached / in-flight attendance read. These are static (shared by all
+  /// instances), so without this a user logging in on the same phone saw the
+  /// previous user's today and month attendance until the caches expired.
+  static void resetForNewUser() {
+    _cachedTodayAttendance = null;
+    _lastTodayAttendanceFetch = null;
+    _cachedMonthAttendance.clear();
+    _lastMonthAttendanceFetch.clear();
+    _lastCallTimestamps.clear();
+    _todayInFlight = null;
+    _inFlightMonthRequests.clear();
+  }
   static DateTime? _lastTodayAttendanceFetch;
 
   // Cache for month attendance: key = "year-month", value = cached data.
@@ -227,7 +240,7 @@ class AttendanceService {
         if (punchErr is DioException) {
           final code = punchErr.response?.statusCode;
           if (code == 413) {
-            final noSelfieData = Map<String, dynamic>.from(bodyData)..remove('selfie');
+            final noSelfieData = await AttendanceSelfieCompress.withSmallSelfie(bodyData);
             response = await _api.dio.post<Map<String, dynamic>>(
               '/staff/attendance/punch-in',
               data: noSelfieData,
@@ -361,7 +374,7 @@ class AttendanceService {
         if (punchErr is DioException) {
           final code = punchErr.response?.statusCode;
           if (code == 413) {
-            final noSelfieData = Map<String, dynamic>.from(bodyData)..remove('selfie');
+            final noSelfieData = await AttendanceSelfieCompress.withSmallSelfie(bodyData);
             response = await _api.dio.post<Map<String, dynamic>>(
               '/staff/attendance/punch-out',
               data: noSelfieData,
@@ -473,6 +486,116 @@ class AttendanceService {
     return code == 404 || code == 405;
   }
 
+  /// Converts a shift clock time ("09:30", "9:30 AM", "18:30:00") to "HH:mm"
+  /// (24h), which is what the screens parse. Null when it can't be read.
+  static String? _shiftTimeToHHmm(dynamic value) {
+    final s = value?.toString().trim() ?? '';
+    if (s.isEmpty || s.toLowerCase() == 'null') return null;
+    final m = RegExp(
+      r'^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$',
+      caseSensitive: false,
+    ).firstMatch(s);
+    if (m == null) return null;
+    var h = int.parse(m.group(1)!);
+    final min = int.parse(m.group(2)!);
+    final period = m.group(3)?.toUpperCase();
+    if (period == 'PM' && h < 12) h += 12;
+    if (period == 'AM' && h == 12) h = 0;
+    if (h > 23 || min > 59) return null;
+    return '${h.toString().padLeft(2, '0')}:${min.toString().padLeft(2, '0')}';
+  }
+
+  /// Normalizes a `/staff/attendance/today-punch` payload (the `data` object of
+  /// the response) in place to the keys the mobile screens read.
+  ///
+  /// The server resolves today's shift (`data.shift` = roster/override/staff
+  /// shift template with name/startTime/endTime); it is copied onto the merged
+  /// `template` as `shiftName`/`shiftStartTime`/`shiftEndTime`, which is where
+  /// the attendance screens read shift timings from.
+  void _normalizeTodayPunchPayload(Map<String, dynamic> data) {
+    final isPunchedIn = data['isPunchedIn'] == true;
+    final isPunchedOut = data['isPunchedOut'] == true;
+    data['checkedIn'] = isPunchedIn && !isPunchedOut;
+    data['hasPunchIn'] = isPunchedIn;
+    data['hasPunchOut'] = isPunchedOut;
+
+    final checkInTime = data['checkInTime'] ?? data['punchIn'];
+    final checkOutTime = data['checkOutTime'] ?? data['punchOut'];
+    if (checkInTime != null && checkInTime.toString().trim() != 'NA') {
+      data['punchIn'] = checkInTime;
+    }
+    if (checkOutTime != null && checkOutTime.toString().trim() != 'NA') {
+      data['punchOut'] = checkOutTime;
+    }
+
+    final isWeekOff = data['isWeekOff'] == true || data['isWeeklyOff'] == true;
+    final isHoliday = data['isHoliday'] == true;
+    data['isWeeklyOff'] = isWeekOff;
+    data['isWeekOff'] = isWeekOff;
+    data['isHoliday'] = isHoliday;
+    if (data['isOnLeave'] == null && data['isLeave'] is bool) {
+      data['isOnLeave'] = data['isLeave'];
+    }
+
+    if (data['attendanceTemplate'] != null && data['template'] == null) {
+      data['template'] = data['attendanceTemplate'];
+    }
+
+    // Today's assigned shift, as resolved by the server.
+    final shiftRaw = data['shift'];
+    final shift = shiftRaw is Map ? Map<String, dynamic>.from(shiftRaw) : null;
+    if (data['shiftAssigned'] == null) {
+      final setup = data['setupStatus'];
+      data['shiftAssigned'] = (setup is Map && setup['shiftAssigned'] is bool)
+          ? setup['shiftAssigned']
+          : shift != null;
+    }
+    if (shift != null) {
+      final start = _shiftTimeToHHmm(shift['startTime']);
+      final end = _shiftTimeToHHmm(shift['endTime']);
+      final name = shift['name']?.toString().trim();
+      if (start != null && end != null) {
+        final tmplRaw = data['template'];
+        final tmpl = tmplRaw is Map
+            ? Map<String, dynamic>.from(tmplRaw)
+            : <String, dynamic>{};
+        tmpl['shiftStartTime'] = start;
+        tmpl['shiftEndTime'] = end;
+        data['shiftStartTime'] = start;
+        data['shiftEndTime'] = end;
+        if (name != null && name.isNotEmpty) {
+          tmpl['shiftName'] = name;
+          data['shiftName'] = name;
+        }
+        data['template'] = tmpl;
+      }
+    }
+
+    if (data['template'] != null) {
+      attendanceTemplate = data['template'];
+    }
+
+    if (data['status'] == null || data['status'].toString().isEmpty) {
+      if (isWeekOff) {
+        data['status'] = 'Week Off';
+      } else if (isHoliday) {
+        data['status'] = 'Holiday';
+      } else if (isPunchedIn) {
+        data['status'] = 'Present';
+      }
+    }
+  }
+
+  /// Callers of [getAttendanceByDate] read the legacy envelope: flags
+  /// (`template`, `isWeeklyOff`, `checkedIn`, ...) at the top level and the day's
+  /// record under `data`. Builds that from a flat normalized today-punch map.
+  static Map<String, dynamic> _asAttendanceByDateEnvelope(
+    Map<String, dynamic> flat,
+  ) {
+    if (flat['data'] is Map) return flat;
+    return {...flat, 'data': Map<String, dynamic>.from(flat)};
+  }
+
   Future<Map<String, dynamic>> _getTodayAttendanceImpl({
     bool forceRefresh = false,
     String? date,
@@ -567,43 +690,7 @@ class AttendanceService {
           innerData is Map ? Map<String, dynamic>.from(innerData) : {};
 
       // Normalize web today-punch fields to standard mobile app keys
-      final isPunchedIn = data['isPunchedIn'] == true;
-      final isPunchedOut = data['isPunchedOut'] == true;
-      data['checkedIn'] = isPunchedIn && !isPunchedOut;
-      data['hasPunchIn'] = isPunchedIn;
-      data['hasPunchOut'] = isPunchedOut;
-
-      final checkInTime = data['checkInTime'] ?? data['punchIn'];
-      final checkOutTime = data['checkOutTime'] ?? data['punchOut'];
-      if (checkInTime != null && checkInTime.toString().trim() != 'NA') {
-        data['punchIn'] = checkInTime;
-      }
-      if (checkOutTime != null && checkOutTime.toString().trim() != 'NA') {
-        data['punchOut'] = checkOutTime;
-      }
-
-      final isWeekOff = data['isWeekOff'] == true || data['isWeeklyOff'] == true;
-      final isHoliday = data['isHoliday'] == true;
-      data['isWeeklyOff'] = isWeekOff;
-      data['isWeekOff'] = isWeekOff;
-      data['isHoliday'] = isHoliday;
-
-      if (data['attendanceTemplate'] != null && data['template'] == null) {
-        data['template'] = data['attendanceTemplate'];
-      }
-      if (data['template'] != null) {
-        attendanceTemplate = data['template'];
-      }
-
-      if (data['status'] == null || data['status'].toString().isEmpty) {
-        if (isWeekOff) {
-          data['status'] = 'Week Off';
-        } else if (isHoliday) {
-          data['status'] = 'Holiday';
-        } else if (isPunchedIn) {
-          data['status'] = 'Present';
-        }
-      }
+      _normalizeTodayPunchPayload(data);
 
       _cachedTodayAttendance = data;
       _lastTodayAttendanceFetch = DateTime.now();
@@ -671,10 +758,10 @@ class AttendanceService {
         final todayStr =
             '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
         if (date == todayStr && _cachedTodayAttendance != null) {
-          return {'success': true, 'data': _cachedTodayAttendance!};
+          return {'success': true, 'data': _asAttendanceByDateEnvelope(_cachedTodayAttendance!)};
         }
         if (_cachedTodayAttendance != null) {
-          return {'success': true, 'data': _cachedTodayAttendance!};
+          return {'success': true, 'data': _asAttendanceByDateEnvelope(_cachedTodayAttendance!)};
         }
         return {
           'success': true,
@@ -701,13 +788,27 @@ class AttendanceService {
           queryParameters: {'date': date, 'clientTime': clientTimeIso, 'clientLocalTime': clientLocalTime},
         );
       }
-      final data = response.data is Map ? Map<String, dynamic>.from(response.data as Map) : <String, dynamic>{};
+      final body = response.data is Map ? Map<String, dynamic>.from(response.data as Map) : <String, dynamic>{};
+      // today-punch wraps its payload as { success, data: {...} }; unwrap and
+      // normalize it (shift, week-off, holiday, punch keys) so callers reading
+      // top-level fields see the real values instead of null/defaults.
+      final inner = body['data'];
+      final isTodayPunch = inner is Map &&
+          (inner.containsKey('isPunchedIn') ||
+              inner.containsKey('setupStatus') ||
+              inner.containsKey('shift'));
+      Map<String, dynamic> flat = body;
+      if (isTodayPunch) {
+        flat = Map<String, dynamic>.from(inner);
+        _normalizeTodayPunchPayload(flat);
+      }
+      final data = isTodayPunch ? _asAttendanceByDateEnvelope(flat) : body;
       // Share cache with getTodayAttendance so throttle/cache hits can return this data.
       final now = DateTime.now();
       final todayStr =
           '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       if (date == todayStr) {
-        _cachedTodayAttendance = data;
+        _cachedTodayAttendance = flat;
         _lastTodayAttendanceFetch = DateTime.now();
       }
       return {'success': true, 'data': data};
@@ -718,10 +819,10 @@ class AttendanceService {
         final todayStr =
             '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
         if (date == todayStr && _cachedTodayAttendance != null) {
-          return {'success': true, 'data': _cachedTodayAttendance!};
+          return {'success': true, 'data': _asAttendanceByDateEnvelope(_cachedTodayAttendance!)};
         }
         if (_cachedTodayAttendance != null) {
-          return {'success': true, 'data': _cachedTodayAttendance!};
+          return {'success': true, 'data': _asAttendanceByDateEnvelope(_cachedTodayAttendance!)};
         }
         return {
           'success': true,

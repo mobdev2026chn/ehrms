@@ -804,6 +804,32 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
     );
   }
 
+  /// Admin: see whether a staff member has a registered face and remove it
+  /// (e.g. the wrong person's face was registered). After removal the staff
+  /// member is asked to register again on their next punch.
+  void _openFaceRegistrationSheet(Map<String, dynamic> staff, String name) {
+    final staffId = (staff['_id'] ?? staff['id'] ?? '').toString();
+    if (staffId.isEmpty) {
+      SnackBarUtils.showSnackBar(context, 'Staff id not found', isError: true);
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => _FaceRegistrationSheet(
+        staffId: staffId,
+        staffName: name.isNotEmpty ? name : 'this staff member',
+        onRemoved: (message) {
+          if (!mounted) return;
+          SnackBarUtils.showSnackBar(context, message);
+        },
+      ),
+    );
+  }
+
   Widget _buildStaffCard(Map<String, dynamic> staff, int sNo) {
     final empId = (staff['employeeId'] ?? '').toString();
     final name = (staff['name'] ?? '${staff['firstName'] ?? ''} ${staff['lastName'] ?? ''}').toString().trim();
@@ -891,6 +917,21 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                 ),
               ),
               const SizedBox(width: 8),
+              // Face registration (view / remove)
+              InkWell(
+                onTap: () => _openFaceRegistrationSheet(staff, name),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: const Icon(Icons.face_retouching_natural_outlined, size: 15, color: Color(0xFF64748B)),
+                ),
+              ),
+              const SizedBox(width: 6),
               // View Eye Button
               InkWell(
                 onTap: () {
@@ -1040,6 +1081,240 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
           onPressed: _currentPage < _totalPages ? () => setState(() => _currentPage++) : null,
         ),
       ],
+    );
+  }
+}
+
+/// Bottom sheet: a staff member's face registration status with a
+/// "Remove face" action (GET/DELETE /admin/face-recognition/:staffId).
+class _FaceRegistrationSheet extends StatefulWidget {
+  const _FaceRegistrationSheet({
+    required this.staffId,
+    required this.staffName,
+    required this.onRemoved,
+  });
+
+  final String staffId;
+  final String staffName;
+  final ValueChanged<String> onRemoved;
+
+  @override
+  State<_FaceRegistrationSheet> createState() => _FaceRegistrationSheetState();
+}
+
+class _FaceRegistrationSheetState extends State<_FaceRegistrationSheet> {
+  final _service = AdminStaffService();
+  bool _loading = true;
+  bool _removing = false;
+  bool _enrolled = false;
+  int _samples = 0;
+  DateTime? _enrolledAt;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final res = await _service.getStaffFaceStatus(widget.staffId);
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      if (res['success'] == true) {
+        _enrolled = res['enrolled'] == true;
+        _samples = (res['samples'] is num) ? (res['samples'] as num).toInt() : 0;
+        _enrolledAt =
+            DateTime.tryParse(res['enrolledAt']?.toString() ?? '')?.toLocal();
+      } else {
+        _error = res['message']?.toString() ?? 'Could not read face registration.';
+      }
+    });
+  }
+
+  Future<void> _confirmAndRemove() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove registered face?'),
+        content: Text(
+          '${widget.staffName} will not be able to punch in with face '
+          'verification until they register their face again. '
+          'They will be asked to register on their next punch.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: const Color(0xFFDC2626)),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _removing = true);
+    final res = await _service.resetStaffFace(widget.staffId);
+    if (!mounted) return;
+    setState(() => _removing = false);
+    if (res['success'] == true) {
+      Navigator.pop(context);
+      widget.onRemoved(res['message']?.toString() ?? 'Face registration removed.');
+    } else {
+      SnackBarUtils.showSnackBar(
+        context,
+        res['message']?.toString() ?? 'Could not remove face registration.',
+        isError: true,
+      );
+    }
+  }
+
+  String get _detailLine {
+    if (!_enrolled) return 'Staff will be asked to register on their next punch.';
+    final parts = <String>[
+      if (_enrolledAt != null)
+        'On ${DateFormat('dd MMM yyyy, hh:mm a').format(_enrolledAt!)}',
+      _samples == 1 ? '1 sample' : '$_samples samples',
+    ];
+    return parts.join(' · ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E8F0),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Face Registration',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              widget.staffName,
+              style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
+            ),
+            const SizedBox(height: 16),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+              )
+            else if (_error != null)
+              Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Color(0xFFDC2626), size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(fontSize: 13, color: Color(0xFFDC2626)),
+                    ),
+                  ),
+                  TextButton(onPressed: _load, child: const Text('Retry')),
+                ],
+              )
+            else ...[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _enrolled ? const Color(0xFFECFDF5) : const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _enrolled ? const Color(0xFFA7F3D0) : const Color(0xFFE2E8F0),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _enrolled ? Icons.verified_user_outlined : Icons.face_outlined,
+                      color: _enrolled ? const Color(0xFF059669) : const Color(0xFF94A3B8),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _enrolled ? 'Face registered' : 'No face registered',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: _enrolled
+                                  ? const Color(0xFF047857)
+                                  : const Color(0xFF475569),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _detailLine,
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_enrolled) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _removing ? null : _confirmAndRemove,
+                    icon: _removing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: Text(_removing ? 'Removing…' : 'Remove face'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFDC2626),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

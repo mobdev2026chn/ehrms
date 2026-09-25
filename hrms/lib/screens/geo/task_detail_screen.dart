@@ -2216,7 +2216,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   bool _actionLoading = false;
 
-  /// Show "Start Ride": enabled for any assigned, pending, scheduled, approved, or requested task.
+  /// Show "Start Ride": for assigned, pending, scheduled or approved tasks. A task still
+  /// Requested (awaiting admin approval) can't be started — the server refuses it too.
   bool get _showStartRideButton =>
       task.id != null &&
       task.id!.isNotEmpty &&
@@ -2225,7 +2226,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           task.status == TaskStatus.scheduled ||
           task.status == TaskStatus.approved ||
           task.status == TaskStatus.staffapproved ||
-          task.status == TaskStatus.requested ||
           task.status == TaskStatus.onlineReady);
 
   /// Show "Resume Ride" when task is on hold, holdOnArrival, reopenedOnArrival, exited with hold, or admin reopened.
@@ -2742,6 +2742,29 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       ),
                     ),
                   ],
+                  if (task.status == TaskStatus.requested)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.orange.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.hourglass_top_rounded, size: 18, color: Colors.orange.shade800),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Waiting for admin approval. You can start this task once it is approved.',
+                              style: TextStyle(fontSize: 12.5, color: Colors.orange.shade900, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   if (!_showApprovalButtons &&
                       !_showStartRideButton &&
                       !_showResumeRideButton &&

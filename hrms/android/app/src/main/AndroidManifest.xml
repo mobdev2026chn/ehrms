@@ -39,7 +39,7 @@
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher">
         <meta-data android:name="com.google.firebase.messaging.default_notification_icon"
-            android:resource="@drawable/ic_notification" />
+            android:resource="@drawable/ic_stat_ektahr" />
         <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="hrms_fcm_channel" />
         <!-- Old Maps key: <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyBcoj_g5hxrsv3mEJCVF1Uev_JZRcFO0F8"/> -->

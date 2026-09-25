@@ -349,8 +349,8 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
   static List<_RequestTabSpec> get _tabSpecs =>
       _showLoanTab ? _allTabSpecs : _allTabSpecs.where((t) => t.label != 'Loan').toList();
 
-  // Keys let the app-bar filter button and the create FAB drive whichever tab
-  // is currently visible (each tab exposes toggleFilters / show…Dialog).
+  // Keys let the create FAB drive whichever tab is currently visible (each tab
+  // exposes show…Dialog). Filters live inside each tab's own control bar.
   final GlobalKey<_LeaveRequestsTabState> _leaveKey = GlobalKey();
   final GlobalKey<_PermissionRequestsTabState> _permissionKey = GlobalKey();
   final GlobalKey<_ExpenseRequestsTabState> _expenseKey = GlobalKey();
@@ -438,27 +438,6 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
     }
   }
 
-  /// App-bar funnel → toggle the active tab's filter panel.
-  void _toggleActiveFilters() {
-    switch (_tabController.index) {
-      case 0:
-        _leaveKey.currentState?.toggleFilters();
-        break;
-      case 1:
-        _permissionKey.currentState?.toggleFilters();
-        break;
-      case 2:
-        _expenseKey.currentState?.toggleFilters();
-        break;
-      case 3:
-        _payslipKey.currentState?.toggleFilters();
-        break;
-      case 4:
-        if (_showLoanTab) _loanKey.currentState?.toggleFilters();
-        break;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -471,14 +450,6 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
         backgroundColor: AppColors.background,
         foregroundColor: AppColors.textPrimary,
         surfaceTintColor: Colors.transparent,
-        actions: [
-          IconButton(
-            tooltip: 'Filter',
-            onPressed: _toggleActiveFilters,
-            icon: const Icon(Icons.filter_alt_outlined),
-            color: AppColors.primary,
-          ),
-        ],
       ),
       drawer: AppDrawer(
         currentIndex: widget.dashboardTabIndex ?? 1,
@@ -1229,6 +1200,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
           59,
           999,
         );
+        _currentPage = 1;
       });
       _fetchLeaves();
     }
@@ -1238,6 +1210,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     setState(() {
       _startDate = null;
       _endDate = null;
+      _currentPage = 1;
     });
     _fetchLeaves();
   }
@@ -1818,6 +1791,32 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       ),
                     ),
                   ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                  // In-tab filter toggle (the app bar has no filter button):
+                  // reveals the date filter panel below the search row.
+                  InkWell(
+                    onTap: toggleFilters,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: (_showFilters || _startDate != null)
+                            ? const Color(0xFFFFFBEB)
+                            : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        Icons.filter_list_rounded,
+                        size: 18,
+                        color: (_showFilters || _startDate != null)
+                            ? const Color(0xFFEFAA1F)
+                            : const Color(0xFF64748B),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
                   Container(
                     decoration: BoxDecoration(
                       color: const Color(0xFFF1F5F9),
@@ -1893,6 +1892,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       ],
                     ),
                   ),
+                    ],
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -1926,6 +1927,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                         onChanged: (val) {
                           if (_debounce?.isActive ?? false) _debounce!.cancel();
                           _debounce = Timer(const Duration(milliseconds: 400), () {
+                            _currentPage = 1;
                             _fetchLeaves();
                           });
                         },
@@ -1963,6 +1965,52 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                   ),
                 ],
               ),
+              if (_showFilters) ...[
+                const SizedBox(height: 8),
+                // Date filter: shows leaves overlapping the picked day.
+                InkWell(
+                  onTap: _pickDate,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    height: 38,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: _startDate != null ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFF94A3B8)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _startDate == null
+                                ? 'Filter by date'
+                                : DateFormat('MMM dd, yyyy').format(_startDate!),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: _startDate == null ? FontWeight.w500 : FontWeight.w700,
+                              color: _startDate == null ? const Color(0xFF94A3B8) : const Color(0xFF1E293B),
+                            ),
+                          ),
+                        ),
+                        if (_startDate != null)
+                          InkWell(
+                            onTap: _clearDateFilter,
+                            borderRadius: BorderRadius.circular(8),
+                            child: const Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(Icons.close_rounded, size: 16, color: Color(0xFF64748B)),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         );
@@ -4908,7 +4956,6 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
   final int _itemsPerPage = 5;
   int _totalPages = 0;
   final TextEditingController _searchController = TextEditingController();
-  bool _showFilters = false;
   bool _isTableView = false;
 
   Future<void> _cancelExpense(Map<String, dynamic> expense) async {
@@ -4956,12 +5003,6 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
         );
       }
     }
-  }
-
-  void toggleFilters() {
-    setState(() {
-      _showFilters = !_showFilters;
-    });
   }
 
   void refresh() {
@@ -5405,15 +5446,21 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Reimbursement Claims',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF0F172A),
-                  letterSpacing: -0.3,
+              // Shrinks with "…" instead of pushing the view toggle off-screen.
+              const Flexible(
+                child: Text(
+                  'Reimbursement Claims',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F172A),
+                    letterSpacing: -0.3,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               // Card / Table View Mode Toggle
               Container(
                 decoration: BoxDecoration(
@@ -5521,7 +5568,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                         borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
                       ),
                     ),
-                    onSubmitted: (_) => _fetchExpenses(),
+                    onSubmitted: (_) {
+                      setState(() => _currentPage = 1);
+                      _fetchExpenses();
+                    },
                   ),
                 ),
               ),
@@ -6844,7 +6894,6 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   final AttendanceService _attendanceService = AttendanceService();
   List<dynamic> _requests = [];
   bool _isLoading = true;
-  bool _showFilters = false;
   bool _isTableView = false;
   String _selectedStatus = 'All Status';
   final List<String> _statusOptions = const [
@@ -6878,12 +6927,6 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
   // page through them on the client (5 per page) to match the other tabs.
   int _currentPage = 1;
   final int _itemsPerPage = 5;
-
-  void toggleFilters() {
-    setState(() {
-      _showFilters = !_showFilters;
-    });
-  }
 
   @override
   void dispose() {
@@ -7561,15 +7604,21 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Permission Requests',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF0F172A),
-                  letterSpacing: -0.3,
+              // Shrinks with "…" instead of pushing the view toggle off-screen.
+              const Flexible(
+                child: Text(
+                  'Permission Requests',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F172A),
+                    letterSpacing: -0.3,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               // Card / Table View Mode Toggle
               Container(
                 decoration: BoxDecoration(
@@ -8058,6 +8107,15 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     final double balance = (quota - consumed) < 0 ? 0 : (quota - consumed);
 
     final filtered = _requests.where((r) {
+      // The backend returns every permission request regardless of month, so
+      // keep only those dated in the month shown on the balance card (read
+      // locally, matching how the card/table format the date).
+      final date = DateTime.tryParse((r['date'] ?? '').toString())?.toLocal();
+      if (date == null ||
+          date.year != _selectedMonth.year ||
+          date.month != _selectedMonth.month) {
+        return false;
+      }
       if (_selectedStatus != 'All Status') {
         if ((r['status'] ?? '').toString().toLowerCase() != _selectedStatus.toLowerCase()) return false;
       }
@@ -9229,14 +9287,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
   int _currentPage = 1;
   final int _itemsPerPage = 5;
   int _totalPages = 0;
-  bool _showFilters = false;
   bool _isTableView = false;
-
-  void toggleFilters() {
-    setState(() {
-      _showFilters = !_showFilters;
-    });
-  }
 
   void refresh() {
     // Background refresh: keep the current list instead of flashing the loader.
@@ -9821,15 +9872,21 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Payslip Requests',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF0F172A),
-                  letterSpacing: -0.3,
+              // Shrinks with "…" instead of pushing the view toggle off-screen.
+              const Flexible(
+                child: Text(
+                  'Payslip Requests',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F172A),
+                    letterSpacing: -0.3,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               // Card / Table View Mode Toggle
               Container(
                 decoration: BoxDecoration(
@@ -9940,6 +9997,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                     onChanged: (val) {
                       if (_debounce?.isActive ?? false) _debounce!.cancel();
                       _debounce = Timer(const Duration(milliseconds: 500), () {
+                        _currentPage = 1;
                         _fetchRequests();
                       });
                     },

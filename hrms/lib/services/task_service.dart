@@ -797,8 +797,10 @@ class TaskService {
           if (payload != null) return Task.fromJson(payload);
         }
       } on DioException catch (e) {
-        // If backend returned a 400 validation error (e.g. location/geofence refusal), propagate it immediately!
-        if (e.response != null && e.response?.statusCode == 400) {
+        // Server refusals (geofence 400, awaiting approval 403, another task running 409)
+        // are final — show the server's message instead of trying legacy routes.
+        final code = e.response?.statusCode;
+        if (e.response != null && (code == 400 || code == 403 || code == 409)) {
           final msg = (e.response?.data is Map)
               ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
               : null;

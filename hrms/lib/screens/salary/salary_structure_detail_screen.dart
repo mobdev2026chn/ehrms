@@ -36,6 +36,34 @@ class _SalaryStructureDetailScreenState
   double? _ctrlNet;
   double? _ctrlCtc;
 
+  /// HRMSbackend salary structure lines (`salary['structure']`, built by
+  /// [SalaryService.salaryMapFromHrmsStructure]). When present, the component
+  /// cards list these real lines instead of the locally derived Basic/DA/HRA ladder.
+  Map<String, dynamic>? _backendStructure;
+
+  static Map<String, dynamic>? _backendStructureOf(Map<String, dynamic> salary) {
+    final s = salary['structure'];
+    return s is Map ? Map<String, dynamic>.from(s) : null;
+  }
+
+  static List<_Component> _backendComponents(
+    dynamic raw, {
+    required IconData icon,
+    required String subtitle,
+    bool yearly = false,
+  }) {
+    if (raw is! List) return const [];
+    return raw.whereType<Map>().map((e) {
+      final amount = _numOrNull(yearly ? e['yearly'] : e['monthly']) ?? 0.0;
+      return _Component(
+        icon: icon,
+        title: (e['name'] ?? 'Component').toString(),
+        subtitle: subtitle,
+        amount: amount,
+      );
+    }).toList();
+  }
+
   static double? _numOrNull(dynamic v) {
     if (v is num) return v.toDouble();
     if (v is String) return double.tryParse(v);
@@ -48,6 +76,7 @@ class _SalaryStructureDetailScreenState
     final cachedBundle = SwrCache.get<StaffSalaryBundle>('salary_structure_bundle');
     final cachedStats = SwrCache.get<Map<String, dynamic>>('salary_stats_cache');
     if (cachedBundle != null) {
+      _backendStructure = _backendStructureOf(cachedBundle.salary);
       _salaryInputs = SalaryStructureInputs.fromMap(cachedBundle.salary);
       _salaryStructure = calculateSalaryStructure(_salaryInputs!);
       if (cachedStats != null) {
@@ -106,7 +135,8 @@ class _SalaryStructureDetailScreenState
       try {
         final statsEnv = await _salaryService.getSalaryStats();
         final data = statsEnv['data'];
-        final stats = data is Map ? data['stats'] : null;
+        final stats =
+            statsEnv['stats'] ?? (data is Map ? data['stats'] : null);
         if (stats is Map) {
           SwrCache.set('salary_stats_cache', Map<String, dynamic>.from(stats));
           ctrlGross = _numOrNull(stats['grossSalary']);
@@ -119,6 +149,7 @@ class _SalaryStructureDetailScreenState
 
       if (!mounted) return;
       setState(() {
+        _backendStructure = _backendStructureOf(bundle.salary);
         _salaryInputs = inputs;
         _salaryStructure = calculated;
         _ctrlGross = ctrlGross ?? _ctrlGross;
@@ -237,9 +268,14 @@ class _SalaryStructureDetailScreenState
     final inputs = _salaryInputs;
 
     // Prefer the payroll controller's exact figures for the headline cards.
-    final heroGross = _ctrlGross ?? monthly.grossSalary;
-    final netTakeHome = _ctrlNet ?? monthly.netMonthlySalary;
-    final totalCtc = _ctrlCtc ?? _salaryStructure!.totalCTC;
+    final bs = _backendStructure;
+    final heroGross = _ctrlGross ??
+        _numOrNull(bs?['grossMonthly']) ??
+        monthly.grossSalary;
+    final netTakeHome =
+        _ctrlNet ?? _numOrNull(bs?['netMonthly']) ?? monthly.netMonthlySalary;
+    final totalCtc =
+        _ctrlCtc ?? _numOrNull(bs?['totalCTC']) ?? _salaryStructure!.totalCTC;
 
     // Fixed earning components (web parity — same rows as before, restyled).
     final earnings = <_Component>[
@@ -338,6 +374,48 @@ class _SalaryStructureDetailScreenState
       ),
     ];
 
+    // HRMSbackend: show the structure's own component lines.
+    final shownEarnings = bs == null
+        ? earnings
+        : [
+            ..._backendComponents(
+              bs['earnings'],
+              icon: Icons.account_balance_wallet_outlined,
+              subtitle: 'Monthly',
+            ),
+            ..._backendComponents(
+              bs['allowances'],
+              icon: Icons.card_giftcard_outlined,
+              subtitle: 'Allowance · Monthly',
+            ),
+          ];
+    final shownDeductions = bs == null
+        ? deductions
+        : _backendComponents(
+            bs['deductions'],
+            icon: Icons.remove_circle_outline,
+            subtitle: 'Monthly',
+          );
+    final shownDeductionsTotal = bs == null
+        ? monthly.totalMonthlyDeductions
+        : shownDeductions.fold<double>(0.0, (s, c) => s + c.amount);
+    final shownBenefits = bs == null
+        ? benefits
+        : [
+            ..._backendComponents(
+              bs['benefits'],
+              icon: Icons.redeem_outlined,
+              subtitle: 'Yearly Benefit',
+              yearly: true,
+            ),
+            ..._backendComponents(
+              bs['variables'],
+              icon: Icons.emoji_events_outlined,
+              subtitle: 'Variable · Yearly',
+              yearly: true,
+            ),
+          ];
+
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -351,25 +429,27 @@ class _SalaryStructureDetailScreenState
           // ── Earnings ────────────────────────────────────────────────────
           _sectionHeader('Earnings', trailing: 'COMPONENTS'),
           const SizedBox(height: 10),
-          _buildComponentCard(earnings, currencyFormat),
+          _buildComponentCard(shownEarnings, currencyFormat),
           const SizedBox(height: 22),
 
           // ── Deductions ──────────────────────────────────────────────────
           _sectionHeader('Deductions'),
           const SizedBox(height: 10),
           _buildComponentCard(
-            deductions,
+            shownDeductions,
             currencyFormat,
             isDeduction: true,
             totalLabel: 'Total Deductions',
-            totalAmount: monthly.totalMonthlyDeductions,
+            totalAmount: shownDeductionsTotal,
           ),
           const SizedBox(height: 22),
 
           // ── Benefits & Allowances (yearly) ──────────────────────────────
-          _sectionHeader('Benefits & Allowances', trailing: 'YEARLY'),
-          const SizedBox(height: 10),
-          _buildComponentCard(benefits, currencyFormat),
+          if (bs == null || shownBenefits.isNotEmpty) ...[
+            _sectionHeader('Benefits & Allowances', trailing: 'YEARLY'),
+            const SizedBox(height: 10),
+            _buildComponentCard(shownBenefits, currencyFormat),
+          ],
           const SizedBox(height: 22),
 
           // ── Net take home (dark hero) ───────────────────────────────────

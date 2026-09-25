@@ -9,6 +9,7 @@ import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import '../../config/app_colors.dart';
 import '../../utils/face_detection_helper.dart';
+import '../../utils/image_sharpness.dart';
 import '../../widgets/face_guide_overlay.dart';
 import '../../utils/snackbar_utils.dart';
 
@@ -379,6 +380,16 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       // entirely (chosen == null) so a detector hiccup never hard-blocks a punch.
       // Enrollment relaxes the gate to single-face-only so a clear photo is accepted.
       validationError = chosen?.qualityIssue(relaxed: widget.enrollMode);
+
+      // Sharpness gate: a blurry / shaky capture can't identify the person (and
+      // the server's face engine rejects it anyway), so ask for a steady retake.
+      if (validationError == null) {
+        final sharpness = await ImageSharpness.centerVariance(processed);
+        debugPrint('[Selfie] sharpness=${sharpness?.toStringAsFixed(1)}');
+        if (sharpness != null && sharpness < ImageSharpness.minVariance) {
+          validationError = ImageSharpness.blurryMessage;
+        }
+      }
     } catch (_) {
       // Keep the original capture if processing fails.
     }

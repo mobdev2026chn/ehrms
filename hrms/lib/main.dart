@@ -144,7 +144,7 @@ void main() {
           config: BackgroundLocationTrackerConfig(
             loggingEnabled: kDebugMode,
             androidConfig: const AndroidConfig(
-              notificationIcon: 'ic_notification',
+              notificationIcon: 'ic_stat_ektahr',
               notificationBody: 'Live tracking in progress. Tap to open.',
               channelName: 'Live Tracking',
               cancelTrackingActionText: 'Stop tracking',

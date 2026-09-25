@@ -506,6 +506,12 @@ class RequestService {
   /// directory. Loaded once per app session; used to name request reviewers.
   static Map<String, String>? _reviewerNames;
 
+  /// Reviewer names are per company; forget them when a different user logs in.
+  static void resetForNewUser() {
+    _reviewerNames = null;
+    _reviewerNamesInFlight = null;
+  }
+
   /// Legacy-route fallbacks run only when the primary route does not exist.
   /// Anything else (validation 400, timeout) is surfaced as-is: falling through
   /// hid the server's message behind a legacy 404 and re-sent POSTs.

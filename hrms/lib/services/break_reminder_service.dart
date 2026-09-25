@@ -125,7 +125,7 @@ class BreakReminderService {
       channelDescription: _channelDescription,
       importance: Importance.high,
       priority: Priority.high,
-      icon: '@drawable/ic_notification',
+      icon: '@drawable/ic_stat_ektahr',
       category: AndroidNotificationCategory.reminder,
       actions: const [
         AndroidNotificationAction(

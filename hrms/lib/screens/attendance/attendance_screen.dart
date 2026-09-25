@@ -1895,6 +1895,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
   }
 
+  /// Whether [_attendanceData] was fetched for the calendar day [recordKey] (yyyy-MM-dd).
+  /// The fetch date is a LOCAL date, so it is formatted locally — converting it to UTC (as
+  /// _attendanceCalendarDate does for DateTimes) moves local midnight to the previous day.
+  bool _attendanceDataIsFor(String recordKey) {
+    final fetched = _attendanceDataFetchedFor;
+    if (_attendanceData == null || fetched == null || recordKey.isEmpty) return false;
+    return DateFormat('yyyy-MM-dd').format(fetched) == recordKey;
+  }
+
   String _dateKey(dynamic record) {
     if (record is! Map) return '';
     return _attendanceCalendarDate(record['date']);
@@ -2226,11 +2235,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       }
     }
 
-    // Fallback: if selected day matches today or fetched attendance date, merge from _attendanceData
-    final isSelectedDayToday = _selectedDay.year == DateTime.now().year &&
-        _selectedDay.month == DateTime.now().month &&
-        _selectedDay.day == DateTime.now().day;
-    if (_attendanceData != null && (isSelectedDayToday || dateStr == _attendanceCalendarDate(_attendanceDataFetchedFor))) {
+    // Fallback: fill gaps from _attendanceData ONLY when it was fetched for this record's own
+    // day. (It used to key off the calendar's selected day, so opening e.g. a weekend row while
+    // today was selected pasted today's punch, selfie and address into that weekend.)
+    final recordKey = _dateKey(record);
+    final isRecordToday =
+        recordKey.isNotEmpty && recordKey == DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final sameDayData = _attendanceDataIsFor(recordKey);
+    if (sameDayData) {
       if (punchIn == null || _formatTime(punchIn) == '--:--') {
         final tIn = _resolvePunchInFromRecord(_attendanceData);
         if (tIn != null && _formatTime(tIn) != '--:--') punchIn = tIn;
@@ -2283,14 +2295,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         punchOutSelfieUrl != '-';
 
     var breakSessions = _resolveBreakSessionsFromRecord(record);
-    if (breakSessions.isEmpty && _attendanceData != null && (isSelectedDayToday || dateStr == _attendanceCalendarDate(_attendanceDataFetchedFor))) {
+    if (breakSessions.isEmpty && sameDayData) {
       breakSessions = _resolveBreakSessionsFromRecord(_attendanceData);
     }
+    final Map<String, dynamic>? sameDay = sameDayData ? _attendanceData : null;
     Map<String, dynamic>? activeBreak = (record['breakDetails']?['activeBreak'] ??
         record['activeBreak'] ??
-        _attendanceData?['breakDetails']?['activeBreak'] ??
-        _attendanceData?['activeBreak']) as Map<String, dynamic>?;
-    if (activeBreak == null && isSelectedDayToday && BreakService.lastKnownHasOpenBreak == true) {
+        sameDay?['breakDetails']?['activeBreak'] ??
+        sameDay?['activeBreak']) as Map<String, dynamic>?;
+    if (activeBreak == null && isRecordToday && BreakService.lastKnownHasOpenBreak == true) {
       final persistedStart = BreakService.lastKnownBreakStartTime;
       if (persistedStart != null) {
         activeBreak = {
@@ -3529,6 +3542,28 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return DateFormat('dd MMM, hh:mm:ss a').format(date);
   }
 
+  /// A punch time as a local DateTime. HRMSbackend stores punches as clock text
+  /// ("09:30 AM"), which DateTime.parse can't read — every late / early check threw and
+  /// silently reported "on time". Clock text is placed on the record's own calendar day
+  /// (or today when no record is given); full timestamps are parsed as before.
+  DateTime? _punchDateTime(dynamic raw, {Map<String, dynamic>? record}) {
+    final parsed = _parseAnyDateTimeToLocal(raw);
+    if (parsed != null) return parsed;
+    final s = raw?.toString().trim() ?? '';
+    final m = RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?$').firstMatch(s);
+    if (m == null) return null;
+    var hour = int.parse(m.group(1)!);
+    final minute = int.parse(m.group(2)!);
+    final second = int.tryParse(m.group(3) ?? '') ?? 0;
+    final period = m.group(4)?.toUpperCase();
+    if (period != null) hour = hour % 12 + (period == 'PM' ? 12 : 0);
+    if (hour > 23 || minute > 59) return null;
+    DateTime day = DateTime.now();
+    final key = record != null ? _dateKey(record) : '';
+    if (key.length >= 10) day = DateTime.tryParse(key.substring(0, 10)) ?? day;
+    return DateTime(day.year, day.month, day.day, hour, minute, second);
+  }
+
   DateTime? _parseAnyDateTimeToLocal(dynamic value) {
     if (value == null) return null;
     if (value is DateTime) return value.isUtc ? value.toLocal() : value;
@@ -4106,7 +4141,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         final punchInRaw = _attendanceData?['punchIn'];
         if (punchInRaw != null) {
           try {
-            final punchIn = DateTime.parse(punchInRaw.toString()).toLocal();
+            final punchIn = _punchDateTime(punchInRaw) ??
+                (throw const FormatException('unreadable punch time'));
             final reqH = _openShiftRequiredHours();
             final requiredMin = (reqH * 60).round();
             final workedMin = now.difference(punchIn).inMinutes;
@@ -4655,7 +4691,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     if (t != null && t.isNotEmpty) {
       final tStart = t['shiftStartTime']?.toString().trim();
       final tEnd = t['shiftEndTime']?.toString().trim();
-      final tName = (t['name'] ?? t['shiftName'])?.toString().trim();
+      // shiftName = server-resolved shift; name is the attendance template's.
+      final tName = (t['shiftName'] ?? t['name'])?.toString().trim();
       final tType = (t['shiftType'] ?? '').toString().toLowerCase().trim();
       final isOpenT = tType.contains('open');
       if ((tStart != null &&
@@ -4722,7 +4759,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       return fromRecord;
     }
     final tName =
-        (_attendanceTemplate?['name'] ?? _attendanceTemplate?['shiftName'])
+        (_attendanceTemplate?['shiftName'] ?? _attendanceTemplate?['name'])
             ?.toString()
             .trim();
     if (tName != null && tName.isNotEmpty) return tName;
@@ -4835,14 +4872,30 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return 15;
   }
 
-  /// Shift start time from DB (template). Single fallback when template not loaded.
+  /// Shift start time ("HH:mm") from the server-resolved shift on the merged
+  /// template. Empty when no shift is assigned (no hard-coded default).
   String _getShiftStartTime() {
-    return _attendanceTemplate?['shiftStartTime']?.toString().trim() ?? '09:30';
+    return _getShiftStartTimeFromDb() ?? '';
   }
 
-  /// Shift end time from DB (template). Single fallback when template not loaded.
+  /// Shift end time ("HH:mm") from the server-resolved shift on the merged
+  /// template. Empty when no shift is assigned (no hard-coded default).
   String _getShiftEndTime() {
-    return _attendanceTemplate?['shiftEndTime']?.toString().trim() ?? '18:30';
+    return _getShiftEndTimeFromDb() ?? '';
+  }
+
+  /// "General Shift · 9:30 AM - 6:30 PM" for today's assigned shift, or
+  /// "Shift: Not assigned" when the server resolved none.
+  String _todayShiftSummaryLine() {
+    final name = (_attendanceTemplate?['shiftName'] ?? '').toString().trim();
+    final start = _getShiftStartTimeFromDb();
+    final end = _getShiftEndTimeFromDb();
+    if (start != null && end != null) {
+      final window = '${_formatShiftTime12(start)} - ${_formatShiftTime12(end)}';
+      return name.isNotEmpty ? '$name · $window' : 'Shift · $window';
+    }
+    if (name.isNotEmpty) return name;
+    return 'Shift: Not assigned';
   }
 
   /// Shift start from DB only (no fallback). Use for notice message so we never show hardcoded time.
@@ -5164,7 +5217,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         : _isOpenShiftTemplate();
     if (openEval) return false;
     try {
-      final punchIn = DateTime.parse(punchInTime).toLocal();
+      final punchIn = _punchDateTime(punchInTime, record: record) ??
+          (throw const FormatException('unreadable punch time'));
 
       // Half-day working session wins; else [appliedShiftId] window when set; else template.
       Map<String, String>? sessionTimings = record != null
@@ -5201,7 +5255,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         : _isOpenShiftTemplate();
     if (openEval) return false;
     try {
-      final punchOut = DateTime.parse(punchOutTime).toLocal();
+      final punchOut = _punchDateTime(punchOutTime, record: record) ??
+          (throw const FormatException('unreadable punch time'));
 
       Map<String, String>? sessionTimings = record != null
           ? _getWorkingSessionTimingsForRecord(record)
@@ -5229,7 +5284,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   bool _isEarlyCheckOut(String? punchOutTime, {Map<String, dynamic>? record}) {
     if (punchOutTime == null) return false;
     try {
-      final punchOut = DateTime.parse(punchOutTime).toLocal();
+      final punchOut = _punchDateTime(punchOutTime, record: record) ??
+          (throw const FormatException('unreadable punch time'));
 
       final openEval = record != null
           ? _isOpenShiftForRecordEvaluation(record)
@@ -5237,7 +5293,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       if (openEval) {
         final punchInRaw = record?['punchIn'];
         if (punchInRaw == null) return false;
-        final punchIn = DateTime.parse(punchInRaw.toString()).toLocal();
+        final punchIn = _punchDateTime(punchInRaw, record: record) ??
+            (throw const FormatException('unreadable punch time'));
         final worked = punchOut.difference(punchIn).inMinutes;
         final requiredH = record != null
             ? _openShiftRequiredHoursForRecord(record)
@@ -5259,7 +5316,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       // end boundary on the correct calendar day instead of the same morning.
       final punchInRaw = record?['punchIn'];
       final punchInDt = punchInRaw != null
-          ? DateTime.tryParse(punchInRaw.toString())?.toLocal()
+          ? _punchDateTime(punchInRaw, record: record)
           : null;
       final shiftEnd = _resolveShiftEndForEarly(
         shiftStartStr: shiftStartStr,
@@ -5490,18 +5547,22 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return '$h:$m';
   }
 
-  String _formatTimeShort(dynamic isoString) {
-    if (isoString == null ||
-        isoString.toString().isEmpty ||
-        isoString == 'null') {
+  /// Punch time as "hh:mm a". Accepts the server's "09:30 AM" strings, "HH:mm"
+  /// and ISO timestamps; "--:--" when empty or unreadable.
+  String _formatTimeShort(dynamic value) {
+    final s = value?.toString().trim() ?? '';
+    if (s.isEmpty || s == 'null' || s == '-' || s.toUpperCase() == 'NA') {
       return '--:--';
     }
-    try {
-      final date = DateTime.parse(isoString.toString()).toLocal();
-      return DateFormat('hh:mm a').format(date);
-    } catch (_) {
-      return '--:--';
-    }
+    // Same clock-time shapes [_formatTime] handles: "9:30 AM" and "HH:mm[:ss]".
+    final isClockTime = RegExp(
+      r'^\d{1,2}:\d{2}\s*(AM|PM)$|^\d{1,2}:\d{2}(?::\d{2})?$',
+      caseSensitive: false,
+    ).hasMatch(s);
+    if (isClockTime) return _formatTime(s);
+    final dt = _parseAnyDateTimeToLocal(value);
+    if (dt == null) return '--:--';
+    return DateFormat('hh:mm a').format(dt);
   }
 
   /*
@@ -6107,6 +6168,17 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   ),
                 ],
               ),
+              const SizedBox(height: 4),
+              // Today's assigned shift (name + timings) from the server.
+              Text(
+                _todayShiftSummaryLine(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colorScheme.onSurface.withOpacity(0.7),
+                ),
+              ),
               const SizedBox(height: 12),
               // Check In and Check Out cards (tappable, screenshot-style design)
               Row(
@@ -6257,7 +6329,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  isCompleted ? 'Done' : 'Start at $shiftEnd',
+                                  isCompleted
+                                      ? 'Done'
+                                      : shiftEnd.isEmpty
+                                      ? 'Shift not assigned'
+                                      : 'Start at ${_formatShiftTime12(shiftEnd)}',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: Colors.black,
@@ -7978,7 +8054,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         final punchInRaw = _attendanceData?['punchIn'];
         if (punchInRaw != null) {
           try {
-            final punchIn = DateTime.parse(punchInRaw.toString()).toLocal();
+            final punchIn = _punchDateTime(punchInRaw) ??
+                (throw const FormatException('unreadable punch time'));
             final reqH = _openShiftRequiredHours();
             final requiredMin = (reqH * 60).round();
             final workedMin = now.difference(punchIn).inMinutes;

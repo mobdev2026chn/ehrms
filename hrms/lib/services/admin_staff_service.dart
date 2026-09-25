@@ -171,6 +171,46 @@ class AdminStaffService {
     }
   }
 
+  /// Face registration of a staff member
+  /// (GET /admin/face-recognition/:staffId → { enrolled, samples, enrolledAt }).
+  Future<Map<String, dynamic>> getStaffFaceStatus(String staffId) async {
+    try {
+      final response = await _api.request(
+        '/admin/face-recognition/$staffId',
+        method: 'GET',
+      );
+      final data = response.data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return {'success': false, 'message': 'Unexpected response'};
+    } catch (e) {
+      return {'success': false, 'message': _errorMessage(e, 'Could not read face registration.')};
+    }
+  }
+
+  /// Removes a staff member's registered face so they register again on their
+  /// next punch (DELETE /admin/face-recognition/:staffId → { reset, message }).
+  Future<Map<String, dynamic>> resetStaffFace(String staffId) async {
+    try {
+      final response = await _api.request(
+        '/admin/face-recognition/$staffId',
+        method: 'DELETE',
+      );
+      final data = response.data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return {'success': true};
+    } catch (e) {
+      return {'success': false, 'message': _errorMessage(e, 'Could not remove face registration.')};
+    }
+  }
+
+  static String _errorMessage(Object e, String fallback) {
+    if (e is DioException) {
+      final body = e.response?.data;
+      if (body is Map && body['message'] != null) return body['message'].toString();
+    }
+    return fallback;
+  }
+
   /// Fetches next available employee ID (GET /admin/staff/next-employee-id)
   Future<String?> getNextEmployeeId() async {
     try {

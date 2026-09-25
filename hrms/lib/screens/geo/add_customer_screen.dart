@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:phone_numbers_parser/metadata.dart';
 import 'package:phone_numbers_parser/phone_numbers_parser.dart';
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/services/customer_service.dart';
@@ -31,6 +32,15 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   final _pincodeController = TextEditingController();
   final _stateController = TextEditingController();
   bool _submitting = false;
+
+  /// Customer location from "Select on Map". Field In / Field Out are checked against
+  /// it, so a customer is not saved without one.
+  double? _pinnedLat;
+  double? _pinnedLng;
+
+  /// Geofence radius for staff-added customers. The backend default (10 m) is tighter
+  /// than phone GPS accuracy and would refuse genuine Field In attempts.
+  static const double _defaultCustomerRadiusM = 100;
 
   /// E.164 digits only (no leading +), for API `countryCode`.
   String _dialDigits = '91';
@@ -152,6 +162,31 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     try {
       final rawDigits = _numberController.text.replaceAll(RegExp(r'\D'), '');
       final company = _companyController.text.trim();
+
+      // Location: the pinned point, else the typed address looked up on the phone (free).
+      var lat = _pinnedLat;
+      var lng = _pinnedLng;
+      if (lat == null || lng == null) {
+        try {
+          final found = await locationFromAddress(
+            '${_addressController.text.trim()}, ${_cityController.text.trim()} ${_pincodeController.text.trim()}',
+          );
+          if (found.isNotEmpty) {
+            lat = found.first.latitude;
+            lng = found.first.longitude;
+          }
+        } catch (_) {}
+      }
+      if (lat == null || lng == null) {
+        if (!mounted) return;
+        setState(() => _submitting = false);
+        SnackBarUtils.showSnackBar(
+          context,
+          'Could not find this address on the map. Use "Select on Map" to pin the customer location.',
+          isError: true,
+        );
+        return;
+      }
       final customer = Customer(
         customerName: _nameController.text.trim(),
         customerNumber: rawDigits,
@@ -162,6 +197,9 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
         pincode: _pincodeController.text.trim(),
         state: _stateController.text.trim(),
         countryCode: _dialDigits,
+        latitude: lat,
+        longitude: lng,
+        radius: _defaultCustomerRadiusM,
       );
 
       await CustomerService().createCustomer(customer);
@@ -487,6 +525,8 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                               );
                               if (result != null && mounted) {
                                 setState(() {
+                                  _pinnedLat = result.lat;
+                                  _pinnedLng = result.lng;
                                   if (result.address.isNotEmpty) {
                                     _addressController.text = result.address;
                                   }

@@ -118,7 +118,7 @@ class LocationService {
     // Keep background tracker for when app goes to background.
     // Uses foreground service with persistent notification; app can go background or be swiped away.
     const liveTrackingConfig = AndroidConfig(
-      notificationIcon: 'explore',
+      notificationIcon: 'ic_stat_ektahr',
       notificationBody: 'Live tracking in progress. Tap to open.',
       channelName: 'Live Tracking',
       cancelTrackingActionText: 'Stop tracking',

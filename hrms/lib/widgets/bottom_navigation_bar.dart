@@ -123,10 +123,17 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
     _checkRole();
     _checkPunchState();
     _fetchActiveBreak();
+    // Re-check whenever a break is started/ended anywhere in the app.
+    BreakService.stateRevision.addListener(_onBreakStateChanged);
+  }
+
+  void _onBreakStateChanged() {
+    if (mounted) _fetchActiveBreak();
   }
 
   @override
   void dispose() {
+    BreakService.stateRevision.removeListener(_onBreakStateChanged);
     _pulseController.dispose();
     super.dispose();
   }
@@ -150,21 +157,20 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
       widget.isBreakActive;
 
   DateTime? get _effectiveBreakStartTime {
-    if (_useExternalBreakState && widget.activeBreakStartTime != null) {
-      return widget.activeBreakStartTime;
-    }
-    if (_fetchedBreakStartTime != null) return _fetchedBreakStartTime;
-    if (widget.isBreakActive) {
-      // Unknown start: use the last start the server reported, not "now".
-      return BreakService.lastKnownBreakStartTime ?? DateTime.now();
-    }
-    return null;
+    if (!_effectiveBreakActive) return null;
+    if (widget.activeBreakStartTime != null) return widget.activeBreakStartTime;
+    // Unknown start: use the last start the server reported, not "now".
+    return _fetchedBreakStartTime ??
+        BreakService.lastKnownBreakStartTime ??
+        DateTime.now();
   }
 
-  bool get _effectiveBreakActive =>
-      widget.isBreakActive ||
-      widget.activeBreakStartTime != null ||
-      _fetchedBreakStartTime != null;
+  /// When the dashboard passes break state in, it is the single source of truth.
+  /// The bar's own one-time fetch ([_fetchedBreakStartTime]) was OR-ed in before,
+  /// so after a break ended the stale start kept the "Break Ongoing" card counting.
+  bool get _effectiveBreakActive => _useExternalBreakState
+      ? (widget.isBreakActive || widget.activeBreakStartTime != null)
+      : _fetchedBreakStartTime != null;
 
   Future<void> _fetchActiveBreak() async {
     final result = await _breakService.getCurrentBreak();

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/break_flow_log.dart';
 import '../utils/error_message_utils.dart';
 import 'api_client.dart';
+import '../utils/attendance_selfie_compress.dart';
 import 'break_reminder_service.dart';
 
 class BreakService {
@@ -24,6 +25,16 @@ class BreakService {
   /// (start time -> current time) and NEVER resets to 00:00 on navigation or reload.
   static DateTime? lastKnownBreakStartTime;
   static const String _kBreakStartPrefsKey = 'persisted_active_break_start_time';
+
+  /// Forget the in-memory break state (it is per user, but static for the app's
+  /// lifetime). A stale 'on break' here showed the previous user's break to the
+  /// next user who logged in on the same phone.
+  static void resetForNewUser() {
+    lastKnownHasOpenBreak = null;
+    lastKnownBreakStartTime = null;
+    _breakStatusInFlight = null;
+    _bumpStateRevision();
+  }
 
   static Future<void> persistActiveBreakStart(DateTime? startTime) async {
     lastKnownBreakStartTime = startTime;
@@ -175,6 +186,9 @@ class BreakService {
             },
           };
         }
+        // The server is the truth: no open break means clear any locally kept one.
+        lastKnownHasOpenBreak = false;
+        await persistActiveBreakStart(null);
         await BreakReminderService.sync(hasOpenBreak: false, startedAt: null);
         return {'success': true, 'data': null};
       }
@@ -312,7 +326,7 @@ class BreakService {
             data: bodyData,
           );
         } else if (postErr is DioException && postErr.response?.statusCode == 413) {
-          final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
+          final noSelfie = await AttendanceSelfieCompress.withSmallSelfie(bodyData);
           response = await _api.dio.post<Map<String, dynamic>>(
             '/staff/attendance/break/start',
             data: noSelfie,
@@ -545,7 +559,7 @@ class BreakService {
               }
             } catch (_) {}
           } else if (de.response?.statusCode == 413) {
-            final noSelfie = Map<String, dynamic>.from(bodyData)..remove('selfie');
+            final noSelfie = await AttendanceSelfieCompress.withSmallSelfie(bodyData);
             try {
               final res = await _api.dio.post<Map<String, dynamic>>(
                 endpoint,

@@ -29,6 +29,7 @@ import '../../widgets/app_tab_loader.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/geo/live_tracking_service.dart';
+import '../../services/geo/address_resolution_service.dart';
 import '../geo/live_tracking_screen.dart';
 import '../../services/request_service.dart';
 import '../../services/attendance_service.dart';
@@ -200,6 +201,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   bool _isCandidate = false;
   bool _isAdminLike = false;
   bool _liveTrackingActive = false;
+  /// Full address reverse-geocoded from today's punch-in lat/lng, keyed by the
+  /// coordinates so each spot is looked up once.
+  String? _punchInGeoAddress;
+  String? _punchInGeoKey;
 
   List<dynamic> _todayAnnouncements = [];
   List<dynamic> _todayCelebrations = [];
@@ -441,6 +446,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   /// flags from GET /attendance/today are not dropped (they live on the response root).
   Map<String, dynamic>? _extractLiveTodayAttendance(dynamic responseBody) {
     if (responseBody is! Map<String, dynamic>) return null;
+
+    // 0. AttendanceService.getTodayAttendance already returns the unwrapped,
+    // normalized today-punch `data`. Passing that through the flattener (which
+    // expects a `data` wrapper) kept only a whitelist of keys and dropped the
+    // punch-in `location`, `attendance` (checkInCoordinates), `checkInAt` and
+    // `totalHours` — so the Today card lost its address and clock anchor.
+    if (responseBody['data'] is! Map &&
+        (responseBody.containsKey('isPunchedIn') ||
+            responseBody.containsKey('checkInTime') ||
+            responseBody['punchIn'] != null ||
+            responseBody['status'] != null)) {
+      return Map<String, dynamic>.from(responseBody);
+    }
 
     // 1. Try our helper that flattens the nested data + root flags
     final merged = flattenTodayAttendancePayload(responseBody);
@@ -1218,6 +1236,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             if (_localActiveBreak == null && _ongoingBreakFromTodayAttendance != null) {
               _localActiveBreak = _ongoingBreakFromTodayAttendance;
             }
+            unawaited(_resolvePunchInGeoAddress());
             _todayAnnouncements = announcementsList;
             _todayCelebrations = data['todayCelebrations'] is List
                 ? data['todayCelebrations'] as List
@@ -1540,6 +1559,134 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
+  /// "General Shift · 9:30 AM - 6:30 PM" from today's server-resolved shift
+  /// (`shiftName`/`shiftStartTime`/`shiftEndTime` on the today template).
+  String? _serverTodayShiftLine() {
+    final t = _todayAttendanceTemplateMap();
+    if (t == null) return null;
+    final start = _serverShiftTime12h('shiftStartTime');
+    final end = _serverShiftTime12h('shiftEndTime');
+    if (start == null || end == null) return null;
+    final name = trimmedTimeField(t['shiftName']) ?? 'Shift';
+    return '$name · $start - $end';
+  }
+
+  /// Today's server shift start/end ("shiftStartTime"/"shiftEndTime", HH:mm)
+  /// as "10:00 AM". Null when no shift is resolved.
+  String? _serverShiftTime12h(String key) {
+    final hhmm = trimmedTimeField(_todayAttendanceTemplateMap()?[key]);
+    if (hhmm == null) return null;
+    final p = hhmm.split(':');
+    final h = int.tryParse(p[0]);
+    final m = p.length > 1 ? int.tryParse(p[1]) : 0;
+    if (h == null || m == null) return hhmm;
+    final h12 = h % 12 == 0 ? 12 : h % 12;
+    return '${h12.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')} '
+        '${h < 12 ? 'AM' : 'PM'}';
+  }
+
+  /// Address captured at punch-in (today-punch `location`, which the server
+  /// fills from `attendance.presentDetails.location`). Null until punched in —
+  /// before that the server only echoes the branch / work-mode fallback.
+  String? _todayPunchInAddress() {
+    final t = _todayAttendance;
+    if (t == null) return null;
+    String? clean(dynamic v) {
+      if (v is Map) v = v['address'] ?? v['formattedAddress'];
+      final s = v?.toString().trim() ?? '';
+      if (s.isEmpty || s == 'null' || s == '-' || s == 'Office Location') return null;
+      return s;
+    }
+
+    final att = t['attendance'] is Map ? t['attendance'] as Map : null;
+    final pd = att?['presentDetails'] is Map ? att!['presentDetails'] as Map : null;
+    return clean(_punchInGeoAddress) ??
+        clean(pd?['location']) ??
+        clean(t['punchInAddress']) ??
+        clean(t['checkInAddress']) ??
+        clean(t['location']);
+  }
+
+  /// Today's punch-in lat/lng (`attendance.presentDetails.checkInCoordinates`).
+  (double, double)? _todayPunchInCoordinates() {
+    final t = _todayAttendance;
+    if (t == null) return null;
+    final att = t['attendance'] is Map ? t['attendance'] as Map : null;
+    final pd = att?['presentDetails'] is Map ? att!['presentDetails'] as Map : null;
+    final c = pd?['checkInCoordinates'] ?? t['checkInCoordinates'];
+    if (c is! Map) return null;
+    final lat = double.tryParse(c['latitude']?.toString() ?? '');
+    final lng = double.tryParse(c['longitude']?.toString() ?? '');
+    if (lat == null || lng == null || (lat == 0 && lng == 0)) return null;
+    return (lat, lng);
+  }
+
+  /// Turns today's punch-in lat/lng into a full street address (Google
+  /// Geocoding, phone geocoder as fallback; cached on the device per spot), so
+  /// the Today card shows the exact punch place rather than a short label.
+  Future<void> _resolvePunchInGeoAddress() async {
+    final coords = _todayPunchInCoordinates();
+    if (coords == null) return;
+    final (lat, lng) = coords;
+    final key = '${lat.toStringAsFixed(5)},${lng.toStringAsFixed(5)}';
+    if (key == _punchInGeoKey && _punchInGeoAddress != null) return;
+    _punchInGeoKey = key;
+    final r = await AddressResolutionService.reverseGeocodeForUi(lat, lng);
+    final addr = r?.formattedAddress.trim();
+    if (!mounted || _punchInGeoKey != key || addr == null || addr.isEmpty) return;
+    setState(() => _punchInGeoAddress = addr);
+  }
+
+  /// Hours today's shift expects (end - start, overnight-aware), for the dial.
+  double? _serverShiftTargetHours() {
+    final t = _todayAttendanceTemplateMap();
+    int? mins(dynamic v) {
+      final s = trimmedTimeField(v);
+      if (s == null) return null;
+      final p = s.split(':');
+      final h = int.tryParse(p[0]);
+      final m = p.length > 1 ? int.tryParse(p[1]) : 0;
+      return (h == null || m == null) ? null : h * 60 + m;
+    }
+
+    final start = mins(t?['shiftStartTime']);
+    final end = mins(t?['shiftEndTime']);
+    if (start == null || end == null) return null;
+    var diff = end - start;
+    if (diff <= 0) diff += 24 * 60;
+    return diff / 60.0;
+  }
+
+  /// When today's work started, for the live clock. Prefers the server's
+  /// `checkInAt` (ISO, overnight-safe); falls back to the "hh:mm AM" check-in
+  /// placed on today.
+  DateTime? _todayCheckInMoment() {
+    final t = _todayAttendance;
+    if (t == null) return null;
+    final iso = t['checkInAt']?.toString().trim();
+    if (iso != null && iso.isNotEmpty && iso != 'null') {
+      final dt = DateTime.tryParse(iso);
+      if (dt != null) return dt.toLocal();
+    }
+    final raw = (t['checkInTime'] ?? t['punchIn'])?.toString().trim();
+    if (raw == null || raw.isEmpty || raw == 'null') return null;
+    final parsed = DateTime.tryParse(raw);
+    if (parsed != null) return parsed.toLocal();
+    final m = RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$', caseSensitive: false)
+        .firstMatch(raw);
+    if (m == null) return null;
+    var h = int.parse(m.group(1)!);
+    final min = int.parse(m.group(2)!);
+    final sec = int.tryParse(m.group(3) ?? '') ?? 0;
+    final period = m.group(4)?.toUpperCase();
+    if (period == 'PM' && h < 12) h += 12;
+    if (period == 'AM' && h == 12) h = 0;
+    final now = DateTime.now();
+    var dt = DateTime(now.year, now.month, now.day, h, min, sec);
+    if (dt.isAfter(now)) dt = dt.subtract(const Duration(days: 1));
+    return dt;
+  }
+
   Widget _buildDashboardAssignedShiftHeader() {
     final colorScheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
@@ -1558,9 +1705,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             appliedShiftId: appliedId,
           )
         : null;
-    final appliedHeaderLine = appliedRes != null
+    var appliedHeaderLine = appliedRes != null
         ? _appliedShiftCompactLineFromResult(appliedRes)
         : null;
+    // No company shift list to resolve against: use today's shift as resolved
+    // by the server (today-punch `shift`, mapped onto the template).
+    if (snap == null && appliedHeaderLine == null) {
+      appliedHeaderLine = _serverTodayShiftLine();
+    }
     if (snap == null && appliedHeaderLine == null) {
       return const SizedBox.shrink();
     }
@@ -2916,7 +3068,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         _todayAttendance!['punchIn'].toString().trim().isNotEmpty;
     final isWeekOff = _todayAttendance?['isWeekOff'] == true;
     final isHoliday = _todayAttendance?['isHoliday'] == true;
-    final branchName = _companyName.isNotEmpty ? _companyName : 'chennai';
+    final isPunchedOut = _todayAttendance?['punchOut'] != null &&
+        _todayAttendance!['punchOut'].toString().trim().isNotEmpty &&
+        _todayAttendance!['punchOut'].toString().trim() != 'null';
+    // Punch-in address once punched in; before that the branch/company name.
+    final punchAddress = isPunchedIn ? _todayPunchInAddress() : null;
+    final locationText = punchAddress ?? (_companyName.isNotEmpty ? _companyName : null);
+    final shiftLine = _serverTodayShiftLine();
+    final shiftStart = _serverShiftTime12h('shiftStartTime');
+    final shiftEnd = _serverShiftTime12h('shiftEndTime');
+    final checkInAt = isPunchedIn ? _todayCheckInMoment() : null;
+    final totalHoursRaw = _todayAttendance?['totalHours'];
+    final totalHours = totalHoursRaw is num
+        ? totalHoursRaw.toDouble()
+        : double.tryParse(totalHoursRaw?.toString() ?? '');
 
     final isOnBreak = _isCurrentBreakActive;
     final breakStart = _activeBreakStartTime();
@@ -3021,39 +3186,88 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              const Icon(Icons.location_on_outlined, size: 13, color: Color(0xFF94A3B8)),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  branchName.toLowerCase(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF94A3B8),
-                    fontWeight: FontWeight.w500,
+          if (shiftLine != null) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.schedule_rounded, size: 13, color: Color(0xFF94A3B8)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    shiftLine,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF64748B),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
+          if (locationText != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 1),
+                  child: Icon(Icons.location_on_outlined, size: 13, color: Color(0xFFEFAA1F)),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  // "Punched in 01:48 PM · <full punch-in address>" (web: MapPin + location).
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        if (punchAddress != null && inTime != '--:--')
+                          TextSpan(
+                            text: 'Punched in $inTime · ',
+                            style: const TextStyle(
+                              color: Color(0xFF0F172A),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        TextSpan(text: locationText),
+                      ],
+                    ),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF64748B),
+                      fontWeight: FontWeight.w500,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           const Divider(height: 1, color: Color(0xFFF1F5F9)),
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildWebPunchTimeCol('Punch In', inTime),
+              _buildWebPunchTimeCol(
+                'Punch In',
+                inTime,
+                sub: shiftStart != null ? 'Shift starts $shiftStart' : null,
+              ),
               if (isOnBreak)
                 _buildWebPunchTimeCol(
                   'Break Start',
                   breakStartStr,
                   valueColor: const Color(0xFFF59E0B),
                 ),
-              _buildWebPunchTimeCol('Punch Out', outTime),
+              _buildWebPunchTimeCol(
+                'Punch Out',
+                outTime,
+                sub: shiftEnd != null ? 'Shift ends $shiftEnd' : null,
+              ),
               _buildWebPunchTimeCol(
                 isWeekOff ? 'Week Off' : 'Status',
                 isWeekOff
@@ -3069,6 +3283,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ),
             ],
           ),
+          if (checkInAt != null) ...[
+            const SizedBox(height: 12),
+            _LiveWorkClock(
+              checkInAt: checkInAt,
+              stopped: isPunchedOut,
+              totalHours: totalHours,
+              targetHours: _serverShiftTargetHours(),
+              onBreak: isOnBreak,
+            ),
+          ],
           if (isOnBreak) ...[
             const SizedBox(height: 12),
             Container(
@@ -3381,7 +3605,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
-  Widget _buildWebPunchTimeCol(String label, String value, {Color? valueColor}) {
+  Widget _buildWebPunchTimeCol(
+    String label,
+    String value, {
+    Color? valueColor,
+    String? sub,
+  }) {
     // Flexible so the spaceBetween row of 3-4 columns can't overflow on narrow phones.
     return Flexible(
       child: Column(
@@ -3408,6 +3637,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               color: valueColor ?? const Color(0xFF0F172A),
             ),
           ),
+          if (sub != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              sub,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 10,
+                color: Color(0xFF94A3B8),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -4108,7 +4350,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           IntrinsicHeight(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4149,25 +4391,33 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+              // Compact: these three cards were taller than their two lines need.
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
                     label,
+                    maxLines: 1,
+                    softWrap: false,
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF94A3B8),
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerLeft,
+                    // One line, always: the parent IntrinsicHeight measures this Text
+                    // before FittedBox scales it, and a wrappable amount was measured
+                    // as 2-3 lines — that reserved height is what made the cards tall.
                     child: Text(
                       amount,
+                      maxLines: 1,
+                      softWrap: false,
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w900,
@@ -7115,4 +7365,345 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       ],
     );
   }
+}
+
+/// Live worked-today clock for the Today card — a port of the web dashboard's
+/// `WorkedTodayTimer`:
+///  * a dial whose amber arc fills with the share of the shift worked,
+///  * a sweep hand doing one turn a minute, placed on the displayed second,
+///  * a pulsing dot in the centre while working,
+///  * an HH:MM:SS readout where only the digits that change roll up.
+/// Anchored to [checkInAt] (not incremented), so it never drifts and resumes
+/// correctly after a reload. Ticks in its own State so only this card rebuilds.
+/// Once punched out it shows the recorded total ("8.5 Hrs", "Worked today").
+class _LiveWorkClock extends StatefulWidget {
+  const _LiveWorkClock({
+    required this.checkInAt,
+    required this.stopped,
+    this.totalHours,
+    this.targetHours,
+    this.onBreak = false,
+  });
+
+  final DateTime checkInAt;
+  final bool stopped;
+  final double? totalHours;
+  final double? targetHours;
+  final bool onBreak;
+
+  @override
+  State<_LiveWorkClock> createState() => _LiveWorkClockState();
+}
+
+class _LiveWorkClockState extends State<_LiveWorkClock>
+    with SingleTickerProviderStateMixin {
+  static const _amber = Color(0xFFEFAA1F);
+  static const double _dial = 76;
+
+  Timer? _timer;
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1000),
+  );
+
+  bool get _running => !widget.stopped;
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(_LiveWorkClock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.stopped != widget.stopped) _sync();
+  }
+
+  void _sync() {
+    _timer?.cancel();
+    _timer = null;
+    if (_running) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+      _pulse.repeat();
+    } else {
+      _pulse.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  Duration get _elapsed {
+    final d = DateTime.now().difference(widget.checkInAt);
+    return d.isNegative ? Duration.zero : d;
+  }
+
+  String _fmtHours(double h) =>
+      h == h.roundToDouble() ? h.toStringAsFixed(0) : h.toStringAsFixed(1);
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final elapsed = _elapsed;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final total = widget.totalHours ?? 0;
+    final display = _running
+        ? '${two(elapsed.inHours)}:${two(elapsed.inMinutes % 60)}:${two(elapsed.inSeconds % 60)}'
+        : (total > 0 ? '${_fmtHours(total)} Hrs' : '0 Hrs');
+
+    final workedHours = _running ? elapsed.inSeconds / 3600.0 : total;
+    final target = widget.targetHours;
+    final hasTarget = target != null && target > 0;
+    final progress = hasTarget ? (workedHours / target).clamp(0.0, 1.0) : 0.0;
+    // Unwound (never modulo'd) so 59 -> 0 keeps turning forward.
+    final sweepTurns = elapsed.inSeconds / 60.0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: _dial,
+            height: _dial,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Track + shift-progress arc, eased toward the real share.
+                TweenAnimationBuilder<double>(
+                  tween: Tween(end: progress),
+                  duration: reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 900),
+                  curve: Curves.easeOutCubic,
+                  builder: (_, p, _) => CustomPaint(
+                    size: const Size(_dial, _dial),
+                    painter: _WorkDialPainter(progress: p, showArc: hasTarget),
+                  ),
+                ),
+                if (_running)
+                  AnimatedRotation(
+                    turns: sweepTurns,
+                    duration: reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 350),
+                    curve: Curves.easeOutBack,
+                    child: SizedBox(
+                      width: _dial,
+                      height: _dial,
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: Container(
+                          margin: const EdgeInsets.only(top: 9),
+                          width: 2,
+                          height: 13,
+                          decoration: BoxDecoration(
+                            color: _amber,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_running)
+                  AnimatedBuilder(
+                    animation: _pulse,
+                    builder: (_, _) {
+                      final t = reduceMotion ? 0.0 : _pulse.value;
+                      return SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // Web "animate-ping": a ring that grows and fades.
+                            Container(
+                              width: 10 + 16 * t,
+                              height: 10 + 16 * t,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _amber.withValues(alpha: 0.75 * (1 - t)),
+                              ),
+                            ),
+                            Container(
+                              width: 10,
+                              height: 10,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _amber,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  )
+                else
+                  Text(
+                    hasTarget ? '${(progress * 100).round()}%' : '--',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF94A3B8),
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: _running
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (var i = 0; i < display.length; i++)
+                              _RollingChar(
+                                key: ValueKey(i),
+                                char: display[i],
+                                animate: !reduceMotion,
+                              ),
+                          ],
+                        )
+                      : Text(display, style: _RollingChar.style),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _running
+                      ? (widget.onBreak ? 'On break' : 'Working now')
+                      : 'Worked today',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: widget.onBreak && _running
+                        ? const Color(0xFFD97706)
+                        : const Color(0xFF64748B),
+                  ),
+                ),
+                if (hasTarget) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'of ${_fmtHours(target)} hrs shift',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF94A3B8),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One readout character in a fixed-width slot: a changed digit slides up and
+/// out while the new one slides in from below (web `RollingChar`). Keyed per
+/// position, so only the digits that actually changed move.
+class _RollingChar extends StatelessWidget {
+  const _RollingChar({super.key, required this.char, required this.animate});
+
+  final String char;
+  final bool animate;
+
+  static const style = TextStyle(
+    fontSize: 22,
+    fontWeight: FontWeight.w900,
+    color: Color(0xFF0F172A),
+    height: 1,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final width = char == ':' ? 7.0 : 14.0;
+    final text = Text(char, style: style, textAlign: TextAlign.center);
+    if (!animate) return SizedBox(width: width, child: text);
+    return SizedBox(
+      width: width,
+      height: 28,
+      child: ClipRect(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: const Cubic(0.22, 1, 0.36, 1),
+          switchOutCurve: const Cubic(0.22, 1, 0.36, 1),
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.center,
+            children: [...previous, ?current],
+          ),
+          transitionBuilder: (child, anim) {
+            final incoming = child.key == ValueKey(char);
+            final offset = Tween<Offset>(
+              begin: incoming ? const Offset(0, 0.7) : const Offset(0, -0.7),
+              end: Offset.zero,
+            ).animate(anim);
+            return FadeTransition(
+              opacity: anim,
+              child: SlideTransition(position: offset, child: child),
+            );
+          },
+          child: Center(key: ValueKey(char), child: text),
+        ),
+      ),
+    );
+  }
+}
+
+/// Grey track with the amber shift-progress arc, starting at 12 o'clock.
+class _WorkDialPainter extends CustomPainter {
+  _WorkDialPainter({required this.progress, required this.showArc});
+
+  final double progress;
+  final bool showArc;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const stroke = 5.0;
+    const radius = 32.0;
+    final center = size.center(Offset.zero);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..color = const Color(0xFFF1F5F9),
+    );
+    if (!showArc || progress <= 0) return;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2,
+      2 * math.pi * progress,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..strokeCap = StrokeCap.round
+        ..color = const Color(0xFFEFAA1F),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_WorkDialPainter old) =>
+      old.progress != progress || old.showArc != showArc;
 }

@@ -7,7 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/constants.dart';
-import '../../utils/swr_cache.dart';
+import '../../utils/user_session_reset.dart';
 
 /// Clears persisted auth tokens + user snapshot and default Dio Authorization header.
 Future<void> clearStoredAuthSession() async {
@@ -21,8 +21,8 @@ Future<void> clearStoredAuthSession() async {
   // Legacy device-wide "face registered" flag: it made the next user on this phone
   // look registered. Registration now lives on the server per staff member.
   await prefs.remove('face_enrolled_selfie');
-  // Drop any in-memory screen caches so one session's data can't leak into the next.
-  SwrCache.clearAll();
+  // Drop any in-memory caches so one session's data can't leak into the next.
+  resetUserScopedState();
   DioClient().clearAuthToken();
 }
 

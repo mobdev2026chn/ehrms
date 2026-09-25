@@ -1,10 +1,15 @@
 // hrms/lib/screens/salary/all_payslips_screen.dart
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_colors.dart';
 import '../../services/request_service.dart';
+import '../../services/salary_service.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -14,6 +19,82 @@ const List<String> _kMonths = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+
+/// Month name for a payslip request: app_backend sends 1-12, HRMSbackend the
+/// month name ("August") with the year as a separate string.
+String? _payslipMonthName(dynamic raw) {
+  if (raw is num && raw >= 1 && raw <= 12) return _kMonths[raw.toInt() - 1];
+  if (raw is String && raw.trim().isNotEmpty) {
+    final n = int.tryParse(raw.trim());
+    if (n != null) return (n >= 1 && n <= 12) ? _kMonths[n - 1] : null;
+    return raw.trim();
+  }
+  return null;
+}
+
+/// HRMSbackend payslip requests carry the issued PayRoll id as a plain string
+/// (`payrollId`, set once payroll is Paid) instead of a populated `payslipUrl`.
+String? payslipPayrollIdOf(dynamic req) {
+  if (req is! Map) return null;
+  final pid = req['payrollId'];
+  if (pid is! String) return null;
+  final id = pid.trim();
+  return (id.isEmpty || id == 'null') ? null : id;
+}
+
+/// Downloads the payslip PDF for [payrollId] (HRMSbackend
+/// `GET /admin/staff/payroll/statement/:id/view?download=true`), saves it under
+/// Downloads/Payslips and opens it.
+Future<void> openPayslipPdfForPayrollId(
+  BuildContext context,
+  String payrollId, {
+  String? period,
+}) async {
+  var loadingShown = true;
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const Center(child: AppTabLoader()),
+  );
+  void closeLoading() {
+    if (loadingShown && context.mounted) {
+      Navigator.of(context).pop();
+      loadingShown = false;
+    }
+  }
+
+  try {
+    final bytes =
+        await SalaryService().getPayslipPdfBytes(payrollId, download: true);
+    closeLoading();
+    if (!context.mounted) return;
+    if (bytes == null) {
+      SnackBarUtils.showSnackBar(context, 'Unable to download payslip.',
+          isError: true);
+      return;
+    }
+    final downloadsDir = await getDownloadsDirectory();
+    final baseDir = downloadsDir ?? await getApplicationDocumentsDirectory();
+    final dir = Directory('${baseDir.path}/Payslips');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final safe = (period ?? '').trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_');
+    final file = File(
+      '${dir.path}/Payslip_${safe.isEmpty ? DateTime.now().millisecondsSinceEpoch : safe}.pdf',
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    final result = await OpenFilex.open(file.path);
+    if (!context.mounted) return;
+    if (result.type != ResultType.done) {
+      SnackBarUtils.showSnackBar(context, 'Payslip saved to: ${file.path}');
+    }
+  } catch (e) {
+    closeLoading();
+    if (context.mounted) {
+      SnackBarUtils.showSnackBar(context, 'Error downloading payslip: $e',
+          isError: true);
+    }
+  }
+}
 
 /// Full list of the signed-in user's payslip requests, reached from the
 /// "VIEW ALL" action on [RequestPayslipScreen]. Unlike the generic
@@ -131,6 +212,9 @@ class _AllPayslipsScreenState extends State<AllPayslipsScreen> {
                       itemBuilder: (_, i) => PayslipRequestCard(
                         req: _requests[i],
                         onDownload: _onDownload,
+                        onDownloadPayroll: (id, period) =>
+                            openPayslipPdfForPayrollId(context, id,
+                                period: period),
                       ),
                     ),
             ),
@@ -145,6 +229,7 @@ class PayslipRequestCard extends StatelessWidget {
     super.key,
     required this.req,
     required this.onDownload,
+    this.onDownloadPayroll,
   });
 
   final dynamic req;
@@ -152,6 +237,10 @@ class PayslipRequestCard extends StatelessWidget {
   /// Called with the payslip URL when one exists, or `null` when the payslip
   /// has not been generated yet.
   final void Function(String? url) onDownload;
+
+  /// Called instead of [onDownload] when the request has no URL but carries an
+  /// issued payroll id (HRMSbackend), with the id and the display period.
+  final void Function(String payrollId, String period)? onDownloadPayroll;
 
   String? _payslipUrl(dynamic req) {
     final payroll = req is Map ? req['payrollId'] : null;
@@ -161,17 +250,16 @@ class PayslipRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final monthNum = req is Map ? req['month'] : null;
-    final monthName = (monthNum is int && monthNum >= 1 && monthNum <= 12)
-        ? _kMonths[monthNum - 1]
-        : null;
+    final monthName = _payslipMonthName(req is Map ? req['month'] : null);
     final year = req is Map ? req['year']?.toString() : null;
     final period = (req is Map && req['period'] != null)
         ? req['period'].toString()
         : [monthName, year].whereType<String>().join(' ').trim();
 
     final url = _payslipUrl(req);
-    final hasUrl = url != null;
+    final payrollId =
+        onDownloadPayroll != null && url == null ? payslipPayrollIdOf(req) : null;
+    final hasUrl = url != null || payrollId != null;
 
     String when = '';
     final created = req is Map ? req['createdAt'] : null;
@@ -228,7 +316,9 @@ class PayslipRequestCard extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           GestureDetector(
-            onTap: () => onDownload(url),
+            onTap: () => payrollId != null
+                ? onDownloadPayroll!(payrollId, period)
+                : onDownload(url),
             child: Container(
               width: 40,
               height: 40,

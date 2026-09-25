@@ -1,9 +1,20 @@
 // presence_tracking_service.dart
-// Staff location tracking based on attendance presence status.
-// Stores a point every 1 minute in trackings (POST /tracking/presence/store) while checked in.
+// Day-long "timeline" location tracking that starts at PUNCH IN (not at a task's Field In).
+//
+// Flow: punch in -> ensureTrackingIfPunchedIn(true) -> refresh GET /staff/profile and read the
+// admin-controlled `Staff.tracking` flag -> if true, store a point every
+// [AppConstants.presenceTrackingCaptureIntervalSeconds] via
+// POST /staff/geo-task/live-tracking/record (no taskId; staffId comes from the JWT) until
+// PUNCH OUT (ensureTrackingIfPunchedIn(false) / stopTracking()). If the flag is false/absent,
+// nothing is tracked and any running presence tracking is stopped.
+//
+// While a GEO task ride is live, presence is paused and LiveTrackingService (task tracking)
+// takes over; it resumes after the ride.
 // Timer runs regardless of which screen is visible (singleton). When app is in background,
-// the OS may pause the isolate so the timer does not fire; on resume we send one record and restart the timer.
-// Failed periodic sends (e.g. offline) are queued locally and POSTed when the app opens again.
+// the OS may pause the isolate so the timer does not fire; the native background tracker
+// (see main.dart backgroundCallback -> sendPresenceFromBackground) keeps sending points.
+// Failed sends (e.g. offline) are queued locally and replayed via
+// POST /staff/geo-task/live-tracking/batch.
 
 import 'dart:async';
 import 'dart:convert';
@@ -23,6 +34,23 @@ import 'package:hrms/services/geo/live_tracking_service.dart';
 import 'package:hrms/services/geo/movement_classification_service.dart';
 import 'package:hrms/services/geo/tracking_outlier_filter_service.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
+
+/// HRMSbackend endpoints (mounted under /api/staff/geo-task). A point without taskId is
+/// stored as a staff-level (presence) point in the LiveTracking collection.
+const String _kPresenceRecordPath = '/staff/geo-task/live-tracking/record';
+const String _kPresenceBatchPath = '/staff/geo-task/live-tracking/batch';
+
+/// Last known value of the staff profile's admin-controlled `tracking` flag.
+const String _kPresenceTrackingFlag = 'presence_staff_tracking_flag';
+const String _kPresenceTrackingFlagCheckedAt =
+    'presence_staff_tracking_flag_checked_at_ms';
+
+/// Throttled reverse-geocode cache for presence points (phone geocoder only).
+const String _kPresenceAddrLat = 'presence_addr_lat';
+const String _kPresenceAddrLng = 'presence_addr_lng';
+const String _kPresenceAddrJson = 'presence_addr_json';
+const String _kPresenceAddrAtMs = 'presence_addr_at_ms';
 
 /// SharedPref key: stores today's date when checked in (YYYY-MM-DD). Cleared on checkout.
 const String _kPresenceTrackingDate = 'presence_tracking_date';
@@ -71,7 +99,17 @@ class PresenceTrackingService {
   bool _taskInProgress = false;
   bool _sendingAppClosed = false;
   bool _periodicTickInProgress = false;
+  bool _flushInProgress = false;
+  Future<void>? _ensureInFlight;
   static int _offlineSendingCount = 0;
+
+  /// A punch-in (or dashboard reload) re-reads the staff profile unless the flag was
+  /// fetched within this window (dedupes the concurrent punch-in + nav refresh calls).
+  static const Duration _flagMaxAgeOnEnsure = Duration(seconds: 60);
+
+  /// While tracking, the flag is re-checked this often so an admin turning tracking
+  /// off stops the device without waiting for punch out.
+  static const Duration _flagMaxAgeWhileTracking = Duration(minutes: 30);
   static int _localOfflineInsertCount = 0;
 
   /// Interval for inserting presence tracking into DB (trackings collection).
@@ -84,7 +122,7 @@ class PresenceTrackingService {
   static const double defaultOfficeRadiusMeters = 200;
   static const double _maxAccuracyBufferM = 80;
   static const AndroidConfig _presenceBackgroundConfig = AndroidConfig(
-    notificationIcon: 'explore',
+    notificationIcon: 'ic_stat_ektahr',
     notificationBody: 'Attendance presence tracking active. Tap to open.',
     channelName: 'Presence Tracking',
     cancelTrackingActionText: 'Stop tracking',
@@ -205,7 +243,70 @@ class PresenceTrackingService {
       await prefs.remove(_kPresenceLastMovementType);
       await prefs.remove(_kPresenceConsecutiveLowSpeed);
       await prefs.remove(_kPresencePinnedGeofenceLocation);
+      await _clearPresenceAddressCache(prefs);
     }
+  }
+
+  static Future<void> _clearPresenceAddressCache(SharedPreferences prefs) async {
+    await prefs.remove(_kPresenceAddrLat);
+    await prefs.remove(_kPresenceAddrLng);
+    await prefs.remove(_kPresenceAddrJson);
+    await prefs.remove(_kPresenceAddrAtMs);
+  }
+
+  /// Address label for a presence point. Reuses the last resolved address until the staff
+  /// member has moved [LiveTrackingService.trackingAddressMinMoveM] and
+  /// [LiveTrackingService.trackingAddressMinInterval] has passed. Uses the phone's own
+  /// geocoder ([AddressResolutionService.reverseGeocodeForTracking]) — never Google per point.
+  /// Prefs-only, so it also works in the background isolate.
+  static Future<Map<String, String?>> _resolvePresenceAddress(
+    SharedPreferences prefs,
+    double lat,
+    double lng,
+  ) async {
+    Map<String, String?> cached = const {};
+    final raw = prefs.getString(_kPresenceAddrJson);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          cached = decoded.map(
+            (k, v) => MapEntry(k.toString(), v?.toString()),
+          );
+        }
+      } catch (_) {}
+    }
+    final cachedLat = prefs.getDouble(_kPresenceAddrLat);
+    final cachedLng = prefs.getDouble(_kPresenceAddrLng);
+    if (cachedLat != null &&
+        cachedLng != null &&
+        (cached['fullAddress'] ?? '').isNotEmpty) {
+      final moved = gl.Geolocator.distanceBetween(cachedLat, cachedLng, lat, lng);
+      final sinceMs = DateTime.now().millisecondsSinceEpoch -
+          (prefs.getInt(_kPresenceAddrAtMs) ?? 0);
+      if (moved < LiveTrackingService.trackingAddressMinMoveM ||
+          sinceMs < LiveTrackingService.trackingAddressMinInterval.inMilliseconds) {
+        return cached;
+      }
+    }
+    final resolved =
+        await AddressResolutionService.reverseGeocodeForTracking(lat, lng);
+    if (resolved == null || resolved.formattedAddress.isEmpty) return cached;
+    final fresh = <String, String?>{
+      'address': resolved.formattedAddress,
+      'fullAddress': resolved.formattedAddress,
+      'city': resolved.city ?? resolved.state,
+      'area': resolved.area,
+      'pincode': resolved.pincode,
+    };
+    await prefs.setDouble(_kPresenceAddrLat, lat);
+    await prefs.setDouble(_kPresenceAddrLng, lng);
+    await prefs.setString(_kPresenceAddrJson, jsonEncode(fresh));
+    await prefs.setInt(
+      _kPresenceAddrAtMs,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    return fresh;
   }
 
   Future<void> clearTrackingAllowed() async {
@@ -224,6 +325,7 @@ class PresenceTrackingService {
     await prefs.remove(_kPresenceLastMovementType);
     await prefs.remove(_kPresenceConsecutiveLowSpeed);
     await prefs.remove(_kPresencePinnedGeofenceLocation);
+    await _clearPresenceAddressCache(prefs);
   }
 
   Future<void> _clearPinnedOfficeZone() async {
@@ -488,22 +590,37 @@ class PresenceTrackingService {
       return;
     }
 
+    // baseUrl is a compile-time constant and the token was read after prefs.reload(), so
+    // this works in the background isolate without the foreground ApiClient.
     final baseUrl = AppConstants.baseUrl.replaceAll(RegExp(r'/$'), '');
-    final uri = Uri.parse('$baseUrl/tracking/presence/store');
+    final uri = Uri.parse('$baseUrl$_kPresenceRecordPath');
     final capturedAt = DateTime.now().toUtc();
     final body = <String, dynamic>{
       'lat': lat,
       'lng': lng,
+      'latitude': lat,
+      'longitude': lng,
       'status': 'active',
       'appStatus': await _getLifecycleAppStatusForBackgroundInsert(),
       'timestamp': capturedAt.toIso8601String(),
     };
+    String? presenceStatus;
     final pinnedRaw = prefs.getString(_kPresencePinnedGeofenceLocation);
     if (pinnedRaw != null && pinnedRaw.isNotEmpty) {
-      final ps = _presenceStatusFromPinnedJson(pinnedRaw, lat, lng);
-      if (ps != null) body['presenceStatus'] = ps;
+      presenceStatus = _presenceStatusFromPinnedJson(pinnedRaw, lat, lng);
     }
+    if (presenceStatus == null) {
+      final gf = await self._branchGeofenceFromTemplate();
+      presenceStatus = self._isInsideOffice(lat, lng, gf, accuracyM: accuracyM ?? 0)
+          ? 'in_office'
+          : 'out_of_office';
+    }
+    // Always explicit: without a taskId the backend defaults to 'in_office'.
+    body['presenceStatus'] = presenceStatus;
     if (batteryPercent != null) body['batteryPercent'] = batteryPercent;
+    if (speedMps != null && speedMps.isFinite && speedMps >= 0) {
+      body['speed'] = speedMps;
+    }
     if (accuracyM != null) body['accuracy'] = accuracyM;
     final movement = await _classifyBackgroundMovement(
       prefs,
@@ -538,6 +655,11 @@ class PresenceTrackingService {
         ? movement.consecutiveLowSpeed
         : 0;
     body['movementType'] = resolvedMovementType;
+    final addr = await _resolvePresenceAddress(prefs, lat, lng);
+    for (final k in const ['address', 'fullAddress', 'city', 'area', 'pincode']) {
+      final v = addr[k];
+      if (v != null && v.isNotEmpty) body[k] = v;
+    }
     Future<void> enqueueBackgroundFailure() async {
       await self._enqueueFailedPeriodicPresence(
         lat: lat,
@@ -548,6 +670,11 @@ class PresenceTrackingService {
         movementType: resolvedMovementType,
         accuracy: accuracyM,
         batteryPercent: batteryPercent,
+        address: addr['address'],
+        fullAddress: addr['fullAddress'],
+        city: addr['city'],
+        area: addr['area'],
+        pincode: addr['pincode'],
         capturedAtUtc: capturedAt,
       );
     }
@@ -643,17 +770,37 @@ class PresenceTrackingService {
     return true;
   }
 
-  /// Call when API / prefs show user is punched in today (e.g. after app restart or dashboard load).
+  /// Call after PUNCH IN / PUNCH OUT and whenever API / prefs show the punch state
+  /// (dashboard load, app restart). Punched in + staff `tracking` flag on => day tracking
+  /// runs; otherwise it is stopped. Calls are serialized so the concurrent punch-in and
+  /// nav-refresh calls don't both start timers / fetch the profile.
   Future<void> ensureTrackingIfPunchedIn(bool isPunchedInToday) async {
+    while (_ensureInFlight != null) {
+      try {
+        await _ensureInFlight;
+      } catch (_) {}
+    }
+    final run = _ensureTrackingImpl(isPunchedInToday);
+    _ensureInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (identical(_ensureInFlight, run)) _ensureInFlight = null;
+    }
+  }
+
+  Future<void> _ensureTrackingImpl(bool isPunchedInToday) async {
     if (!isPunchedInToday) {
       await stopTracking();
       return;
     }
 
-    final status = await getPresenceStatus();
-    if (status['canTrack'] != true) {
+    final enabled = await isTimelineTrackingEnabled(maxAge: _flagMaxAgeOnEnsure);
+    if (!enabled) {
       if (kDebugMode) {
-        debugPrint('[PresenceTracking] cannot start tracking: ${status['reason']}');
+        debugPrint(
+          '[PresenceTracking] not tracking: timeline tracking disabled for this staff',
+        );
       }
       await stopTracking();
       return;
@@ -663,40 +810,76 @@ class PresenceTrackingService {
     await _schedulePresenceSends();
   }
 
-  Future<Map<String, dynamic>> getPresenceStatus() async {
-    await _setToken();
-    try {
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/tracking/presence/status',
-      );
-      final data = response.data;
-      if (data == null) return {'canTrack': false, 'reason': 'unknown'};
-      final d = data['data'];
-      if (d is! Map) return {'canTrack': false, 'reason': 'invalid_response'};
-      var gf = d['branchGeofence'] as Map<String, dynamic>?;
-      // Web / admin check-in: no SharedPreferences pin; geofence still comes from API.
-      // If API payload is missing, use cached attendance template branch (dashboard loads it).
-      if (d['canTrack'] == true &&
-          (gf == null || !_branchGeofenceHasTargets(gf))) {
-        final fromTemplate = await _branchGeofenceFromTemplate();
-        if (fromTemplate != null) gf = fromTemplate;
-      }
-      return {
-        'canTrack': d['canTrack'] == true,
-        'reason': d['reason'] as String?,
-        'branchGeofence': gf,
-      };
-    } catch (e) {
-      return {'canTrack': false, 'reason': 'error'};
+  /// Reads the admin-controlled `Staff.tracking` flag from GET /staff/profile (raw Staff
+  /// document). Refetches the profile unless the flag was read within [maxAge]; when the
+  /// profile cannot be fetched (offline) the last known value is used. Absent => false.
+  Future<bool> isTimelineTrackingEnabled({
+    Duration maxAge = _flagMaxAgeOnEnsure,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getBool(_kPresenceTrackingFlag);
+    final checkedAt = prefs.getInt(_kPresenceTrackingFlagCheckedAt) ?? 0;
+    final ageMs = DateTime.now().millisecondsSinceEpoch - checkedAt;
+    if (cached != null &&
+        checkedAt > 0 &&
+        ageMs >= 0 &&
+        ageMs < maxAge.inMilliseconds) {
+      return cached;
     }
+    try {
+      final res = await AuthService().getProfile(forceRefresh: true);
+      if (res['success'] == true) {
+        final enabled = _trackingFlagFromProfile(res['data']) ?? false;
+        await prefs.setBool(_kPresenceTrackingFlag, enabled);
+        await prefs.setInt(
+          _kPresenceTrackingFlagCheckedAt,
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        return enabled;
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[PresenceTracking] profile fetch for tracking flag failed: $e');
+      }
+    }
+    return cached ?? false;
   }
 
-  bool _branchGeofenceHasTargets(Map<String, dynamic> gf) {
-    final t = gf['targets'];
-    return t is List && t.isNotEmpty;
+  static bool? _trackingFlagFromProfile(dynamic data) {
+    bool? read(dynamic m) {
+      if (m is! Map) return null;
+      final v = m['tracking'];
+      if (v is bool) return v;
+      if (v is String) return v.toLowerCase() == 'true';
+      if (v is num) return v != 0;
+      return null;
+    }
+
+    if (data is! Map) return null;
+    return read(data) ?? read(data['staff']) ?? read(data['staffData']);
   }
 
-  /// Builds the same shape as GET /tracking/presence/status `branchGeofence` from [AttendanceTemplateStore].
+  /// canTrack = staff `tracking` flag; branchGeofence from the cached attendance template
+  /// (used only to label points in_office / out_of_office).
+  Future<Map<String, dynamic>> getPresenceStatus({
+    Duration flagMaxAge = _flagMaxAgeWhileTracking,
+  }) async {
+    final enabled = await isTimelineTrackingEnabled(maxAge: flagMaxAge);
+    if (!enabled) {
+      return {
+        'canTrack': false,
+        'reason': 'tracking_disabled_for_staff',
+        'branchGeofence': null,
+      };
+    }
+    return {
+      'canTrack': true,
+      'reason': null,
+      'branchGeofence': await _branchGeofenceFromTemplate(),
+    };
+  }
+
+  /// Builds the branch geofence targets from [AttendanceTemplateStore].
   Future<Map<String, dynamic>?> _branchGeofenceFromTemplate() async {
     final details = await AttendanceTemplateStore.loadTemplateDetails();
     final branchRaw = details?['branch'];
@@ -1035,15 +1218,19 @@ class PresenceTrackingService {
       );
     }
     try {
+      // No taskId: stored as a staff-level point; staffId/adminId come from the JWT.
       final body = <String, dynamic>{
         'lat': lat,
         'lng': lng,
+        'latitude': lat,
+        'longitude': lng,
         'presenceStatus': presenceStatus,
         'timestamp': capturedAt.toIso8601String(),
       };
-      if (status == 'active' || status == 'inactive' || status == 'offline') {
-        body['status'] = status;
-      }
+      body['status'] =
+          (status == 'active' || status == 'inactive' || status == 'offline')
+          ? status
+          : 'active';
       if (appStatus == 'app_closed' ||
           appStatus == 'app_background' ||
           appStatus == 'active' ||
@@ -1063,7 +1250,7 @@ class PresenceTrackingService {
       if (pincode != null && pincode.isNotEmpty) body['pincode'] = pincode;
 
       final response = await _api.dio.post<dynamic>(
-        '/tracking/presence/store',
+        _kPresenceRecordPath,
         data: body,
       );
       final savedId = response.data is Map
@@ -1224,59 +1411,76 @@ class PresenceTrackingService {
       );
     }
 
-    final remaining = <Map<String, dynamic>>[];
-    for (final m in list) {
-      final lat = (m['lat'] as num?)?.toDouble();
-      final lng = (m['lng'] as num?)?.toDouble();
-      final ps = m['presenceStatus'] as String?;
-      final ts = m['timestamp'] as String?;
-      if (lat == null || lng == null || ps == null || ts == null) {
-        continue;
+    if (_flushInProgress) return;
+    _flushInProgress = true;
+    try {
+      // Queued rows were already outlier-filtered before being queued; replay them in
+      // one request (POST /staff/geo-task/live-tracking/batch, no taskId).
+      String keyOf(Map<String, dynamic> m) =>
+          '${m['timestamp']}|${m['lat']}|${m['lng']}';
+      final sentKeys = <String>{};
+      final points = <Map<String, dynamic>>[];
+      for (final m in list) {
+        final lat = (m['lat'] as num?)?.toDouble();
+        final lng = (m['lng'] as num?)?.toDouble();
+        final ts = m['timestamp'] as String?;
+        if (lat == null || lng == null || ts == null) continue;
+        sentKeys.add(keyOf(m));
+        points.add({
+          ...m,
+          'latitude': lat,
+          'longitude': lng,
+          'presenceStatus':
+              (m['presenceStatus'] as String?) ?? 'out_of_office',
+          'status': (m['status'] as String?) ?? 'offline',
+        });
       }
-      DateTime? t;
-      try {
-        t = DateTime.parse(ts).toUtc();
-      } catch (_) {
-        continue;
-      }
-      final outcome = await _sendPresence(
-        lat: lat,
-        lng: lng,
-        presenceStatus: ps,
-        status: m['status'] as String?,
-        appStatus: m['appStatus'] as String?,
-        movementType: m['movementType'] as String?,
-        accuracy: (m['accuracy'] as num?)?.toDouble(),
-        batteryPercent: (m['batteryPercent'] as num?)?.toInt(),
-        address: m['address'] as String?,
-        fullAddress: m['fullAddress'] as String?,
-        city: m['city'] as String?,
-        area: m['area'] as String?,
-        pincode: m['pincode'] as String?,
-        timestampUtc: t,
-      );
-      if (kDebugMode && AppConstants.logTrackingsToConsole) {
-        final resultLabel = outcome.result == _PresenceSendResult.sent
-            ? 'sent_ok'
-            : outcome.result == _PresenceSendResult.skipped
-            ? 'sent_skip'
-            : 'sent_fail';
-        debugPrint(
-          '[Trackings] presence_offline flush_item $resultLabel '
-          'lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)}',
-        );
-        if (outcome.result == _PresenceSendResult.sent) {
-          _offlineSendingCount += 1;
-          debugPrint('****COUNT OFFLINE-SENDING-$_offlineSendingCount');
+
+      var dropQueued = points.isEmpty;
+      if (points.isNotEmpty) {
+        await _setToken();
+        try {
+          await _api.dio.post<dynamic>(
+            _kPresenceBatchPath,
+            data: {'points': points},
+          );
+          dropQueued = true;
+          if (kDebugMode && AppConstants.logTrackingsToConsole) {
+            _offlineSendingCount += points.length;
+            debugPrint(
+              '[Trackings] presence_offline flush_batch OK sent=${points.length} '
+              'total=$_offlineSendingCount',
+            );
+          }
+        } on DioException catch (e) {
+          // 400 = nothing valid in the payload; retrying would never succeed.
+          if (e.response?.statusCode == 400) dropQueued = true;
+          if (kDebugMode && AppConstants.logTrackingsToConsole) {
+            debugPrint(
+              '[Trackings] presence_offline flush_batch FAIL '
+              '${e.response?.statusCode} → ${e.response?.data}',
+            );
+          }
+        } catch (e) {
+          if (kDebugMode) debugPrint('[PresenceTracking] flush error: $e');
         }
       }
-      if (outcome.result == _PresenceSendResult.failed) remaining.add(m);
-    }
-    await _savePendingQueue(remaining);
-    if (kDebugMode && AppConstants.logTrackingsToConsole && list.isNotEmpty) {
-      debugPrint(
-        '[Trackings] flush_pending sent=${list.length - remaining.length}/${list.length} remaining=${remaining.length}',
-      );
+      if (dropQueued) {
+        // Re-read: rows queued while the request was in flight must survive.
+        final current = await _loadPendingQueue();
+        final remaining = current
+            .where(
+              (m) =>
+                  !sentKeys.contains(keyOf(m)) &&
+                  m['timestamp'] != null &&
+                  m['lat'] is num &&
+                  m['lng'] is num,
+            )
+            .toList();
+        await _savePendingQueue(remaining);
+      }
+    } finally {
+      _flushInProgress = false;
     }
   }
 
@@ -1347,7 +1551,8 @@ class PresenceTrackingService {
     try {
       batteryPercent = await Battery().batteryLevel;
     } catch (_) {}
-    final resolvedAddress = await AddressResolutionService.reverseGeocodeForTracking(
+    final addr = await _resolvePresenceAddress(
+      await SharedPreferences.getInstance(),
       lat,
       lng,
     );
@@ -1370,11 +1575,11 @@ class PresenceTrackingService {
       movementType: movementType,
       accuracy: accuracy,
       batteryPercent: batteryPercent,
-      address: resolvedAddress?.formattedAddress,
-      fullAddress: resolvedAddress?.formattedAddress,
-      city: resolvedAddress?.city ?? resolvedAddress?.state,
-      area: resolvedAddress?.area,
-      pincode: resolvedAddress?.pincode,
+      address: addr['address'],
+      fullAddress: addr['fullAddress'],
+      city: addr['city'],
+      area: addr['area'],
+      pincode: addr['pincode'],
       timestampUtc: capturedAt,
     );
     if (outcome.result == _PresenceSendResult.failed) {
@@ -1387,11 +1592,11 @@ class PresenceTrackingService {
         movementType: outcome.movementType,
         accuracy: accuracy,
         batteryPercent: batteryPercent,
-        address: resolvedAddress?.formattedAddress,
-        fullAddress: resolvedAddress?.formattedAddress,
-        city: resolvedAddress?.city ?? resolvedAddress?.state,
-        area: resolvedAddress?.area,
-        pincode: resolvedAddress?.pincode,
+        address: addr['address'],
+        fullAddress: addr['fullAddress'],
+        city: addr['city'],
+        area: addr['area'],
+        pincode: addr['pincode'],
         capturedAtUtc: capturedAt,
       );
     }
@@ -1446,10 +1651,17 @@ class PresenceTrackingService {
     }
   }
 
-  /// First send + periodic uploads. Ensures a tracking record is inserted every 1 minute while checked in.
+  /// First send + periodic uploads: one point every [trackingInterval] while checked in.
   Future<void> _schedulePresenceSends() async {
     if (_taskInProgress) return;
     if (!await isTrackingAllowed()) return;
+
+    if (_isTracking && _trackingTimer != null) {
+      // Already running (e.g. dashboard reload after punch in): keep the current timer
+      // instead of forcing an extra GPS fix + upload.
+      await _ensureBackgroundPresenceTracking();
+      return;
+    }
 
     _isTracking = true;
     await MovementClassificationService().start();
@@ -1490,14 +1702,15 @@ class PresenceTrackingService {
       try {
         batteryPercent = await Battery().batteryLevel;
       } catch (_) {}
-      final resolvedAddress = await AddressResolutionService.reverseGeocodeForTracking(
+      final addr = await _resolvePresenceAddress(
+        await SharedPreferences.getInstance(),
         position.latitude,
         position.longitude,
       );
       final movementType = await _classifyForegroundMovement(position);
-      final presenceState = await getPresenceStatus();
-      final apiGf = presenceState['branchGeofence'] as Map<String, dynamic>?;
-      final effectiveGf = await _effectiveOfficeGeofence(apiGf);
+      final effectiveGf = await _effectiveOfficeGeofence(
+        await _branchGeofenceFromTemplate(),
+      );
       final presenceStatus =
           _isInsideOffice(
             position.latitude,
@@ -1517,11 +1730,11 @@ class PresenceTrackingService {
         movementType: movementType,
         accuracy: position.accuracy,
         batteryPercent: batteryPercent,
-        address: resolvedAddress?.formattedAddress,
-        fullAddress: resolvedAddress?.formattedAddress,
-        city: resolvedAddress?.city ?? resolvedAddress?.state,
-        area: resolvedAddress?.area,
-        pincode: resolvedAddress?.pincode,
+        address: addr['address'],
+        fullAddress: addr['fullAddress'],
+        city: addr['city'],
+        area: addr['area'],
+        pincode: addr['pincode'],
       );
       if (kDebugMode) {
         debugPrint(
@@ -1558,15 +1771,16 @@ class PresenceTrackingService {
     _sendingAppClosed = true;
     await markAppClosed();
     try {
-      final status = await getPresenceStatus();
-      final branchGeofence = status['branchGeofence'] as Map<String, dynamic>?;
-      final effectiveGf = await _effectiveOfficeGeofence(branchGeofence);
+      final effectiveGf = await _effectiveOfficeGeofence(
+        await _branchGeofenceFromTemplate(),
+      );
       final position = await _capturePresencePosition();
       int? batteryPercent;
       try {
         batteryPercent = await Battery().batteryLevel;
       } catch (_) {}
-      final resolvedAddress = await AddressResolutionService.reverseGeocodeForTracking(
+      final addr = await _resolvePresenceAddress(
+        await SharedPreferences.getInstance(),
         position.latitude,
         position.longitude,
       );
@@ -1590,11 +1804,11 @@ class PresenceTrackingService {
         movementType: movementType,
         accuracy: position.accuracy,
         batteryPercent: batteryPercent,
-        address: resolvedAddress?.formattedAddress,
-        fullAddress: resolvedAddress?.formattedAddress,
-        city: resolvedAddress?.city ?? resolvedAddress?.state,
-        area: resolvedAddress?.area,
-        pincode: resolvedAddress?.pincode,
+        address: addr['address'],
+        fullAddress: addr['fullAddress'],
+        city: addr['city'],
+        area: addr['area'],
+        pincode: addr['pincode'],
       );
 
       if (outcome.result == _PresenceSendResult.sent) {
@@ -1631,7 +1845,13 @@ class PresenceTrackingService {
     });
   }
 
+  /// Punch out / tracking disabled / logout: stop the timer and the native presence tracker
+  /// (unless a task ride owns it) and clear the day's presence state.
   Future<void> stopTracking() async {
+    // Best effort: upload offline-queued points before the queue is cleared.
+    try {
+      await flushPendingPresenceQueue();
+    } catch (_) {}
     _isTracking = false;
     _taskInProgress = false;
     _trackingTimer?.cancel();

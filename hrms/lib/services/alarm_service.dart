@@ -101,7 +101,7 @@ class AlarmService {
       channelDescription: 'Reminder alarms',
       importance: Importance.max,
       priority: Priority.max,
-      icon: '@drawable/ic_notification',
+      icon: '@drawable/ic_stat_ektahr',
       fullScreenIntent: true,
     );
     const iosDetails = DarwinNotificationDetails(

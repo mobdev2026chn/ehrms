@@ -10,13 +10,20 @@ import 'package:image/image.dart' as img;
 /// punch spinner never freezes the UI on a multi-MB selfie. The native
 /// [FlutterImageCompress] call already runs off the Dart isolate.
 class AttendanceSelfieCompress {
-  static const int _maxSide = 200;
-  static const int _quality = 20;
+  // 640 px / quality 75 keeps the face clear enough to recognise (~50-80 KB).
+  // It was 200 px / quality 20 only to squeeze under the server's old 10 KB body
+  // limit, which left punch selfies unrecognisable. The server now accepts 2 MB.
+  static const int _maxSide = 640;
+  static const int _quality = 75;
   static const int _skipBelowBytes = 2000;
 
+  /// Old-server fallback (see [shrinkDataUrlForSmallBodyLimit]).
+  static const int _smallSide = 200;
+  static const int _smallQuality = 20;
+
   /// Hard ceiling: base64 payload must stay under this. If it doesn't, we
-  /// re-compress at rock-bottom quality. 100 KB b64 ≈ 75 KB raw JPEG.
-  static const int _maxBase64Length = 100000;
+  /// re-compress smaller. 400 KB b64 ≈ 300 KB raw JPEG.
+  static const int _maxBase64Length = 400000;
 
   /// Builds a COMPRESSED jpeg data URL from raw camera bytes.
   ///
@@ -43,13 +50,42 @@ class AttendanceSelfieCompress {
 
     // ── Step 4: Hard cap — if STILL too large, crush aggressively ──
     if (b64.length > _maxBase64Length) {
-      debugPrint('[SelfieCompress] STILL too large (${b64.length} b64 chars), crushing at quality 5 / 120px...');
-      processed = await _nativeCompress(processed, maxSide: 120, quality: 5);
+      debugPrint('[SelfieCompress] STILL too large (${b64.length} b64 chars), re-compressing at 480px / q60...');
+      processed = await _nativeCompress(processed, maxSide: 480, quality: 60);
       b64 = await compute<List<int>, String>(base64Encode, processed);
     }
 
     debugPrint('[SelfieCompress] FINAL: ${processed.length} bytes (~${(b64.length / 1024).toStringAsFixed(1)} KB b64)');
     return 'data:image/jpeg;base64,$b64';
+  }
+
+  /// A tiny (200 px) version of [dataUrl] for a server that still rejects large
+  /// bodies (HTTP 413) — keeps a selfie on the punch instead of dropping it.
+  static Future<String?> shrinkDataUrlForSmallBodyLimit(String? dataUrl) async {
+    if (dataUrl == null || dataUrl.isEmpty) return dataUrl;
+    try {
+      final comma = dataUrl.indexOf(',');
+      final b64 = comma >= 0 ? dataUrl.substring(comma + 1) : dataUrl;
+      final raw = await compute<String, Uint8List>(base64Decode, b64);
+      final small = await _nativeCompress(raw, maxSide: _smallSide, quality: _smallQuality);
+      final encoded = await compute<List<int>, String>(base64Encode, small);
+      return 'data:image/jpeg;base64,$encoded';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// [body] with its "selfie" replaced by the tiny version (or removed if that
+  /// fails) — the retry payload after a 413 from a server with a small body limit.
+  static Future<Map<String, dynamic>> withSmallSelfie(Map<String, dynamic> body) async {
+    final copy = Map<String, dynamic>.from(body);
+    final small = await shrinkDataUrlForSmallBodyLimit(copy['selfie']?.toString());
+    if (small == null || small.isEmpty) {
+      copy.remove('selfie');
+    } else {
+      copy['selfie'] = small;
+    }
+    return copy;
   }
 
   /// Returns a JPEG data URL, or [dataUrl] if compression fails or is not worthwhile.

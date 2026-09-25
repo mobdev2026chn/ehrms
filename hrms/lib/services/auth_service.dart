@@ -8,11 +8,13 @@ import 'package:dio/dio.dart';
 import '../config/constants.dart';
 import '../utils/error_message_utils.dart';
 import '../utils/swr_cache.dart';
+import '../utils/user_session_reset.dart';
 import 'api_client.dart';
 import 'web_hrms_api_dio.dart';
 import 'fcm_service.dart';
 import 'attendance_template_store.dart';
 import 'geo/live_tracking_service.dart';
+import 'presence_tracking_service.dart';
 import 'interaction_socket_service.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -114,6 +116,8 @@ class AuthService {
   }
 
   Future<Map<String, dynamic>> login(String email, String password, {String? otp}) async {
+    // A new sign-in must never start with the previous user's in-memory data.
+    resetUserScopedState();
     invalidateProfileCache();
     try {
       final startedAt = DateTime.now();
@@ -347,6 +351,8 @@ class AuthService {
     _api.clearAuthToken();
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
+    // Day (presence) tracking belongs to this user too: stop it now, not at the next tick.
+    await PresenceTrackingService().stopTracking();
     await FcmService.clearStoredNotifications();
     await prefs.remove('token');
     await prefs.remove(AppConstants.refreshTokenPrefsKey);
@@ -391,6 +397,7 @@ class AuthService {
 
   // Verify email with backend after Google Sign-In
   Future<Map<String, dynamic>> googleLoginBackend(String email) async {
+    resetUserScopedState(); // new sign-in: no previous user's in-memory data
     try {
       final response = await _api.dio.post<Map<String, dynamic>>(
         '/auth/google-login',
@@ -747,6 +754,7 @@ class AuthService {
   }
 
   Future<void> logout() async {
+    resetUserScopedState();
     InteractionSocketService.instance.disconnect();
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
@@ -763,6 +771,8 @@ class AuthService {
     SwrCache.clearAll();
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
+    // Day (presence) tracking belongs to this user too: stop it now, not at the next tick.
+    await PresenceTrackingService().stopTracking();
     await FcmService.clearStoredNotifications();
     invalidateProfileCache();
     await prefs.clear();
