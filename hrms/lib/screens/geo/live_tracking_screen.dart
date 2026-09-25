@@ -19,6 +19,8 @@ import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/presence_tracking_service.dart';
 import 'package:hrms/services/geo/live_tracking_service.dart';
 import 'package:hrms/services/geo/route_recorder.dart';
+import 'package:hrms/widgets/travelled_route_style.dart';
+import 'package:hrms/services/geo/route_snapping_service.dart';
 import 'package:hrms/services/geo/movement_classification_service.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/arrived_screen.dart';
@@ -76,6 +78,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   /// Path built ONLY from actual GPS coordinates (List<LatLng> from location stream).
   Polyline? _routePolyline;
+  bool _syncingTrail = false;
 
   /// Road route from current/last position to destination (fetched from Directions API).
   Polyline? _shortestRoutePolyline;
@@ -250,6 +253,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       if (mounted) setState(() {});
       return;
     }
+    // Opened (or reopened mid-ride): draw what was already travelled from the saved trail.
+    unawaited(_syncFromSavedTrail());
     await LiveTrackingService().startTracking(
       taskMongoId: widget.taskMongoId!,
       taskId: widget.taskId,
@@ -297,6 +302,51 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     });
     // Anything left from an earlier ride that couldn't upload (offline, app killed).
     unawaited(RouteRecorder.flushAll());
+  }
+
+  /// Redraws the travelled line from the task's full saved GPS trail and sets
+  /// 'Total distance' to its length. The saved trail also holds the points the
+  /// background tracker recorded while this screen wasn't getting location
+  /// (app minimised, PiP, screen reopened), which the live line alone misses.
+  /// Pending phone points are uploaded first so the trail is complete. Never
+  /// shrinks the line: if the saved trail is shorter (e.g. offline), the
+  /// current line is kept.
+  Future<void> _syncFromSavedTrail() async {
+    final id = widget.taskMongoId;
+    if (id == null || id.isEmpty) return;
+    if (_syncingTrail) return;
+    _syncingTrail = true;
+    try {
+      await RouteRecorder.flush(id);
+      final saved = await TaskService().getTravelledPathUntilArrived(id);
+      if (!mounted || saved.length < 2) return;
+      final cleaned = RouteSnappingService.cleanLatLng(
+        saved.map((e) => LatLng(e['lat']!, e['lng']!)).toList(),
+      );
+      if (cleaned.length < 2) return;
+      final meters = _pathLengthM(cleaned);
+      if (meters < _totalDistanceCovered) return;
+      setState(() {
+        _routePolyline = TravelledRouteStyle.polyline('traveled', cleaned);
+        _totalDistanceCovered = meters;
+      });
+    } catch (_) {
+      // Keep the live line; the next sync will catch up.
+    } finally {
+      _syncingTrail = false;
+    }
+  }
+  static double _pathLengthM(List<LatLng> pts) {
+    var m = 0.0;
+    for (var i = 1; i < pts.length; i++) {
+      m += gl.Geolocator.distanceBetween(
+        pts[i - 1].latitude,
+        pts[i - 1].longitude,
+        pts[i].latitude,
+        pts[i].longitude,
+      );
+    }
+    return m;
   }
 
   Future<void> _enablePipOnMinimize() async {
@@ -372,19 +422,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             ));
           }
 
-          if (_lastLocation != null) {
-            final distance = gl.Geolocator.distanceBetween(
-              _lastLocation!.latitude!,
-              _lastLocation!.longitude!,
-              location.latitude!,
-              location.longitude!,
-            );
-            // Only accumulate distance if accuracy is reliable (<= 25m) and movement is genuine (>= 8m)
-            final acc = location.accuracy ?? 0;
-            if (acc <= 25 && distance >= 8 && _currentActivity.toLowerCase() != 'stop') {
-              _totalDistanceCovered += distance;
-            }
-          }
+          // Total distance grows with the drawn travelled line (see
+          // _updateRoutePolyline), so the number always matches the route shown.
 
           final movementType = MovementClassificationService()
               .addLocationAndClassify(
@@ -859,16 +898,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     }
 
     if (_routePolyline == null) {
-      _routePolyline = Polyline(
-        polylineId: const PolylineId('traveled'),
-        points: [widget.pickupLocation, newLatLng],
-        color: AppColors.primary,
-        width: 5,
-        startCap: Cap.roundCap,
-        endCap: Cap.roundCap,
-        jointType: JointType.round,
-        geodesic: true,
-      );
+      // Starts at the first real GPS fix, not the assumed pickup point.
+      _routePolyline = TravelledRouteStyle.polyline('traveled', [newLatLng]);
     } else {
       final currentPoints = List<LatLng>.from(_routePolyline!.points);
       final last = currentPoints.isNotEmpty ? currentPoints.last : null;
@@ -885,6 +916,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           _fetchRoadRoute(newLatLng.latitude, newLatLng.longitude);
           return;
         }
+      }
+      if (last != null) {
+        _totalDistanceCovered += gl.Geolocator.distanceBetween(
+          last.latitude,
+          last.longitude,
+          newLatLng.latitude,
+          newLatLng.longitude,
+        );
       }
       currentPoints.add(newLatLng);
       _routePolyline = _routePolyline?.copyWith(pointsParam: currentPoints);
@@ -974,6 +1013,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
+      // Pick up the route travelled while the app was in the background.
+      unawaited(_syncFromSavedTrail());
       _lastRouteFetchTime = null;
       final fromLat = _lastLocation?.latitude ?? widget.pickupLocation.latitude;
       final fromLng =
@@ -1674,9 +1715,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Only the route actually travelled is drawn. The suggested road route is still
+    // fetched for the 'shortest remaining' distance and ETA, but not shown as a line.
     final allPolylines = <Polyline>{
       if (_routePolyline != null) _routePolyline!,
-      if (_shortestRoutePolyline != null) _shortestRoutePolyline!,
     };
 
     return PiPSwitcher(

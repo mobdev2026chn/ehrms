@@ -11,6 +11,7 @@ import 'package:hrms/screens/geo/my_tasks_screen.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/geo/route_snapping_service.dart';
 import 'package:hrms/widgets/oriented_image.dart';
+import 'package:hrms/widgets/travelled_route_style.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
@@ -910,16 +911,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           },
           polylines: displayRoute.length > 1
               ? {
-                  Polyline(
-                    polylineId: const PolylineId('route'),
-                    points: displayRoute,
-                    color: AppColors.primary,
-                    width: 5,
-                    geodesic: true,
-                    startCap: Cap.roundCap,
-                    endCap: Cap.roundCap,
-                    jointType: JointType.round,
-                  ),
+                  TravelledRouteStyle.polyline('route', displayRoute),
                 }
               : {},
           markers: markers,

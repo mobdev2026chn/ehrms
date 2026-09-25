@@ -22,6 +22,7 @@ import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/task_movement_summary_util.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
+import 'package:hrms/widgets/travelled_route_style.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final Task task;
@@ -384,16 +385,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           };
           _polylines.clear();
           _polylines.add(
-            Polyline(
-              polylineId: const PolylineId('travelled'),
-              points: travelledPts,
-              color: AppColors.primary,
-              width: 5,
-              geodesic: true,
-              startCap: Cap.roundCap,
-              endCap: Cap.roundCap,
-              jointType: JointType.round,
-            ),
+            TravelledRouteStyle.polyline('travelled', travelledPts),
           );
         });
         return;
