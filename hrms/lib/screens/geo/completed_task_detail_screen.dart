@@ -45,7 +45,9 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   /// exact path travelled (not corner-cutting straight lines).
   Future<void> _computeSnappedRoute(List<RoutePoint> routePoints) async {
     if (routePoints.length < 2) return;
-    final snapped = await RouteSnappingService.buildExactRoute(routePoints);
+    // Display route: drawn as-is when dense, snapped once and cached otherwise.
+    final key = (widget.task.id?.isNotEmpty ?? false) ? widget.task.id! : widget.task.taskId;
+    final snapped = await RouteSnappingService.buildDisplayRoute(key, routePoints);
     if (mounted && snapped.length > 1) {
       setState(() => _snappedRoute = snapped);
     }

@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart' as gl;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
 import 'package:hrms/config/constants.dart';
@@ -136,6 +137,80 @@ class RouteSnappingService {
       if (kDebugMode) {
         debugPrint('[RouteSnapping] snapToRoads failed, using raw points: $e');
       }
+      return cleaned;
+    }
+  }
+
+  // ── Route for DISPLAY (task detail / completed task maps) ───────────────────
+  // Roads API is billed per request (100 points each), and a dense recorded
+  // route has ~100 points per km, so snapping on every screen open was costly.
+  // For display: a dense route (points every <= 60 m) already follows the
+  // streets and is drawn as-is; a sparse one is snapped ONCE and the result is
+  // kept on the phone per task. The allowance distance at arrival
+  // (travelledDistanceKm) still snaps, exactly as before.
+
+  static const double _denseSpacingMeters = 60;
+  static const String _snapCachePrefix = 'route_snap_v1:';
+  static const String _snapCacheIndex = 'route_snap_v1_index';
+  static const int _snapCacheMax = 80;
+
+  /// Display route for [raw] tracking points of task [cacheKey].
+  static Future<List<LatLng>> buildDisplayRoute(
+    String cacheKey,
+    List<RoutePoint> raw,
+  ) =>
+      _displayRoute(cacheKey, cleanPoints(raw));
+
+  /// Display route for already-projected coordinates of task [cacheKey].
+  static Future<List<LatLng>> buildDisplayRouteFromLatLng(
+    String cacheKey,
+    List<LatLng> raw,
+  ) =>
+      _displayRoute(cacheKey, cleanLatLng(raw));
+
+  static Future<List<LatLng>> _displayRoute(
+    String cacheKey,
+    List<LatLng> cleaned,
+  ) async {
+    if (cleaned.length < 2) return cleaned;
+    final spacing = _pathLengthMeters(cleaned) / (cleaned.length - 1);
+    if (spacing <= _denseSpacingMeters) return cleaned;
+
+    // Same task + same number of points = same route; reuse the snapped copy.
+    final key = '$_snapCachePrefix$cacheKey:${cleaned.length}';
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hit = prefs.getString(key);
+      if (hit != null && hit.isNotEmpty) {
+        final pts = hit.split(';').map((s) {
+          final ll = s.split(',');
+          return LatLng(double.parse(ll[0]), double.parse(ll[1]));
+        }).toList();
+        if (pts.length >= 2) return pts;
+      }
+      List<LatLng> snapped;
+      try {
+        snapped = await _snapToRoads(cleaned);
+      } catch (_) {
+        return cleaned;
+      }
+      if (snapped.length < cleaned.length) return cleaned;
+      await prefs.setString(
+        key,
+        snapped
+            .map((p) =>
+                '${p.latitude.toStringAsFixed(6)},${p.longitude.toStringAsFixed(6)}')
+            .join(';'),
+      );
+      final index = prefs.getStringList(_snapCacheIndex) ?? <String>[];
+      index.remove(key);
+      index.add(key);
+      while (index.length > _snapCacheMax) {
+        await prefs.remove(index.removeAt(0));
+      }
+      await prefs.setStringList(_snapCacheIndex, index);
+      return snapped;
+    } catch (_) {
       return cleaned;
     }
   }

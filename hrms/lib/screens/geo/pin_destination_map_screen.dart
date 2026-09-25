@@ -63,6 +63,9 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
   bool _resolvingPlace = false;
   String? _searchSessionToken;
 
+  /// True when [_pinnedAddress] is the free on-phone preview (not Google's).
+  bool _addressIsPreview = false;
+
   @override
   void initState() {
     super.initState();
@@ -150,6 +153,7 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
       _resolvingPlace = false;
       _pinnedLocation = target;
       _pinnedAddress = place.address.formattedAddress;
+      _addressIsPreview = false; // already Google's address from search
       _pinnedPincode = place.address.pincode;
       _pinnedCity = place.address.city;
       _loadingAddress = false;
@@ -198,10 +202,14 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
     }
   }
 
+  /// Preview address while the pin moves: phone's own geocoder (free). The
+  /// billed Google lookup happens once, on Confirm (see _onConfirm).
   Future<void> _reverseGeocode(double lat, double lng) async {
     setState(() => _loadingAddress = true);
+    _addressIsPreview = true;
     try {
-      final resolved = await AddressResolutionService.reverseGeocode(lat, lng);
+      final resolved =
+          await AddressResolutionService.reverseGeocodeForTracking(lat, lng);
       if (mounted && resolved != null) {
         setState(() {
           _pinnedAddress = resolved.formattedAddress;
@@ -238,7 +246,7 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
     _reverseGeocode(position.latitude, position.longitude);
   }
 
-  void _onConfirm() {
+  Future<void> _onConfirm() async {
     if (_pinnedLocation == null) {
       SnackBarUtils.showSnackBar(
         context,
@@ -246,6 +254,26 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
       );
       return;
     }
+    // The pin is final: fetch Google's address once (cached per spot) so the
+    // saved destination address is as accurate as before. A pin chosen from
+    // search already has Google's address.
+    if (_addressIsPreview) {
+      setState(() => _loadingAddress = true);
+      final google = await AddressResolutionService.reverseGeocodeWithGoogle(
+        _pinnedLocation!.latitude,
+        _pinnedLocation!.longitude,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (google != null) {
+          _pinnedAddress = google.formattedAddress;
+          _pinnedPincode = google.pincode ?? _pinnedPincode;
+          _pinnedCity = google.city ?? _pinnedCity;
+        }
+        _loadingAddress = false;
+      });
+    }
+    if (!mounted) return;
     Navigator.of(context).pop(
       PinDestinationResult(
         lat: _pinnedLocation!.latitude,

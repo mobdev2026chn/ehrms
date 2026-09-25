@@ -57,6 +57,9 @@ class _TaskTrackEvent {
 }
 
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
+  /// Shared across openings of Task Details (per task + destination).
+  static final Map<String, _RoadDistanceEntry> _roadDistanceCache = {};
+
   late Task task;
 
   Customer? _customer;
@@ -336,7 +339,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             .toList();
         // Snap to roads so the line follows the actual path travelled, not
         // corner-cutting straight segments between sparse GPS samples.
-        final snapped = await RouteSnappingService.buildExactRouteFromLatLng(
+        // Display route: drawn as-is when dense, snapped once and cached otherwise.
+        final snapped = await RouteSnappingService.buildDisplayRouteFromLatLng(
+          task.id!,
           rawTravelledPts,
         );
         final travelledPts = snapped.length >= 2 ? snapped : rawTravelledPts;
@@ -393,12 +398,34 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     }
     // Road distance and drive time from Google Directions (same as Google Maps);
     // the service falls back to a straight line if Directions is unavailable.
-    final road = await DirectionsService.getRouteBetweenCoordinates(
-      originLat: currentPos.latitude,
-      originLng: currentPos.longitude,
-      destLat: dest.latitude,
-      destLng: dest.longitude,
-    );
+    // Directions is billed per call: reopening the same task within 5 min from
+    // (nearly) the same place reuses the last answer.
+    final cacheKey = '${task.id ?? task.taskId}|${dest.latitude},${dest.longitude}';
+    final prev = _roadDistanceCache[cacheKey];
+    final reuse = prev != null &&
+        DateTime.now().difference(prev.at) < const Duration(minutes: 5) &&
+        Geolocator.distanceBetween(
+              prev.origin.latitude,
+              prev.origin.longitude,
+              currentPos.latitude,
+              currentPos.longitude,
+            ) <
+            500;
+    final road = reuse
+        ? prev.result
+        : await DirectionsService.getRouteBetweenCoordinates(
+            originLat: currentPos.latitude,
+            originLng: currentPos.longitude,
+            destLat: dest.latitude,
+            destLng: dest.longitude,
+          );
+    if (!reuse && road.points.length > 2) {
+      _roadDistanceCache[cacheKey] = _RoadDistanceEntry(
+        origin: LatLng(currentPos.latitude, currentPos.longitude),
+        at: DateTime.now(),
+        result: road,
+      );
+    }
     if (!mounted) return;
     setState(() {
       _distanceKm = road.distanceKm;
@@ -2743,4 +2770,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       ),
     );
   }
+}
+
+/// Last Directions answer for a task's "km away" (see _roadDistanceCache).
+class _RoadDistanceEntry {
+  final LatLng origin;
+  final DateTime at;
+  final DirectionsResult result;
+
+  const _RoadDistanceEntry({
+    required this.origin,
+    required this.at,
+    required this.result,
+  });
 }
