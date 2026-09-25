@@ -74,7 +74,8 @@ function markDeviceOffline(deviceId) {
   }
 }
 
-// Dedicated MongoDB Collection 'dmalogs' in DEV_HRMS for DMA Mouse Movement, Status & Screenshots
+// Dedicated MongoDB Collection 'dmalogs' in DEV_HRMS for live device status only.
+// Screenshots and idle logs are stored on the server disk (src/storage/fileStore.js), not in MongoDB.
 async function logDmaActivityToMongo(data) {
   if (mongoose.connection.readyState !== 1) return;
   try {
@@ -91,7 +92,6 @@ async function logDmaActivityToMongo(data) {
         currentUser: data.currentUser || 'EktaHR Employee',
         businessId: data.businessId || 'default',
         status: data.status || 'ONLINE',
-        idleSeconds: data.idleSeconds !== undefined ? data.idleSeconds : 0,
         activeWindow: data.activeWindow || '',
         processName: data.processName || '',
         keystrokes: data.keystrokes || 0,
@@ -101,108 +101,10 @@ async function logDmaActivityToMongo(data) {
       }
     };
 
-    if (data.imageBase64 || data.image) {
-      const screenshotItem = {
-        id: 'SS-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
-        timestamp: new Date(),
-        imageBase64: data.imageBase64 || data.image
-      };
-      updateDoc.$push = {
-        screenshots: {
-          $each: [screenshotItem],
-          $slice: -50
-        }
-      };
-    }
-
     await dmaLogsCol.updateOne(filter, updateDoc, { upsert: true });
   } catch (err) {
     console.error('[Mongo dmalogs] Error logging DMA activity:', err.message);
   }
-}
-
-// In-Memory Screenshot History Store
-const deviceScreenshots = new Map();
-
-function storeScreenshot(data) {
-  const deviceId = (data.deviceId || 'UNKNOWN').toUpperCase();
-  const list = deviceScreenshots.get(deviceId) || [];
-  const entry = {
-    id: 'SS-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
-    deviceId,
-    hostname: data.hostname || deviceId,
-    currentUser: data.currentUser || 'EktaHR Employee',
-    businessId: data.businessId || 'default',
-    timestamp: data.timestamp || new Date().toISOString(),
-    imageBase64: data.imageBase64 || data.image || ''
-  };
-  list.unshift(entry);
-  if (list.length > 50) list.pop();
-  deviceScreenshots.set(deviceId, list);
-
-  // Async sync to dedicated MongoDB 'dmalogs' collection
-  logDmaActivityToMongo(data);
-
-  return entry;
-}
-
-async function getDeviceScreenshots(deviceId, businessId) {
-  const cleanId = (deviceId || '').replace('DEV-', '').toUpperCase();
-  let results = [];
-
-  // 1. Primary Lookup from dedicated MongoDB 'dmalogs' collection
-  if (mongoose.connection.readyState === 1) {
-    try {
-      const targetDb = mongoose.connection.useDb('DEV_HRMS');
-      const dmaLogsCol = targetDb.collection('dmalogs');
-      let queryFilter = {};
-
-      if (businessId && businessId !== 'all' && businessId !== 'superadmin') {
-        queryFilter.businessId = businessId;
-      }
-
-      if (cleanId && cleanId !== 'ALL') {
-        queryFilter.$or = [
-          { deviceId: new RegExp(cleanId, 'i') },
-          { hostname: new RegExp(cleanId, 'i') },
-          { currentUser: new RegExp(cleanId, 'i') }
-        ];
-      }
-
-      const docs = await dmaLogsCol.find(queryFilter).toArray();
-      for (const doc of docs) {
-        if (Array.isArray(doc.screenshots)) {
-          for (const s of doc.screenshots) {
-            results.push({
-              ...s,
-              deviceId: doc.deviceId,
-              hostname: doc.hostname,
-              currentUser: doc.currentUser,
-              businessId: doc.businessId
-            });
-          }
-        }
-      }
-    } catch (e) {
-      console.error('[Mongo dmalogs] Error fetching screenshots:', e.message);
-    }
-  }
-
-  // 2. Fallback to in-memory store if DB query is empty
-  if (results.length === 0) {
-    for (const [k, list] of deviceScreenshots.entries()) {
-      if (!cleanId || cleanId === 'ALL' || k === cleanId || k.includes(cleanId) || cleanId.includes(k)) {
-        results.push(...list);
-      }
-    }
-    if (businessId && businessId !== 'all' && businessId !== 'superadmin') {
-      results = results.filter(item => item.businessId === businessId);
-    }
-  }
-
-  // Sort latest first
-  results.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  return results;
 }
 
 function fetchJson(url) {
@@ -364,8 +266,6 @@ module.exports = {
   registerOrUpdateDevice,
   markDeviceOffline,
   getDevicesList,
-  storeScreenshot,
-  getDeviceScreenshots,
   logDmaActivityToMongo,
   liveDevices
 };

@@ -1,4 +1,5 @@
-const { getDevicesList, storeScreenshot, getDeviceScreenshots, liveDevices } = require('../db/mongo');
+const { getDevicesList, liveDevices } = require('../db/mongo');
+const { saveScreenshot, listScreenshots, resolveScreenshotFile } = require('../storage/fileStore');
 const { getConnectedAgents } = require('../ws/signalingServer');
 
 const NOT_LOGGED_IN_USERS = ['', 'ektahr employee', 'logged out', '—'];
@@ -51,26 +52,48 @@ async function getAllDevices(req, res) {
   }
 }
 
+// Agent upload (every 5 min) -> JPEG file on server disk
 async function postScreenshot(req, res) {
   try {
     const data = req.body || {};
     if (!data.imageBase64 && !data.image) {
       return res.status(400).json({ success: false, error: 'Missing imageBase64 in payload' });
     }
-    console.log('[Screenshot] Received upload for device:', data.deviceId || data.hostname, 'Length:', (data.imageBase64 || '').length);
-    const saved = storeScreenshot(data);
+    const saved = await saveScreenshot({
+      deviceId: data.deviceId,
+      hostname: data.hostname,
+      currentUser: data.currentUser,
+      businessId: data.businessId,
+      timestamp: data.timestamp,
+      idleSeconds: data.idleSeconds,
+      image: data.imageBase64 || data.image
+    });
+    console.log(`[Screenshot] Saved ${saved.businessId}/${saved.deviceId}/${saved.file} (${saved.sizeKB} KB)`);
     res.json({ success: true, screenshot: saved });
   } catch (err) {
-    console.error('[Device] Error storing screenshot:', err);
-    res.status(500).json({ success: false, error: 'Failed to store screenshot' });
+    console.error('[Device] Error storing screenshot:', err.message);
+    res.status(400).json({ success: false, error: 'Failed to store screenshot' });
   }
+}
+
+// Streams a screenshot JPEG from disk (admin's own business only)
+function serveScreenshotFile(req, res) {
+  const { businessId: fileBusinessId, deviceId, day, file } = req.params;
+  const full = resolveScreenshotFile({ businessId: req.user?.businessId, fileBusinessId, deviceId, day, file });
+  if (!full) return res.status(404).json({ error: 'Screenshot not found' });
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.sendFile(full);
 }
 
 async function getScreenshots(req, res) {
   try {
     const deviceId = req.params.deviceId || req.query.deviceId;
-    const businessId = req.user?.businessId || req.query.businessId;
-    const screenshots = await getDeviceScreenshots(deviceId, businessId);
+    const screenshots = listScreenshots({
+      deviceId,
+      businessId: req.user?.businessId,
+      days: req.query.days,
+      limit: req.query.limit
+    });
     res.json({ success: true, screenshots });
   } catch (err) {
     console.error('[Device] Error fetching screenshots:', err);
@@ -92,4 +115,4 @@ async function downloadAgent(req, res) {
   }
 }
 
-module.exports = { getAllDevices, getLanAgents, postScreenshot, getScreenshots, downloadAgent };
+module.exports = { getAllDevices, getLanAgents, postScreenshot, getScreenshots, serveScreenshotFile, downloadAgent };

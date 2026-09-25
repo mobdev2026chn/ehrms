@@ -7,13 +7,16 @@ dotenv.config();
 
 const { connectMongo } = require('./db/mongo');
 const { login, logout, verifyTokenMiddleware, requireAdminRole } = require('./controllers/authController');
-const { getAllDevices, getLanAgents, postScreenshot, getScreenshots, downloadAgent } = require('./controllers/deviceController');
+const { getAllDevices, getLanAgents, postScreenshot, getScreenshots, serveScreenshotFile, downloadAgent } = require('./controllers/deviceController');
+const { startRetentionJob, STORAGE_DIR } = require('./storage/fileStore');
 const { initWebSocketServer } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
 
 // Connect to EktaHR MongoDB
 connectMongo();
 initIdleTracker();
+startRetentionJob();
+console.log(`[Storage] Screenshots & idle logs saved on disk at ${STORAGE_DIR}`);
 
 const { LAN_ONLY, isPrivateIp, lanOnlyHttp } = require('./lanGuard');
 
@@ -67,8 +70,13 @@ const path = require('path');
 // Screenshot API
 app.post('/api/v1/device/screenshot', postScreenshot);
 app.post('/api/device/screenshot', postScreenshot);
-app.get('/api/v1/devices/:deviceId/screenshots', getScreenshots);
-app.get('/api/devices/:deviceId/screenshots', getScreenshots);
+app.get('/api/v1/devices/:deviceId/screenshots', verifyTokenMiddleware, requireAdminRole, getScreenshots);
+app.get('/api/devices/:deviceId/screenshots', verifyTokenMiddleware, requireAdminRole, getScreenshots);
+// Screenshot image files live on disk; <img> tags can't send headers, so ?token= is accepted here
+app.get('/api/v1/screenshots/file/:businessId/:deviceId/:day/:file', (req, res, next) => {
+  if (!req.headers.authorization && req.query.token) req.headers.authorization = `Bearer ${req.query.token}`;
+  next();
+}, verifyTokenMiddleware, requireAdminRole, serveScreenshotFile);
 
 // Serve Agents (.exe download endpoint)
 const agentsPath = path.join(__dirname, '../../agent/publish');

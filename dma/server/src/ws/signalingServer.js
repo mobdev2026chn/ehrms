@@ -3,7 +3,8 @@ const url = require('url');
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { registerOrUpdateDevice, markDeviceOffline, getDevicesList, storeScreenshot } = require('../db/mongo');
+const { registerOrUpdateDevice, markDeviceOffline, getDevicesList } = require('../db/mongo');
+const { saveScreenshot } = require('../storage/fileStore');
 const idleTracker = require('../db/idleTracker');
 const { allowLanUpgrade } = require('../lanGuard');
 
@@ -196,20 +197,18 @@ function handleAgentConnection(ws, query, request) {
     const isJpegFrame = isBuffer && (message.length > 200 || (message[0] === 0xFF && message[1] === 0xD8));
 
     if (isJpegFrame) {
+      // While an admin is watching, keep one frame per minute on disk (owner known from heartbeats)
       const now = Date.now();
-      if (!ws.lastSnapTs || (now - ws.lastSnapTs > 10000)) {
+      if (ws.businessId && ws.currentUser && (!ws.lastSnapTs || (now - ws.lastSnapTs > 60000))) {
         ws.lastSnapTs = now;
-        try {
-          const base64Str = 'data:image/jpeg;base64,' + message.toString('base64');
-          storeScreenshot({
-            deviceId: ws.deviceId,
-            hostname: ws.hostname,
-            currentUser: ws.currentUser || 'EktaHR Employee',
-            businessId: ws.businessId || 'default',
-            timestamp: new Date().toISOString(),
-            imageBase64: base64Str
-          });
-        } catch (e) {}
+        saveScreenshot({
+          deviceId: ws.deviceId,
+          hostname: ws.hostname,
+          currentUser: ws.currentUser,
+          businessId: ws.businessId,
+          timestamp: new Date().toISOString(),
+          image: message
+        }).catch(e => console.error('[Screenshot] Failed to save stream frame:', e.message));
       }
 
       const targetViewers = await getViewerSocketsForAgentAsync(ws);
@@ -232,6 +231,9 @@ function handleAgentConnection(ws, query, request) {
             ipAddress: clientIp
           });
           disconnectOldDeviceIfLoggedElsewhere(hbDev);
+
+          if (data.currentUser) ws.currentUser = data.currentUser;
+          if (data.businessId || query.businessId) ws.businessId = data.businessId || query.businessId;
 
           idleTracker.trackStatus(deviceId, {
             status: data.status || (data.isPaused ? 'PAUSED' : 'ONLINE'),

@@ -115,3 +115,6 @@ frontend/
 
 backend/
 >>>>>>> development
+
+# DMA server monitoring data (screenshots, idle logs)
+dma/server/storage/

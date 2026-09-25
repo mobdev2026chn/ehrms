@@ -1,67 +1,45 @@
-const mongoose = require('mongoose');
+const { appendIdleLog, readIdleLogs, saveOpenIdlePeriods, loadOpenIdlePeriods, dayKey } = require('../storage/fileStore');
 
-// Persists every idle period (agent status IDLE -> anything else) to 'dma_idle_logs' in DEV_HRMS.
-// One document per idle period: { deviceId, hostname, userEmail, businessId, startAt, endAt, durationSec, endReason }
-const COLLECTION = 'dma_idle_logs';
-const LAST_SEEN_PERSIST_MS = 60 * 1000;
+// Persists every idle period (agent status IDLE -> anything else) to disk (storage/idle-logs), not MongoDB.
+// One JSON line per idle period: { deviceId, hostname, userEmail, businessId, startAt, endAt, durationSec, endReason }
+const LAST_SEEN_CHECKPOINT_MS = 60 * 1000;
 
-// deviceId -> { docId (Promise<ObjectId|null>), lastPersistTs }
+// deviceId -> open idle period
 const openIdle = new Map();
-
-function idleCol() {
-  if (mongoose.connection.readyState !== 1) return null;
-  return mongoose.connection.useDb('DEV_HRMS').collection(COLLECTION);
-}
+let lastCheckpointTs = 0;
 
 function isValidUser(email) {
   const clean = (email || '').trim().toLowerCase();
   return clean && clean !== 'ektahr employee' && clean !== 'logged out' && clean !== '—';
 }
 
-async function openIdlePeriod(deviceId, info) {
-  const col = idleCol();
-  if (!col) return null;
-
-  const now = Date.now();
-  const idleSeconds = Number(info.idleSeconds) || 0;
-  // Agent flags IDLE only after 300s without input, so the idle period actually began idleSeconds ago
-  const startAt = new Date(now - idleSeconds * 1000);
-
-  const res = await col.insertOne({
-    deviceId,
-    hostname: info.hostname || deviceId,
-    userEmail: (info.currentUser || '').trim().toLowerCase(),
-    businessId: info.businessId || 'default',
-    startAt,
-    endAt: null,
-    durationSec: null,
-    lastSeenAt: new Date(now),
-    createdAt: new Date(now)
-  });
-  console.log(`[IdleLog] ${deviceId} (${info.currentUser}) went IDLE since ${startAt.toISOString()}`);
-  return res.insertedId;
+function checkpoint() {
+  lastCheckpointTs = Date.now();
+  saveOpenIdlePeriods(openIdle);
 }
 
 async function closeIdlePeriod(deviceId, reason, endAt = new Date()) {
-  const entry = openIdle.get(deviceId);
-  if (!entry) return;
+  const period = openIdle.get(deviceId);
+  if (!period) return;
   openIdle.delete(deviceId);
+  checkpoint();
 
+  const startAt = new Date(period.startAt);
+  const durationSec = Math.max(0, Math.round((endAt - startAt) / 1000));
   try {
-    const docId = await entry.docId;
-    const col = idleCol();
-    if (!docId || !col) return;
-
-    const doc = await col.findOne({ _id: docId }, { projection: { startAt: 1 } });
-    if (!doc) return;
-    const durationSec = Math.max(0, Math.round((endAt - doc.startAt) / 1000));
-
-    await col.updateOne({ _id: docId }, {
-      $set: { endAt, durationSec, endReason: reason, lastSeenAt: endAt }
+    await appendIdleLog({
+      deviceId: period.deviceId,
+      hostname: period.hostname,
+      userEmail: period.userEmail,
+      businessId: period.businessId,
+      startAt: startAt.toISOString(),
+      endAt: new Date(endAt).toISOString(),
+      durationSec,
+      endReason: reason
     });
     console.log(`[IdleLog] ${deviceId} idle period closed (${reason}), duration ${durationSec}s`);
   } catch (err) {
-    console.error('[IdleLog] Error closing idle period:', err.message);
+    console.error('[IdleLog] Error saving idle period:', err.message);
   }
 }
 
@@ -69,25 +47,29 @@ async function closeIdlePeriod(deviceId, reason, endAt = new Date()) {
 function trackStatus(deviceId, info) {
   if (!deviceId || !info) return;
   const status = (info.status || '').toUpperCase();
-  const entry = openIdle.get(deviceId);
+  const period = openIdle.get(deviceId);
 
   if (status === 'IDLE') {
-    if (!entry) {
+    if (!period) {
       if (!isValidUser(info.currentUser)) return;
-      const docId = openIdlePeriod(deviceId, info).catch(err => {
-        console.error('[IdleLog] Error opening idle period:', err.message);
-        return null;
+      const now = Date.now();
+      // Agent flags IDLE only after 300s without input, so the idle period actually began idleSeconds ago
+      const startAt = new Date(now - (Number(info.idleSeconds) || 0) * 1000);
+      openIdle.set(deviceId, {
+        deviceId,
+        hostname: info.hostname || deviceId,
+        userEmail: (info.currentUser || '').trim().toLowerCase(),
+        businessId: info.businessId || 'default',
+        startAt: startAt.toISOString(),
+        lastSeenAt: new Date(now).toISOString()
       });
-      openIdle.set(deviceId, { docId, lastPersistTs: Date.now() });
-    } else if (Date.now() - entry.lastPersistTs > LAST_SEEN_PERSIST_MS) {
-      // Keep lastSeenAt fresh so a server crash can still close the period at a sensible time
-      entry.lastPersistTs = Date.now();
-      entry.docId.then(docId => {
-        const col = idleCol();
-        if (docId && col) col.updateOne({ _id: docId }, { $set: { lastSeenAt: new Date() } }).catch(() => {});
-      });
+      checkpoint();
+      console.log(`[IdleLog] ${deviceId} (${info.currentUser}) went IDLE since ${startAt.toISOString()}`);
+    } else {
+      period.lastSeenAt = new Date().toISOString();
+      if (Date.now() - lastCheckpointTs > LAST_SEEN_CHECKPOINT_MS) checkpoint();
     }
-  } else if (entry) {
+  } else if (period) {
     closeIdlePeriod(deviceId, `status_${status.toLowerCase() || 'unknown'}`);
   }
 }
@@ -97,31 +79,20 @@ function closeForDevice(deviceId, reason) {
 }
 
 // On startup, close idle periods left open by a previous server run at their last known heartbeat
-async function closeStaleOpenPeriods() {
-  const col = idleCol();
-  if (!col) return;
-  try {
-    await col.createIndex({ businessId: 1, userEmail: 1, startAt: -1 });
-    await col.createIndex({ deviceId: 1, endAt: 1 });
-
-    const res = await col.updateMany({ endAt: null }, [
-      {
-        $set: {
-          endAt: '$lastSeenAt',
-          durationSec: { $max: [0, { $round: [{ $divide: [{ $subtract: ['$lastSeenAt', '$startAt'] }, 1000] }, 0] }] },
-          endReason: 'server_restart'
-        }
-      }
-    ]);
-    if (res.modifiedCount) console.log(`[IdleLog] Closed ${res.modifiedCount} stale idle period(s) from previous run`);
-  } catch (err) {
-    console.error('[IdleLog] Error closing stale idle periods:', err.message);
+async function initIdleTracker() {
+  const stale = loadOpenIdlePeriods();
+  const ids = Object.keys(stale);
+  for (const id of ids) {
+    openIdle.set(id, stale[id]);
+    await closeIdlePeriod(id, 'server_restart', new Date(stale[id].lastSeenAt || stale[id].startAt));
   }
+  if (ids.length) console.log(`[IdleLog] Closed ${ids.length} stale idle period(s) from previous run`);
 }
 
-function initIdleTracker() {
-  if (mongoose.connection.readyState === 1) closeStaleOpenPeriods();
-  else mongoose.connection.once('open', closeStaleOpenPeriods);
+function openPeriodsFor(businessId, isSuper) {
+  return [...openIdle.values()]
+    .filter(p => isSuper || p.businessId === businessId)
+    .map(p => ({ ...p, endAt: null, durationSec: null, open: true }));
 }
 
 function isSuperAdminScope(businessId) {
@@ -129,67 +100,48 @@ function isSuperAdminScope(businessId) {
 }
 
 async function getIdleLogs({ businessId, userEmail, deviceId, from, to, limit = 500 }) {
-  const col = idleCol();
-  if (!col) return [];
+  const isSuper = isSuperAdminScope(businessId);
+  const fromDate = from ? new Date(from) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const toDate = to ? new Date(to) : new Date();
 
-  const filter = {};
-  if (!isSuperAdminScope(businessId)) filter.businessId = businessId;
-  if (userEmail) filter.userEmail = userEmail.trim().toLowerCase();
-  if (deviceId) filter.deviceId = deviceId;
-  if (from || to) {
-    filter.startAt = {};
-    if (from) filter.startAt.$gte = new Date(from);
-    if (to) filter.startAt.$lte = new Date(to);
-  }
+  let logs = [
+    ...readIdleLogs({ businessId, fromDay: dayKey(fromDate), toDay: dayKey(toDate) }),
+    ...openPeriodsFor(businessId, isSuper)
+  ];
 
-  return col.find(filter, { projection: { lastSeenAt: 0 } })
-    .sort({ startAt: -1 })
-    .limit(Math.min(Number(limit) || 500, 5000))
-    .toArray();
+  const email = userEmail ? userEmail.trim().toLowerCase() : null;
+  logs = logs.filter(l =>
+    (!email || l.userEmail === email) &&
+    (!deviceId || l.deviceId === deviceId) &&
+    new Date(l.startAt) >= fromDate &&
+    new Date(l.startAt) <= toDate
+  );
+
+  logs.sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
+  return logs.slice(0, Math.min(Number(limit) || 500, 5000));
 }
 
 // Total idle time per user for one day (open periods are counted up to now)
-async function getDailyIdleSummary({ businessId, date, tz = 'Asia/Kolkata' }) {
-  const col = idleCol();
-  if (!col) return [];
+async function getDailyIdleSummary({ businessId, date }) {
+  const isSuper = isSuperAdminScope(businessId);
+  const logs = [
+    ...readIdleLogs({ businessId, fromDay: date, toDay: date }),
+    ...openPeriodsFor(businessId, isSuper).filter(p => dayKey(p.startAt) === date)
+  ];
 
-  const match = {};
-  if (!isSuperAdminScope(businessId)) match.businessId = businessId;
+  const byUser = new Map();
+  for (const l of logs) {
+    const sec = l.durationSec != null ? l.durationSec : Math.round((Date.now() - new Date(l.startAt)) / 1000);
+    const key = `${l.userEmail}|${l.businessId}`;
+    const row = byUser.get(key) || { userEmail: l.userEmail, businessId: l.businessId, date, totalIdleSec: 0, idleCount: 0, longestIdleSec: 0, devices: [] };
+    row.totalIdleSec += sec;
+    row.idleCount += 1;
+    row.longestIdleSec = Math.max(row.longestIdleSec, sec);
+    if (l.hostname && !row.devices.includes(l.hostname)) row.devices.push(l.hostname);
+    byUser.set(key, row);
+  }
 
-  return col.aggregate([
-    { $match: match },
-    { $addFields: { day: { $dateToString: { format: '%Y-%m-%d', date: '$startAt', timezone: tz } } } },
-    { $match: { day: date } },
-    {
-      $addFields: {
-        effectiveSec: {
-          $ifNull: ['$durationSec', { $round: [{ $divide: [{ $subtract: ['$$NOW', '$startAt'] }, 1000] }, 0] }]
-        }
-      }
-    },
-    {
-      $group: {
-        _id: { userEmail: '$userEmail', businessId: '$businessId' },
-        totalIdleSec: { $sum: '$effectiveSec' },
-        idleCount: { $sum: 1 },
-        longestIdleSec: { $max: '$effectiveSec' },
-        devices: { $addToSet: '$hostname' }
-      }
-    },
-    {
-      $project: {
-        _id: 0,
-        userEmail: '$_id.userEmail',
-        businessId: '$_id.businessId',
-        date,
-        totalIdleSec: 1,
-        idleCount: 1,
-        longestIdleSec: 1,
-        devices: 1
-      }
-    },
-    { $sort: { totalIdleSec: -1 } }
-  ]).toArray();
+  return [...byUser.values()].sort((a, b) => b.totalIdleSec - a.totalIdleSec);
 }
 
 module.exports = { initIdleTracker, trackStatus, closeForDevice, getIdleLogs, getDailyIdleSummary };

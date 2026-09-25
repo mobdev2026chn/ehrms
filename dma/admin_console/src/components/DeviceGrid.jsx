@@ -2,6 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { Monitor, Eye, MousePointer, User, Wifi, RefreshCw, LayoutGrid, List, Search, Camera, X, Download } from 'lucide-react';
 import { getServerBaseUrl } from '../config';
 
+
+// Screenshots are JPEG files on the DMA server; <img> can't send headers, so the admin token rides in the URL
+const screenshotSrc = (ss) => {
+  if (ss.imageUrl) {
+    const token = localStorage.getItem('ektahr_token') || '';
+    return `${getServerBaseUrl()}${ss.imageUrl}?token=${encodeURIComponent(token)}`;
+  }
+  return ss.imageBase64 || ss.secureUrl;
+};
+
 const ConnectedBadge = () => (
   <span style={{
     display: 'inline-flex',
@@ -620,7 +630,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
                   {screenshots.map((ss) => (
                     <div
                       key={ss.id || ss._id}
-                      onClick={() => setPreviewImage(ss.imageBase64 || ss.secureUrl)}
+                      onClick={() => setPreviewImage(screenshotSrc(ss))}
                       style={{
                         border: '1px solid #e2e8f0',
                         borderRadius: '10px',
@@ -633,7 +643,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
                       onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none'; }}
                     >
                       <img
-                        src={ss.imageBase64 || ss.secureUrl}
+                        src={screenshotSrc(ss)}
                         alt="Desktop Screenshot"
                         style={{ width: '100%', height: '145px', objectFit: 'cover', display: 'block' }}
                       />
