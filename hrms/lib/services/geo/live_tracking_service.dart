@@ -44,6 +44,13 @@ class LiveTrackingService {
   static const _keyLastResolvedArea = 'live_tracking_last_resolved_area';
   static const _keyLastResolvedPincode =
       'live_tracking_last_resolved_pincode';
+  static const _keyLastResolvedAtMs = 'live_tracking_last_resolved_at_ms';
+
+  /// A tracking point reuses the last address until the staff member has moved
+  /// this far AND this much time has passed. The address is only a label on the
+  /// point; looking it up every few seconds was the bulk of the geocoding bill.
+  static const double trackingAddressMinMoveM = 250;
+  static const Duration trackingAddressMinInterval = Duration(minutes: 2);
   /// Wall-clock start of the current live trip (for UI "Elapsed"; survives sleep / restart).
   static const _keyTripStartMs = 'live_tracking_trip_start_ms';
   static const double duplicateLocationThresholdMeters = 10;
@@ -336,10 +343,6 @@ class LiveTrackingService {
     }
     score += ','.allMatches(formatted).length.clamp(0, 3);
     return score;
-  }
-
-  static bool _hasDetailedAddress(Map<String, String?> address) {
-    return _addressDetailScore(address) >= 5;
   }
 
   /// Check if live tracking is active.
@@ -649,12 +652,16 @@ class LiveTrackingService {
         lat,
         lng,
       );
-      if (distance <= 30 && _hasDetailedAddress(cached)) {
+      final lastAtMs = prefs.getInt(_keyLastResolvedAtMs) ?? 0;
+      final sinceLast = DateTime.now().millisecondsSinceEpoch - lastAtMs;
+      if (distance < trackingAddressMinMoveM ||
+          sinceLast < trackingAddressMinInterval.inMilliseconds) {
         return cached;
       }
     }
 
-    final resolved = await AddressResolutionService.reverseGeocodeWithGoogle(
+    // Phone's own geocoder (free), not Google Geocoding.
+    final resolved = await AddressResolutionService.reverseGeocodeForTracking(
       lat,
       lng,
     );
@@ -669,6 +676,10 @@ class LiveTrackingService {
       if (_addressDetailScore(cached) > _addressDetailScore(fresh)) {
         return cached;
       }
+      await prefs.setInt(
+        _keyLastResolvedAtMs,
+        DateTime.now().millisecondsSinceEpoch,
+      );
       await persistResolvedAddress(
         lat,
         lng,

@@ -1347,7 +1347,7 @@ class PresenceTrackingService {
     try {
       batteryPercent = await Battery().batteryLevel;
     } catch (_) {}
-    final resolvedAddress = await AddressResolutionService.reverseGeocode(
+    final resolvedAddress = await AddressResolutionService.reverseGeocodeForTracking(
       lat,
       lng,
     );
@@ -1490,7 +1490,7 @@ class PresenceTrackingService {
       try {
         batteryPercent = await Battery().batteryLevel;
       } catch (_) {}
-      final resolvedAddress = await AddressResolutionService.reverseGeocode(
+      final resolvedAddress = await AddressResolutionService.reverseGeocodeForTracking(
         position.latitude,
         position.longitude,
       );
@@ -1566,7 +1566,7 @@ class PresenceTrackingService {
       try {
         batteryPercent = await Battery().batteryLevel;
       } catch (_) {}
-      final resolvedAddress = await AddressResolutionService.reverseGeocode(
+      final resolvedAddress = await AddressResolutionService.reverseGeocodeForTracking(
         position.latitude,
         position.longitude,
       );

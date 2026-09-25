@@ -79,13 +79,19 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   /// Path built ONLY from actual GPS coordinates (List<LatLng> from location stream).
   Polyline? _routePolyline;
   bool _syncingTrail = false;
+  DateTime? _lastResolvedTrackingAt;
 
   /// Road route from current/last position to destination (fetched from Directions API).
   Polyline? _shortestRoutePolyline;
   double _plannedTripDistanceKm = 0.0;
   double _remainingDistanceKm = 0.0;
   DateTime? _lastRouteFetchTime;
-  static const _routeRefreshInterval = Duration(seconds: 60);
+  LatLng? _lastRouteFetchFrom;
+  // Directions is billed per call: refresh 'shortest remaining' only when both
+  // enough time has passed and the staff member has really moved. Clearing
+  // _lastRouteFetchTime (destination changed) forces the next fetch.
+  static const _routeRefreshInterval = Duration(minutes: 3);
+  static const double _routeRefreshMinMoveM = 500;
   String? _etaText;
   int _etaMinutes = 0;
   Timer? _etaUpdateTimer;
@@ -539,12 +545,20 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         lat,
         lng,
       );
-      if (distance <= 30 && _hasDetailedTrackingAddress(cached)) {
+      final since = _lastResolvedTrackingAt == null
+          ? null
+          : DateTime.now().difference(_lastResolvedTrackingAt!);
+      // Reuse the last address until moved 250 m AND 2 min passed: the address is
+      // only a label on the tracking point, and lookups were the geocoding bill.
+      if (distance < LiveTrackingService.trackingAddressMinMoveM ||
+          (since != null && since < LiveTrackingService.trackingAddressMinInterval)) {
         return cached;
       }
     }
 
-    final resolved = await AddressResolutionService.reverseGeocode(lat, lng);
+    // Phone's own geocoder (free), not Google Geocoding.
+    final resolved = await AddressResolutionService.reverseGeocodeForTracking(lat, lng);
+    _lastResolvedTrackingAt = DateTime.now();
     final resolvedScore = _addressDetailScore(resolved);
     final cachedScore = _addressDetailScore(cached);
     final bestResolved = cachedScore > resolvedScore && cached != null
@@ -811,11 +825,21 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   Future<void> _fetchRoadRoute(double fromLat, double fromLng) async {
     final now = DateTime.now();
-    if (_lastRouteFetchTime != null &&
-        now.difference(_lastRouteFetchTime!) < _routeRefreshInterval) {
-      return;
+    final lastFrom = _lastRouteFetchFrom;
+    if (_lastRouteFetchTime != null) {
+      final tooSoon = now.difference(_lastRouteFetchTime!) < _routeRefreshInterval;
+      final notMoved = lastFrom != null &&
+          gl.Geolocator.distanceBetween(
+                lastFrom.latitude,
+                lastFrom.longitude,
+                fromLat,
+                fromLng,
+              ) <
+              _routeRefreshMinMoveM;
+      if (tooSoon || notMoved) return;
     }
     _lastRouteFetchTime = now;
+    _lastRouteFetchFrom = LatLng(fromLat, fromLng);
     try {
       final result = await DirectionsService.getRouteBetweenCoordinates(
         originLat: fromLat,
@@ -1015,7 +1039,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     if (state == AppLifecycleState.resumed && mounted) {
       // Pick up the route travelled while the app was in the background.
       unawaited(_syncFromSavedTrail());
-      _lastRouteFetchTime = null;
       final fromLat = _lastLocation?.latitude ?? widget.pickupLocation.latitude;
       final fromLng =
           _lastLocation?.longitude ?? widget.pickupLocation.longitude;

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
@@ -5,6 +7,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart' as gl;
 import 'package:hrms/config/constants.dart';
 import 'package:hrms/services/api_client.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Address resolved for the given coordinates. When [fromGoogleApi] is true,
 /// [formattedAddress] is Google’s formatted address for that lat/lng — this is
@@ -208,9 +211,109 @@ class AddressResolutionService {
     return reverseGeocodeForUi(lat, lng);
   }
 
+  /// Address for a GPS tracking point, from the phone's own (free) geocoder —
+  /// never the billed Google Geocoding API. Tracking points only carry the
+  /// address as a label, so per-point Google lookups were pure cost.
+  static Future<ResolvedAddress?> reverseGeocodeForTracking(
+    double lat,
+    double lng,
+  ) async {
+    final cached = await _cacheGet(lat, lng);
+    if (cached != null) return cached;
+    try {
+      final r = await _reverseGeocodeWithPlacemark(lat, lng)
+          .timeout(const Duration(seconds: 3));
+      if (r != null) await _cachePut(lat, lng, r);
+      return r;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Address cache ───────────────────────────────────────────────────────────
+  // Addresses don't change, and staff hit the same places daily (office, customer
+  // sites). Coordinates are rounded to 4 decimals (~11 m) and kept on the phone,
+  // so each spot is looked up once instead of on every punch/visit.
+  static const String _cachePrefix = 'geo_addr_v1:';
+  static const String _cacheIndexKey = 'geo_addr_v1_index';
+  static const int _cacheMax = 400;
+  static final Map<String, ResolvedAddress> _mem = {};
+
+  static String _cacheKey(double lat, double lng) =>
+      '${lat.toStringAsFixed(4)},${lng.toStringAsFixed(4)}';
+
+  static Future<ResolvedAddress?> _cacheGet(double lat, double lng) async {
+    final k = _cacheKey(lat, lng);
+    final hit = _mem[k];
+    if (hit != null) return hit;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_cachePrefix$k');
+      if (raw == null) return null;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final r = ResolvedAddress(
+        formattedAddress: m['f'] as String,
+        area: m['a'] as String?,
+        city: m['c'] as String?,
+        pincode: m['p'] as String?,
+        state: m['s'] as String?,
+        country: m['n'] as String?,
+        fromGoogleApi: m['g'] == true,
+      );
+      _mem[k] = r;
+      return r;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _cachePut(double lat, double lng, ResolvedAddress r) async {
+    final k = _cacheKey(lat, lng);
+    _mem[k] = r;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        '$_cachePrefix$k',
+        jsonEncode({
+          'f': r.formattedAddress,
+          'a': r.area,
+          'c': r.city,
+          'p': r.pincode,
+          's': r.state,
+          'n': r.country,
+          'g': r.fromGoogleApi,
+        }),
+      );
+      final index = prefs.getStringList(_cacheIndexKey) ?? <String>[];
+      index.remove(k);
+      index.add(k);
+      while (index.length > _cacheMax) {
+        await prefs.remove('$_cachePrefix${index.removeAt(0)}');
+      }
+      await prefs.setStringList(_cacheIndexKey, index);
+    } catch (_) {}
+  }
+
   /// Google Geocoding API only. Use when you must send the same address the user
   /// sees from Google to the backend. Returns null if the key is invalid / API error.
+  /// Answers from the on-device cache first; only a new spot is sent to Google.
   static Future<ResolvedAddress?> reverseGeocodeWithGoogle(
+    double lat,
+    double lng, {
+    Duration receiveTimeout = const Duration(seconds: 4),
+  }) async {
+    final cached = await _cacheGet(lat, lng);
+    if (cached != null && cached.fromGoogleApi) return cached;
+    final fresh = await _reverseGeocodeWithGoogleUncached(
+      lat,
+      lng,
+      receiveTimeout: receiveTimeout,
+    );
+    if (fresh != null) await _cachePut(lat, lng, fresh);
+    return fresh;
+  }
+
+  static Future<ResolvedAddress?> _reverseGeocodeWithGoogleUncached(
     double lat,
     double lng, {
     Duration receiveTimeout = const Duration(seconds: 4),
