@@ -62,7 +62,7 @@ A dedicated, high-performance, LAN-only Live Desktop Streaming & Remote Access s
 - Admins open the console at `http://<server-lan-ip>:2005`.
 - Rebuild the agent (no .NET SDK needed):
   ```bash
-  C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -target:winexe -win32icon:ektaHr.ico -r:System.Windows.Forms.dll -r:System.Drawing.dll -out:publish/EktaHR-Agent.exe AgentSingle.cs
+  C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -target:winexe -win32icon:ektaHr.ico -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll -out:publish/EktaHR-Agent.exe AgentSingle.cs
   ```
 
 ## 🚀 How to Run

@@ -399,52 +399,107 @@ namespace EktaDMAAgent
             catch { }
         }
 
-        public static string GetLocalIPAddress()
+        // Active IPv4 adapters, best first: real adapters with a default gateway (Wi-Fi / Ethernet) before
+        // virtual ones (VirtualBox, Hyper-V, VPN, Docker, WSL) that would make discovery scan the wrong subnet
+        public static List<KeyValuePair<IPAddress, IPAddress>> GetLocalIPv4Adapters()
         {
+            var ranked = new List<KeyValuePair<int, KeyValuePair<IPAddress, IPAddress>>>();
             try
             {
-                var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
-                foreach (var ip in host.AddressList)
+                foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
                 {
-                    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                    if (nic.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback ||
+                        nic.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Tunnel) continue;
+
+                    var props = nic.GetIPProperties();
+                    bool hasGateway = false;
+                    foreach (var gw in props.GatewayAddresses)
                     {
-                        return ip.ToString();
+                        if (gw.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !gw.Address.Equals(IPAddress.Any)) hasGateway = true;
+                    }
+                    string desc = (nic.Name + " " + nic.Description).ToLower();
+                    bool isVirtual = desc.Contains("virtual") || desc.Contains("vmware") || desc.Contains("hyper-v") || desc.Contains("vethernet") ||
+                                     desc.Contains("docker") || desc.Contains("wsl") || desc.Contains("vpn") || desc.Contains("tap-") || desc.Contains("loopback");
+
+                    foreach (var ua in props.UnicastAddresses)
+                    {
+                        if (ua.Address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                        if (!IsPrivateIp(ua.Address) || IPAddress.IsLoopback(ua.Address)) continue;
+                        byte[] b = ua.Address.GetAddressBytes();
+                        if (b[0] == 169 && b[1] == 254) continue; // no DHCP lease
+                        IPAddress mask = ua.IPv4Mask ?? IPAddress.Parse("255.255.255.0");
+                        int score = (hasGateway ? 2 : 0) + (isVirtual ? 0 : 1);
+                        ranked.Add(new KeyValuePair<int, KeyValuePair<IPAddress, IPAddress>>(score, new KeyValuePair<IPAddress, IPAddress>(ua.Address, mask)));
                     }
                 }
             }
             catch { }
+            // Stable sort: best score first, original adapter order kept within a score
+            var result = new List<KeyValuePair<IPAddress, IPAddress>>();
+            for (int score = 3; score >= 0; score--)
+            {
+                foreach (var r in ranked) if (r.Key == score) result.Add(r.Value);
+            }
+            return result;
+        }
+
+        public static string GetLocalIPAddress()
+        {
+            var adapters = GetLocalIPv4Adapters();
+            if (adapters.Count > 0) return adapters[0].Key.ToString();
             return "127.0.0.1";
         }
 
+        // Broadcasts EKTA_DISCOVER on every active adapter (directed + limited broadcast), first server reply wins
         private static string DiscoverViaUdpBroadcast()
         {
+            var adapters = GetLocalIPv4Adapters();
+            var sockets = new List<System.Net.Sockets.UdpClient>();
+            byte[] reqBytes = System.Text.Encoding.UTF8.GetBytes("EKTA_DISCOVER");
             try
             {
-                using (var client = new System.Net.Sockets.UdpClient())
+                foreach (var ad in adapters)
                 {
-                    client.EnableBroadcast = true;
-                    client.Client.ReceiveTimeout = 400;
-                    byte[] reqBytes = System.Text.Encoding.UTF8.GetBytes("EKTA_DISCOVER");
-                    var targetEp = new System.Net.IPEndPoint(System.Net.IPAddress.Broadcast, 9002);
-                    client.Send(reqBytes, reqBytes.Length, targetEp);
-
-                    var remoteEp = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
-                    byte[] respBytes = client.Receive(ref remoteEp);
-                    string respStr = System.Text.Encoding.UTF8.GetString(respBytes).Trim();
-
-                    if (respStr.StartsWith("EKTA_SERVER:"))
+                    try
                     {
-                        string portStr = respStr.Replace("EKTA_SERVER:", "").Trim();
-                        string serverIp = remoteEp.Address.ToString();
-                        return "http://" + serverIp + ":" + (string.IsNullOrEmpty(portStr) ? "2005" : portStr);
+                        var client = new System.Net.Sockets.UdpClient(new IPEndPoint(ad.Key, 0));
+                        client.EnableBroadcast = true;
+                        byte[] ip = ad.Key.GetAddressBytes(), mask = ad.Value.GetAddressBytes(), bcast = new byte[4];
+                        for (int i = 0; i < 4; i++) bcast[i] = (byte)(ip[i] | (~mask[i] & 0xFF));
+                        client.Send(reqBytes, reqBytes.Length, new IPEndPoint(new IPAddress(bcast), 9002));
+                        client.Send(reqBytes, reqBytes.Length, new IPEndPoint(IPAddress.Broadcast, 9002));
+                        sockets.Add(client);
                     }
+                    catch { }
+                }
+
+                DateTime deadline = DateTime.Now.AddMilliseconds(900);
+                while (DateTime.Now < deadline && sockets.Count > 0)
+                {
+                    foreach (var client in sockets)
+                    {
+                        if (client.Available <= 0) continue;
+                        var remoteEp = new IPEndPoint(IPAddress.Any, 0);
+                        string respStr = System.Text.Encoding.UTF8.GetString(client.Receive(ref remoteEp)).Trim();
+                        if (respStr.StartsWith("EKTA_SERVER:"))
+                        {
+                            string portStr = respStr.Replace("EKTA_SERVER:", "").Trim();
+                            return "http://" + remoteEp.Address.ToString() + ":" + (string.IsNullOrEmpty(portStr) ? "2005" : portStr);
+                        }
+                    }
+                    Thread.Sleep(30);
                 }
             }
             catch { }
+            finally
+            {
+                foreach (var c in sockets) { try { c.Close(); } catch { } }
+            }
             return null;
         }
 
-        private static bool PingHealthEndpointFast(string url)
+        public static bool PingHealthEndpointFast(string url)
         {
             if (string.IsNullOrEmpty(url) || !IsLanUrl(url)) return false;
             try
@@ -516,13 +571,17 @@ namespace EktaDMAAgent
                 if (PingHealthEndpointFast(candidate)) return candidate;
             }
 
-            // 3. High-speed parallel LAN Subnet Auto-Scanner
-            if (!string.IsNullOrEmpty(localIp) && localIp.Contains("."))
+            // 3. High-speed parallel LAN Subnet Auto-Scanner - every active adapter's /24, best adapter first
+            var scanned = new List<string>();
+            foreach (var ad in GetLocalIPv4Adapters())
             {
-                string subnetPrefix = localIp.Substring(0, localIp.LastIndexOf('.') + 1);
+                string ipStr = ad.Key.ToString();
+                string subnetPrefix = ipStr.Substring(0, ipStr.LastIndexOf('.') + 1);
+                if (scanned.Contains(subnetPrefix) || scanned.Count >= 3) continue;
+                scanned.Add(subnetPrefix);
+
                 string foundUrl = null;
                 object lockObj = new object();
-
                 System.Threading.Tasks.Parallel.For(1, 255, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = 100 }, i =>
                 {
                     if (foundUrl != null) return;
@@ -630,7 +689,7 @@ namespace EktaDMAAgent
             if (string.IsNullOrEmpty(errorMsg) || errorMsg.StartsWith("Unable to connect"))
             {
                 errorMsg = string.IsNullOrEmpty(ServerHttpUrl)
-                    ? "No EktaHR server found on this LAN. Make sure you are on the office network, or put the server IP in domain.txt next to the agent."
+                    ? "No EktaHR server found on this LAN."
                     : "Unable to connect to LAN server at " + ServerHttpUrl;
             }
             return false;
@@ -2587,6 +2646,14 @@ namespace EktaDMAAgent
             string err;
             bool ok = Program.ValidateAndRegister(email, pass, "", out displayName, out err);
 
+            // Server not discoverable (different subnet, Wi-Fi isolation, broadcast blocked): ask for its IP once
+            if (!ok && string.IsNullOrEmpty(Program.ServerHttpUrl) && AskForServerAddress())
+            {
+                lblLoginError.Text = "Signing in...";
+                Application.DoEvents();
+                ok = Program.ValidateAndRegister(email, pass, "", out displayName, out err);
+            }
+
             if (!ok)
             {
                 lblLoginError.Text = err;
@@ -2598,6 +2665,36 @@ namespace EktaDMAAgent
 
             SwitchToView("HOME");
             trayIcon.Text = "ektaHr Agent - Active (" + displayName + ")";
+        }
+
+        // Prompts for the DMA server IP, verifies it on the LAN and saves it to domain.txt for future logins
+        private bool AskForServerAddress()
+        {
+            while (true)
+            {
+                string input = Microsoft.VisualBasic.Interaction.InputBox(
+                    "EktaHR server was not found automatically on this network.\n\n" +
+                    "Enter the EktaHR DMA server IP address (ask your admin), e.g. 192.168.0.25",
+                    "ektaHr - Server Address", "");
+                if (string.IsNullOrWhiteSpace(input)) return false;
+
+                string url = Program.NormalizeLanServerUrl(input);
+                if (!Program.IsLanUrl(url))
+                {
+                    MessageBox.Show("Only office LAN addresses are allowed (e.g. 192.168.x.x or 10.x.x.x).", "ektaHr", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    continue;
+                }
+                if (!Program.PingHealthEndpointFast(url))
+                {
+                    MessageBox.Show("Cannot reach the EktaHR server at " + url + ".\n\nCheck the IP, and that this PC and the server are on the same office network.", "ektaHr", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    continue;
+                }
+
+                try { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "domain.txt"), input.Trim()); } catch { }
+                Program.ServerHttpUrl = url;
+                Program.ServerWsUrl = Program.ToWsUrl(url);
+                return true;
+            }
         }
 
         private void BtnLogout_Click(object sender, EventArgs e)
