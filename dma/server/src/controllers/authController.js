@@ -1,10 +1,23 @@
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { liveDevices } = require('../db/mongo');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'AEvaHRMS@123';
 const activeUserSessions = new Map();
+
+// EktaHR HRMS backend (HRMSbackend) — single source of truth for Admin / Staff credentials.
+// Contract: POST {HRMS_API_URL}/api/auth/login { email, password }
+//   -> 200 { success, token, user: { id, email, name, role: 'superAdmin'|'admin'|'staff'|'candidate', adminId, ... } }
+//   -> 401 / 403 / 404 { success: false, message }
+const HRMS_API_URL = (process.env.HRMS_API_URL || process.env.BACKEND_URL || 'https://uat.ektahr.com').replace(/\/$/, '');
+const HRMS_LOGIN_ENDPOINT = `${HRMS_API_URL}/api/auth/login`;
+
+// HRMS role -> DMA role
+const ROLE_MAP = {
+  superAdmin: 'SUPER_ADMIN',
+  admin: 'ADMIN',
+  staff: 'STAFF'
+};
+const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
 
 function postJson(urlStr, payloadData) {
   return new Promise((resolve) => {
@@ -12,7 +25,7 @@ function postJson(urlStr, payloadData) {
       const url = new URL(urlStr);
       const transport = url.protocol === 'https:' ? require('https') : require('http');
       const postData = JSON.stringify(payloadData);
-      
+
       const req = transport.request({
         hostname: url.hostname,
         port: url.port || (url.protocol === 'https:' ? 443 : 80),
@@ -22,7 +35,7 @@ function postJson(urlStr, payloadData) {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(postData)
         },
-        timeout: 5000
+        timeout: 8000
       }, res => {
         let body = '';
         res.on('data', chunk => body += chunk);
@@ -30,7 +43,7 @@ function postJson(urlStr, payloadData) {
           try {
             resolve({ statusCode: res.statusCode, data: JSON.parse(body) });
           } catch (e) {
-            resolve(null);
+            resolve({ statusCode: res.statusCode, data: null });
           }
         });
       });
@@ -45,197 +58,92 @@ function postJson(urlStr, payloadData) {
   });
 }
 
+// Verifies credentials against the HRMS backend and maps the account to a DMA identity
+async function authenticateWithHrms(email, password) {
+  const apiResp = await postJson(HRMS_LOGIN_ENDPOINT, { email, password });
+
+  if (!apiResp) {
+    return { ok: false, status: 503, error: 'Unable to reach the EktaHR login service. Please try again.' };
+  }
+
+  const data = apiResp.data || {};
+  if (data.requiresOtp) {
+    return { ok: false, status: 403, error: 'OTP login is enabled for this account and is not supported by the DMA yet.' };
+  }
+  if (apiResp.statusCode !== 200 || !data.success || !data.user) {
+    const status = [401, 403, 404].includes(apiResp.statusCode) ? apiResp.statusCode : 401;
+    return { ok: false, status, error: data.message || 'Invalid EktaHR login credentials.' };
+  }
+
+  const hrmsUser = data.user;
+  const role = ROLE_MAP[hrmsUser.role];
+  if (!role) {
+    return { ok: false, status: 403, error: 'This account type cannot sign in to EktaHR DMA.' };
+  }
+
+  // Company scope: an admin IS the company; staff belong to their admin's company; super admins see all
+  let businessId;
+  if (role === 'SUPER_ADMIN') businessId = 'superadmin';
+  else if (role === 'ADMIN') businessId = hrmsUser.id;
+  else businessId = hrmsUser.adminId;
+
+  if (!businessId) {
+    return { ok: false, status: 403, error: 'This account is not linked to a company in EktaHR.' };
+  }
+
+  return {
+    ok: true,
+    user: {
+      userId: hrmsUser.id,
+      username: (hrmsUser.email || email).toLowerCase(),
+      fullName: hrmsUser.name || `${hrmsUser.firstName || ''} ${hrmsUser.lastName || ''}`.trim() || hrmsUser.email,
+      employeeId: hrmsUser.employeeId,
+      hrmsRole: hrmsUser.role,
+      role,
+      businessId: businessId.toString()
+    }
+  };
+}
+
+// Mounted on two routes:
+//   /api/v1/auth/login    -> Admin Console: company admins and super admins only
+//   /api/device/register  -> Desktop Agent: staff and admins
 async function login(req, res) {
   try {
     const { username, email, password, forceLogout, deviceId, machineName, hostname } = req.body;
     const rawInput = (email || username || '').trim();
 
     if (!rawInput || !password) {
-      return res.status(400).json({ error: 'Email/Username and password are required.' });
+      return res.status(400).json({ error: 'Email and password are required.' });
     }
 
     const cleanUsername = rawInput.toLowerCase();
-    let user = null;
-    let isMatch = false;
+    const isAgentLogin = req.path.includes('/device/');
 
-    // 1. PRIMARY AUTHENTICATION: Hosted HRMS API (https://uat.ektahr.com)
-    try {
-      const backendUrl = (process.env.BACKEND_URL || 'https://uat.ektahr.com').replace(/\/$/, '');
-      const loginEndpoints = [
-        `${backendUrl}/api/v1/auth/login`,
-        `${backendUrl}/api/auth/login`,
-        `${backendUrl}/auth/login`
-      ];
+    const auth = await authenticateWithHrms(cleanUsername, password);
+    if (!auth.ok) {
+      console.warn(`[Auth] HRMS login rejected for ${cleanUsername}: ${auth.error}`);
+      return res.status(auth.status).json({ error: auth.error });
+    }
+    const user = auth.user;
 
-      for (const endpoint of loginEndpoints) {
-        if (isMatch) break;
-        const apiResp = await postJson(endpoint, { email: cleanUsername, username: cleanUsername, password: password });
-        if (apiResp && apiResp.data && (apiResp.data.token || apiResp.data.user || apiResp.data.success === true || apiResp.data.data)) {
-          const apiUser = apiResp.data.user || apiResp.data.data || {};
-          user = {
-            _id: apiUser._id || apiUser.id || cleanUsername,
-            username: apiUser.email || apiUser.username || cleanUsername,
-            name: `${apiUser.firstName || ''} ${apiUser.lastName || ''}`.trim() || apiUser.name || apiUser.email || 'EktaHR User',
-            password: password,
-            role: apiUser.role || 'SUPER_ADMIN',
-            businessId: apiUser.companyId ? apiUser.companyId.toString() : (apiUser.businessId ? apiUser.businessId.toString() : (apiUser.adminId ? apiUser.adminId.toString() : (apiUser._id ? apiUser._id.toString() : 'default')))
-          };
-          isMatch = true;
-          console.log(`[Hosted Auth] Successfully authenticated ${cleanUsername} via hosted endpoint: ${endpoint}`);
-          break;
-        }
-      }
-    } catch (apiErr) {
-      console.warn('[Hosted Auth] Hosted API check error:', apiErr.message);
+    if (!isAgentLogin && !ADMIN_ROLES.includes(user.role)) {
+      return res.status(403).json({ error: 'Only company admins can sign in to the EktaHR DMA Admin Console.' });
+    }
+    if (isAgentLogin && user.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Super admin accounts cannot sign in to the desktop agent. Use a staff or company admin login.' });
     }
 
-    // 2. SECONDARY AUTHENTICATION: Connected MongoDB 'users', 'admins', 'staffs', or 'companies' collections
-    if (!isMatch && mongoose.connection.readyState === 1) {
-      try {
-        const dbsToSearch = [];
-        if (mongoose.connection.db) dbsToSearch.push(mongoose.connection.db);
-        try { dbsToSearch.push(mongoose.connection.useDb('DEV_HRMS')); } catch (e) {}
-        try { dbsToSearch.push(mongoose.connection.useDb('hrms-development')); } catch (e) {}
-
-        for (const dbObj of dbsToSearch) {
-          if (user) break;
-
-          // Check 'users' collection (Main HRMS Users / Admins)
-          const usersCol = dbObj.collection('users');
-          const userDoc = await usersCol.findOne({
-            $or: [
-              { email: new RegExp(`^${cleanUsername}$`, 'i') },
-              { username: new RegExp(`^${cleanUsername}$`, 'i') }
-            ]
-          });
-
-          if (userDoc) {
-            user = {
-              _id: userDoc._id,
-              username: userDoc.email || userDoc.username || cleanUsername,
-              name: userDoc.name || userDoc.fullName || userDoc.username || 'EktaHR User',
-              password: userDoc.password || userDoc.password_hash || userDoc.passwordHash || '',
-              role: (userDoc.role || '').toUpperCase().includes('ADMIN') ? 'SUPER_ADMIN' : (userDoc.role || 'SUPER_ADMIN'),
-              businessId: userDoc.companyId ? userDoc.companyId.toString() : (userDoc._id ? userDoc._id.toString() : 'default')
-            };
-            break;
-          }
-
-          // Check 'admins' collection (Company Admins)
-          const adminsCol = dbObj.collection('admins');
-          const adminDoc = await adminsCol.findOne({
-            $or: [
-              { email: new RegExp(`^${cleanUsername}$`, 'i') },
-              { companyAdmin: new RegExp(`^${cleanUsername}$`, 'i') }
-            ]
-          });
-
-          if (adminDoc) {
-            user = {
-              _id: adminDoc._id,
-              username: adminDoc.email || cleanUsername,
-              name: adminDoc.name || adminDoc.companyAdmin || 'Company Admin',
-              password: adminDoc.password || adminDoc.password_hash || adminDoc.passwordHash || '',
-              role: 'SUPER_ADMIN',
-              businessId: adminDoc._id.toString()
-            };
-            break;
-          }
-
-          // Check 'staffs' collection (Employees / Agents)
-          const staffCol = dbObj.collection('staffs');
-          const staffDoc = await staffCol.findOne({
-            email: new RegExp(`^${cleanUsername}$`, 'i')
-          });
-
-          if (staffDoc) {
-            const fullName = `${staffDoc.firstName || ''} ${staffDoc.lastName || ''}`.trim() || staffDoc.name || staffDoc.email;
-            user = {
-              _id: staffDoc._id,
-              username: staffDoc.email,
-              name: fullName,
-              password: staffDoc.password || staffDoc.password_hash || staffDoc.passwordHash || '',
-              role: staffDoc.role || 'AGENT',
-              businessId: staffDoc.adminId ? staffDoc.adminId.toString() : (staffDoc.companyId ? staffDoc.companyId.toString() : 'default')
-            };
-            break;
-          }
-
-          // Check 'companies' collection
-          const companiesCol = dbObj.collection('companies');
-          const companyDoc = await companiesCol.findOne({
-            $or: [
-              { email: new RegExp(`^${cleanUsername}$`, 'i') },
-              { companyEmail: new RegExp(`^${cleanUsername}$`, 'i') }
-            ]
-          });
-
-          if (companyDoc) {
-            user = {
-              _id: companyDoc._id,
-              username: companyDoc.email || companyDoc.companyEmail || cleanUsername,
-              name: companyDoc.companyName || companyDoc.name || 'Company Admin',
-              password: companyDoc.password || companyDoc.password_hash || companyDoc.passwordHash || '',
-              role: 'SUPER_ADMIN',
-              businessId: companyDoc._id.toString()
-            };
-            break;
-          }
-        }
-      } catch (dbErr) {
-        console.error('[Auth] DB lookup error:', dbErr.message);
-      }
-
-      if (user && user.password && !isMatch) {
-        try {
-          isMatch = bcrypt.compareSync(password, user.password);
-        } catch (e) {}
-
-        if (!isMatch && user.password === password) {
-          isMatch = true;
-        }
-      }
-    }
-
-    // 4. Master Admin & Employee Fallback
-    if (!isMatch && (cleanUsername === 'hp@gmail.com' || cleanUsername === 'akash@gmail.com') && (password === 'User@123' || password === 'Akash@123')) {
-      user = {
-        _id: '67b489a2f1c8e23400a123bc',
-        username: cleanUsername,
-        name: cleanUsername.split('@')[0],
-        password: password,
-        role: 'AGENT',
-        businessId: '6a82956a3f37c860e0d526db'
-      };
-      isMatch = true;
-    }
-    if (!isMatch && (cleanUsername === 'akash.askeva@gmail.com' || cleanUsername === 'admin@ektahr.com' || cleanUsername === 'admin') && (password === 'Akash@123' || password === 'User@123')) {
-      user = {
-        _id: 'admin-super-001',
-        username: cleanUsername,
-        name: 'Akash (Super Admin)',
-        password: password,
-        role: 'SUPER_ADMIN',
-        businessId: 'admin-super-001'
-      };
-      isMatch = true;
-    }
-
-    if (!user || !isMatch) {
-      return res.status(401).json({ error: 'Invalid EktaHR login credentials.' });
-    }
-
-    const userIdStr = (user._id || cleanUsername).toString();
     const reqDeviceId = (deviceId || machineName || hostname || '').trim().toUpperCase();
 
-    // 4. Single-Login Enforcement:
+    // Single-Login Enforcement:
     // If login is from DIFFERENT system with SAME user -> BLOCK IT!
     // If login is from SAME system or Localhost -> ALLOW IT & REFRESH THE SESSION!
-    const clientIp = (req.ip || '').replace('::ffff:', '');
+    const clientIp = (req.socket.remoteAddress || '').replace('::ffff:', '');
     const isLocalMachine = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === 'localhost';
 
     let activeDevHost = null;
-    if (!isLocalMachine && liveDevices && reqDeviceId) {
+    if (isAgentLogin && !isLocalMachine && liveDevices && reqDeviceId) {
       for (const [id, dev] of liveDevices.entries()) {
         const cleanDevId = id.toUpperCase();
         const cleanHost = (dev.hostname || '').toUpperCase();
@@ -260,38 +168,40 @@ async function login(req, res) {
       });
     }
 
-    // 5. Generate new JWT token (Including businessId for strict multi-tenant isolation)
+    // DMA session token (businessId gives strict multi-tenant isolation)
     const token = jwt.sign(
       {
-        userId: userIdStr,
+        userId: user.userId,
         username: user.username,
-        businessId: user.businessId || userIdStr,
-        role: user.role || 'SUPER_ADMIN'
+        businessId: user.businessId,
+        role: user.role,
+        hrmsRole: user.hrmsRole
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
 
-    // Track active session with deviceId
-    activeUserSessions.set(userIdStr, {
+    activeUserSessions.set(user.userId, {
       token,
       loginTime: new Date(),
-      ip: req.ip,
+      ip: clientIp,
       deviceId: reqDeviceId
     });
 
-    console.log(`[Auth] EktaHR Login SUCCESS for: ${user.username} (BusinessId: ${user.businessId}) on device: ${reqDeviceId || 'Same System'}`);
+    console.log(`[Auth] HRMS login SUCCESS: ${user.username} (${user.hrmsRole}, BusinessId: ${user.businessId})${isAgentLogin ? ` on device ${reqDeviceId || 'unknown'}` : ' [Admin Console]'}`);
 
     res.json({
       message: 'EktaHR Login Successful',
       token,
       user: {
-        userId: userIdStr,
+        userId: user.userId,
         username: user.username,
         email: user.username,
-        fullName: user.fullName || user.name || 'EktaHR Admin',
-        businessId: user.businessId || userIdStr,
-        role: user.role || 'SUPER_ADMIN'
+        fullName: user.fullName,
+        employeeId: user.employeeId,
+        businessId: user.businessId,
+        role: user.role,
+        hrmsRole: user.hrmsRole
       }
     });
   } catch (err) {
@@ -332,4 +242,10 @@ function verifyTokenMiddleware(req, res, next) {
   }
 }
 
-module.exports = { login, logout, verifyTokenMiddleware, JWT_SECRET };
+// Use after verifyTokenMiddleware on Admin Console endpoints (staff agent tokens are rejected)
+function requireAdminRole(req, res, next) {
+  if (req.user && ADMIN_ROLES.includes(req.user.role)) return next();
+  return res.status(403).json({ error: 'Admin access required.' });
+}
+
+module.exports = { login, logout, verifyTokenMiddleware, requireAdminRole, JWT_SECRET };

@@ -1,4 +1,44 @@
-const { getDevicesList, storeScreenshot, getDeviceScreenshots } = require('../db/mongo');
+const { getDevicesList, storeScreenshot, getDeviceScreenshots, liveDevices } = require('../db/mongo');
+const { getConnectedAgents } = require('../ws/signalingServer');
+
+const NOT_LOGGED_IN_USERS = ['', 'ektahr employee', 'logged out', '—'];
+
+// LAN scan: PCs whose agent is connected to this server right now AND has an employee logged in,
+// scoped to the admin's business
+async function getLanAgents(req, res) {
+  try {
+    const businessId = req.user?.businessId;
+    const devices = await getDevicesList(businessId);
+    const connected = getConnectedAgents();
+    const seen = new Set();
+
+    const agents = [];
+    for (const d of devices) {
+      const live = connected.get(d.deviceId);
+      const user = (d.currentUser || '').trim().toLowerCase();
+      const status = (d.status || '').toUpperCase();
+      if (!live || seen.has(d.deviceId)) continue;
+      if (NOT_LOGGED_IN_USERS.includes(user) || status === 'LOGGED_OUT' || status === 'OFFLINE') continue;
+
+      seen.add(d.deviceId);
+      const liveInfo = liveDevices.get(d.deviceId) || {};
+      agents.push({
+        ...d,
+        hostname: live.hostname || d.hostname,
+        ipAddress: live.ipAddress || d.ipAddress,
+        idleSeconds: liveInfo.idleSeconds || 0,
+        activeWindow: liveInfo.activeWindow || '',
+        connected: true,
+        connectedAt: live.connectedAt
+      });
+    }
+
+    res.json({ success: true, scannedAt: new Date(), agents });
+  } catch (err) {
+    console.error('[LAN Scan] Error listing connected agents:', err);
+    res.status(500).json({ success: false, error: 'Failed to scan LAN agents' });
+  }
+}
 
 async function getAllDevices(req, res) {
   try {
@@ -52,4 +92,4 @@ async function downloadAgent(req, res) {
   }
 }
 
-module.exports = { getAllDevices, postScreenshot, getScreenshots, downloadAgent };
+module.exports = { getAllDevices, getLanAgents, postScreenshot, getScreenshots, downloadAgent };

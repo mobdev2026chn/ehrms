@@ -126,8 +126,9 @@ namespace EktaDMAAgent
         private static ClientWebSocket currentWs = null;
         private static CancellationTokenSource connCts = null;
 
-        public static string ServerHttpUrl = "https://track.ektahr.com";
-        public static string ServerWsUrl = "wss://track.ektahr.com";
+        // LAN-only: no public default server — resolved from domain.txt / config / UDP discovery / subnet scan
+        public static string ServerHttpUrl = "";
+        public static string ServerWsUrl = "";
 
         [STAThread]
         static void Main(string[] args)
@@ -191,12 +192,11 @@ namespace EktaDMAAgent
                 if (!File.Exists(domainFile)) domainFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "domain_config.txt");
                 if (File.Exists(domainFile))
                 {
-                    string dom = File.ReadAllText(domainFile).Trim().TrimEnd('/');
-                    if (!string.IsNullOrEmpty(dom))
+                    string dom = NormalizeLanServerUrl(File.ReadAllText(domainFile));
+                    if (!string.IsNullOrEmpty(dom) && IsLanUrl(dom))
                     {
-                        string cleanDom = dom.Replace("http://", "").Replace("https://", "").Replace("ws://", "").Replace("wss://", "");
-                        httpUrl = "https://" + cleanDom;
-                        wsUrl = "wss://" + cleanDom;
+                        httpUrl = dom;
+                        wsUrl = ToWsUrl(dom);
                         return;
                     }
                 }
@@ -215,9 +215,9 @@ namespace EktaDMAAgent
                         savedWs = "";
                     }
 
-                    if (!string.IsNullOrEmpty(savedHttp) && !savedHttp.Contains("localhost") && !savedHttp.Contains("127.0.0.1"))
+                    if (!string.IsNullOrEmpty(savedHttp) && !savedHttp.Contains("localhost") && !savedHttp.Contains("127.0.0.1") && IsLanUrl(savedHttp))
                         httpUrl = savedHttp;
-                    if (!string.IsNullOrEmpty(savedWs) && !savedWs.Contains("localhost") && !savedWs.Contains("127.0.0.1"))
+                    if (!string.IsNullOrEmpty(savedWs) && !savedWs.Contains("localhost") && !savedWs.Contains("127.0.0.1") && IsLanUrl(savedWs))
                         wsUrl = savedWs;
                 }
                 else if (File.Exists("config.txt"))
@@ -227,19 +227,80 @@ namespace EktaDMAAgent
                     {
                         try { File.Delete("config.txt"); } catch { }
                     }
-                    else if ((txt.StartsWith("ws://") || txt.StartsWith("wss://")) && !txt.Contains("localhost") && !txt.Contains("127.0.0.1"))
+                    else if ((txt.StartsWith("ws://") || txt.StartsWith("wss://")) && !txt.Contains("localhost") && !txt.Contains("127.0.0.1") && IsLanUrl(txt))
                     {
                         wsUrl = txt;
                     }
                 }
 
-                if (httpUrl.Contains(":9000") || httpUrl.Contains("192.168.0.31") || httpUrl.Contains("192.168.16.121"))
+                if (httpUrl.Contains(":9000") || httpUrl.Contains("192.168.0.31") || httpUrl.Contains("192.168.16.121") || !IsLanUrl(httpUrl))
                 {
-                    httpUrl = "https://track.ektahr.com";
-                    wsUrl = "wss://track.ektahr.com";
+                    httpUrl = "";
+                    wsUrl = "";
                 }
             }
             catch { }
+        }
+
+        // ================= LAN-ONLY HELPERS =================
+        private static bool IsPrivateIp(IPAddress ip)
+        {
+            if (IPAddress.IsLoopback(ip)) return true;
+            if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+            if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            {
+                byte[] v6 = ip.GetAddressBytes();
+                return ip.IsIPv6LinkLocal || (v6[0] & 0xFE) == 0xFC; // fe80::/10, fc00::/7
+            }
+            byte[] b = ip.GetAddressBytes();
+            return b[0] == 10 ||
+                   (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+                   (b[0] == 192 && b[1] == 168) ||
+                   (b[0] == 169 && b[1] == 254);
+        }
+
+        // True only if the URL's host is (or resolves exclusively to) a private LAN / loopback address
+        public static bool IsLanUrl(string url)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(url)) return false;
+                string host = new Uri(url.Trim()).Host;
+                if (string.IsNullOrEmpty(host)) return false;
+
+                IPAddress parsed;
+                if (IPAddress.TryParse(host.Trim('[', ']'), out parsed)) return IsPrivateIp(parsed);
+
+                IPAddress[] resolved = Dns.GetHostAddresses(host);
+                if (resolved.Length == 0) return false;
+                foreach (IPAddress addr in resolved)
+                {
+                    if (!IsPrivateIp(addr)) return false;
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // "192.168.1.10" -> "http://192.168.1.10:2005" (LAN servers run plain HTTP on port 2005 by default)
+        public static string NormalizeLanServerUrl(string raw)
+        {
+            string text = (raw ?? "").Trim().TrimEnd('/');
+            if (string.IsNullOrEmpty(text)) return "";
+            if (text.StartsWith("ws://")) text = "http://" + text.Substring(5);
+            else if (text.StartsWith("wss://")) text = "https://" + text.Substring(6);
+            else if (!text.StartsWith("http://") && !text.StartsWith("https://")) text = "http://" + text;
+
+            string hostPart = text.Substring(text.IndexOf("//") + 2);
+            if (!hostPart.Contains(":") && text.StartsWith("http://")) text = text + ":2005";
+            return text;
+        }
+
+        public static string ToWsUrl(string httpUrl)
+        {
+            if (httpUrl.StartsWith("https://")) return "wss://" + httpUrl.Substring(8);
+            if (httpUrl.StartsWith("http://")) return "ws://" + httpUrl.Substring(7);
+            return httpUrl;
         }
 
         public static void SaveLocalConfig(string httpUrl, string wsUrl)
@@ -385,7 +446,7 @@ namespace EktaDMAAgent
 
         private static bool PingHealthEndpointFast(string url)
         {
-            if (string.IsNullOrEmpty(url)) return false;
+            if (string.IsNullOrEmpty(url) || !IsLanUrl(url)) return false;
             try
             {
                 System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072 | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls;
@@ -422,7 +483,6 @@ namespace EktaDMAAgent
                 }
                 catch
                 {
-                    if (url.Contains("track.ektahr.com")) return true;
                     return false;
                 }
             }
@@ -439,7 +499,6 @@ namespace EktaDMAAgent
             List<string> quickCandidates = new List<string>();
 
             if (!string.IsNullOrEmpty(ServerHttpUrl)) quickCandidates.Add(ServerHttpUrl);
-            quickCandidates.Add("https://track.ektahr.com");
             quickCandidates.Add("http://127.0.0.1:9000");
             quickCandidates.Add("http://127.0.0.1:2005");
             quickCandidates.Add("http://localhost:9000");
@@ -489,10 +548,10 @@ namespace EktaDMAAgent
             displayName = email;
             errorMsg = "";
 
-            if (string.IsNullOrEmpty(ServerHttpUrl) || ServerHttpUrl.Contains(":9000") || ServerHttpUrl.Contains("192.168.0.31") || ServerHttpUrl.Contains("192.168.16.121"))
+            if (string.IsNullOrEmpty(ServerHttpUrl) || ServerHttpUrl.Contains(":9000") || ServerHttpUrl.Contains("192.168.0.31") || ServerHttpUrl.Contains("192.168.16.121") || !IsLanUrl(ServerHttpUrl))
             {
-                ServerHttpUrl = "https://track.ektahr.com";
-                ServerWsUrl = "wss://track.ektahr.com";
+                ServerHttpUrl = "";
+                ServerWsUrl = "";
             }
 
             List<string> candidateUrls = new List<string>();
@@ -528,24 +587,13 @@ namespace EktaDMAAgent
                     }
                     if (!string.IsNullOrEmpty(fileUrl))
                     {
-                        if (!fileUrl.StartsWith("http://") && !fileUrl.StartsWith("https://")) 
-                        {
-                            fileUrl = fileUrl.Contains(".") && !fileUrl.StartsWith("192.") && !fileUrl.StartsWith("127.")
-                                ? "https://" + fileUrl 
-                                : "http://" + fileUrl;
-                        }
-                        if (!fileUrl.Substring(fileUrl.IndexOf("//") + 2).Contains(":") && (fileUrl.Contains("127.0.0.1") || fileUrl.Contains("localhost")))
-                        {
-                            fileUrl = fileUrl + ":2005";
-                        }
-                        candidateUrls.Add(fileUrl.TrimEnd('/'));
+                        candidateUrls.Add(NormalizeLanServerUrl(fileUrl));
                     }
                 }
             }
             catch { }
 
             if (!string.IsNullOrEmpty(ServerHttpUrl) && !candidateUrls.Contains(ServerHttpUrl.TrimEnd('/'))) candidateUrls.Add(ServerHttpUrl.TrimEnd('/'));
-            candidateUrls.Add("https://track.ektahr.com");
             candidateUrls.Add("http://127.0.0.1:2005");
             candidateUrls.Add("http://localhost:2005");
 
@@ -561,7 +609,7 @@ namespace EktaDMAAgent
 
             foreach (string targetUrl in candidateUrls)
             {
-                if (string.IsNullOrEmpty(targetUrl)) continue;
+                if (string.IsNullOrEmpty(targetUrl) || !IsLanUrl(targetUrl)) continue;
                 bool isSuccess = TryValidateAndRegisterSingle(email, password, targetUrl, out displayName, out errorMsg);
                 if (isSuccess)
                 {
@@ -581,8 +629,9 @@ namespace EktaDMAAgent
 
             if (string.IsNullOrEmpty(errorMsg) || errorMsg.StartsWith("Unable to connect"))
             {
-                string displayTarget = (string.IsNullOrEmpty(ServerHttpUrl) || ServerHttpUrl.Contains("192.168") || ServerHttpUrl.Contains(":9000")) ? "https://track.ektahr.com" : ServerHttpUrl;
-                errorMsg = "Unable to connect to server at " + displayTarget;
+                errorMsg = string.IsNullOrEmpty(ServerHttpUrl)
+                    ? "No EktaHR server found on this LAN. Make sure you are on the office network, or put the server IP in domain.txt next to the agent."
+                    : "Unable to connect to LAN server at " + ServerHttpUrl;
             }
             return false;
         }

@@ -105,3 +105,6 @@ body {
   background-color: currentColor;
   box-shadow: 0 0 6px currentColor;
 }
+
+@keyframes ektaSpin { to { transform: rotate(360deg); } }
+.spin { animation: ektaSpin 1s linear infinite; }

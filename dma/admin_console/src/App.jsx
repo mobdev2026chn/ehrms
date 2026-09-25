@@ -17,6 +17,9 @@ export default function App() {
   });
 
   const [devices, setDevices] = useState([]);
+  const [lanAgents, setLanAgents] = useState([]);
+  const [lanScan, setLanScan] = useState({ state: 'scanning', at: null });
+  const [showAllStaff, setShowAllStaff] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [sessionMode, setSessionMode] = useState('VIEW_ONLY');
 
@@ -38,13 +41,62 @@ export default function App() {
     }
   };
 
+  // LAN scan: PCs whose agent is connected to this LAN server with an employee logged in
+  const scanLanAgents = async () => {
+    try {
+      const baseUrl = getServerBaseUrl();
+      const response = await fetch(`${baseUrl}/api/v1/lan/agents`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.status === 401) {
+        handleLogout();
+        return;
+      }
+      const data = await response.json();
+      if (data.success && Array.isArray(data.agents)) {
+        setLanAgents(data.agents);
+        setLanScan({ state: 'done', at: new Date() });
+      } else {
+        setLanScan(prev => ({ ...prev, state: 'error' }));
+      }
+    } catch (e) {
+      console.error('LAN scan failed:', e);
+      setLanScan(prev => ({ ...prev, state: 'error' }));
+    }
+  };
+
+  const refreshAll = () => {
+    scanLanAgents();
+    if (showAllStaff) fetchDevices();
+  };
+
+  // Scan the LAN automatically as soon as the admin logs in, then keep it live
   useEffect(() => {
     if (token) {
+      setLanScan({ state: 'scanning', at: null });
+      scanLanAgents();
+      const interval = setInterval(scanLanAgents, 4000);
+      return () => clearInterval(interval);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token && showAllStaff) {
       fetchDevices();
       const interval = setInterval(fetchDevices, 4000);
       return () => clearInterval(interval);
     }
-  }, [token]);
+  }, [token, showAllStaff]);
+
+  const connectedIds = new Set(lanAgents.map(a => a.deviceId));
+  const visibleDevices = showAllStaff
+    ? [
+        ...lanAgents,
+        ...devices.filter(d => !connectedIds.has(d.deviceId))
+      ]
+    : lanAgents;
 
   const handleLoginSuccess = (newToken, userData) => {
     setToken(newToken);
@@ -64,7 +116,7 @@ export default function App() {
     return <LoginModal onLoginSuccess={handleLoginSuccess} />;
   }
 
-  const onlineCount = devices.filter(d => d.status === 'ONLINE').length;
+  const connectedCount = lanAgents.length;
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc' }}>
@@ -137,8 +189,10 @@ export default function App() {
               <Activity size={26} />
             </div>
             <div>
-              <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 500 }}>Live Active Stream PCs</span>
-              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#059669' }}>{onlineCount} Online</h3>
+              <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 500 }}>Connected LAN Systems</span>
+              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#059669' }}>
+                {lanScan.state === 'scanning' ? 'Scanning…' : `${connectedCount} Connected`}
+              </h3>
             </div>
           </div>
 
@@ -149,14 +203,22 @@ export default function App() {
             <div>
               <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 500 }}>Network Mode</span>
               <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#d97706' }}>Office LAN</h3>
+              <span style={{ fontSize: '0.75rem', color: lanScan.state === 'error' ? '#dc2626' : '#94a3b8' }}>
+                {lanScan.state === 'error'
+                  ? 'LAN scan failed — retrying…'
+                  : lanScan.at ? `Auto-scanned ${lanScan.at.toLocaleTimeString()}` : 'Scanning local network…'}
+              </span>
             </div>
           </div>
         </div>
 
         {/* Device Grid Component */}
         <DeviceGrid
-          devices={devices}
-          onRefresh={fetchDevices}
+          devices={visibleDevices}
+          onRefresh={refreshAll}
+          showAllStaff={showAllStaff}
+          onToggleShowAll={() => setShowAllStaff(v => !v)}
+          scanning={lanScan.state === 'scanning'}
           onSelectDevice={(device, mode) => {
             setSelectedDevice(device);
             setSessionMode(mode);

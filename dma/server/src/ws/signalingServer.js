@@ -4,6 +4,8 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { registerOrUpdateDevice, markDeviceOffline, getDevicesList, storeScreenshot } = require('../db/mongo');
+const idleTracker = require('../db/idleTracker');
+const { allowLanUpgrade } = require('../lanGuard');
 
 const agentSockets = new Map();
 const viewerSockets = new Map();
@@ -107,6 +109,7 @@ function initWebSocketServer(server) {
   const wss = new WebSocket.Server({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
+    if (!allowLanUpgrade(request, socket)) return;
     const parsedUrl = url.parse(request.url, true);
     const pathname = parsedUrl.pathname;
 
@@ -154,16 +157,19 @@ function disconnectOldDeviceIfLoggedElsewhere(updatedInfo) {
       } catch (e) {}
       agentSockets.delete(oldId);
       markDeviceOffline(oldId);
+      idleTracker.closeForDevice(oldId, 'logged_in_elsewhere');
     }
   }
 }
 
 function handleAgentConnection(ws, query, request) {
   const deviceId = query.deviceId || query.hostname || `AGENT-${Date.now()}`;
-  const clientIp = request.headers['x-forwarded-for'] || request.socket.remoteAddress || '127.0.0.1';
+  const clientIp = (request.socket.remoteAddress || '127.0.0.1').replace(/^::ffff:/, '');
 
   ws.deviceId = deviceId;
   ws.hostname = query.hostname || query.machineName || deviceId;
+  ws.clientIp = clientIp;
+  ws.connectedAt = new Date();
   console.log(`[WebSocket] Agent connected: ${deviceId} (${ws.hostname} @ ${clientIp})`);
 
   if (agentSockets.has(deviceId)) {
@@ -226,6 +232,14 @@ function handleAgentConnection(ws, query, request) {
             ipAddress: clientIp
           });
           disconnectOldDeviceIfLoggedElsewhere(hbDev);
+
+          idleTracker.trackStatus(deviceId, {
+            status: data.status || (data.isPaused ? 'PAUSED' : 'ONLINE'),
+            idleSeconds: data.idleSeconds,
+            currentUser: data.currentUser || query.user,
+            businessId: data.businessId || query.businessId || query.orgId || query.companyId,
+            hostname: data.hostname || data.machineName || ws.hostname
+          });
         } else if (data.type === 'RESOLUTION_INFO') {
           const targetViewers = await getViewerSocketsForAgentAsync(ws);
           for (const vWs of targetViewers) {
@@ -245,6 +259,7 @@ function handleAgentConnection(ws, query, request) {
     if (agentSockets.get(deviceId) === ws) {
       agentSockets.delete(deviceId);
       markDeviceOffline(deviceId);
+      idleTracker.closeForDevice(deviceId, 'agent_disconnected');
 
       for (const [vId, vSet] of viewerSockets.entries()) {
         for (const vWs of vSet) {
@@ -308,4 +323,15 @@ async function handleViewerConnection(ws, query, request) {
   });
 }
 
-module.exports = { initWebSocketServer };
+// Agents with an open WebSocket right now: deviceId -> { hostname, ipAddress, connectedAt }
+function getConnectedAgents() {
+  const connected = new Map();
+  for (const [id, socket] of agentSockets.entries()) {
+    if (socket.readyState === WebSocket.OPEN) {
+      connected.set(id, { hostname: socket.hostname, ipAddress: socket.clientIp, connectedAt: socket.connectedAt });
+    }
+  }
+  return connected;
+}
+
+module.exports = { initWebSocketServer, getConnectedAgents };

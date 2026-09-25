@@ -49,6 +49,22 @@ A dedicated, high-performance, LAN-only Live Desktop Streaming & Remote Access s
 
 ---
 
+## 🔒 LAN-Only Mode
+
+- **Server** rejects HTTP / WebSocket / UDP-discovery traffic from non-private IPs (`LAN_ONLY=true` in `server/.env`, see `server/src/lanGuard.js`). It still needs *outbound* internet for MongoDB Atlas and EktaHR login.
+- **Agent & Admin Console launcher** only connect to private LAN addresses (10.x, 172.16–31.x, 192.168.x, localhost). There is no public fallback.
+- Server discovery order: `domain.txt` next to the exe (e.g. `192.168.1.10` → `http://192.168.1.10:2005`) → saved `config.json` → UDP broadcast on port 9002 → subnet scan on port 2005.
+- On the server PC, allow the ports on the **Private** network profile only:
+  ```powershell
+  New-NetFirewallRule -DisplayName "EktaDMA TCP 2005" -Direction Inbound -Protocol TCP -LocalPort 2005 -Profile Private -Action Allow
+  New-NetFirewallRule -DisplayName "EktaDMA UDP 9002" -Direction Inbound -Protocol UDP -LocalPort 9002 -Profile Private -Action Allow
+  ```
+- Admins open the console at `http://<server-lan-ip>:2005`.
+- Rebuild the agent (no .NET SDK needed):
+  ```bash
+  C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -target:winexe -win32icon:ektaHr.ico -r:System.Windows.Forms.dll -r:System.Drawing.dll -out:publish/EktaHR-Agent.exe AgentSingle.cs
+  ```
+
 ## 🚀 How to Run
 
 ### 1. Start EktaDMA Server

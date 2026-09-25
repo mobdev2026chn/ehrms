@@ -340,7 +340,8 @@ async function getDevicesList(targetBusinessId) {
         resolvedAdminStrIds.includes((dev.currentUser || '').toLowerCase())
       );
 
-      if (isSuperAdminAccess || matchesAdmin || !belongsToOtherAdmin) {
+      // Company admins only see live agents whose businessId (the staff's HRMS adminId) is theirs
+      if (isSuperAdminAccess || (matchesAdmin && !belongsToOtherAdmin)) {
         processedKeys.add(userKey);
         results.push({
           deviceId: id,

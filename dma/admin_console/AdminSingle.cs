@@ -14,7 +14,8 @@ namespace EktaHR.AdminConsole
         [DllImport("shell32.dll", SetLastError = true)]
         private static extern void SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
 
-        public static string ServerUrl = "https://track.ektahr.com";
+        // LAN-only: no public default server — resolved from domain.txt / UDP discovery / subnet scan
+        public static string ServerUrl = "";
 
         [STAThread]
         static void Main(string[] args)
@@ -43,6 +44,13 @@ namespace EktaHR.AdminConsole
             }
 
             AutoDetectPort();
+
+            if (string.IsNullOrEmpty(ServerUrl))
+            {
+                MessageBox.Show("No EktaHR DMA server found on this LAN.\n\nMake sure you are on the office network, or put the server IP (e.g. 192.168.1.10) in domain.txt next to this app.",
+                    "EktaHR Admin Console", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
             bool isNewInstance;
             using (System.Threading.Mutex mutex = new System.Threading.Mutex(true, "Global\\EktaHR_AdminConsole_SingleInstance_Mutex", out isNewInstance))
@@ -96,24 +104,53 @@ namespace EktaHR.AdminConsole
                 if (!File.Exists(cfgFile)) cfgFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.txt");
                 if (File.Exists(cfgFile))
                 {
-                    string text = File.ReadAllText(cfgFile).Trim();
+                    string text = File.ReadAllText(cfgFile).Trim().TrimEnd('/');
                     if (!string.IsNullOrEmpty(text))
                     {
-                        if (!text.StartsWith("http://") && !text.StartsWith("https://")) 
-                        {
-                            text = text.Contains(".") && !text.StartsWith("192.") && !text.StartsWith("127.")
-                                ? "https://" + text 
-                                : "http://" + text;
-                        }
-                        if (!text.Substring(text.IndexOf("//") + 2).Contains(":") && (text.Contains("127.0.0.1") || text.Contains("localhost")))
-                        {
-                            text = text + ":2005";
-                        }
-                        ServerUrl = text.TrimEnd('/');
+                        if (!text.StartsWith("http://") && !text.StartsWith("https://")) text = "http://" + text;
+                        if (!text.Substring(text.IndexOf("//") + 2).Contains(":") && text.StartsWith("http://")) text = text + ":2005";
+                        if (IsLanUrl(text)) ServerUrl = text;
                     }
                 }
             }
             catch { }
+        }
+
+        private static bool IsPrivateIp(IPAddress ip)
+        {
+            if (IPAddress.IsLoopback(ip)) return true;
+            if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+            if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            {
+                byte[] v6 = ip.GetAddressBytes();
+                return ip.IsIPv6LinkLocal || (v6[0] & 0xFE) == 0xFC;
+            }
+            byte[] b = ip.GetAddressBytes();
+            return b[0] == 10 ||
+                   (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+                   (b[0] == 192 && b[1] == 168) ||
+                   (b[0] == 169 && b[1] == 254);
+        }
+
+        // True only if the URL's host is (or resolves exclusively to) a private LAN / loopback address
+        private static bool IsLanUrl(string url)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(url)) return false;
+                string host = new Uri(url.Trim()).Host;
+                IPAddress parsed;
+                if (IPAddress.TryParse(host.Trim('[', ']'), out parsed)) return IsPrivateIp(parsed);
+
+                IPAddress[] resolved = Dns.GetHostAddresses(host);
+                if (resolved.Length == 0) return false;
+                foreach (IPAddress addr in resolved)
+                {
+                    if (!IsPrivateIp(addr)) return false;
+                }
+                return true;
+            }
+            catch { return false; }
         }
 
         private static string GetLocalIPAddress()
@@ -163,7 +200,7 @@ namespace EktaHR.AdminConsole
 
         private static bool PingHealthEndpointFast(string url)
         {
-            if (string.IsNullOrEmpty(url)) return false;
+            if (string.IsNullOrEmpty(url) || !IsLanUrl(url)) return false;
             try
             {
                 System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072 | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls;
@@ -200,7 +237,6 @@ namespace EktaHR.AdminConsole
                 }
                 catch
                 {
-                    if (url.Contains("track.ektahr.com")) return true;
                     return false;
                 }
             }
@@ -217,7 +253,6 @@ namespace EktaHR.AdminConsole
             List<string> quickCandidates = new List<string>();
 
             if (!string.IsNullOrEmpty(ServerUrl)) quickCandidates.Add(ServerUrl);
-            quickCandidates.Add("https://track.ektahr.com");
             quickCandidates.Add("http://127.0.0.1:2005");
             quickCandidates.Add("http://localhost:2005");
             quickCandidates.Add("http://192.168.0.31:2005");
@@ -257,8 +292,8 @@ namespace EktaHR.AdminConsole
 
         private static void AutoDetectPort()
         {
-            // 1. Always keep configured domain URL if present
-            if (!string.IsNullOrEmpty(ServerUrl) && (ServerUrl.Contains("track.ektahr.com") || PingHealthEndpointFast(ServerUrl)))
+            // 1. Keep configured LAN server URL if it is reachable
+            if (!string.IsNullOrEmpty(ServerUrl) && PingHealthEndpointFast(ServerUrl))
             {
                 return;
             }
@@ -278,8 +313,8 @@ namespace EktaHR.AdminConsole
                 return;
             }
 
-            // 4. Default fallback to track.ektahr.com
-            ServerUrl = "https://track.ektahr.com";
+            // 4. LAN-only: no public fallback
+            ServerUrl = "";
         }
     }
 }

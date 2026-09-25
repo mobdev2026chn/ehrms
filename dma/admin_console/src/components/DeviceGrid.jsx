@@ -2,7 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { Monitor, Eye, MousePointer, User, Wifi, RefreshCw, LayoutGrid, List, Search, Camera, X, Download } from 'lucide-react';
 import { getServerBaseUrl } from '../config';
 
-export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
+const ConnectedBadge = () => (
+  <span style={{
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '1px 8px',
+    borderRadius: '10px',
+    fontSize: '0.68rem',
+    fontWeight: 700,
+    color: '#047857',
+    background: '#ecfdf5',
+    border: '1px solid #a7f3d0',
+    marginLeft: '8px',
+    verticalAlign: 'middle'
+  }}>
+    <Wifi size={11} /> CONNECTED
+  </span>
+);
+
+export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAllStaff = false, onToggleShowAll, scanning = false }) {
   const [viewMode, setViewMode] = useState('LIST');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeScreenshotDevice, setActiveScreenshotDevice] = useState(null);
@@ -98,14 +117,23 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.01em' }}>
-            EktaHR Office LAN Devices ({devices.length})
+            {showAllStaff ? `All Staff Devices (${devices.length})` : `Connected LAN Systems (${devices.length})`}
           </h2>
           <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '2px' }}>
-            Active employee computers monitored on local network
+            {showAllStaff
+              ? 'Connected PCs first, then staff without a live agent'
+              : 'PCs on this LAN where an employee is logged in via the EktaHR agent — auto-scanned every few seconds'}
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {onToggleShowAll && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#475569', fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}>
+              <input type="checkbox" checked={showAllStaff} onChange={onToggleShowAll} />
+              Show all staff
+            </label>
+          )}
+
           {/* Search Box */}
           <div style={{ position: 'relative', width: '220px' }}>
             <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '10px' }} />
@@ -205,9 +233,22 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
 
       {sortedDevices.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
-          <Monitor size={48} style={{ opacity: 0.4, marginBottom: '12px' }} />
-          <p style={{ fontSize: '1.1rem', fontWeight: 500 }}>No matching EktaHR devices found.</p>
-          <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Ensure EktaHR-Agent.exe is running on employee PCs.</span>
+          {scanning ? (
+            <>
+              <RefreshCw size={40} className="spin" style={{ opacity: 0.5, marginBottom: '12px' }} />
+              <p style={{ fontSize: '1.1rem', fontWeight: 500 }}>Scanning local network for logged-in agents…</p>
+            </>
+          ) : (
+            <>
+              <Monitor size={48} style={{ opacity: 0.4, marginBottom: '12px' }} />
+              <p style={{ fontSize: '1.1rem', fontWeight: 500 }}>
+                {searchTerm ? 'No matching EktaHR devices found.' : 'No LAN systems connected yet.'}
+              </p>
+              <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+                PCs appear here automatically once an employee logs in to EktaHR-Agent.exe on this office network.
+              </span>
+            </>
+          )}
         </div>
       ) : viewMode === 'LIST' ? (
         /* ==================== SLEEK LIST VIEW TABLE ==================== */
@@ -223,7 +264,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
             </thead>
             <tbody>
               {sortedDevices.map((device) => {
-                const isConnectable = device.status && device.status !== 'OFFLINE' && device.status !== 'LOGGED_OUT';
+                const isConnectable = !!device.connected && device.status !== 'OFFLINE' && device.status !== 'LOGGED_OUT';
                 const { statusColor, statusBg, statusBorder, statusText, dotColor } = getStatusConfig(device.status);
                 const userInitial = (device.currentUser || 'E').charAt(0).toUpperCase();
 
@@ -258,6 +299,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
                         <div>
                           <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.95rem' }}>
                             {device.hostname || device.deviceId}
+                            {device.connected && <ConnectedBadge />}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#64748b', fontSize: '0.8rem', marginTop: '2px' }}>
                             <User size={13} color="#94a3b8" />
@@ -363,7 +405,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
         /* ==================== GRID VIEW CARDS ==================== */
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: '18px' }}>
           {sortedDevices.map((device) => {
-            const isConnectable = device.status && device.status !== 'OFFLINE' && device.status !== 'LOGGED_OUT';
+            const isConnectable = !!device.connected && device.status !== 'OFFLINE' && device.status !== 'LOGGED_OUT';
             const isOnline = device.status === 'ONLINE';
             const { statusColor, statusBg, statusBorder, statusText, dotColor } = getStatusConfig(device.status);
 
@@ -401,6 +443,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice }) {
                       <div>
                         <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a' }}>
                           {device.hostname || device.deviceId}
+                          {device.connected && <ConnectedBadge />}
                         </h4>
                         <span style={{ fontSize: '0.75rem', color: isConnectable ? '#d97706' : '#64748b', fontWeight: 600 }}>
                           {device.ipAddress}

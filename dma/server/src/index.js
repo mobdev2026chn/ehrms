@@ -6,14 +6,19 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const { connectMongo } = require('./db/mongo');
-const { login, logout, verifyTokenMiddleware } = require('./controllers/authController');
-const { getAllDevices, postScreenshot, getScreenshots, downloadAgent } = require('./controllers/deviceController');
+const { login, logout, verifyTokenMiddleware, requireAdminRole } = require('./controllers/authController');
+const { getAllDevices, getLanAgents, postScreenshot, getScreenshots, downloadAgent } = require('./controllers/deviceController');
 const { initWebSocketServer } = require('./ws/signalingServer');
+const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
 
 // Connect to EktaHR MongoDB
 connectMongo();
+initIdleTracker();
+
+const { LAN_ONLY, isPrivateIp, lanOnlyHttp } = require('./lanGuard');
 
 const app = express();
+app.use(lanOnlyHttp);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -28,9 +33,33 @@ app.get('/api/v1/download/agent', downloadAgent);
 app.get('/download/agent', downloadAgent);
 
 // Devices API
-app.get('/api/v1/devices', verifyTokenMiddleware, getAllDevices);
-app.get('/api/v1/devices/list', verifyTokenMiddleware, getAllDevices);
+app.get('/api/v1/devices', verifyTokenMiddleware, requireAdminRole, getAllDevices);
+app.get('/api/v1/devices/list', verifyTokenMiddleware, requireAdminRole, getAllDevices);
 app.get('/api/devices/list', getAllDevices);
+app.get('/api/v1/lan/agents', verifyTokenMiddleware, requireAdminRole, getLanAgents);
+
+// Idle Time Logs API (scoped to the admin's businessId from the JWT)
+app.get('/api/v1/idle-logs', verifyTokenMiddleware, requireAdminRole, async (req, res) => {
+  try {
+    const { userEmail, deviceId, from, to, limit } = req.query;
+    const logs = await getIdleLogs({ businessId: req.user.businessId, userEmail, deviceId, from, to, limit });
+    res.json({ success: true, logs });
+  } catch (err) {
+    console.error('[IdleLog] Error fetching idle logs:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch idle logs' });
+  }
+});
+app.get('/api/v1/idle-logs/summary', verifyTokenMiddleware, requireAdminRole, async (req, res) => {
+  try {
+    const tz = req.query.tz || 'Asia/Kolkata';
+    const date = req.query.date || new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const summary = await getDailyIdleSummary({ businessId: req.user.businessId, date, tz });
+    res.json({ success: true, date, summary });
+  } catch (err) {
+    console.error('[IdleLog] Error fetching idle summary:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch idle summary' });
+  }
+});
 
 const fs = require('fs');
 const path = require('path');
@@ -67,6 +96,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`=======================================================`);
   console.log(`[EktaDMA Server] Running on http://0.0.0.0:${PORT}`);
   console.log(`[WebSocket] Listening on ws://0.0.0.0:${PORT}/agent & /viewer`);
+  console.log(`[LAN Guard] ${LAN_ONLY ? 'LAN-only mode ON (public IPs are rejected)' : 'LAN-only mode OFF'}`);
   console.log(`=======================================================`);
 });
 
@@ -78,6 +108,7 @@ try {
   const udpServer = dgram.createSocket('udp4');
 
   udpServer.on('message', (msg, rinfo) => {
+    if (!isPrivateIp(rinfo.address)) return;
     const messageStr = msg.toString().trim();
     if (messageStr.includes('EKTA_DISCOVER')) {
       const responseMsg = Buffer.from(`EKTA_SERVER:${PORT}`);
