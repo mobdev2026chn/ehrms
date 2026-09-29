@@ -187,13 +187,16 @@ function handleAgentConnection(ws, query, request) {
     hostname: ws.hostname,
     ipAddress: clientIp,
     currentUser: query.user || query.employeeName,
-    businessId: query.businessId || query.orgId || query.companyId
+    businessId: query.businessId || query.orgId || query.companyId,
+    // A (re)connected agent is online; don't inherit OFFLINE from its last disconnect
+    status: 'ONLINE'
   });
   disconnectOldDeviceIfLoggedElsewhere(updatedDev);
 
-  ws.on('message', async (message) => {
-    const isBuffer = Buffer.isBuffer(message);
-    const isJpegFrame = isBuffer && (message.length > 200 || (message[0] === 0xFF && message[1] === 0xD8));
+  ws.on('message', async (message, isBinary) => {
+    // ws delivers text frames as Buffers too, so use the frame type — a long heartbeat
+    // (long active-window title) must not be mistaken for a screen frame
+    const isJpegFrame = isBinary && Buffer.isBuffer(message) && message.length > 2 && message[0] === 0xFF && message[1] === 0xD8;
 
     if (isJpegFrame) {
       // Live frames are relayed only; saved screenshots come from the agent (every 5 min + when idle > 5 min)
