@@ -113,6 +113,8 @@ namespace EktaDMAAgent
         public static int ShiftSeconds = 0;
         public static int ActiveSeconds = 0;
         public static int IdleSeconds = 0;
+        // No mouse / keyboard input for this long = IDLE (idle screenshot + admin alert)
+        public const int IDLE_THRESHOLD_SECONDS = 120;
         public static long TotalKeystrokes = 0;
         public static long TotalMouseClicks = 0;
         public static int TotalScreenshots = 0;
@@ -602,8 +604,12 @@ namespace EktaDMAAgent
         }
 
         // ================= AUTHENTICATION & DEVICE REGISTRATION =================
+        // True when the last login attempt got an answer from a DMA server (even a rejection)
+        public static bool LastLoginReachedServer = false;
+
         public static bool ValidateAndRegister(string email, string password, string userEnteredUrl, out string displayName, out string errorMsg)
         {
+            LastLoginReachedServer = false;
             displayName = email;
             errorMsg = "";
 
@@ -680,8 +686,11 @@ namespace EktaDMAAgent
                     return true;
                 }
 
-                if (!string.IsNullOrEmpty(errorMsg) && (errorMsg.Contains("Invalid") || errorMsg.Contains("Login Blocked") || errorMsg.Contains("already logged in") || errorMsg.Contains("password") || errorMsg.Contains("credentials")))
+                // A server answered and rejected the login (wrong password, deactivated account, ...):
+                // show its message, don't try other servers or ask for a server address
+                if (!string.IsNullOrEmpty(errorMsg) && !errorMsg.StartsWith("Unable to connect"))
                 {
+                    LastLoginReachedServer = true;
                     return false;
                 }
             }
@@ -925,7 +934,7 @@ namespace EktaDMAAgent
                 else if (IsBreak) statusStr = "BREAK";
                 else if (IsMeeting) statusStr = "MEETING";
                 else if (IsPaused) statusStr = "PAUSED";
-                else if (IdleSeconds >= 300) statusStr = "IDLE";
+                else if (IdleSeconds >= IDLE_THRESHOLD_SECONDS) statusStr = "IDLE";
 
                 if (statusStr == "IDLE") AgentStatus = "Idle";
                 else if (statusStr == "BREAK") AgentStatus = "On Break";
@@ -963,7 +972,7 @@ namespace EktaDMAAgent
                     else if (IsBreak) statusStr = "BREAK";
                     else if (IsMeeting) statusStr = "MEETING";
                     else if (IsPaused) statusStr = "PAUSED";
-                    else if (IdleSeconds >= 300) statusStr = "IDLE";
+                    else if (IdleSeconds >= IDLE_THRESHOLD_SECONDS) statusStr = "IDLE";
 
                     if (statusStr == "IDLE") AgentStatus = "Idle";
                     else if (statusStr == "BREAK") AgentStatus = "On Break";
@@ -1034,7 +1043,7 @@ namespace EktaDMAAgent
             while (!token.IsCancellationRequested && IsLoggedIn)
             {
                 // Every 5 minutes, whether the employee is active or idle (idle ones carry idleSeconds for the badge)
-                CaptureAndUploadScreenshot(IdleSeconds >= 300 ? "idle" : "scheduled");
+                CaptureAndUploadScreenshot(IdleSeconds >= IDLE_THRESHOLD_SECONDS ? "idle" : "scheduled");
 
                 // Wait exactly 5 minutes (300,000 ms) for next periodic screenshot
                 await Task.Delay(300000, token);
@@ -1144,8 +1153,8 @@ namespace EktaDMAAgent
                     uint idleMs = GetIdleTimeMs();
                     IdleSeconds = (int)(idleMs / 1000);
 
-                    // If idle for 5+ minutes (300 seconds) without mouse movement, pause active time & notify
-                    bool isSystemIdle = IdleSeconds >= 300;
+                    // If idle for 2+ minutes (IDLE_THRESHOLD_SECONDS) without mouse / keyboard input, pause active time & notify
+                    bool isSystemIdle = IdleSeconds >= IDLE_THRESHOLD_SECONDS;
 
                     if (isSystemIdle && !wasIdleState)
                     {
@@ -1153,7 +1162,7 @@ namespace EktaDMAAgent
                         AgentStatus = "Idle";
                         SendInstantStatusUpdate("IDLE");
                         ShowIdleTrayNotification(true);
-                        // Idle for 5+ minutes: capture the screen at that moment (idle badge in Admin Console)
+                        // Idle for 2+ minutes: capture the screen at that moment (idle badge + admin alert in Admin Console)
                         Task.Run(() => CaptureAndUploadScreenshot("idle_start"));
                     }
                     else if (!isSystemIdle && wasIdleState)
@@ -1192,7 +1201,7 @@ namespace EktaDMAAgent
                     {
                         if (isIdle)
                         {
-                            EktaAgentForm.Instance.ShowTrayBalloon("ektaHr Monitoring: System Idle", "No mouse movement detected for 5 minutes. Active timer paused.", ToolTipIcon.Warning);
+                            EktaAgentForm.Instance.ShowTrayBalloon("ektaHr Monitoring: System Idle", "No mouse movement detected for 2 minutes. Active timer paused.", ToolTipIcon.Warning);
                         }
                         else
                         {
@@ -2647,7 +2656,7 @@ namespace EktaDMAAgent
             bool ok = Program.ValidateAndRegister(email, pass, "", out displayName, out err);
 
             // Server not discoverable (different subnet, Wi-Fi isolation, broadcast blocked): ask for its IP once
-            if (!ok && string.IsNullOrEmpty(Program.ServerHttpUrl) && AskForServerAddress())
+            if (!ok && !Program.LastLoginReachedServer && AskForServerAddress())
             {
                 lblLoginError.Text = "Signing in...";
                 Application.DoEvents();
@@ -2756,7 +2765,7 @@ namespace EktaDMAAgent
                 // Format Today Card
                 lblCheckedIn.Text = "Checked in at: " + Program.CheckInTime;
                 lblCheckedOut.Text = "Checked out at: " + Program.CheckOutTime;
-                lblStatusVal.Text = "Status: " + (Program.IsPaused ? "Paused" : (Program.IsBreak ? "Break" : (Program.IsMeeting ? "Meeting" : (Program.IdleSeconds >= 300 ? "Idle" : "Active"))));
+                lblStatusVal.Text = "Status: " + (Program.IsPaused ? "Paused" : (Program.IsBreak ? "Break" : (Program.IsMeeting ? "Meeting" : (Program.IdleSeconds >= Program.IDLE_THRESHOLD_SECONDS ? "Idle" : "Active"))));
                 lblTotalWorkVal.Text = "Total Work: " + FormatDuration(Program.ShiftSeconds);
                 lblIdleVal.Text = "Idle: " + FormatDuration(Program.IdleSeconds);
                 lblActiveVal.Text = "Active: " + FormatDuration(Program.ActiveSeconds);

@@ -3,6 +3,8 @@ import { CalendarDays, ChevronLeft, ChevronRight, Clock, Camera, Search, X, Arro
 import { getServerBaseUrl } from '../config';
 
 const OFFICE_TZ = 'Asia/Kolkata';
+// Matches the agent: no mouse/keyboard input for 2 minutes = idle
+const IDLE_THRESHOLD_SECONDS = 120;
 
 const todayKey = () => new Date().toLocaleDateString('en-CA', { timeZone: OFFICE_TZ });
 
@@ -46,9 +48,9 @@ const screenshotSrc = (ss) => {
   return `${getServerBaseUrl()}${ss.imageUrl}?token=${encodeURIComponent(token)}`;
 };
 
-// Red/amber badge on screenshots taken while the employee was idle (5+ min without input)
+// Red/amber badge on screenshots taken while the employee was idle (2+ min without input)
 export function IdleBadge({ ss, style }) {
-  const idle = ss && (ss.isIdle || (ss.idleSeconds || 0) >= 300);
+  const idle = ss && (ss.isIdle || (ss.idleSeconds || 0) >= IDLE_THRESHOLD_SECONDS);
   if (!idle) return null;
   const label = ss.trigger === 'idle_start' ? `Went idle · ${formatDuration(ss.idleSeconds)}` : `Idle ${formatDuration(ss.idleSeconds)}`;
   return (
@@ -185,7 +187,7 @@ function EmployeeDetail({ employee, date, onDateChange, onBack }) {
             <div style={cardStyle}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>
-                  Screenshots <span style={{ fontWeight: 500, color: '#64748b', fontSize: '0.8rem' }}>(every 5 min · {data.screenshots.filter(x => x.isIdle || (x.idleSeconds || 0) >= 300).length} while idle)</span>
+                  Screenshots <span style={{ fontWeight: 500, color: '#64748b', fontSize: '0.8rem' }}>(every 5 min · {data.screenshots.filter(x => x.isIdle || (x.idleSeconds || 0) >= IDLE_THRESHOLD_SECONDS).length} while idle)</span>
                 </h3>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#475569', fontWeight: 600, cursor: 'pointer' }}>
                   <input type="checkbox" checked={idleOnly} onChange={() => setIdleOnly(v => !v)} /> Idle only
@@ -195,11 +197,11 @@ function EmployeeDetail({ employee, date, onDateChange, onBack }) {
                 <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>No screenshots captured on this day.</p>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '12px' }}>
-                  {data.screenshots.filter(x => !idleOnly || x.isIdle || (x.idleSeconds || 0) >= 300).map(ss => (
+                  {data.screenshots.filter(x => !idleOnly || x.isIdle || (x.idleSeconds || 0) >= IDLE_THRESHOLD_SECONDS).map(ss => (
                     <button
                       key={ss.id}
                       onClick={() => setPreview(ss)}
-                      style={{ border: (ss.isIdle || (ss.idleSeconds || 0) >= 300) ? '2px solid #f59e0b' : '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', padding: 0, background: '#f8fafc', cursor: 'zoom-in', textAlign: 'left' }}
+                      style={{ border: (ss.isIdle || (ss.idleSeconds || 0) >= IDLE_THRESHOLD_SECONDS) ? '2px solid #f59e0b' : '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', padding: 0, background: '#f8fafc', cursor: 'zoom-in', textAlign: 'left' }}
                     >
                       <div style={{ position: 'relative' }}>
                         <img src={screenshotSrc(ss)} alt={`Screenshot ${formatTime(ss.timestamp)}`} loading="lazy" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block', background: '#e2e8f0' }} />

@@ -1,4 +1,5 @@
 const { appendIdleLog, readIdleLogs, saveOpenIdlePeriods, loadOpenIdlePeriods, dayKey } = require('../storage/fileStore');
+const { pushAlert } = require('../alerts');
 
 // Persists every idle period (agent status IDLE -> anything else) to disk (storage/idle-logs), not MongoDB.
 // One JSON line per idle period: { deviceId, hostname, userEmail, businessId, startAt, endAt, durationSec, endReason }
@@ -38,6 +39,9 @@ async function closeIdlePeriod(deviceId, reason, endAt = new Date()) {
       endReason: reason
     });
     console.log(`[IdleLog] ${deviceId} idle period closed (${reason}), duration ${durationSec}s`);
+    if (reason.startsWith('status_')) {
+      pushAlert({ type: 'IDLE_END', businessId: period.businessId, userEmail: period.userEmail, hostname: period.hostname, deviceId, idleSince: startAt.toISOString(), durationSec });
+    }
   } catch (err) {
     console.error('[IdleLog] Error saving idle period:', err.message);
   }
@@ -53,7 +57,7 @@ function trackStatus(deviceId, info) {
     if (!period) {
       if (!isValidUser(info.currentUser)) return;
       const now = Date.now();
-      // Agent flags IDLE only after 300s without input, so the idle period actually began idleSeconds ago
+      // Agent flags IDLE only after its threshold (2 min) without input, so the idle period actually began idleSeconds ago
       const startAt = new Date(now - (Number(info.idleSeconds) || 0) * 1000);
       openIdle.set(deviceId, {
         deviceId,
@@ -65,6 +69,8 @@ function trackStatus(deviceId, info) {
       });
       checkpoint();
       console.log(`[IdleLog] ${deviceId} (${info.currentUser}) went IDLE since ${startAt.toISOString()}`);
+      const p = openIdle.get(deviceId);
+      pushAlert({ type: 'IDLE_START', businessId: p.businessId, userEmail: p.userEmail, hostname: p.hostname, deviceId, idleSince: p.startAt });
     } else {
       period.lastSeenAt = new Date().toISOString();
       if (Date.now() - lastCheckpointTs > LAST_SEEN_CHECKPOINT_MS) checkpoint();

@@ -10,6 +10,7 @@ const { login, logout, verifyTokenMiddleware, requireAdminRole } = require('./co
 const { getAllDevices, getLanAgents, postScreenshot, getScreenshots, serveScreenshotFile, downloadAgent } = require('./controllers/deviceController');
 const { startRetentionJob, STORAGE_DIR } = require('./storage/fileStore');
 const { getActivitySummary, getEmployeeActivity } = require('./controllers/activityController');
+const { getAlerts } = require('./alerts');
 const { initWebSocketServer } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
 
@@ -53,6 +54,12 @@ app.get('/api/v1/idle-logs', verifyTokenMiddleware, requireAdminRole, async (req
     res.status(500).json({ success: false, error: 'Failed to fetch idle logs' });
   }
 });
+// Live admin alerts (employee went idle / came back), polled by the Admin Console
+app.get('/api/v1/alerts', verifyTokenMiddleware, requireAdminRole, (req, res) => {
+  const since = req.query.since !== undefined ? Number(req.query.since) : -1;
+  res.json({ success: true, ...getAlerts({ businessId: req.user.businessId, since, limit: req.query.limit }) });
+});
+
 // Date-wise employee activity (idle time + screenshots) for the Admin Console "Activity Report"
 app.get('/api/v1/activity/summary', verifyTokenMiddleware, requireAdminRole, getActivitySummary);
 app.get('/api/v1/activity/employee', verifyTokenMiddleware, requireAdminRole, getEmployeeActivity);

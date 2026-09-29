@@ -10,6 +10,8 @@ const STORAGE_DIR = path.resolve(process.env.DMA_STORAGE_DIR || path.join(__dirn
 const SCREENSHOT_DIR = path.join(STORAGE_DIR, 'screenshots');
 const IDLE_DIR = path.join(STORAGE_DIR, 'idle-logs');
 const TIMEZONE = process.env.DMA_TIMEZONE || 'Asia/Kolkata';
+// Matches the agent: no input for 2 minutes = idle
+const IDLE_THRESHOLD_SECONDS = 120;
 
 fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 fs.mkdirSync(IDLE_DIR, { recursive: true });
@@ -83,7 +85,7 @@ async function saveScreenshot({ deviceId, hostname, currentUser, businessId, tim
     idleSeconds: Number(idleSeconds) || 0,
     // scheduled = 5-min capture, idle = 5-min capture while idle, idle_start = captured when idle crossed 5 min
     trigger: ['scheduled', 'idle', 'idle_start'].includes(trigger) ? trigger : 'scheduled',
-    isIdle: trigger === 'idle' || trigger === 'idle_start' || (Number(idleSeconds) || 0) >= 300,
+    isIdle: trigger === 'idle' || trigger === 'idle_start' || (Number(idleSeconds) || 0) >= IDLE_THRESHOLD_SECONDS,
     sizeKB: Math.round(buffer.length / 1024),
     imageUrl: `/api/v1/screenshots/file/${encodeURIComponent(biz)}/${encodeURIComponent(dev)}/${day}/${file}`
   };

@@ -30,7 +30,9 @@ function registerOrUpdateDevice(deviceId, data) {
   // Single Active Device per Email Restriction: If user logs in on a new device, disconnect old device
   if (cleanNewUser && cleanNewUser !== 'ektahr employee' && cleanNewUser !== 'logged out' && cleanNewUser !== '—') {
     for (const [id, dev] of liveDevices.entries()) {
-      if (id !== deviceId && dev.currentUser && dev.currentUser.trim().toLowerCase() === cleanNewUser && dev.status !== 'OFFLINE') {
+      // liveDevices also holds an email-keyed alias of each device (id !== dev.deviceId) — skip it,
+      // and skip this same device, so only a genuinely different PC counts as "logged in elsewhere"
+      if (id === dev.deviceId && dev.deviceId !== deviceId && dev.currentUser && dev.currentUser.trim().toLowerCase() === cleanNewUser && dev.status !== 'OFFLINE') {
         dev.status = 'OFFLINE';
         dev.lastSeen = new Date();
         prevDevToDisconnect = id;

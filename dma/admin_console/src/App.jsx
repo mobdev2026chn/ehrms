@@ -3,6 +3,7 @@ import LoginModal from './components/LoginModal';
 import DeviceGrid from './components/DeviceGrid';
 import RemoteViewer from './components/RemoteViewer';
 import ActivityReport from './components/ActivityReport';
+import IdleAlerts from './components/IdleAlerts';
 import { LogOut, Monitor, Activity, Wifi, RefreshCw, CalendarDays } from 'lucide-react';
 
 import { getServerBaseUrl } from './config';
@@ -166,6 +167,22 @@ export default function App() {
 
         {/* User Badge & Logout */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+          <IdleAlerts
+            token={token}
+            nameFor={(email) => {
+              const match = [...lanAgents, ...devices].find(d => (d.currentUser || '').toLowerCase() === email);
+              return (match && match.fullName) || email;
+            }}
+            canView={(a) => lanAgents.some(d => d.deviceId === a.deviceId)}
+            onView={(a) => {
+              const agent = lanAgents.find(d => d.deviceId === a.deviceId);
+              if (agent) {
+                setSelectedDevice(agent);
+                setSessionMode('VIEW_ONLY');
+              }
+            }}
+          />
+
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#0f172a' }}>
               {user?.fullName || user?.username}
