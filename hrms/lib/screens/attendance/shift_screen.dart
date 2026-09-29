@@ -9,6 +9,7 @@ import '../../services/auth_service.dart';
 import '../../utils/holiday_off_util.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../utils/shift_policy_util.dart';
+import '../../utils/salary_fine_summary.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/profile_app_bar_actions.dart';
@@ -1584,15 +1585,18 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final earlyMin = _intOf(record?['earlyMinutes']) ?? 0;
     final breakObj = record?['break'];
     final breakMap = breakObj is Map ? Map<String, dynamic>.from(breakObj) : null;
-    final breakFineMin = _intOf(breakMap?['totalBreakFineMins']) ?? 0;
+    // HRMSbackend break fine arrives as fineAdjustment.breakFine (applyServerFineFields).
+    final breakFineMin = _intOf(breakMap?['totalBreakFineMins']) ??
+        _intOf(record?['breakFineMinutes']) ??
+        0;
     final breakUsedMin = _intOf(breakMap?['totalBreakMin']) ?? 0;
-    final breakFineAmount = _doubleOf(breakMap?['totalBreakFineAmount']) ?? 0;
     final permissionFineMin = _intOf(record?['permissionFineMinutes']) ?? 0;
-    final permissionFineAmount = _doubleOf(record?['permissionFineAmount']) ?? 0;
-    final lateEarlyFineAmount = _doubleOf(record?['fineAmount']) ?? 0;
-    final totalFineMin = lateMin + earlyMin + breakFineMin + permissionFineMin;
-    final totalFineAmount =
-        lateEarlyFineAmount + breakFineAmount + permissionFineAmount;
+    // Day total = the backend's fineAdjustment.totalFine (same figure as web).
+    final isServerFine = record?['totalFineAmount'] is num;
+    final totalFineMin = isServerFine
+        ? recordTotalFineMinutes(record)
+        : lateMin + earlyMin + breakFineMin + permissionFineMin;
+    final totalFineAmount = recordTotalFineAmount(record);
 
     // ── Break / permission allocations (from the day's shift policy) ──────────
     final breakAllocated = policies.breakPolicy.limitMinutes;

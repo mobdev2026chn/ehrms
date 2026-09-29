@@ -120,6 +120,20 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   int _customersPage = 1;
   static const int _customersPerPage = 10;
 
+  /// Card header date + time. HRMSbackend sends `assignedDate` as a date only
+  /// ("2026-09-29"), so the time comes from when the task was started
+  /// (`fieldInTime` / timeIn — for a Field Journey, the moment it was created).
+  /// Not started yet → date only.
+  static DateTime _taskCardDateTime(Task task) {
+    final d = task.assignedDate ?? task.expectedCompletionDate;
+    final day = d.isUtc ? d.toLocal() : d;
+    final st = task.startTime;
+    if (st == null) return day;
+    final t = st.isUtc ? st.toLocal() : st;
+    if (t.hour == 0 && t.minute == 0) return day;
+    return DateTime(day.year, day.month, day.day, t.hour, t.minute);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2410,10 +2424,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                           Text(
                                                             // Created date (assignedDate
                                                             // falls back to createdAt in
-                                                            // the model); shown as-is.
-                                                            DateDisplayUtil.formatShortDate(
-                                                              task.assignedDate ??
-                                                                  task.expectedCompletionDate,
+                                                            // the model); with the time.
+                                                            DateDisplayUtil.formatShortDateTime(
+                                                              _taskCardDateTime(task),
                                                             ),
                                                             style: TextStyle(
                                                               fontSize: 10,

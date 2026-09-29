@@ -3078,6 +3078,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final shiftStart = _serverShiftTime12h('shiftStartTime');
     final shiftEnd = _serverShiftTime12h('shiftEndTime');
     final checkInAt = isPunchedIn ? _todayCheckInMoment() : null;
+    // Backend fine for today (today-punch `totalFine`; legs mapped by
+    // applyServerFineFields). The app never calculates fines itself.
+    final fineRaw = _todayAttendance?['totalFine'] ?? _todayAttendance?['totalFineAmount'];
+    final todayFine = fineRaw is num ? fineRaw.toDouble() : (double.tryParse('${fineRaw ?? ''}') ?? 0);
+    String money(dynamic v) => v is num && v > 0 ? '₹${v.toStringAsFixed(2)}' : '';
+    final todayFineParts = [
+      if (money(_todayAttendance?['lateFineAmount']).isNotEmpty) 'Late ${money(_todayAttendance?['lateFineAmount'])}',
+      if (money(_todayAttendance?['earlyExitFineAmount']).isNotEmpty) 'Early ${money(_todayAttendance?['earlyExitFineAmount'])}',
+      if (money(_todayAttendance?['breakFineAmount']).isNotEmpty) 'Break ${money(_todayAttendance?['breakFineAmount'])}',
+    ].join(' · ');
     final totalHoursRaw = _todayAttendance?['totalHours'];
     final totalHours = totalHoursRaw is num
         ? totalHoursRaw.toDouble()
@@ -3283,6 +3293,45 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ),
             ],
           ),
+          // Today's fine as the backend calculated it (today-punch `totalFine`,
+          // late + early + break) — same row as the web Today card, only when > 0.
+          if (todayFine > 0) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF1F2),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFFECDD3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.gavel_rounded, size: 15, color: Color(0xFFE11D48)),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'Fine',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFF43F5E)),
+                  ),
+                  if (todayFineParts.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        todayFineParts,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11, color: Color(0xFF9F1239)),
+                      ),
+                    ),
+                  ] else
+                    const Spacer(),
+                  Text(
+                    '₹ ${todayFine.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFE11D48)),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (checkInAt != null) ...[
             const SizedBox(height: 12),
             _LiveWorkClock(

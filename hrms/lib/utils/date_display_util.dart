@@ -27,6 +27,15 @@ class DateDisplayUtil {
   static String formatShortDate(DateTime? dateTime) =>
       formatForDisplay(dateTime, 'dd MMM yy');
 
+  /// Short date + time: "06 Feb 25, 10:30 AM". Date-only values (local
+  /// midnight) show just the date instead of a misleading "12:00 AM".
+  static String formatShortDateTime(DateTime? dateTime) {
+    if (dateTime == null) return '—';
+    final local = dateTime.isUtc ? dateTime.toLocal() : dateTime;
+    final dateOnly = local.hour == 0 && local.minute == 0 && local.second == 0;
+    return DateFormat(dateOnly ? 'dd MMM yy' : 'dd MMM yy, h:mm a').format(local);
+  }
+
   /// Date only: "06 Feb 2025"
   static String formatDateOnly(DateTime? dateTime) =>
       formatForDisplay(dateTime, 'dd MMM yyyy');

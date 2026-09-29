@@ -703,7 +703,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }) {
     return '$baseMessage\n'
         'LateMinutes: $lateMinutes\n'
-        'Fine: ₹${fineAmount.toStringAsFixed(2)}';
+        'Any fine is calculated by the system after you punch (same as web) and shown on your Today card.';
   }
 
   String _buildEarlyAlertMessage({
@@ -713,7 +713,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }) {
     return '$baseMessage\n'
         'EarlyMinutes: $earlyMinutes\n'
-        'Fine: ₹${fineAmount.toStringAsFixed(2)}';
+        'Any fine is calculated by the system after you punch (same as web) and shown on your Today card.';
   }
 
   Future<Map<String, int>> _getPermissionAdjustment({

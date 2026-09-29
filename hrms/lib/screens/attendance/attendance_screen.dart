@@ -31,6 +31,7 @@ import 'selfie_camera_screen.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/absent_alert_helper.dart';
+import '../../utils/salary_fine_summary.dart';
 import '../../utils/fine_calculation_util.dart';
 import '../../services/salary_service.dart';
 import '../../services/settings_service.dart';
@@ -2107,8 +2108,11 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final fineAmount = record['fineAmount'] as num?;
     final breakMapForFine =
         record['break'] is Map ? Map<String, dynamic>.from(record['break'] as Map) : null;
-    final breakFineMins = breakMapForFine?['totalBreakFineMins'] as num?;
-    final breakFineAmount = breakMapForFine?['totalBreakFineAmount'] as num?;
+    // HRMSbackend: fineAdjustment.breakFine, mapped by applyServerFineFields.
+    final breakFineMins = (breakMapForFine?['totalBreakFineMins'] as num?) ??
+        (record['breakFineMinutes'] as num?);
+    final breakFineAmount = (breakMapForFine?['totalBreakFineAmount'] as num?) ??
+        (record['breakFineAmount'] as num?);
     // Permission fine = daily-allowance EXCEED (regular) + custom-window OVERRUN.
     // Both participate in the day's Total Fine per the attendance policy, so the
     // "Permission Fine" row and Total Fine Min sum BOTH. The overrun amount is
@@ -2123,9 +2127,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final totalFineMinsDisplay = (fineHours?.toDouble() ?? 0) +
         (breakFineMins?.toDouble() ?? 0) +
         permissionFineMins;
-    final totalFineAmountDisplay = (fineAmount?.toDouble() ?? 0) +
-        (breakFineAmount?.toDouble() ?? 0) +
-        (permissionRegularFineAmount?.toDouble() ?? 0);
+    // The backend's own day total (fineAdjustment.totalFine) when present — the
+    // exact figure the web shows; older records keep the summed fields.
+    final totalFineAmountDisplay = record['totalFineAmount'] is num
+        ? (record['totalFineAmount'] as num).toDouble()
+        : (fineAmount?.toDouble() ?? 0) +
+            (breakFineAmount?.toDouble() ?? 0) +
+            (permissionRegularFineAmount?.toDouble() ?? 0);
     final hasFineInfo =
         (lateMinutes != null && lateMinutes > 0) ||
         (earlyMinutes != null && earlyMinutes > 0) ||
@@ -3928,10 +3936,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required int lateMinutes,
     required double fineAmount,
   }) {
-    final formattedFine = NumberFormat('#,##0.00').format(fineAmount);
+    // No app-side ₹ estimate: the backend calculates the fine (as on web).
     return '$baseMessage\n'
         'LateMinutes: $lateMinutes\n'
-        'Fine: ₹$formattedFine';
+        'Any fine is calculated by the system after you punch (same as web) and shown on your Today card.';
   }
 
   String _buildEarlyAlertMessage({
@@ -3939,10 +3947,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required int earlyMinutes,
     required double fineAmount,
   }) {
-    final formattedFine = NumberFormat('#,##0.00').format(fineAmount);
     return '$baseMessage\n'
         'EarlyMinutes: $earlyMinutes\n'
-        'Fine: ₹$formattedFine';
+        'Any fine is calculated by the system after you punch (same as web) and shown on your Today card.';
   }
 
   Map<String, String> _resolveFineLogForAction(String actionApplyToType) {
@@ -9343,14 +9350,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // Status style from AppColors
     final st = AppColors.statusStyle(status.toLowerCase());
 
-    // Day-wise total fine = late/early (record.fineAmount) + break overage +
-    // permission overage. Matches the detail sheet and shift screen.
-    final breakMapForFine =
-        recordMap['break'] is Map ? Map<String, dynamic>.from(recordMap['break'] as Map) : null;
-    final dayFineAmount =
-        ((recordMap['fineAmount'] as num?)?.toDouble() ?? 0) +
-        ((breakMapForFine?['totalBreakFineAmount'] as num?)?.toDouble() ?? 0) +
-        ((recordMap['permissionFineAmount'] as num?)?.toDouble() ?? 0);
+    // Day-wise total fine: the backend's fineAdjustment.totalFine (same as web),
+    // else late/early + break + permission for older records.
+    final dayFineAmount = recordTotalFineAmount(recordMap);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),

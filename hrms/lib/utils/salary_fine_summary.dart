@@ -40,13 +40,71 @@ String? normalizeAttendanceDateKeyForSalary(dynamic rawValue) {
   }
 }
 
-/// The day's TOTAL attendance fine amount for a record: late/early
-/// (`fineAmount`) + break overage (`break.totalBreakFineAmount`) + permission
-/// overage (`permissionFineAmount`). Use everywhere a day's fine is shown so
-/// late, early, break and permission fines are all reflected (matches the
-/// attendance + shift detail sheets and the backend).
+double _round2(double v) => (v * 100).round() / 100;
+
+double _fineLegAmount(dynamic leg) =>
+    leg is Map ? ((leg['amount'] as num?)?.toDouble() ?? 0.0) : 0.0;
+
+/// Minutes from HRMSbackend `updatedHours` ({hours, minutes}) or "HH:MM".
+int _fineLegMinutes(dynamic leg) {
+  if (leg is! Map) return 0;
+  final u = leg['updatedHours'];
+  if (u is Map) {
+    final h = (u['hours'] as num?)?.toInt() ?? 0;
+    final m = (u['minutes'] as num?)?.toInt() ?? 0;
+    return h * 60 + m;
+  }
+  final a = leg['actualHours']?.toString() ?? '';
+  final match = RegExp(r'^(\d{1,3}):(\d{2})').firstMatch(a);
+  if (match != null) return int.parse(match.group(1)!) * 60 + int.parse(match.group(2)!);
+  return 0;
+}
+
+/// Maps HRMSbackend's stored fine (`fineAdjustment`) onto the keys the app's
+/// fine UI reads — the SAME figures the web shows. Fines are calculated only by
+/// the backend (utils/fineCalculator.ts); the app never recalculates them.
+///
+/// `fineAdjustment`: `{ lateFine:{amount, updatedHours}, earlyExitFine:{...},
+/// breakFine:{...}, totalFine }` → `lateFineAmount`, `earlyExitFineAmount`,
+/// `breakFineAmount`, `fineAmount` (late + early), `totalFineAmount` (the
+/// backend's totalFine = late + early + break), `lateMinutes`/`earlyMinutes`
+/// (when not already set) and `fineHours` (minutes that were actually fined).
+void applyServerFineFields(Map<String, dynamic> m) {
+  final fa = m['fineAdjustment'];
+  if (fa is! Map) return;
+  final late = _fineLegAmount(fa['lateFine']);
+  final early = _fineLegAmount(fa['earlyExitFine']);
+  final brk = _fineLegAmount(fa['breakFine']);
+  final total = (fa['totalFine'] as num?)?.toDouble() ?? (late + early + brk);
+  final lateMin = _fineLegMinutes(fa['lateFine']);
+  final earlyMin = _fineLegMinutes(fa['earlyExitFine']);
+  final breakMin = _fineLegMinutes(fa['breakFine']);
+
+  m['lateFineAmount'] = _round2(late);
+  m['earlyExitFineAmount'] = _round2(early);
+  m['breakFineAmount'] = _round2(brk);
+  m['fineAmount'] = _round2(late + early);
+  m['totalFineAmount'] = _round2(total);
+  m['lateMinutes'] ??= lateMin;
+  m['earlyMinutes'] ??= earlyMin;
+  m['fineHours'] = (late > 0 ? lateMin : 0) + (early > 0 ? earlyMin : 0);
+  m['breakFineMinutes'] = brk > 0 ? breakMin : 0;
+}
+
+/// The day's TOTAL attendance fine amount for a record.
+///
+/// HRMSbackend records (mapped by [applyServerFineFields]): the backend's own
+/// `fineAdjustment.totalFine` — exactly what the web shows. Older records:
+/// late/early (`fineAmount`) + break (`break.totalBreakFineAmount`) +
+/// permission overage (`permissionFineAmount`).
 double recordTotalFineAmount(dynamic raw) {
   if (raw is! Map) return 0.0;
+  final server = raw['totalFineAmount'];
+  if (server is num) return _round2(server.toDouble());
+  final fa = raw['fineAdjustment'];
+  if (fa is Map && fa['totalFine'] is num) {
+    return _round2((fa['totalFine'] as num).toDouble());
+  }
   final lateEarly = (raw['fineAmount'] as num?)?.toDouble() ?? 0.0;
   final breakObj = raw['break'];
   final breakFine = breakObj is Map
@@ -61,6 +119,11 @@ double recordTotalFineAmount(dynamic raw) {
 /// (`break.totalBreakFineMins`) + permission overage (`permissionFineMinutes`).
 int recordTotalFineMinutes(dynamic raw) {
   if (raw is! Map) return 0;
+  if (raw['totalFineAmount'] is num) {
+    // HRMSbackend record (see applyServerFineFields).
+    return ((raw['fineHours'] as num?)?.toInt() ?? 0) +
+        ((raw['breakFineMinutes'] as num?)?.toInt() ?? 0);
+  }
   final lateEarly = (raw['fineHours'] as num?)?.toInt() ?? 0;
   final breakObj = raw['break'];
   final breakMins = breakObj is Map

@@ -10,6 +10,7 @@ import '../config/constants.dart';
 import '../utils/attendance_selfie_compress.dart';
 import '../utils/error_message_utils.dart';
 import '../utils/punch_flow_log.dart';
+import '../utils/salary_fine_summary.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 import 'web_hrms_api_dio.dart';
@@ -573,6 +574,15 @@ class AttendanceService {
 
     if (data['template'] != null) {
       attendanceTemplate = data['template'];
+    }
+
+    // Today's backend-calculated fine (today-punch `fineAdjustment` / `totalFine`),
+    // on the same keys as the month records.
+    applyServerFineFields(data);
+    if (data['attendance'] is Map) {
+      final att = Map<String, dynamic>.from(data['attendance'] as Map);
+      applyServerFineFields(att);
+      data['attendance'] = att;
     }
 
     if (data['status'] == null || data['status'].toString().isEmpty) {
@@ -1229,6 +1239,8 @@ class AttendanceService {
           if (punchOut != null && punchOut != 'NA') m['punchOut'] = punchOut;
           if (workHours != null) m['workHours'] = workHours;
           if (fine != null) m['fine'] = fine;
+          // Backend-calculated fines onto the keys the fine UI reads (same as web).
+          applyServerFineFields(m);
           if (overtime != null) m['overtime'] = overtime;
           if (punchInSelfie != null) m['punchInSelfie'] = punchInSelfie;
           if (punchOutSelfie != null) m['punchOutSelfie'] = punchOutSelfie;
