@@ -97,15 +97,18 @@ class ErrorMessageUtils {
       return _genericMessage;
     }
 
-    final msg = error.toString();
-    if (_isTechnical(msg)) return _genericMessage;
-    // Short, clean backend messages (e.g. "Invalid OTP") can pass through
-    if (msg.length < 80 && !msg.contains('Exception') && !msg.contains('Error:')) {
-      final cleaned = msg
-          .replaceFirst(RegExp(r'^Exception:\s*'), '')
-          .replaceFirst(RegExp(r'^Error:\s*'), '');
-      if (cleaned.length < 60) return cleaned;
-    }
+    // Services wrap server messages as `Exception('<message>')` (e.g. "You are not within
+    // the task location..."). Strip that prefix BEFORE the technical check — checking
+    // first rejected every wrapped message for containing the word "Exception".
+    // Programming errors (TypeError, null-check, RangeError...) are never user messages.
+    if (error is! Exception && error is! String) return _genericMessage;
+    final cleaned = error
+        .toString()
+        .replaceFirst(RegExp(r'^Exception:\s*'), '')
+        .replaceFirst(RegExp(r'^Error:\s*'), '')
+        .trim();
+    if (cleaned.isEmpty || _isTechnical(cleaned)) return _genericMessage;
+    if (cleaned.length <= 300) return cleaned;
     return _genericMessage;
   }
 
