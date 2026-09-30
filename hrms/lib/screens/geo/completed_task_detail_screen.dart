@@ -4,6 +4,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:intl/intl.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/dashboard/dashboard_screen.dart';
@@ -26,6 +27,24 @@ class CompletedTaskDetailScreen extends StatefulWidget {
       _CompletedTaskDetailScreenState();
 }
 
+/// The leg that brought the staff member to this task (see [_loadTaskLeg]).
+class _TaskLeg {
+  _TaskLeg({
+    required this.startLabel,
+    required this.startAt,
+    required this.stopAt,
+    required this.km,
+    required this.path,
+  });
+  final String startLabel;
+  final DateTime? startAt;
+  final DateTime? stopAt;
+  final double? km;
+  final List<LatLng> path;
+  List<LatLng> display = const [];
+  List<LatLng> get line => display.length >= 2 ? display : path;
+}
+
 class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   TaskCompletionReport? _report;
   bool _loading = true;
@@ -35,10 +54,79 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   /// snapping completes; the map falls back to cleaned raw points meanwhile.
   List<LatLng>? _snappedRoute;
 
+  /// This task's leg of the day (HRMSbackend day route): from the previous
+  /// departure (Punch In, or the previous task's Field Out) to this task's
+  /// Field In. Null when the day has no such leg (older days / tracking off).
+  _TaskLeg? _leg;
+
   @override
   void initState() {
     super.initState();
     _fetchReport();
+    _loadTaskLeg();
+  }
+
+  /// Finds the leg that ends at this task's Field In in the day's route and
+  /// snaps it to the roads, pinned to its Start and Stop points.
+  Future<void> _loadTaskLeg() async {
+    final t = widget.task;
+    final taskMongoId = (t.id?.isNotEmpty ?? false) ? t.id! : '';
+    if (taskMongoId.isEmpty) return;
+    final day = (t.completedDate ?? t.startTime ?? DateTime.now()).toLocal();
+    try {
+      final data = await TaskService().getDayRoute(day);
+      Map? leg;
+      for (final l in (data['legs'] as List? ?? const [])) {
+        if (l is Map && l['to'] is Map && (l['to'] as Map)['taskId']?.toString() == taskMongoId) {
+          leg = l;
+          break;
+        }
+      }
+      if (leg == null) return;
+      final from = leg['from'] as Map;
+      final to = leg['to'] as Map;
+      LatLng? flagPos(Map end) {
+        for (final f in (data['flags'] as List? ?? const [])) {
+          if (f is Map && f['type'] == end['type'] && f['at'] == end['at'] &&
+              f['latitude'] is num && f['longitude'] is num) {
+            return LatLng((f['latitude'] as num).toDouble(), (f['longitude'] as num).toDouble());
+          }
+        }
+        return null;
+      }
+
+      final startPos = flagPos(from);
+      final stopPos = flagPos(to);
+      final path = <LatLng>[
+        if (startPos != null) startPos,
+        for (final p in (leg['path'] as List? ?? const []))
+          if (p is Map && p['lat'] is num && p['lng'] is num)
+            LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()),
+        if (stopPos != null) stopPos,
+      ];
+      final fromTitle = from['taskTitle']?.toString() ?? '';
+      final taskLeg = _TaskLeg(
+        startLabel: from['type'] == 'punch_in'
+            ? 'Punch In'
+            : (fromTitle.isNotEmpty ? 'Field Out · $fromTitle' : 'Previous Field Out'),
+        startAt: DateTime.tryParse(from['at']?.toString() ?? '')?.toLocal(),
+        stopAt: DateTime.tryParse(to['at']?.toString() ?? '')?.toLocal(),
+        km: (leg['distanceKm'] as num?)?.toDouble(),
+        path: path,
+      );
+      if (!mounted) return;
+      setState(() => _leg = taskLeg);
+
+      if (path.length >= 3) {
+        final snapped = await RouteSnappingService.buildDisplayRouteFromLatLng('task-leg-$taskMongoId', path);
+        if (!mounted || snapped.length < 2) return;
+        setState(() {
+          taskLeg.display = [path.first, ...snapped.sublist(1, snapped.length - 1), path.last];
+        });
+      }
+    } catch (_) {
+      // Leg is optional: older days, tracking off, or non-field employees.
+    }
   }
 
   /// Snap the raw tracking points to the road network so the map shows the
@@ -860,7 +948,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       }
     }
 
-    if (routePoints.isEmpty) {
+    final leg = (_leg != null && _leg!.line.length >= 2) ? _leg : null;
+    if (routePoints.isEmpty && leg == null) {
       return Container(
         height: 200,
         decoration: BoxDecoration(
@@ -882,14 +971,35 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         ? _snappedRoute!
         : routePoints;
 
-    final bounds = _computeBounds(displayRoute);
+    final bounds = _computeBounds([...displayRoute, if (leg != null) ...leg.line]);
     final center = LatLng(
       (bounds.southwest.latitude + bounds.northeast.latitude) / 2,
       (bounds.southwest.longitude + bounds.northeast.longitude) / 2,
     );
 
+    final time = DateFormat('hh:mm a');
     final markers = <Marker>{};
-    if (displayRoute.isNotEmpty) {
+    if (leg != null) {
+      // The task's leg: Start (where the staff member set off) → Stop (this task's Field In).
+      markers.add(Marker(
+        markerId: const MarkerId('leg-start'),
+        position: leg.line.first,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        infoWindow: InfoWindow(
+          title: 'Start',
+          snippet: [leg.startLabel, if (leg.startAt != null) time.format(leg.startAt!)].join(' · '),
+        ),
+      ));
+      markers.add(Marker(
+        markerId: const MarkerId('leg-stop'),
+        position: leg.line.last,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(
+          title: 'Stop',
+          snippet: ['Field In', if (leg.stopAt != null) time.format(leg.stopAt!)].join(' · '),
+        ),
+      ));
+    } else if (displayRoute.isNotEmpty) {
       markers.add(
         Marker(
           markerId: const MarkerId('start'),
@@ -914,7 +1024,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       }
     }
 
-    return Container(
+    final mapBox = Container(
       height: 220,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
@@ -942,6 +1052,83 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         ),
       ),
     );
+    if (leg == null) return mapBox;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        mapBox,
+        const SizedBox(height: 8),
+        _legCaption(leg, time),
+      ],
+    );
+  }
+
+  /// "Start: Punch In · 10:05 AM → Stop: Field In · 02:01 PM · 0.2 km".
+  Widget _legCaption(_TaskLeg leg, DateFormat time) {
+    Widget end(Color color, String title, String detail) => Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.flag_rounded, size: 18, color: color),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: color)),
+                    Text(
+                      detail,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11.5, color: Color(0xFF475569)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          end(
+            const Color(0xFF16A34A),
+            'Start',
+            [leg.startLabel, if (leg.startAt != null) time.format(leg.startAt!)].join(' · '),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Icon(Icons.arrow_forward_rounded, size: 16, color: Color(0xFF94A3B8)),
+          ),
+          end(
+            const Color(0xFFDC2626),
+            'Stop',
+            ['Field In', if (leg.stopAt != null) time.format(leg.stopAt!)].join(' · '),
+          ),
+          if (leg.km != null) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: TravelledRouteStyle.color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${leg.km!.toStringAsFixed(1)} km',
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: TravelledRouteStyle.color),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _routeMap(
@@ -949,20 +1136,35 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
     List<LatLng> displayRoute,
     Set<Marker> markers,
   ) {
+    final leg = (_leg != null && _leg!.line.length >= 2) ? _leg : null;
+    final fit = [...displayRoute, if (leg != null) ...leg.line];
     return GoogleMap(
       initialCameraPosition: CameraPosition(target: center, zoom: 14),
       onMapCreated: (controller) {
-        if (displayRoute.length > 1) {
+        if (fit.length > 1) {
           Future.delayed(const Duration(milliseconds: 300), () {
             controller.animateCamera(
-              CameraUpdate.newLatLngBounds(_computeBounds(displayRoute), 40),
+              CameraUpdate.newLatLngBounds(_computeBounds(fit), 40),
             );
           });
         }
       },
-      polylines: displayRoute.length > 1
-          ? {TravelledRouteStyle.polyline('route', displayRoute)}
-          : {},
+      polylines: {
+        // The task's leg (Start → Stop) as the main green route line.
+        if (leg != null) TravelledRouteStyle.polyline('task-leg', leg.line),
+        // GPS recorded on the task itself (e.g. at the client): thinner blue, on top.
+        if (displayRoute.length > 1)
+          leg == null
+              ? TravelledRouteStyle.polyline('route', displayRoute)
+              : Polyline(
+                  polylineId: const PolylineId('route'),
+                  points: displayRoute,
+                  color: const Color(0xFF1565C0),
+                  width: 4,
+                  jointType: JointType.round,
+                  zIndex: 3,
+                ),
+      },
       markers: markers,
       mapToolbarEnabled: false,
       zoomControlsEnabled: true,

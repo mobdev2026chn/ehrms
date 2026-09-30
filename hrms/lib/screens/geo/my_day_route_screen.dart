@@ -60,6 +60,26 @@ class _Leg {
   List<LatLng> get line => display.length >= 2 ? display : path;
 }
 
+/// One piece of the day's continuous route, between two consecutive flags:
+/// a travel leg (IN→F1, F1 out→F2, …, last out→OUT) or time at a client
+/// (F1 → F1 out). Consecutive pieces share their end points, so the route is
+/// one unbroken line from Punch In to Punch Out.
+class _Seg {
+  _Seg(this.key, this.legIndex, this.color, this.points);
+  final String key;
+
+  /// Leg number for travel pieces; null for time at a client.
+  final int? legIndex;
+  final Color color;
+
+  /// Anchored at both ends (flag positions / neighbour's end).
+  final List<LatLng> points;
+
+  /// [points] snapped to the roads, with the same two end points.
+  List<LatLng> display = const [];
+  List<LatLng> get line => display.length >= 2 ? display : points;
+}
+
 class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   late DateTime _day;
   bool _loading = true;
@@ -68,7 +88,6 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   double? _totalKm;
   double? _trailKm;
   /// The whole tracked day (punch-in → punch-out / now), including time at clients.
-  List<LatLng> _trail = [];
   bool _punchedOut = false;
   List<_Flag> _flags = [];
   List<_Leg> _legs = [];
@@ -128,8 +147,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         _loading = true;
         _error = null;
         _selectedLeg = null;
-        _trailDisplay = const [];
-        _lastTrailSnapAt = null;
+        _segs = [];
       });
     }
     try {
@@ -192,10 +210,14 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           ],
         ));
       }
-      final trail = <LatLng>[
+      // Whole-day points with their times, so the route can be cut at each flag.
+      final trailT = <(LatLng, DateTime)>[
         for (final p in (data['trail'] as List? ?? const []))
           if (p is Map && p['lat'] is num && p['lng'] is num)
-            LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()),
+            (
+              LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()),
+              _parseAt(p['t']),
+            ),
       ];
       // Leg colours + the flag codes at each end (IN → F1, F1 out → F2, …).
       for (var i = 0; i < legs.length; i++) {
@@ -218,18 +240,17 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         _trackingOn = data['trackingEnabled'] == true;
         _totalKm = (data['totalKm'] as num?)?.toDouble();
         _trailKm = (data['trailKm'] as num?)?.toDouble();
-        _trail = trail;
         _punchedOut = flags.any((f) => f.type == 'punch_out');
         _flags = flags;
-        // Periodic refresh: keep the road-snapped line of legs that haven't changed.
-        for (final l in legs) {
-          for (final old in _legs) {
-            if (old.index == l.index && old.path.length == l.path.length && old.display.length >= 2) {
-              l.display = old.display;
-            }
+        _legs = legs;
+        final segs = _buildSegments(flags, legs, trailT);
+        // Periodic refresh: keep the road-snapped line of pieces that haven't changed.
+        for (final s in segs) {
+          for (final old in _segs) {
+            if (old.key == s.key && old.display.length >= 2) s.display = old.display;
           }
         }
-        _legs = legs;
+        _segs = segs;
       });
       if (!silent) WidgetsBinding.instance.addPostFrameCallback((_) => _fitTo(null));
       unawaited(_buildMapGraphics());
@@ -269,21 +290,71 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     Color(0xFFC2185B), // pink
   ];
 
-  /// Whole-day trail snapped to the roads (falls back to the raw trail).
-  List<LatLng> _trailDisplay = const [];
+  /// The day's route as connected pieces (see [_Seg]).
+  List<_Seg> _segs = [];
 
-  /// Rendered label pins ("IN", "F1", "L1 · 3.4 km", …), keyed by text+colour.
+  /// Grey for time at a client, between two coloured legs.
+  static const Color _siteColor = Color(0xFF64748B);
+
+  /// Rendered flag icons, keyed by type + visit.
   final Map<String, BitmapDescriptor> _icons = {};
 
   String get _dayKey => DateFormat('yyyyMMdd').format(_day);
 
-  /// Road-snapped lines for every leg and the whole day (cached on the phone
-  /// per day + point count, so each route is snapped once), and the label pins.
-  Future<void> _buildMapGraphics() async {
-    final legs = List<_Leg>.from(_legs);
-    final trail = List<LatLng>.from(_trail);
+  /// Cuts the whole-day GPS trail at every flag (Punch In, Field In, Field Out,
+  /// Punch Out): IN→F1 = L1, F1→F1 out = at site, F1 out→F2 = L2, … Each piece
+  /// starts exactly where the previous one ended (the flag's position, or the
+  /// neighbour's last point when a flag has no location), so the route never
+  /// breaks. While still punched in, the last piece runs to the latest point.
+  List<_Seg> _buildSegments(List<_Flag> flags, List<_Leg> legs, List<(LatLng, DateTime)> trail) {
+    if (trail.isEmpty) return [];
+    final marks = flags.where((f) => f.type != '').toList()..sort((a, b) => a.at.compareTo(b.at));
+    if (marks.isEmpty) return [];
 
-    // Flag icons first (cheap), so the flags show right away.
+    _Leg? legFrom(_Flag f) {
+      for (final l in legs) {
+        if (l.fromAt.difference(f.at).inSeconds.abs() <= 1) return l;
+      }
+      return null;
+    }
+
+    final segs = <_Seg>[];
+    LatLng? carry = marks.first.pos; // the previous piece's end
+    for (var i = 0; i < marks.length; i++) {
+      final from = marks[i];
+      final to = i + 1 < marks.length ? marks[i + 1] : null;
+      if (to == null && _punchedOut) break; // day closed at the last flag
+      final end = to?.at ?? DateTime.now();
+      final inside = [
+        for (final p in trail)
+          if (p.$2.isAfter(from.at) && p.$2.isBefore(end)) p.$1,
+      ];
+      final start = from.pos ?? carry ?? (inside.isNotEmpty ? inside.first : null);
+      final finish = to?.pos ?? (inside.isNotEmpty ? inside.last : start);
+      if (start == null || finish == null) continue;
+      final pts = <LatLng>[start, ...inside, if (finish != (inside.isNotEmpty ? inside.last : start)) finish];
+      // Skip a zero-length piece (nothing moved, both ends the same spot).
+      carry = pts.last;
+      if (pts.length < 2) continue;
+
+      final isTravel = from.type == 'punch_in' || from.type == 'field_out';
+      final leg = isTravel ? legFrom(from) : null;
+      segs.add(_Seg(
+        '${isTravel ? 'L' : 'S'}${leg?.index ?? i}-${pts.length}',
+        leg?.index,
+        leg?.color ?? (isTravel ? _legPalette[segs.length % _legPalette.length] : _siteColor),
+        pts,
+      ));
+    }
+    return segs;
+  }
+
+  /// Flag icons, then road-snapped pieces. Each snapped piece is re-pinned to
+  /// its original two end points, so snapping can't reopen a gap at a flag.
+  /// Snaps are cached on the phone per piece + point count.
+  Future<void> _buildMapGraphics() async {
+    final segs = List<_Seg>.from(_segs);
+
     for (final f in _flags) {
       if (f.pos == null || !_isMapFlag(f)) continue;
       final key = _flagKey(f);
@@ -294,30 +365,23 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     }
     if (mounted) setState(() {});
 
-    // Then snap each leg and the whole day to the roads.
-    for (final l in legs) {
-      if (l.path.length < 2 || l.display.length >= 2) continue;
+    for (final s in segs) {
+      if (s.display.length >= 2 || s.points.length < 3) continue; // 2 points = nothing to snap
       try {
-        l.display = await RouteSnappingService.buildDisplayRouteFromLatLng(
-          'myday-$_dayKey-leg${l.index}',
-          l.path,
-        );
+        final snapped = await RouteSnappingService.buildDisplayRouteFromLatLng('myday-$_dayKey-${s.key}', s.points);
+        if (snapped.length >= 2) {
+          s.display = [
+            s.points.first,
+            if (snapped.first != s.points.first) snapped.first,
+            ...snapped.sublist(1, snapped.length - 1),
+            if (snapped.last != s.points.last) snapped.last,
+            s.points.last,
+          ];
+        }
       } catch (_) {}
       if (mounted) setState(() {});
     }
-    // The whole-day line grows while punched in: re-snap it at most every 5 min
-    // (each new point count is a Roads API call), keeping the previous line meanwhile.
-    final dueAt = _lastTrailSnapAt?.add(const Duration(minutes: 5));
-    if (trail.length >= 2 && (dueAt == null || DateTime.now().isAfter(dueAt))) {
-      _lastTrailSnapAt = DateTime.now();
-      try {
-        final snapped = await RouteSnappingService.buildDisplayRouteFromLatLng('myday-$_dayKey-trail', trail);
-        if (mounted) setState(() => _trailDisplay = snapped);
-      } catch (_) {}
-    }
   }
-
-  DateTime? _lastTrailSnapAt;
 
   Color _flagColor(String type) => switch (type) {
         'punch_in' => const Color(0xFF16A34A),
@@ -400,38 +464,28 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
             ),
       };
 
+  /// One continuous route: the pieces in order, each in its leg colour (grey
+  /// while at a client). Tap a leg to highlight it.
   Set<Polyline> get _polylines {
-    final whole = _trailDisplay.length >= 2 ? _trailDisplay : _trail;
-    final out = <Polyline>{
-      // Complete route punch-in → punch-out underneath (incl. movement at
-      // clients), road-snapped; the coloured legs are drawn on top of it.
-      if (whole.length >= 2)
-        Polyline(
-          polylineId: const PolylineId('whole-day'),
-          points: whole,
-          color: const Color(0xFF94A3B8).withValues(alpha: 0.55),
-          width: 7,
-          jointType: JointType.round,
-          startCap: Cap.roundCap,
-          endCap: Cap.roundCap,
-          zIndex: 1,
-        ),
-    };
-    for (final l in _legs) {
-      final pts = l.line;
+    final out = <Polyline>{};
+    for (var i = 0; i < _segs.length; i++) {
+      final s = _segs[i];
+      final pts = s.line;
       if (pts.length < 2) continue;
-      final faded = _selectedLeg != null && _selectedLeg != l.index;
+      final faded = _selectedLeg != null && s.legIndex != _selectedLeg;
       out.add(Polyline(
-        polylineId: PolylineId('leg-${l.index}'),
+        polylineId: PolylineId('seg-$i'),
         points: pts,
-        color: faded ? l.color.withValues(alpha: 0.25) : l.color,
-        width: 5,
+        color: faded ? s.color.withValues(alpha: 0.3) : s.color,
+        width: s.legIndex == null ? 5 : 6,
         jointType: JointType.round,
         startCap: Cap.roundCap,
         endCap: Cap.roundCap,
-        zIndex: faded ? 2 : 3,
-        consumeTapEvents: true,
-        onTap: () => setState(() => _selectedLeg = faded ? l.index : null),
+        zIndex: faded ? 1 : 2,
+        consumeTapEvents: s.legIndex != null,
+        onTap: s.legIndex == null
+            ? null
+            : () => setState(() => _selectedLeg = _selectedLeg == s.legIndex ? null : s.legIndex),
       ));
     }
     return out;
@@ -441,10 +495,10 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     final map = _map;
     if (map == null) return;
     final pts = <LatLng>[
-      if (leg != null) ...leg.line,
+      if (leg != null) ...[for (final s in _segs) if (s.legIndex == leg.index) ...s.line],
+      if (leg != null && !_segs.any((s) => s.legIndex == leg.index)) ...leg.path,
       if (leg == null) ...[for (final f in _flags) if (f.pos != null) f.pos!],
-      if (leg == null) ...[for (final l in _legs) ...l.path],
-      if (leg == null) ..._trail,
+      if (leg == null) ...[for (final s in _segs) ...s.line],
     ];
     if (pts.isEmpty) return;
     if (pts.length == 1) {
@@ -703,9 +757,9 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 16, height: 5, color: const Color(0xFF94A3B8).withValues(alpha: 0.55)),
+            Container(width: 16, height: 5, color: _siteColor),
             const SizedBox(width: 4),
-            const Text('Complete route (punch in → out)', style: TextStyle(fontSize: 11.5, color: _muted)),
+            const Text('At client (Field In → Field Out)', style: TextStyle(fontSize: 11.5, color: _muted)),
           ],
         ),
       ],
