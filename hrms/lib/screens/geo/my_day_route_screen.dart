@@ -7,7 +7,6 @@
 
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -16,6 +15,7 @@ import 'package:intl/intl.dart';
 import '../../services/geo/route_snapping_service.dart';
 import '../../services/task_service.dart';
 import '../../utils/error_message_utils.dart';
+import '../../widgets/flag_marker_icon.dart';
 import '../../widgets/travelled_route_style.dart';
 
 class MyDayRouteScreen extends StatefulWidget {
@@ -376,11 +376,23 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     final segs = List<_Seg>.from(_segs);
 
     for (final f in _flags) {
-      if (f.pos == null || !_isMapFlag(f)) continue;
+      if (f.pos == null) continue;
       final key = _flagKey(f);
       if (_icons.containsKey(key)) continue;
       try {
-        _icons[key] = await _flagIcon(_flagColor(f.type), f.type == 'field_in' ? f.code.replaceFirst('F', '') : null);
+        if (_isVisit(f)) {
+          // "F1 in" (blue, tag on the right) / "F1 out" (orange, tag on the left).
+          final dot = await dotLabelMarkerIcon(
+            context,
+            f.type == 'field_in' ? kFieldInDotColor : kFieldOutDotColor,
+            _visitLabel(f),
+            labelLeft: f.type == 'field_out',
+          );
+          _icons[key] = dot.icon;
+          _dotAnchors[key] = dot.anchor;
+        } else {
+          _icons[key] = await flagMarkerIcon(context, _flagColor(f.type));
+        }
       } catch (_) {}
     }
     if (mounted) setState(() {});
@@ -418,76 +430,38 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         _ => _muted,
       };
 
-  /// Only Punch In, Field In and Punch Out get a flag on the map.
-  bool _isMapFlag(_Flag f) => f.type == 'punch_in' || f.type == 'field_in' || f.type == 'punch_out';
+  /// Field In / Field Out are drawn as labelled dots; Punch In / Out as flags.
+  bool _isVisit(_Flag f) => f.type == 'field_in' || f.type == 'field_out';
 
-  String _flagKey(_Flag f) => 'flag|${f.type}|${f.type == 'field_in' ? f.code : ''}';
+  /// "F1 in" / "F1 out" (codes are "F1" / "F1 out").
+  String _visitLabel(_Flag f) => f.type == 'field_in' ? '${f.code} in' : f.code;
 
-  /// Small, clear flag icon: a white-ringed coloured circle with a white flag,
-  /// plus a tiny visit number (1, 2, …) for Field In. ~26 dp, drawn crisp.
-  Future<BitmapDescriptor> _flagIcon(Color color, String? number) async {
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final d = 26 * dpr; // circle diameter
-    final badge = number == null ? 0.0 : 14 * dpr;
-    final w = d + badge * 0.55;
-    final h = d + badge * 0.35;
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    final c = Offset(d / 2, h - d / 2);
+  String _flagKey(_Flag f) => 'mk|${f.type}|${_isVisit(f) ? f.code : ''}';
 
-    canvas.drawCircle(c.translate(0, dpr), d / 2 - dpr, Paint()..color = const Color(0x33000000));
-    canvas.drawCircle(c, d / 2 - dpr, Paint()..color = Colors.white);
-    canvas.drawCircle(c, d / 2 - 3 * dpr, Paint()..color = color);
-
-    final icon = Icons.flag_rounded;
-    final tp = TextPainter(
-      text: TextSpan(
-        text: String.fromCharCode(icon.codePoint),
-        style: TextStyle(fontSize: 15 * dpr, fontFamily: icon.fontFamily, package: icon.fontPackage, color: Colors.white),
-      ),
-      textDirection: ui.TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, c - Offset(tp.width / 2, tp.height / 2));
-
-    if (number != null) {
-      final bc = Offset(w - badge / 2, badge / 2);
-      canvas.drawCircle(bc, badge / 2, Paint()..color = Colors.white);
-      canvas.drawCircle(bc, badge / 2 - 1.5 * dpr, Paint()..color = const Color(0xFF0F172A));
-      final np = TextPainter(
-        text: TextSpan(
-          text: number,
-          style: TextStyle(fontSize: 8.5 * dpr, fontWeight: FontWeight.w900, color: Colors.white),
-        ),
-        textDirection: ui.TextDirection.ltr,
-      )..layout();
-      np.paint(canvas, bc - Offset(np.width / 2, np.height / 2));
-    }
-
-    final img = await recorder.endRecording().toImage(w.ceil(), h.ceil());
-    final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), imagePixelRatio: dpr);
-  }
+  /// Anchor for each dot icon (centres the dot, not the label).
+  final Map<String, Offset> _dotAnchors = {};
 
   Set<Marker> get _markers => {
         for (final f in _flags)
-          if (f.pos != null && _isMapFlag(f))
+          if (f.pos != null)
             Marker(
               markerId: MarkerId('flag-${f.seq}'),
               position: f.pos!,
               icon: _icons[_flagKey(f)] ?? BitmapDescriptor.defaultMarkerWithHue(_hueFor(f.type)),
-              anchor: const Offset(0.5, 0.5),
+              anchor: _dotAnchors[_flagKey(f)] ?? const Offset(0.5, 0.5),
               infoWindow: InfoWindow(
                 title: switch (f.type) {
                   'punch_in' => 'Punch In',
                   'punch_out' => 'Punch Out',
-                  _ => '${f.code} · ${f.title.replaceFirst('Field In · ', '')}',
+                  'field_out' => '${_visitLabel(f)} · ${f.title.replaceFirst('Field Out · ', '')}',
+                  _ => '${_visitLabel(f)} · ${f.title.replaceFirst('Field In · ', '')}',
                 },
                 snippet: [
                   DateFormat('hh:mm a').format(f.at),
                   if (f.address.isNotEmpty) f.address,
                 ].join(' · '),
               ),
-              zIndexInt: 3,
+              zIndexInt: _isVisit(f) ? 2 : 3, // flags above dots
             ),
       };
 
@@ -765,12 +739,30 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
             Text(label, style: const TextStyle(fontSize: 11.5, color: _muted)),
           ],
         );
+    Widget visitDot(Color c, String label) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: c,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1.5),
+                boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 2)],
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(fontSize: 11.5, color: _muted)),
+          ],
+        );
     return Wrap(
       spacing: 12,
       runSpacing: 6,
       children: [
         dot(_flagColor('punch_in'), 'Punch In'),
-        dot(_flagColor('field_in'), 'Field In (F1, F2…)'),
+        visitDot(kFieldInDotColor, 'F1 in = Field In'),
+        visitDot(kFieldOutDotColor, 'F1 out = Field Out'),
         dot(_flagColor('punch_out'), 'Punch Out'),
         Row(
           mainAxisSize: MainAxisSize.min,

@@ -1,6 +1,7 @@
 // Task Completion detailed view with timeline and route map.
 // Fetches data from DB (tasks + trackings). Timeline + map side-by-side.
 
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -13,6 +14,7 @@ import 'package:hrms/services/task_service.dart';
 import 'package:hrms/services/geo/route_snapping_service.dart';
 import 'package:hrms/widgets/oriented_image.dart';
 import 'package:hrms/widgets/travelled_route_style.dart';
+import 'package:hrms/widgets/flag_marker_icon.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
@@ -41,6 +43,12 @@ class _TaskLeg {
   final DateTime? stopAt;
   final double? km;
   final List<LatLng> path;
+
+  /// This task's visit number that day (F1, F2, …) and its Field In / Out spots.
+  int visitNo = 1;
+  LatLng? inPos;
+  LatLng? outPos;
+  DateTime? outAt;
   List<LatLng> display = const [];
   List<LatLng> get line => display.length >= 2 ? display : path;
 }
@@ -59,11 +67,50 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   /// Field In. Null when the day has no such leg (older days / tracking off).
   _TaskLeg? _leg;
 
+  /// Flag icons for the leg's Start (green) and Stop (red) on the map.
+  BitmapDescriptor? _startFlag;
+  BitmapDescriptor? _stopFlag;
+
+  /// "F1 in" / "F1 out" dots for this visit.
+  ({BitmapDescriptor icon, Offset anchor})? _inDot;
+  ({BitmapDescriptor icon, Offset anchor})? _outDot;
+
+  Future<void> _loadVisitDots(int visitNo) async {
+    if (!mounted) return;
+    try {
+      final inDot = await dotLabelMarkerIcon(context, kFieldInDotColor, 'F$visitNo in');
+      if (!mounted) return;
+      final outDot = await dotLabelMarkerIcon(context, kFieldOutDotColor, 'F$visitNo out', labelLeft: true);
+      if (!mounted) return;
+      setState(() {
+        _inDot = inDot;
+        _outDot = outDot;
+      });
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();
     _fetchReport();
     _loadTaskLeg();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFlagIcons());
+  }
+
+  Future<void> _loadFlagIcons() async {
+    if (!mounted) return;
+    try {
+      final start = await flagMarkerIcon(context, const Color(0xFF16A34A));
+      if (!mounted) return;
+      final stop = await flagMarkerIcon(context, const Color(0xFFDC2626));
+      if (!mounted) return;
+      setState(() {
+        _startFlag = start;
+        _stopFlag = stop;
+      });
+    } catch (_) {
+      // Fall back to the default pins.
+    }
   }
 
   /// Finds the leg that ends at this task's Field In in the day's route and
@@ -114,8 +161,27 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         km: (leg['distanceKm'] as num?)?.toDouble(),
         path: path,
       );
+      // Visit number (order of Field Ins that day) and this task's Field Out.
+      var n = 0;
+      for (final f in (data['flags'] as List? ?? const [])) {
+        if (f is! Map) continue;
+        final pos = (f['latitude'] is num && f['longitude'] is num)
+            ? LatLng((f['latitude'] as num).toDouble(), (f['longitude'] as num).toDouble())
+            : null;
+        if (f['type'] == 'field_in') {
+          n++;
+          if (f['taskId']?.toString() == taskMongoId) {
+            taskLeg.visitNo = n;
+            taskLeg.inPos = pos;
+          }
+        } else if (f['type'] == 'field_out' && f['taskId']?.toString() == taskMongoId) {
+          taskLeg.outPos = pos;
+          taskLeg.outAt = DateTime.tryParse(f['at']?.toString() ?? '')?.toLocal();
+        }
+      }
       if (!mounted) return;
       setState(() => _leg = taskLeg);
+      unawaited(_loadVisitDots(taskLeg.visitNo));
 
       if (path.length >= 3) {
         final snapped = await RouteSnappingService.buildDisplayRouteFromLatLng('task-leg-$taskMongoId', path);
@@ -984,7 +1050,10 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       markers.add(Marker(
         markerId: const MarkerId('leg-start'),
         position: leg.line.first,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        // Green flag — same icon as the "Start" caption below the map.
+        icon: _startFlag ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        anchor: _startFlag != null ? const Offset(0.5, 0.5) : const Offset(0.5, 1),
+        zIndexInt: 2,
         infoWindow: InfoWindow(
           title: 'Start',
           snippet: [leg.startLabel, if (leg.startAt != null) time.format(leg.startAt!)].join(' · '),
@@ -993,12 +1062,42 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       markers.add(Marker(
         markerId: const MarkerId('leg-stop'),
         position: leg.line.last,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        // Red flag — same icon as the "Stop" caption below the map.
+        icon: _stopFlag ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        anchor: _stopFlag != null ? const Offset(0.5, 0.5) : const Offset(0.5, 1),
+        zIndexInt: 3,
         infoWindow: InfoWindow(
           title: 'Stop',
           snippet: ['Field In', if (leg.stopAt != null) time.format(leg.stopAt!)].join(' · '),
         ),
       ));
+      // This visit's Field In / Field Out as labelled dots (under the flags).
+      if (_inDot != null) {
+        markers.add(Marker(
+          markerId: const MarkerId('visit-in'),
+          position: leg.inPos ?? leg.line.last,
+          icon: _inDot!.icon,
+          anchor: _inDot!.anchor,
+          zIndexInt: 1,
+          infoWindow: InfoWindow(
+            title: 'F${leg.visitNo} in · Field In',
+            snippet: leg.stopAt != null ? time.format(leg.stopAt!) : null,
+          ),
+        ));
+      }
+      if (_outDot != null && leg.outPos != null) {
+        markers.add(Marker(
+          markerId: const MarkerId('visit-out'),
+          position: leg.outPos!,
+          icon: _outDot!.icon,
+          anchor: _outDot!.anchor,
+          zIndexInt: 1,
+          infoWindow: InfoWindow(
+            title: 'F${leg.visitNo} out · Field Out',
+            snippet: leg.outAt != null ? time.format(leg.outAt!) : null,
+          ),
+        ));
+      }
     } else if (displayRoute.isNotEmpty) {
       markers.add(
         Marker(
