@@ -487,16 +487,22 @@ class Task {
     }
 
     final proofImgStr = (json['photoProofUrl'] ?? json['proofImg'] ?? json['fieldOutImage'])?.toString();
-    final isOtpDone = (json['customFields']?['otpVerified'] as bool?) ??
-        (json['progressSteps']?['otpVerified'] as bool?) ??
-        (json['isOtpVerified'] as bool?) ??
-        (json['otpVerified'] as bool?) ??
+    // Verified if ANY source says so (the completion report sends `isOtpVerified`,
+    // which also covers Email fields verified by OTP); a stale `false` elsewhere
+    // must not hide it.
+    final isOtpDone = json['customFields']?['otpVerified'] == true ||
+        json['progressSteps']?['otpVerified'] == true ||
+        json['isOtpVerified'] == true ||
+        json['otpVerified'] == true ||
         (json['fieldOutOtp'] != null && json['fieldOutOtp'].toString().trim().isNotEmpty);
     final isPhotoDone = (json['progressSteps'] != null ? (json['progressSteps']['photoProof'] as bool?) : null) ??
         (proofImgStr != null && proofImgStr.isNotEmpty);
 
+    // Start = when the task was started (HRMSbackend `fieldInTime` = task.timeIn);
+    // `actualFieldInTime` is the Field In / Arrived moment and only a last resort
+    // here — reading it first made Start show the Arrived time.
     final startTimeVal = _parseTimeOrDateTime(
-      json['startTime'] ?? json['actualFieldInTime'] ?? json['timeIn'] ?? json['fieldInTime'] ?? json['startDate'],
+      json['startTime'] ?? json['fieldInTime'] ?? json['timeIn'] ?? json['actualFieldInTime'] ?? json['startDate'],
     );
     final arrivalTimeVal = _parseTimeOrDateTime(
       json['arrivalTime'] ?? json['actualFieldInTime'] ?? json['timeIn'] ?? json['fieldInTime'],

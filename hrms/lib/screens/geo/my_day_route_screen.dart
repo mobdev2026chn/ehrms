@@ -7,11 +7,13 @@
 
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 
+import '../../services/geo/route_snapping_service.dart';
 import '../../services/task_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/travelled_route_style.dart';
@@ -26,13 +28,17 @@ class MyDayRouteScreen extends StatefulWidget {
 }
 
 class _Flag {
-  _Flag(this.seq, this.type, this.at, this.pos, this.title, this.address);
+  _Flag(this.seq, this.type, this.at, this.pos, this.title, this.address, this.taskId);
   final int seq;
   final String type; // punch_in | field_in | field_out | punch_out
   final DateTime at;
   final LatLng? pos;
   final String title;
   final String address;
+  final String taskId;
+
+  /// Short map label: IN, F1, F1 out, F2, …, OUT (visits numbered in order).
+  String code = '';
 }
 
 class _Leg {
@@ -44,6 +50,14 @@ class _Leg {
   final DateTime toAt;
   final double? km;
   final List<LatLng> path;
+
+  /// [path] snapped to the roads (continuous line); falls back to [path].
+  List<LatLng> display = const [];
+  Color color = TravelledRouteStyle.color;
+  String fromCode = '';
+  String toCode = '';
+
+  List<LatLng> get line => display.length >= 2 ? display : path;
 }
 
 class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
@@ -55,8 +69,6 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   double? _trailKm;
   /// The whole tracked day (punch-in → punch-out / now), including time at clients.
   List<LatLng> _trail = [];
-  LatLng? _lastPoint;
-  DateTime? _lastPointAt;
   bool _punchedOut = false;
   List<_Flag> _flags = [];
   List<_Leg> _legs = [];
@@ -116,6 +128,8 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         _loading = true;
         _error = null;
         _selectedLeg = null;
+        _trailDisplay = const [];
+        _lastTrailSnapAt = null;
       });
     }
     try {
@@ -134,7 +148,24 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           lat != null && lng != null ? LatLng(lat, lng) : null,
           task.isNotEmpty ? '${_typeLabel(type)} · $task' : _typeLabel(type),
           raw['address']?.toString() ?? '',
+          raw['taskId']?.toString() ?? '',
         ));
+      }
+      // Visits numbered in order: Field In of the n-th visit = Fn, its Field Out = "Fn out".
+      final visitNo = <String, int>{};
+      for (final f in flags) {
+        switch (f.type) {
+          case 'punch_in':
+            f.code = 'IN';
+          case 'punch_out':
+            f.code = 'OUT';
+          case 'field_in':
+            final n = visitNo.putIfAbsent(f.taskId.isEmpty ? 'seq${f.seq}' : f.taskId, () => visitNo.length + 1);
+            f.code = 'F$n';
+          case 'field_out':
+            final n = visitNo.putIfAbsent(f.taskId.isEmpty ? 'seq${f.seq}' : f.taskId, () => visitNo.length + 1);
+            f.code = 'F$n out';
+        }
       }
       final legs = <_Leg>[];
       for (final raw in (data['legs'] as List? ?? const [])) {
@@ -166,7 +197,21 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           if (p is Map && p['lat'] is num && p['lng'] is num)
             LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()),
       ];
-      final lp = data['lastPoint'];
+      // Leg colours + the flag codes at each end (IN → F1, F1 out → F2, …).
+      for (var i = 0; i < legs.length; i++) {
+        final l = legs[i];
+        l.color = _legPalette[i % _legPalette.length];
+        _Flag? near(DateTime at, bool departure) {
+          for (final f in flags) {
+            final isDep = f.type == 'punch_in' || f.type == 'field_out';
+            if (isDep == departure && f.at.difference(at).inSeconds.abs() <= 1) return f;
+          }
+          return null;
+        }
+
+        l.fromCode = near(l.fromAt, true)?.code ?? '';
+        l.toCode = near(l.toAt, false)?.code ?? '';
+      }
       if (!mounted) return;
       setState(() {
         _loading = false;
@@ -174,15 +219,20 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         _totalKm = (data['totalKm'] as num?)?.toDouble();
         _trailKm = (data['trailKm'] as num?)?.toDouble();
         _trail = trail;
-        _lastPoint = lp is Map && lp['lat'] is num && lp['lng'] is num
-            ? LatLng((lp['lat'] as num).toDouble(), (lp['lng'] as num).toDouble())
-            : null;
-        _lastPointAt = lp is Map ? DateTime.tryParse(lp['t']?.toString() ?? '')?.toLocal() : null;
         _punchedOut = flags.any((f) => f.type == 'punch_out');
         _flags = flags;
+        // Periodic refresh: keep the road-snapped line of legs that haven't changed.
+        for (final l in legs) {
+          for (final old in _legs) {
+            if (old.index == l.index && old.path.length == l.path.length && old.display.length >= 2) {
+              l.display = old.display;
+            }
+          }
+        }
         _legs = legs;
       });
       if (!silent) WidgetsBinding.instance.addPostFrameCallback((_) => _fitTo(null));
+      unawaited(_buildMapGraphics());
     } catch (e) {
       if (!mounted || silent) return;
       setState(() {
@@ -209,27 +259,138 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     }
   }
 
+  /// Distinct leg colours so L1, L2, … are easy to tell apart on the map.
+  static const List<Color> _legPalette = [
+    Color(0xFF2E7D32), // green
+    Color(0xFF1565C0), // blue
+    Color(0xFF6A1B9A), // purple
+    Color(0xFFEF6C00), // orange
+    Color(0xFF00838F), // teal
+    Color(0xFFC2185B), // pink
+  ];
+
+  /// Whole-day trail snapped to the roads (falls back to the raw trail).
+  List<LatLng> _trailDisplay = const [];
+
+  /// Rendered label pins ("IN", "F1", "L1 · 3.4 km", …), keyed by text+colour.
+  final Map<String, BitmapDescriptor> _icons = {};
+
+  String get _dayKey => DateFormat('yyyyMMdd').format(_day);
+
+  /// Road-snapped lines for every leg and the whole day (cached on the phone
+  /// per day + point count, so each route is snapped once), and the label pins.
+  Future<void> _buildMapGraphics() async {
+    final legs = List<_Leg>.from(_legs);
+    final trail = List<LatLng>.from(_trail);
+
+    // Flag icons first (cheap), so the flags show right away.
+    for (final f in _flags) {
+      if (f.pos == null || !_isMapFlag(f)) continue;
+      final key = _flagKey(f);
+      if (_icons.containsKey(key)) continue;
+      try {
+        _icons[key] = await _flagIcon(_flagColor(f.type), f.type == 'field_in' ? f.code.replaceFirst('F', '') : null);
+      } catch (_) {}
+    }
+    if (mounted) setState(() {});
+
+    // Then snap each leg and the whole day to the roads.
+    for (final l in legs) {
+      if (l.path.length < 2 || l.display.length >= 2) continue;
+      try {
+        l.display = await RouteSnappingService.buildDisplayRouteFromLatLng(
+          'myday-$_dayKey-leg${l.index}',
+          l.path,
+        );
+      } catch (_) {}
+      if (mounted) setState(() {});
+    }
+    // The whole-day line grows while punched in: re-snap it at most every 5 min
+    // (each new point count is a Roads API call), keeping the previous line meanwhile.
+    final dueAt = _lastTrailSnapAt?.add(const Duration(minutes: 5));
+    if (trail.length >= 2 && (dueAt == null || DateTime.now().isAfter(dueAt))) {
+      _lastTrailSnapAt = DateTime.now();
+      try {
+        final snapped = await RouteSnappingService.buildDisplayRouteFromLatLng('myday-$_dayKey-trail', trail);
+        if (mounted) setState(() => _trailDisplay = snapped);
+      } catch (_) {}
+    }
+  }
+
+  DateTime? _lastTrailSnapAt;
+
+  Color _flagColor(String type) => switch (type) {
+        'punch_in' => const Color(0xFF16A34A),
+        'field_in' => const Color(0xFF0284C7),
+        'field_out' => const Color(0xFFEA580C),
+        'punch_out' => const Color(0xFFDC2626),
+        _ => _muted,
+      };
+
+  /// Only Punch In, Field In and Punch Out get a flag on the map.
+  bool _isMapFlag(_Flag f) => f.type == 'punch_in' || f.type == 'field_in' || f.type == 'punch_out';
+
+  String _flagKey(_Flag f) => 'flag|${f.type}|${f.type == 'field_in' ? f.code : ''}';
+
+  /// Small, clear flag icon: a white-ringed coloured circle with a white flag,
+  /// plus a tiny visit number (1, 2, …) for Field In. ~26 dp, drawn crisp.
+  Future<BitmapDescriptor> _flagIcon(Color color, String? number) async {
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final d = 26 * dpr; // circle diameter
+    final badge = number == null ? 0.0 : 14 * dpr;
+    final w = d + badge * 0.55;
+    final h = d + badge * 0.35;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final c = Offset(d / 2, h - d / 2);
+
+    canvas.drawCircle(c.translate(0, dpr), d / 2 - dpr, Paint()..color = const Color(0x33000000));
+    canvas.drawCircle(c, d / 2 - dpr, Paint()..color = Colors.white);
+    canvas.drawCircle(c, d / 2 - 3 * dpr, Paint()..color = color);
+
+    final icon = Icons.flag_rounded;
+    final tp = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(fontSize: 15 * dpr, fontFamily: icon.fontFamily, package: icon.fontPackage, color: Colors.white),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, c - Offset(tp.width / 2, tp.height / 2));
+
+    if (number != null) {
+      final bc = Offset(w - badge / 2, badge / 2);
+      canvas.drawCircle(bc, badge / 2, Paint()..color = Colors.white);
+      canvas.drawCircle(bc, badge / 2 - 1.5 * dpr, Paint()..color = const Color(0xFF0F172A));
+      final np = TextPainter(
+        text: TextSpan(
+          text: number,
+          style: TextStyle(fontSize: 8.5 * dpr, fontWeight: FontWeight.w900, color: Colors.white),
+        ),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      np.paint(canvas, bc - Offset(np.width / 2, np.height / 2));
+    }
+
+    final img = await recorder.endRecording().toImage(w.ceil(), h.ceil());
+    final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), imagePixelRatio: dpr);
+  }
+
   Set<Marker> get _markers => {
-        // Latest position while the day is still running (today, not punched out).
-        if (_lastPoint != null && _isToday && !_punchedOut)
-          Marker(
-            markerId: const MarkerId('now'),
-            position: _lastPoint!,
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
-            infoWindow: InfoWindow(
-              title: 'Latest position',
-              snippet: _lastPointAt != null ? DateFormat('hh:mm a').format(_lastPointAt!) : null,
-            ),
-            zIndexInt: 4,
-          ),
         for (final f in _flags)
-          if (f.pos != null)
+          if (f.pos != null && _isMapFlag(f))
             Marker(
               markerId: MarkerId('flag-${f.seq}'),
               position: f.pos!,
-              icon: BitmapDescriptor.defaultMarkerWithHue(_hueFor(f.type)),
+              icon: _icons[_flagKey(f)] ?? BitmapDescriptor.defaultMarkerWithHue(_hueFor(f.type)),
+              anchor: const Offset(0.5, 0.5),
               infoWindow: InfoWindow(
-                title: '${f.seq}. ${f.title}',
+                title: switch (f.type) {
+                  'punch_in' => 'Punch In',
+                  'punch_out' => 'Punch Out',
+                  _ => '${f.code} · ${f.title.replaceFirst('Field In · ', '')}',
+                },
                 snippet: [
                   DateFormat('hh:mm a').format(f.at),
                   if (f.address.isNotEmpty) f.address,
@@ -240,23 +401,38 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       };
 
   Set<Polyline> get _polylines {
+    final whole = _trailDisplay.length >= 2 ? _trailDisplay : _trail;
     final out = <Polyline>{
-      // The whole day underneath (incl. movement at clients); legs drawn on top.
-      if (_trail.length >= 2)
+      // Complete route punch-in → punch-out underneath (incl. movement at
+      // clients), road-snapped; the coloured legs are drawn on top of it.
+      if (whole.length >= 2)
         Polyline(
           polylineId: const PolylineId('whole-day'),
-          points: _trail,
-          color: const Color(0xFF6366F1).withValues(alpha: 0.45),
-          width: 4,
+          points: whole,
+          color: const Color(0xFF94A3B8).withValues(alpha: 0.55),
+          width: 7,
           jointType: JointType.round,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
           zIndex: 1,
         ),
     };
     for (final l in _legs) {
-      if (l.path.length < 2) continue;
-      final selected = _selectedLeg == null || _selectedLeg == l.index;
-      final line = TravelledRouteStyle.polyline('leg-${l.index}', l.path);
-      out.add(selected ? line : line.copyWith(colorParam: TravelledRouteStyle.color.withValues(alpha: 0.25)));
+      final pts = l.line;
+      if (pts.length < 2) continue;
+      final faded = _selectedLeg != null && _selectedLeg != l.index;
+      out.add(Polyline(
+        polylineId: PolylineId('leg-${l.index}'),
+        points: pts,
+        color: faded ? l.color.withValues(alpha: 0.25) : l.color,
+        width: 5,
+        jointType: JointType.round,
+        startCap: Cap.roundCap,
+        endCap: Cap.roundCap,
+        zIndex: faded ? 2 : 3,
+        consumeTapEvents: true,
+        onTap: () => setState(() => _selectedLeg = faded ? l.index : null),
+      ));
     }
     return out;
   }
@@ -265,7 +441,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     final map = _map;
     if (map == null) return;
     final pts = <LatLng>[
-      if (leg != null) ...leg.path,
+      if (leg != null) ...leg.line,
       if (leg == null) ...[for (final f in _flags) if (f.pos != null) f.pos!],
       if (leg == null) ...[for (final l in _legs) ...l.path],
       if (leg == null) ..._trail,
@@ -440,15 +616,9 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
               ),
             )
           else ...[
-            if (_legs.isNotEmpty) ...[
-              const Text('Legs', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink)),
-              const SizedBox(height: 8),
-              for (final l in _legs) _legTile(l),
-              const SizedBox(height: 14),
-            ],
             const Text('Timeline', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink)),
-            const SizedBox(height: 8),
-            for (final f in _flags) _flagTile(f),
+            const SizedBox(height: 10),
+            ..._timeline(),
           ],
         ],
       ),
@@ -509,7 +679,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     Widget dot(Color c, String label) => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.location_on, size: 16, color: c),
+            Icon(Icons.flag_rounded, size: 16, color: c),
             const SizedBox(width: 2),
             Text(label, style: const TextStyle(fontSize: 11.5, color: _muted)),
           ],
@@ -518,80 +688,143 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       spacing: 12,
       runSpacing: 6,
       children: [
-        dot(const Color(0xFF16A34A), 'Punch In'),
-        dot(const Color(0xFF0EA5E9), 'Field In'),
-        dot(const Color(0xFFF97316), 'Field Out'),
-        dot(const Color(0xFFDC2626), 'Punch Out'),
-        if (_isToday && !_punchedOut) dot(const Color(0xFF8B5CF6), 'Latest position'),
+        dot(_flagColor('punch_in'), 'Punch In'),
+        dot(_flagColor('field_in'), 'Field In (F1, F2…)'),
+        dot(_flagColor('punch_out'), 'Punch Out'),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 16, height: 3, color: TravelledRouteStyle.color),
+            for (final c in _legPalette.take(3))
+              Container(width: 8, height: 4, margin: const EdgeInsets.only(right: 2), color: c),
             const SizedBox(width: 4),
-            const Text('Travel leg', style: TextStyle(fontSize: 11.5, color: _muted)),
+            const Text('Legs L1, L2…', style: TextStyle(fontSize: 11.5, color: _muted)),
           ],
         ),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 16, height: 3, color: const Color(0xFF6366F1).withValues(alpha: 0.45)),
+            Container(width: 16, height: 5, color: const Color(0xFF94A3B8).withValues(alpha: 0.55)),
             const SizedBox(width: 4),
-            const Text('Whole day', style: TextStyle(fontSize: 11.5, color: _muted)),
+            const Text('Complete route (punch in → out)', style: TextStyle(fontSize: 11.5, color: _muted)),
           ],
         ),
       ],
     );
   }
 
-  Widget _legTile(_Leg l) {
-    final selected = _selectedLeg == l.index;
+  // ── Timeline: flag → leg → flag … (Punch In, each Field In, Punch Out) ──
+
+  /// The Field Out that closed the visit of [fieldIn] (same task), if any.
+  _Flag? _fieldOutFor(_Flag fieldIn) {
+    for (final f in _flags) {
+      if (f.type == 'field_out' && f.taskId.isNotEmpty && f.taskId == fieldIn.taskId) return f;
+    }
+    return null;
+  }
+
+  /// The leg that ends at [arrival] (a Field In or Punch Out).
+  _Leg? _legInto(_Flag arrival) {
+    for (final l in _legs) {
+      if (l.toAt.difference(arrival.at).inSeconds.abs() <= 1) return l;
+    }
+    return null;
+  }
+
+  List<Widget> _timeline() {
+    final shown = _flags.where((f) => f.type != 'field_out').toList();
+    final rows = <Widget>[];
+    for (var i = 0; i < shown.length; i++) {
+      final f = shown[i];
+      if (f.type != 'punch_in') {
+        final leg = _legInto(f);
+        if (leg != null) rows.add(_legRow(leg));
+      }
+      rows.add(_flagRow(f, isLast: i == shown.length - 1));
+    }
+    return rows;
+  }
+
+  Widget _flagRow(_Flag f, {required bool isLast}) {
+    final color = _flagColor(f.type);
+    final out = f.type == 'field_in' ? _fieldOutFor(f) : null;
+    final time = DateFormat('hh:mm a');
+    final title = switch (f.type) {
+      'punch_in' => 'Punch In',
+      'punch_out' => 'Punch Out',
+      _ => '${f.code} · ${f.title.replaceFirst('Field In · ', '')}',
+    };
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () {
-        setState(() => _selectedLeg = selected ? null : l.index);
-        _fitTo(selected ? null : l);
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFFF0FDF4) : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: selected ? const Color(0xFF86EFAC) : const Color(0xFFE2E8F0)),
-        ),
+      onTap: f.pos == null ? null : () => _map?.animateCamera(CameraUpdate.newLatLngZoom(f.pos!, 16)),
+      child: IntrinsicHeight(
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            CircleAvatar(
-              radius: 14,
-              backgroundColor: TravelledRouteStyle.color.withValues(alpha: 0.12),
-              child: Text(
-                '${l.index}',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: TravelledRouteStyle.color),
+            SizedBox(
+              width: 36,
+              child: Column(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                      boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 4)],
+                    ),
+                    child: const Icon(Icons.flag_rounded, size: 16, color: Colors.white),
+                  ),
+                  if (!isLast)
+                    Expanded(child: Container(width: 2, color: const Color(0xFFE2E8F0))),
+                ],
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${l.fromLabel} → ${l.toLabel}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _ink),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${DateFormat('hh:mm a').format(l.fromAt)} – ${DateFormat('hh:mm a').format(l.toAt)}',
-                    style: const TextStyle(fontSize: 11.5, color: _muted),
-                  ),
-                ],
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: _ink),
+                          ),
+                        ),
+                        Text(
+                          out != null ? '${time.format(f.at)} – ${time.format(out.at)}' : time.format(f.at),
+                          style: const TextStyle(fontSize: 12, color: _muted, fontWeight: FontWeight.w700),
+                        ),
+                      ],
+                    ),
+                    if (f.address.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          f.address,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11.5, color: _muted),
+                        ),
+                      ),
+                    if (f.type == 'field_in')
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          out != null ? 'At site ${_durationLabel(out.at.difference(f.at))}' : 'At site now',
+                          style: TextStyle(fontSize: 11.5, color: color, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    if (f.pos == null)
+                      const Text('Location not recorded', style: TextStyle(fontSize: 11.5, color: _muted)),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              l.km == null ? '—' : '${l.km!.toStringAsFixed(1)} km',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: _ink),
             ),
           ],
         ),
@@ -599,39 +832,77 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     );
   }
 
-  Widget _flagTile(_Flag f) {
-    final color = switch (f.type) {
-      'punch_in' => const Color(0xFF16A34A),
-      'field_in' => const Color(0xFF0EA5E9),
-      'field_out' => const Color(0xFFF97316),
-      'punch_out' => const Color(0xFFDC2626),
-      _ => _muted,
-    };
+  Widget _legRow(_Leg l) {
+    final selected = _selectedLeg == l.index;
+    final time = DateFormat('hh:mm a');
     return InkWell(
-      onTap: f.pos == null ? null : () => _map?.animateCamera(CameraUpdate.newLatLngZoom(f.pos!, 16)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+      onTap: () {
+        setState(() => _selectedLeg = selected ? null : l.index);
+        _fitTo(selected ? null : l);
+      },
+      child: IntrinsicHeight(
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(Icons.location_on, size: 20, color: color),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${f.seq}. ${f.title}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _ink)),
-                  if (f.address.isNotEmpty)
-                    Text(f.address, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: _muted)),
-                  if (f.pos == null)
-                    const Text('Location not recorded', style: TextStyle(fontSize: 11.5, color: _muted)),
-                ],
+            // The leg drawn as a thick segment of the rail, in its map colour.
+            SizedBox(
+              width: 36,
+              child: Center(
+                child: Container(
+                  width: selected ? 6 : 4,
+                  decoration: BoxDecoration(color: l.color, borderRadius: BorderRadius.circular(3)),
+                ),
               ),
             ),
-            Text(DateFormat('hh:mm a').format(f.at), style: const TextStyle(fontSize: 12, color: _muted, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: l.color.withValues(alpha: selected ? 0.12 : 0.06),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: l.color.withValues(alpha: selected ? 0.9 : 0.25)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(color: l.color, borderRadius: BorderRadius.circular(6)),
+                      child: Text(
+                        'L${l.index}',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${l.fromCode.isNotEmpty ? l.fromCode : 'Start'} → ${l.toCode.isNotEmpty ? l.toCode : 'End'}'
+                        '  ·  ${time.format(l.fromAt)} – ${time.format(l.toAt)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11.5, color: _muted, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      l.km == null ? '—' : '${l.km!.toStringAsFixed(1)} km',
+                      style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w900, color: l.color),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  String _durationLabel(Duration d) {
+    if (d.inMinutes < 1) return '< 1 min';
+    final h = d.inHours;
+    final m = d.inMinutes % 60;
+    return h > 0 ? '${h}h ${m}m' : '${m}m';
   }
 }
