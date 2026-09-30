@@ -77,6 +77,10 @@ class _Seg {
 
   /// [points] snapped to the roads, with the same two end points.
   List<LatLng> display = const [];
+
+  /// Snapped earlier part + raw new points (the growing last piece); a full
+  /// re-snap is due later.
+  bool provisional = false;
   List<LatLng> get line => display.length >= 2 ? display : points;
 }
 
@@ -244,10 +248,23 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         _flags = flags;
         _legs = legs;
         final segs = _buildSegments(flags, legs, trailT);
-        // Periodic refresh: keep the road-snapped line of pieces that haven't changed.
-        for (final s in segs) {
+        // Periodic refresh: keep the road-snapped line of pieces that haven't
+        // changed. The growing last piece (still punched in) keeps its snapped
+        // part and just extends with the new points, so the route follows the
+        // person without a Roads API call every minute (re-snapped every 5 min).
+        for (var i = 0; i < segs.length; i++) {
+          final s = segs[i];
+          final isOpen = !_punchedOut && i == segs.length - 1;
           for (final old in _segs) {
-            if (old.key == s.key && old.display.length >= 2) s.display = old.display;
+            if (old.display.length < 2) continue;
+            if (old.key == s.key) {
+              s.display = old.display;
+            } else if (isOpen &&
+                old.key.split('-').first == s.key.split('-').first &&
+                s.points.length > old.points.length) {
+              s.display = [...old.display, ...s.points.sublist(old.points.length)];
+              s.provisional = true;
+            }
           }
         }
         _segs = segs;
@@ -289,6 +306,9 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     Color(0xFF00838F), // teal
     Color(0xFFC2185B), // pink
   ];
+
+  /// When the growing last piece was last snapped (throttles Roads API calls).
+  DateTime? _openSnapAt;
 
   /// The day's route as connected pieces (see [_Seg]).
   List<_Seg> _segs = [];
@@ -366,7 +386,13 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     if (mounted) setState(() {});
 
     for (final s in segs) {
-      if (s.display.length >= 2 || s.points.length < 3) continue; // 2 points = nothing to snap
+      if (s.points.length < 3) continue; // 2 points = nothing to snap
+      if (s.display.length >= 2) {
+        // Already snapped; the growing piece is re-snapped at most every 5 min.
+        final due = _openSnapAt == null || DateTime.now().difference(_openSnapAt!) >= const Duration(minutes: 5);
+        if (!s.provisional || !due) continue;
+      }
+      if (s.provisional || (!_punchedOut && identical(s, segs.last))) _openSnapAt = DateTime.now();
       try {
         final snapped = await RouteSnappingService.buildDisplayRouteFromLatLng('myday-$_dayKey-${s.key}', s.points);
         if (snapped.length >= 2) {
@@ -377,6 +403,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
             if (snapped.last != s.points.last) snapped.last,
             s.points.last,
           ];
+          s.provisional = false;
         }
       } catch (_) {}
       if (mounted) setState(() {});
