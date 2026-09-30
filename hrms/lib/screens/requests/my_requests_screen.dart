@@ -509,9 +509,9 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
         dividerColor: Colors.transparent,
         labelColor: AppColors.primary,
         unselectedLabelColor: AppColors.textSecondary,
-        labelStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+        labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
         unselectedLabelStyle: const TextStyle(
-          fontSize: 11.5,
+          fontSize: 13,
           fontWeight: FontWeight.w600,
         ),
         labelPadding: const EdgeInsets.symmetric(horizontal: 2),
@@ -879,7 +879,7 @@ class _PaginationBar extends StatelessWidget {
           '$page',
           style: TextStyle(
             color: isCurrent ? Colors.white : AppColors.primary,
-            fontSize: 14,
+            fontSize: 15,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -936,7 +936,7 @@ class _PaginationBar extends StatelessWidget {
       icon: const Icon(Icons.add, size: 20),
       label: Text(
         createLabel ?? '',
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
       ),
       style: ElevatedButton.styleFrom(
         backgroundColor: AppColors.primary,
@@ -1398,7 +1398,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                   Text(
                                     'Leave Entitlements & Balances',
                                     style: TextStyle(
-                                      fontSize: 12.5,
+                                      fontSize: 13.5,
                                       fontWeight: FontWeight.w800,
                                       color: Color(0xFF0F172A),
                                     ),
@@ -1408,7 +1408,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                   Text(
                                     'leaves',
                                     style: TextStyle(
-                                      fontSize: 10,
+                                      fontSize: 11.5,
                                       fontWeight: FontWeight.w600,
                                       color: Color(0xFF94A3B8),
                                     ),
@@ -1433,7 +1433,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             const Text(
                               'Available: ',
                               style: TextStyle(
-                                fontSize: 10.5,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w700,
                                 color: Color(0xFF92400E),
                               ),
@@ -1447,7 +1447,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               child: Text(
                                 _trimBalanceNum(totalAvailableLeaves),
                                 style: const TextStyle(
-                                  fontSize: 10,
+                                  fontSize: 11.5,
                                   fontWeight: FontWeight.w900,
                                   color: Colors.white,
                                 ),
@@ -1471,7 +1471,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           child: Text(
                             'TYPE',
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 11.5,
                               fontWeight: FontWeight.w800,
                               color: Color(0xFF94A3B8),
                               letterSpacing: 0.5,
@@ -1484,7 +1484,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             'ALLOCATED',
                             textAlign: TextAlign.center,
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 11.5,
                               fontWeight: FontWeight.w800,
                               color: Color(0xFF94A3B8),
                               letterSpacing: 0.5,
@@ -1497,7 +1497,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             'USED',
                             textAlign: TextAlign.center,
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 11.5,
                               fontWeight: FontWeight.w800,
                               color: Color(0xFF94A3B8),
                               letterSpacing: 0.5,
@@ -1510,7 +1510,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             'AVAILABLE',
                             textAlign: TextAlign.right,
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 11.5,
                               fontWeight: FontWeight.w800,
                               color: Color(0xFF94A3B8),
                               letterSpacing: 0.5,
@@ -1526,7 +1526,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       child: Center(
                         child: Text(
                           'No leave balances found',
-                          style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+                          style: TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8)),
                         ),
                       ),
                     )
@@ -1563,7 +1563,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                     child: Text(
                                       initial,
                                       style: TextStyle(
-                                        fontSize: 11,
+                                        fontSize: 12.5,
                                         fontWeight: FontWeight.w900,
                                         color: badgeColor,
                                       ),
@@ -1577,7 +1577,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                         Text(
                                           name,
                                           style: const TextStyle(
-                                            fontSize: 12,
+                                            fontSize: 13,
                                             fontWeight: FontWeight.w700,
                                             color: Color(0xFF1E293B),
                                           ),
@@ -1603,7 +1603,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 _trimBalanceNum(total),
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w800,
                                   color: Color(0xFF1E293B),
                                 ),
@@ -1615,7 +1615,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 _trimBalanceNum(used),
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w700,
                                   color: Color(0xFF94A3B8),
                                 ),
@@ -1627,7 +1627,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 '${_trimBalanceNum(avail)} day(s)',
                                 textAlign: TextAlign.right,
                                 style: const TextStyle(
-                                  fontSize: 11.5,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w800,
                                   color: Color(0xFFEFAA1F),
                                 ),
@@ -1676,7 +1676,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       const Text(
                         'Total Requests',
                         style: TextStyle(
-                          fontSize: 13.5,
+                          fontSize: 14.5,
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF0F172A),
                         ),
@@ -1713,11 +1713,11 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               children: [
                                 const Text(
                                   'Approved',
-                                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
                                 ),
                                 Text(
                                   '$approvedCount',
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF10B981)),
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFF10B981)),
                                 ),
                               ],
                             ),
@@ -1727,11 +1727,11 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               children: [
                                 const Text(
                                   'Rejected',
-                                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
                                 ),
                                 Text(
                                   '$rejectedCount',
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFFF43F5E)),
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFF43F5E)),
                                 ),
                               ],
                             ),
@@ -1741,11 +1741,11 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               children: [
                                 const Text(
                                   'Pending',
-                                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
                                 ),
                                 Text(
                                   '$pendingCount',
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFFEFAA1F)),
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFEFAA1F)),
                                 ),
                               ],
                             ),
@@ -1759,7 +1759,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                     alignment: Alignment.centerRight,
                     child: Text(
                       '$totalRequests request(s) total',
-                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8)),
+                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8)),
                     ),
                   ),
                 ],
@@ -1848,7 +1848,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 Text(
                                   'Cards',
                                   style: TextStyle(
-                                    fontSize: 11,
+                                    fontSize: 12.5,
                                     fontWeight: FontWeight.w700,
                                     color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                                   ),
@@ -1880,7 +1880,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 Text(
                                   'Table',
                                   style: TextStyle(
-                                    fontSize: 11,
+                                    fontSize: 12.5,
                                     fontWeight: FontWeight.w700,
                                     color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                                   ),
@@ -1906,7 +1906,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                         controller: _searchController,
                         decoration: InputDecoration(
                           hintText: 'Search...',
-                          hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                          hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                           prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                           filled: true,
@@ -1947,7 +1947,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       child: DropdownButton<String>(
                         value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
                         icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
-                        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
                         items: _statusOptions
                             .map((s) => DropdownMenuItem(value: s, child: Text(s)))
                             .toList(),
@@ -1991,7 +1991,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 ? 'Filter by date'
                                 : DateFormat('MMM dd, yyyy').format(_startDate!),
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 13,
                               fontWeight: _startDate == null ? FontWeight.w500 : FontWeight.w700,
                               color: _startDate == null ? const Color(0xFF94A3B8) : const Color(0xFF1E293B),
                             ),
@@ -2087,7 +2087,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 child: Text(
                                   _isHalfDayLeaveRecord(leave) ? '$leaveType (Half Day)' : leaveType,
                                   style: const TextStyle(
-                                    fontSize: 13.5,
+                                    fontSize: 14.5,
                                     fontWeight: FontWeight.w800,
                                     color: Color(0xFF0F172A),
                                   ),
@@ -2108,7 +2108,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           child: Text(
                             status,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12.5,
                               fontWeight: FontWeight.w700,
                               color: statusText,
                             ),
@@ -2126,7 +2126,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             '$start ➔ $end',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
                           ),
                         ),
                         const SizedBox(width: 6),
@@ -2138,7 +2138,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           ),
                           child: Text(
                             '$days Day(s)',
-                            style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF475569)),
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF475569)),
                           ),
                         ),
                       ],
@@ -2147,7 +2147,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       const SizedBox(height: 8),
                       Text(
                         'Reason: $reason',
-                        style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                        style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -2161,7 +2161,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
                           label: const Text(
                             'Cancel',
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
                           ),
                           style: OutlinedButton.styleFrom(
                             side: const BorderSide(color: Color(0xFFFECACA)),
@@ -2202,13 +2202,13 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
           child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
             headingTextStyle: const TextStyle(
-              fontSize: 10.5,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
               color: Color(0xFF94A3B8),
               letterSpacing: 0.5,
             ),
             dataTextStyle: const TextStyle(
-              fontSize: 11.5,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
               color: Color(0xFF1E293B),
             ),
@@ -2265,7 +2265,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       child: Text(
                         status,
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: statusText,
                         ),
@@ -2295,7 +2295,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 SizedBox(width: 4),
                                 Text(
                                   'Cancel',
-                                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
                                 ),
                               ],
                             ),
@@ -2360,7 +2360,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           const Text(
                             'No leave requests found',
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 15,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF64748B),
                             ),
@@ -2639,7 +2639,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         Text(
                           DateFormat('MMMM yyyy').format(navDate),
                           style: const TextStyle(
-                            fontSize: 14,
+                            fontSize: 15,
                             fontWeight: FontWeight.w800,
                             color: Color(0xFF0F172A),
                           ),
@@ -2659,13 +2659,13 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: const [
-                        Text('SU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('MO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('WE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TH', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('FR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('SA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -2704,7 +2704,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             child: Text(
                               '$dayNumber',
                               style: TextStyle(
-                                fontSize: 12.5,
+                                fontSize: 13.5,
                                 fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
                                 color: isSelected ? Colors.white : const Color(0xFF1E293B),
                               ),
@@ -2776,7 +2776,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         child: Text(
                           opt['badge'] as String? ?? 'L',
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 13,
                             fontWeight: FontWeight.w900,
                             color: opt['badgeText'] as Color? ?? const Color(0xFFEFAA1F),
                           ),
@@ -2785,7 +2785,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       title: Text(
                         opt['label'] as String? ?? '',
                         style: TextStyle(
-                          fontSize: 13.5,
+                          fontSize: 14.5,
                           fontWeight: FontWeight.w800,
                           color: isSelected ? const Color(0xFFEFAA1F) : const Color(0xFF0F172A),
                         ),
@@ -2793,7 +2793,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       subtitle: opt['subtext'] != null
                           ? Text(
                               opt['subtext'] as String,
-                              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+                              style: const TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8)),
                             )
                           : null,
                       trailing: Row(
@@ -2812,7 +2812,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                               child: Text(
                                 '${bal.toInt()} Left',
                                 style: TextStyle(
-                                  fontSize: 10,
+                                  fontSize: 11.5,
                                   fontWeight: FontWeight.w800,
                                   color: bal > 0 ? const Color(0xFF059669) : const Color(0xFFDC2626),
                                 ),
@@ -3031,7 +3031,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 12.5,
                                   fontWeight: FontWeight.w600,
                                   color: Color(0xFF94A3B8),
                                 ),
@@ -3066,7 +3066,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       Expanded(
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
                         ),
                       ),
                       InkWell(
@@ -3086,7 +3086,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                   const Text(
                     'LEAVE TYPE',
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 12.5,
                       fontWeight: FontWeight.w900,
                       color: Color(0xFF64748B),
                       letterSpacing: 0.5,
@@ -3126,7 +3126,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           Text(
                             'Half Day',
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12.5,
                               fontWeight: FontWeight.w800,
                               color: _isHalfDay ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
                             ),
@@ -3164,7 +3164,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           child: Text(
                             opt['badge'] as String? ?? 'L',
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 13,
                               fontWeight: FontWeight.w900,
                               color: opt['badgeText'] as Color? ?? const Color(0xFFEFAA1F),
                             ),
@@ -3178,7 +3178,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             Text(
                               opt?['label'] as String? ?? (_isLoadingTypes ? 'Loading leave types...' : 'Select Leave Type'),
                               style: const TextStyle(
-                                fontSize: 13.5,
+                                fontSize: 14.5,
                                 fontWeight: FontWeight.w800,
                                 color: Color(0xFF0F172A),
                               ),
@@ -3186,7 +3186,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             if (opt?['subtext'] != null)
                               Text(
                                 opt!['subtext'] as String,
-                                style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                                style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
                               ),
                           ],
                         ),
@@ -3202,7 +3202,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           child: Text(
                             '${bal.toInt()} Left',
                             style: const TextStyle(
-                              fontSize: 10.5,
+                              fontSize: 12,
                               fontWeight: FontWeight.w800,
                               color: Color(0xFFD97706),
                             ),
@@ -3237,18 +3237,18 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         children: [
                           const Text(
                             'Available Balance: ',
-                            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
                           ),
                           Text(
                             '${bal.toInt()} Left',
-                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, color: Color(0xFFD97706)),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFD97706)),
                           ),
                         ],
                       ),
                       if (alloc != null)
                         Text(
                           'Allocated: ${alloc.toInt()} • Used: ${(used ?? 0).toInt()}',
-                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B)),
+                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B)),
                         ),
                     ],
                   ),
@@ -3261,7 +3261,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 const Text(
                   'SELECT HALF',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w900,
                     color: Color(0xFF64748B),
                     letterSpacing: 0.5,
@@ -3299,7 +3299,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                               Text(
                                 '1st Half',
                                 style: TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w800,
                                   color: _halfDaySession == '1st Half' ? Colors.white : const Color(0xFF1E293B),
                                 ),
@@ -3339,7 +3339,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                               Text(
                                 '2nd Half',
                                 style: TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w800,
                                   color: _halfDaySession == '2nd Half' ? Colors.white : const Color(0xFF1E293B),
                                 ),
@@ -3360,7 +3360,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 const Text(
                   'SELECT DATE *',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w900,
                     color: Color(0xFF64748B),
                     letterSpacing: 0.5,
@@ -3391,7 +3391,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    fontSize: 13,
+                                    fontSize: 14,
                                     fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
                                     color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
                                   ),
@@ -3416,7 +3416,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           const Text(
                             'START DATE *',
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12.5,
                               fontWeight: FontWeight.w900,
                               color: Color(0xFF64748B),
                               letterSpacing: 0.5,
@@ -3447,7 +3447,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
-                                              fontSize: 12,
+                                              fontSize: 13,
                                               fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
                                               color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
                                             ),
@@ -3473,7 +3473,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           const Text(
                             'END DATE *',
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12.5,
                               fontWeight: FontWeight.w900,
                               color: Color(0xFF64748B),
                               letterSpacing: 0.5,
@@ -3504,7 +3504,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
-                                              fontSize: 12,
+                                              fontSize: 13,
                                               fontWeight: _endDate != null ? FontWeight.w800 : FontWeight.w500,
                                               color: _endDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
                                             ),
@@ -3531,7 +3531,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
               const Text(
                 'REASON',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w900,
                   color: Color(0xFF64748B),
                   letterSpacing: 0.5,
@@ -3541,10 +3541,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
               TextFormField(
                 controller: _reasonController,
                 maxLines: 3,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
                   hintText: 'State the reason for your leave request...',
-                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                   border: OutlineInputBorder(
@@ -3578,7 +3578,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       ),
                       child: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
                       ),
                     ),
                   ),
@@ -3601,7 +3601,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             )
                           : const Text(
                               'Submit Request',
-                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
                             ),
                     ),
                   ),
@@ -3926,7 +3926,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                         child: Text(
                           loan['status'] ?? '',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12.5,
                             fontWeight: FontWeight.w600,
                             color: statusColor,
                           ),
@@ -3991,7 +3991,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
         Text(
           '$label: ',
           style: TextStyle(
-            fontSize: 12,
+            fontSize: 13,
             color: Color(0xFF424242),
             fontWeight: FontWeight.w600,
           ),
@@ -3999,7 +3999,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
         Expanded(
           child: Text(
             value,
-            style: TextStyle(fontSize: 12, color: Color(0xFF424242)),
+            style: TextStyle(fontSize: 13, color: Color(0xFF424242)),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -4385,7 +4385,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 'OUTSTANDING LOAN AMOUNT',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.9),
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.2,
                 ),
@@ -4418,7 +4418,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                       'Total remaining across your active loans',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -4458,7 +4458,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
           Text(
             label,
             style: const TextStyle(
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
               color: AppColors.textSecondary,
             ),
@@ -4481,7 +4481,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 child: Text(
                   caption,
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: 13,
                     color: AppColors.textSecondary,
                   ),
                   maxLines: 1,
@@ -4501,7 +4501,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
       child: Text(
         text.toUpperCase(),
         style: const TextStyle(
-          fontSize: 12,
+          fontSize: 13,
           fontWeight: FontWeight.w700,
           color: AppColors.textPrimary,
         ),
@@ -4632,7 +4632,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                   '${_tenureMonths.round()} Months',
                   style: TextStyle(
                     color: AppColors.primaryDark,
-                    fontSize: 12,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -4664,28 +4664,28 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 Text(
                   '3M',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     color: AppColors.textSecondary,
                   ),
                 ),
                 Text(
                   '12M',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     color: AppColors.textSecondary,
                   ),
                 ),
                 Text(
                   '24M',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     color: AppColors.textSecondary,
                   ),
                 ),
                 Text(
                   '36M',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -4900,7 +4900,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                     'By submitting, you agree to the HRMS Loan Policy and Terms.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 13,
                       color: AppColors.textCaption,
                     ),
                   ),
@@ -5318,7 +5318,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       'TOTAL REIMBURSED',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 11,
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.5,
                       ),
@@ -5368,7 +5368,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       'Pending Amount',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 12,
+                        fontSize: 13,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -5401,7 +5401,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                   '$pendingCount Pending Claim${pendingCount == 1 ? '' : 's'}',
                   style: TextStyle(
                     color: AppColors.primary,
-                    fontSize: 12,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -5493,7 +5493,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                             Text(
                               'Cards',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
                                 color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                               ),
@@ -5525,7 +5525,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                             Text(
                               'Table',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
                                 color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                               ),
@@ -5550,7 +5550,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                     controller: _searchController,
                     decoration: InputDecoration(
                       hintText: 'Search...',
-                      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                      hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                       prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                       filled: true,
@@ -5589,7 +5589,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                   child: DropdownButton<String>(
                     value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
                     icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
                     items: _statusOptions
                         .map((s) => DropdownMenuItem(value: s, child: Text(s)))
                         .toList(),
@@ -5683,7 +5683,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                    fontSize: 13.5,
+                                    fontSize: 14.5,
                                     fontWeight: FontWeight.w800,
                                     color: Color(0xFF0F172A),
                                   ),
@@ -5692,7 +5692,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                                   date,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                                  style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
                                 ),
                               ],
                             ),
@@ -5723,7 +5723,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                           child: Text(
                             status,
                             style: TextStyle(
-                              fontSize: 10.5,
+                              fontSize: 12,
                               fontWeight: FontWeight.w700,
                               color: statusText,
                             ),
@@ -5737,7 +5737,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                   const SizedBox(height: 10),
                   Text(
                     desc,
-                    style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -5751,7 +5751,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
                       label: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
                       ),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Color(0xFFFECACA)),
@@ -5792,13 +5792,13 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
           child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
             headingTextStyle: const TextStyle(
-              fontSize: 10.5,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
               color: Color(0xFF94A3B8),
               letterSpacing: 0.5,
             ),
             dataTextStyle: const TextStyle(
-              fontSize: 11.5,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
               color: Color(0xFF1E293B),
             ),
@@ -5854,7 +5854,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       child: Text(
                         status,
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: statusText,
                         ),
@@ -5878,7 +5878,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                                 SizedBox(width: 4),
                                 Text(
                                   'Cancel',
-                                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
                                 ),
                               ],
                             ),
@@ -5955,7 +5955,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                           const Text(
                             'No expense requests found',
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 15,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF64748B),
                             ),
@@ -6085,7 +6085,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                   ),
                   child: const Icon(Icons.camera_alt_rounded, color: Color(0xFFEFAA1F), size: 20),
                 ),
-                title: const Text('Take Photo', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                title: const Text('Take Photo', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 onTap: () => Navigator.pop(sheetContext, _ProofSource.camera),
               ),
               ListTile(
@@ -6097,8 +6097,8 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                   ),
                   child: const Icon(Icons.photo_library_rounded, color: Color(0xFFEFAA1F), size: 20),
                 ),
-                title: const Text('Choose from Gallery / Files', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                subtitle: const Text('JPG, JPEG, PNG, WEBP (Max 5MB)', style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
+                title: const Text('Choose from Gallery / Files', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                subtitle: const Text('JPG, JPEG, PNG, WEBP (Max 5MB)', style: TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8))),
                 onTap: () => Navigator.pop(sheetContext, _ProofSource.files),
               ),
               const SizedBox(height: 12),
@@ -6234,7 +6234,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                         Text(
                           DateFormat('MMMM yyyy').format(navDate),
                           style: const TextStyle(
-                            fontSize: 14,
+                            fontSize: 15,
                             fontWeight: FontWeight.w800,
                             color: Color(0xFF0F172A),
                           ),
@@ -6257,13 +6257,13 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: const [
-                        Text('SU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('MO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('WE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TH', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('FR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('SA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -6306,7 +6306,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                             child: Text(
                               '$dayNumber',
                               style: TextStyle(
-                                fontSize: 12.5,
+                                fontSize: 13.5,
                                 fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
                                 color: isSelected
                                     ? Colors.white
@@ -6446,7 +6446,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                       Text(
                         'Submit a new expense claim',
                         style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF94A3B8),
                         ),
@@ -6477,7 +6477,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                       Expanded(
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
                         ),
                       ),
                       InkWell(
@@ -6494,7 +6494,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
               const Text(
                 'Expense Type',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF334155),
                 ),
@@ -6512,7 +6512,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                     value: _expenseType,
                     isExpanded: true,
                     icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                     items: _expenseTypeOptions
                         .map((type) => DropdownMenuItem(value: type, child: Text(type)))
                         .toList(),
@@ -6531,7 +6531,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
               const Text(
                 'Amount (₹)',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF334155),
                 ),
@@ -6541,10 +6541,10 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 controller: _amountController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 enabled: !_isSubmitting,
-                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
                   hintText: 'Enter expense amount',
-                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -6571,13 +6571,13 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                   Text(
                     'Date',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF334155),
                     ),
                   ),
                   SizedBox(width: 3),
-                  Text('*', style: TextStyle(color: Color(0xFFEF4444), fontSize: 12, fontWeight: FontWeight.w700)),
+                  Text('*', style: TextStyle(color: Color(0xFFEF4444), fontSize: 13, fontWeight: FontWeight.w700)),
                 ],
               ),
               const SizedBox(height: 6),
@@ -6597,7 +6597,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                       Text(
                         _date != null ? DateFormat('MM/dd/yyyy').format(_date!) : 'mm/dd/yyyy',
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: 14,
                           fontWeight: _date != null ? FontWeight.w600 : FontWeight.w500,
                           color: _date != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
                         ),
@@ -6616,13 +6616,13 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                   Text(
                     'Description',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF334155),
                     ),
                   ),
                   SizedBox(width: 3),
-                  Text('*', style: TextStyle(color: Color(0xFFEF4444), fontSize: 12, fontWeight: FontWeight.w700)),
+                  Text('*', style: TextStyle(color: Color(0xFFEF4444), fontSize: 13, fontWeight: FontWeight.w700)),
                 ],
               ),
               const SizedBox(height: 6),
@@ -6630,10 +6630,10 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 controller: _descriptionController,
                 maxLines: 3,
                 enabled: !_isSubmitting,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
                   hintText: 'e.g., Client meeting travel, Team lunch, Conference accommodation',
-                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                   contentPadding: const EdgeInsets.all(12),
@@ -6654,7 +6654,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
               const SizedBox(height: 4),
               const Text(
                 'Briefly describe the expense so approvers can verify your claim.',
-                style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
+                style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
               ),
 
               const SizedBox(height: 14),
@@ -6663,7 +6663,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
               const Text(
                 'Proof Document (Image)',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF334155),
                 ),
@@ -6705,12 +6705,12 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                               _selectedFile!.path.split(RegExp(r'[/\\]')).last,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF15803D)),
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF15803D)),
                             ),
                             const SizedBox(height: 2),
                             const Text(
                               'Click "Change" or "Remove" to update.',
-                              style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
+                              style: TextStyle(fontSize: 11.5, color: Color(0xFF94A3B8)),
                             ),
                           ],
                         ),
@@ -6725,7 +6725,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                                 color: const Color(0xFFF1F5F9),
                                 borderRadius: BorderRadius.circular(6),
                               ),
-                              child: const Text('Change', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF475569))),
+                              child: const Text('Change', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF475569))),
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -6737,7 +6737,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                                 color: const Color(0xFFFEF2F2),
                                 borderRadius: BorderRadius.circular(6),
                               ),
-                              child: const Text('Remove', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFDC2626))),
+                              child: const Text('Remove', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFDC2626))),
                             ),
                           ),
                         ],
@@ -6766,13 +6766,13 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                           SizedBox(height: 6),
                           Text(
                             'Upload Proof Image',
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
                           ),
                           SizedBox(height: 2),
                           Text(
                             'Upload receipt or bill image (JPG, JPEG, PNG, WEBP. Max 5MB).',
                             textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
+                            style: TextStyle(fontSize: 11.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
                           ),
                         ],
                       ),
@@ -6796,7 +6796,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                       ),
                       child: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
                       ),
                     ),
                   ),
@@ -6819,7 +6819,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                             )
                           : const Text(
                               'Submit Claim',
-                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
                             ),
                     ),
                   ),
@@ -7462,7 +7462,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       child: Text(
                         'Permission Balance',
                         style: TextStyle(
-                          fontSize: 12.5,
+                          fontSize: 13.5,
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF0F172A),
                         ),
@@ -7490,7 +7490,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       const SizedBox(width: 4),
                       Text(
                         monthLabel,
-                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
                       ),
                     ],
                   ),
@@ -7510,7 +7510,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     const Text(
                       'MONTHLY QUOTA',
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 11.5,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF94A3B8),
                         letterSpacing: 0.4,
@@ -7520,7 +7520,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     Text(
                       formatMinutes(hasBalance ? quota : 0),
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 15,
                         fontWeight: FontWeight.w900,
                         color: Color(0xFF0F172A),
                       ),
@@ -7539,7 +7539,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     const Text(
                       'CONSUMED / PENDING',
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 11.5,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF94A3B8),
                         letterSpacing: 0.4,
@@ -7549,7 +7549,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     Text(
                       formatMinutes(hasBalance ? consumed : 0),
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 15,
                         fontWeight: FontWeight.w900,
                         color: Color(0xFF0F172A),
                       ),
@@ -7568,7 +7568,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     const Text(
                       'REMAINING',
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 11.5,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF94A3B8),
                         letterSpacing: 0.4,
@@ -7578,7 +7578,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     Text(
                       formatMinutes(hasBalance ? balance : 0),
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 15,
                         fontWeight: FontWeight.w900,
                         color: Color(0xFF0F172A),
                       ),
@@ -7651,7 +7651,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                             Text(
                               'Cards',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
                                 color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                               ),
@@ -7683,7 +7683,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                             Text(
                               'Table',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
                                 color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                               ),
@@ -7708,7 +7708,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     controller: _searchController,
                     decoration: InputDecoration(
                       hintText: 'Search...',
-                      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                      hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                       prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                       filled: true,
@@ -7749,7 +7749,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   child: DropdownButton<String>(
                     value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
                     icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
                     items: _statusOptions
                         .map((s) => DropdownMenuItem(value: s, child: Text(s)))
                         .toList(),
@@ -7843,7 +7843,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13.5,
+                                fontSize: 14.5,
                                 fontWeight: FontWeight.w800,
                                 color: Color(0xFF0F172A),
                               ),
@@ -7860,7 +7860,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                             child: Text(
                               type,
                               style: TextStyle(
-                                fontSize: 10.5,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w800,
                                 color: typeText,
                               ),
@@ -7880,7 +7880,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       child: Text(
                         status,
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                           color: statusText,
                         ),
@@ -7897,7 +7897,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     const SizedBox(width: 6),
                     Text(
                       'Requested: $durationStr',
-                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
                     ),
                   ],
                 ),
@@ -7906,7 +7906,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   const SizedBox(height: 8),
                   Text(
                     'Reason: $reason',
-                    style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -7922,7 +7922,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
                       label: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
                       ),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Color(0xFFFECACA)),
@@ -7963,13 +7963,13 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
           child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
             headingTextStyle: const TextStyle(
-              fontSize: 10.5,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
               color: Color(0xFF94A3B8),
               letterSpacing: 0.5,
             ),
             dataTextStyle: const TextStyle(
-              fontSize: 11.5,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
               color: Color(0xFF1E293B),
             ),
@@ -8030,7 +8030,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       child: Text(
                         type,
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w800,
                           color: typeText,
                         ),
@@ -8049,7 +8049,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       child: Text(
                         status,
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: statusText,
                         ),
@@ -8079,7 +8079,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                                 SizedBox(width: 4),
                                 Text(
                                   'Cancel',
-                                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
                                 ),
                               ],
                             ),
@@ -8180,7 +8180,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                           const Text(
                             'No permission requests found',
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 15,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF64748B),
                             ),
@@ -8299,7 +8299,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
               message,
               style: TextStyle(
                 color: color,
-                fontSize: 12.5,
+                fontSize: 13.5,
                 fontWeight: FontWeight.w600,
                 height: 1.3,
               ),
@@ -8349,7 +8349,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     title,
                     style: TextStyle(
                       color: AppColors.primary,
-                      fontSize: 10,
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -8361,7 +8361,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
               value,
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 14,
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -8490,7 +8490,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                         Text(
                           DateFormat('MMMM yyyy').format(navDate),
                           style: const TextStyle(
-                            fontSize: 14,
+                            fontSize: 15,
                             fontWeight: FontWeight.w800,
                             color: Color(0xFF0F172A),
                           ),
@@ -8513,13 +8513,13 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: const [
-                        Text('SU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('MO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TU', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('WE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TH', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('FR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('SA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -8562,7 +8562,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             child: Text(
                               '$dayNumber',
                               style: TextStyle(
-                                fontSize: 12.5,
+                                fontSize: 13.5,
                                 fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
                                 color: isSelected
                                     ? Colors.white
@@ -8735,7 +8735,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       Expanded(
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
                         ),
                       ),
                       InkWell(
@@ -8752,7 +8752,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
               const Text(
                 'DATE *',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w900,
                   color: Color(0xFF64748B),
                   letterSpacing: 0.5,
@@ -8783,7 +8783,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 14,
                                   fontWeight: _permDate != null ? FontWeight.w800 : FontWeight.w500,
                                   color: _permDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
                                 ),
@@ -8804,7 +8804,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
               const Text(
                 'PERMISSION TYPE',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w900,
                   color: Color(0xFF64748B),
                   letterSpacing: 0.5,
@@ -8823,7 +8823,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     value: _permType,
                     isExpanded: true,
                     icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
                     items: const [
                       DropdownMenuItem(value: 'Late', child: Text('Late')),
                       DropdownMenuItem(value: 'Early', child: Text('Early')),
@@ -8845,7 +8845,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 const Text(
                   'LATE DURATION *',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w900,
                     color: Color(0xFF64748B),
                     letterSpacing: 0.5,
@@ -8863,7 +8863,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Hours (e.g. 1)',
-                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -8882,7 +8882,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Hours', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -8896,7 +8896,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 30)',
-                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -8915,7 +8915,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Minutes', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -8925,7 +8925,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 const Text(
                   'EARLY DURATION *',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w900,
                     color: Color(0xFF64748B),
                     letterSpacing: 0.5,
@@ -8943,7 +8943,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Hours (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -8962,7 +8962,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Hours', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -8976,7 +8976,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 45)',
-                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -8995,7 +8995,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Minutes', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -9006,7 +9006,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 const Text(
                   'LATE DURATION *',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w900,
                     color: Color(0xFF64748B),
                     letterSpacing: 0.5,
@@ -9024,7 +9024,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Hours (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -9043,7 +9043,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Hours', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -9057,7 +9057,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -9076,7 +9076,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Minutes', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -9086,7 +9086,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 const Text(
                   'EARLY DURATION *',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w900,
                     color: Color(0xFF64748B),
                     letterSpacing: 0.5,
@@ -9104,7 +9104,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Hours (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -9123,7 +9123,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Hours', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -9137,7 +9137,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 30)',
-                              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                               filled: true,
                               fillColor: const Color(0xFFF8FAFC),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -9156,7 +9156,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Minutes', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -9170,7 +9170,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
               const Text(
                 'REASON *',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w900,
                   color: Color(0xFF64748B),
                   letterSpacing: 0.5,
@@ -9180,10 +9180,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
               TextFormField(
                 controller: _reasonController,
                 maxLines: 3,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
                   hintText: 'State the reason for permission request...',
-                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                   border: OutlineInputBorder(
@@ -9217,7 +9217,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       ),
                       child: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
                       ),
                     ),
                   ),
@@ -9240,7 +9240,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             )
                           : const Text(
                               'Submit Request',
-                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
                             ),
                     ),
                   ),
@@ -9919,7 +9919,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                             Text(
                               'Cards',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
                                 color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                               ),
@@ -9951,7 +9951,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                             Text(
                               'Table',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
                                 color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                               ),
@@ -9976,7 +9976,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                     controller: _searchController,
                     decoration: InputDecoration(
                       hintText: 'Search Reason, Month...',
-                      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                      hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                       prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                       filled: true,
@@ -10018,7 +10018,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                   child: DropdownButton<String>(
                     value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
                     icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
                     items: _statusOptions
                         .map((s) => DropdownMenuItem(value: s, child: Text(s)))
                         .toList(),
@@ -10123,7 +10123,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                    fontSize: 13.5,
+                                    fontSize: 14.5,
                                     fontWeight: FontWeight.w800,
                                     color: Color(0xFF0F172A),
                                   ),
@@ -10132,7 +10132,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                                   'Applied: $appliedDate',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                                  style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
                                 ),
                               ],
                             ),
@@ -10151,7 +10151,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                       child: Text(
                         status,
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: statusText,
                         ),
@@ -10163,7 +10163,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                   const SizedBox(height: 10),
                   Text(
                     reason,
-                    style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -10183,7 +10183,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                         Expanded(
                           child: Text(
                             'Rejected: $rejectionReason',
-                            style: const TextStyle(fontSize: 10.5, color: Color(0xFFDC2626), fontWeight: FontWeight.w600),
+                            style: const TextStyle(fontSize: 12, color: Color(0xFFDC2626), fontWeight: FontWeight.w600),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -10200,7 +10200,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                       OutlinedButton.icon(
                         onPressed: () => _viewPayslipItem(req),
                         icon: const Icon(Icons.description_outlined, size: 14, color: Color(0xFF0F172A)),
-                        label: const Text('View', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+                        label: const Text('View', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: Color(0xFFE2E8F0)),
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -10212,7 +10212,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                       ElevatedButton.icon(
                         onPressed: () => _downloadPayslipItem(req),
                         icon: const Icon(Icons.download_rounded, size: 14),
-                        label: const Text('Download', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                        label: const Text('Download', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFEFAA1F),
                           foregroundColor: Colors.white,
@@ -10233,7 +10233,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                         icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
                         label: const Text(
                           'Cancel',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
                         ),
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: Color(0xFFFECACA)),
@@ -10275,13 +10275,13 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
           child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
             headingTextStyle: const TextStyle(
-              fontSize: 10.5,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
               color: Color(0xFF94A3B8),
               letterSpacing: 0.5,
             ),
             dataTextStyle: const TextStyle(
-              fontSize: 11.5,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
               color: Color(0xFF1E293B),
             ),
@@ -10341,7 +10341,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                       child: Text(
                         status,
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: statusText,
                         ),
@@ -10392,7 +10392,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                                     SizedBox(width: 4),
                                     Text(
                                       'Cancel',
-                                      style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
                                     ),
                                   ],
                                 ),
@@ -10416,7 +10416,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
         Text(
           '$label: ',
           style: const TextStyle(
-            fontSize: 12,
+            fontSize: 13,
             color: Color(0xFF424242),
             fontWeight: FontWeight.w600,
           ),
@@ -10424,7 +10424,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(fontSize: 12, color: Color(0xFF424242)),
+            style: const TextStyle(fontSize: 13, color: Color(0xFF424242)),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
@@ -10512,7 +10512,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                           const Text(
                             'No payslip requests found',
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 15,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF64748B),
                             ),
@@ -10685,7 +10685,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                       Text(
                         'Request a payslip for a specific month',
                         style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF94A3B8),
                         ),
@@ -10716,7 +10716,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                       Expanded(
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
                         ),
                       ),
                       InkWell(
@@ -10733,7 +10733,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
               const Text(
                 'Month',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF334155),
                 ),
@@ -10751,7 +10751,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                     value: _month,
                     isExpanded: true,
                     icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                     items: _months
                         .map((m) => DropdownMenuItem(value: m, child: Text(m)))
                         .toList(),
@@ -10770,7 +10770,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
               const Text(
                 'Year',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF334155),
                 ),
@@ -10780,10 +10780,10 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                 controller: _yearController,
                 keyboardType: TextInputType.number,
                 enabled: !_isSubmitting,
-                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
                   hintText: 'e.g., 2026',
-                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -10808,7 +10808,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
               const Text(
                 'Reason (Optional)',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF334155),
                 ),
@@ -10818,10 +10818,10 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                 controller: _reasonController,
                 maxLines: 3,
                 enabled: !_isSubmitting,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
                 decoration: InputDecoration(
                   hintText: 'Enter reason for payslip request',
-                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                   contentPadding: const EdgeInsets.all(12),
@@ -10855,7 +10855,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                       ),
                       child: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
                       ),
                     ),
                   ),
@@ -10878,7 +10878,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                             )
                           : const Text(
                               'Submit Request',
-                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
                             ),
                     ),
                   ),

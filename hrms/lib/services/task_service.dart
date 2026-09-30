@@ -1650,6 +1650,27 @@ class TaskService {
     }
   }
 
+  /// The signed-in staff member's field day (HRMSbackend GET /staff/geo-task/day-route):
+  /// punch-in / Field In / Field Out / punch-out flags and the legs between them with
+  /// the travelled path and km (km null when tracking is off). Throws with the server
+  /// message on failure.
+  Future<Map<String, dynamic>> getDayRoute(DateTime day) async {
+    await _setToken();
+    final key =
+        '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+    try {
+      final res = await _api.dio.get<dynamic>(
+        '/staff/geo-task/day-route',
+        queryParameters: {'date': key},
+      );
+      final data = res.data is Map ? (res.data as Map)['data'] : null;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      throw Exception('Could not load your route.');
+    } on DioException catch (e) {
+      throw Exception(_serverMessage(e) ?? 'Could not load your route.');
+    }
+  }
+
   /// Get active field journey status for external staff
   Future<Map<String, dynamic>?> getJourneyStatus() async {
     await _setToken();

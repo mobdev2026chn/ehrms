@@ -112,24 +112,36 @@ class PresenceTrackingService {
   static const Duration _flagMaxAgeWhileTracking = Duration(minutes: 30);
   static int _localOfflineInsertCount = 0;
 
+  /// Seconds between captured points. Comes from the admin's HRMS Geo setting
+  /// (GET /staff/geo-task/live-tracking/config `intervalSeconds`, default 30),
+  /// cached in prefs so the background isolate uses it too. Dense enough that the
+  /// day route's leg km (backend) follows the road instead of 5-minute chords.
+  static int _intervalSeconds = _kDefaultIntervalSeconds;
+  static const int _kDefaultIntervalSeconds = 30;
+  static const String _kPresenceIntervalSec = 'presence_capture_interval_sec';
+
   /// Interval for inserting presence tracking into DB (trackings collection).
   /// Applied to both foreground timer and native Android background tracker.
-  static const Duration trackingInterval = Duration(
-    seconds: AppConstants.presenceTrackingCaptureIntervalSeconds,
-  );
+  static Duration get trackingInterval => Duration(seconds: _intervalSeconds);
+
+  static Future<void> _loadIntervalFromPrefs([SharedPreferences? p]) async {
+    final prefs = p ?? await SharedPreferences.getInstance();
+    final v = prefs.getInt(_kPresenceIntervalSec);
+    if (v != null && v >= 10 && v <= 300) _intervalSeconds = v;
+  }
   static const double _duplicateLocationThresholdMeters = 10;
 
   static const double defaultOfficeRadiusMeters = 200;
   static const double _maxAccuracyBufferM = 80;
-  static const AndroidConfig _presenceBackgroundConfig = AndroidConfig(
-    notificationIcon: 'ic_stat_ektahr',
-    notificationBody: 'Attendance presence tracking active. Tap to open.',
-    channelName: 'Presence Tracking',
-    cancelTrackingActionText: 'Stop tracking',
-    enableCancelTrackingAction: true,
-    trackingInterval: trackingInterval,
-    distanceFilterMeters: null,
-  );
+  static AndroidConfig get _presenceBackgroundConfig => AndroidConfig(
+        notificationIcon: 'ic_stat_ektahr',
+        notificationBody: 'Attendance presence tracking active. Tap to open.',
+        channelName: 'Presence Tracking',
+        cancelTrackingActionText: 'Stop tracking',
+        enableCancelTrackingAction: true,
+        trackingInterval: trackingInterval,
+        distanceFilterMeters: null,
+      );
 
   Future<gl.Position> _capturePresencePosition() {
     // Use the same stabilized GPS sampling as attendance check-in so
@@ -177,6 +189,7 @@ class PresenceTrackingService {
     String logLabel = 'presence_store',
   }) async {
     final prefs = await SharedPreferences.getInstance();
+    await _loadIntervalFromPrefs(prefs);
     final lastLat = prefs.getDouble(_kPresenceLastSentLat);
     final lastLng = prefs.getDouble(_kPresenceLastSentLng);
     if (lastLat == null || lastLng == null) return false;
@@ -568,6 +581,7 @@ class PresenceTrackingService {
       return;
     }
 
+    await _loadIntervalFromPrefs(prefs);
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final lastAttemptMs = prefs.getInt(_kPresenceLastBackgroundAttemptTime);
     if (lastAttemptMs != null &&
@@ -817,6 +831,7 @@ class PresenceTrackingService {
     Duration maxAge = _flagMaxAgeOnEnsure,
   }) async {
     final prefs = await SharedPreferences.getInstance();
+    await _loadIntervalFromPrefs(prefs);
     final cached = prefs.getBool(_kPresenceTrackingFlag);
     final checkedAt = prefs.getInt(_kPresenceTrackingFlagCheckedAt) ?? 0;
     final ageMs = DateTime.now().millisecondsSinceEpoch - checkedAt;
@@ -829,7 +844,24 @@ class PresenceTrackingService {
     try {
       final res = await AuthService().getProfile(forceRefresh: true);
       if (res['success'] == true) {
-        final enabled = _trackingFlagFromProfile(res['data']) ?? false;
+        // Timeline Tracking (Staff.tracking) OR Live Tracking (HRMS Geo config:
+        // global switch AND this employee), plus the admin's capture interval.
+        var enabled = _trackingFlagFromProfile(res['data']) ?? false;
+        try {
+          await _setToken();
+          final cfgRes = await _api.dio.get<dynamic>('/staff/geo-task/live-tracking/config');
+          final cfg = cfgRes.data is Map ? (cfgRes.data as Map)['data'] : null;
+          if (cfg is Map) {
+            if (cfg['liveTracking'] == true) enabled = true;
+            final iv = (cfg['intervalSeconds'] as num?)?.toInt();
+            if (iv != null && iv >= 10 && iv <= 300) {
+              _intervalSeconds = iv;
+              await prefs.setInt(_kPresenceIntervalSec, iv);
+            }
+          }
+        } catch (_) {
+          // Older backend without the config route: keep the profile flag.
+        }
         await prefs.setBool(_kPresenceTrackingFlag, enabled);
         await prefs.setInt(
           _kPresenceTrackingFlagCheckedAt,
@@ -848,7 +880,9 @@ class PresenceTrackingService {
   static bool? _trackingFlagFromProfile(dynamic data) {
     bool? read(dynamic m) {
       if (m is! Map) return null;
-      final v = m['tracking'];
+      // HRMSbackend renamed Staff.tracking -> Staff.timelineTracking; older
+      // records may still carry only the old field.
+      final v = m['timelineTracking'] ?? m['tracking'];
       if (v is bool) return v;
       if (v is String) return v.toLowerCase() == 'true';
       if (v is num) return v != 0;
@@ -1685,7 +1719,7 @@ class PresenceTrackingService {
     });
     if (kDebugMode) {
       debugPrint(
-        '[PresenceTracking] timer started (interval: ${trackingInterval.inMinutes} min)',
+        '[PresenceTracking] timer started (interval: ${trackingInterval.inSeconds} s)',
       );
     }
   }

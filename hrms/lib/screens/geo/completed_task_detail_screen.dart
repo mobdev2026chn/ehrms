@@ -46,8 +46,13 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   Future<void> _computeSnappedRoute(List<RoutePoint> routePoints) async {
     if (routePoints.length < 2) return;
     // Display route: drawn as-is when dense, snapped once and cached otherwise.
-    final key = (widget.task.id?.isNotEmpty ?? false) ? widget.task.id! : widget.task.taskId;
-    final snapped = await RouteSnappingService.buildDisplayRoute(key, routePoints);
+    final key = (widget.task.id?.isNotEmpty ?? false)
+        ? widget.task.id!
+        : widget.task.taskId;
+    final snapped = await RouteSnappingService.buildDisplayRoute(
+      key,
+      routePoints,
+    );
     if (mounted && snapped.length > 1) {
       setState(() => _snappedRoute = snapped);
     }
@@ -394,18 +399,23 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   }
 
   Widget _buildAddressCard(Task task) {
-    final source = (task.sourceLocation?.displayAddress != null && task.sourceLocation!.displayAddress!.isNotEmpty)
+    final source =
+        (task.sourceLocation?.displayAddress != null &&
+            task.sourceLocation!.displayAddress!.isNotEmpty)
         ? task.sourceLocation!.displayAddress!
         : ((task.sourceLocation?.lat != null && task.sourceLocation!.lat != 0)
-            ? '${task.sourceLocation!.lat.toStringAsFixed(4)}, ${task.sourceLocation!.lng.toStringAsFixed(4)}'
-            : '—');
-    final dest = (task.destinationLocation?.displayAddress != null && task.destinationLocation!.displayAddress!.isNotEmpty)
+              ? '${task.sourceLocation!.lat.toStringAsFixed(4)}, ${task.sourceLocation!.lng.toStringAsFixed(4)}'
+              : '—');
+    final dest =
+        (task.destinationLocation?.displayAddress != null &&
+            task.destinationLocation!.displayAddress!.isNotEmpty)
         ? task.destinationLocation!.displayAddress!
         : (task.customer != null
-            ? '${task.customer!.address}, ${task.customer!.city}, ${task.customer!.pincode}'
-            : ((task.destinationLocation?.lat != null && task.destinationLocation!.lat != 0)
-                ? '${task.destinationLocation!.lat.toStringAsFixed(4)}, ${task.destinationLocation!.lng.toStringAsFixed(4)}'
-                : '—'));
+              ? '${task.customer!.address}, ${task.customer!.city}, ${task.customer!.pincode}'
+              : ((task.destinationLocation?.lat != null &&
+                        task.destinationLocation!.lat != 0)
+                    ? '${task.destinationLocation!.lat.toStringAsFixed(4)}, ${task.destinationLocation!.lng.toStringAsFixed(4)}'
+                    : '—'));
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -456,10 +466,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                     const SizedBox(height: 2),
                     Text(
                       source,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.white,
-                      ),
+                      style: TextStyle(fontSize: 13, color: Colors.white),
                     ),
                   ],
                 ),
@@ -487,10 +494,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                     const SizedBox(height: 2),
                     Text(
                       dest,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.white,
-                      ),
+                      style: TextStyle(fontSize: 13, color: Colors.white),
                     ),
                   ],
                 ),
@@ -617,7 +621,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           ),
           _proofRow(
             'Photo Proof',
-            (task.photoProofUrl != null && task.photoProofUrl!.isNotEmpty) || task.photoProof == true
+            (task.photoProofUrl != null && task.photoProofUrl!.isNotEmpty) ||
+                    task.photoProof == true
                 ? 'Uploaded'
                 : '—',
           ),
@@ -629,36 +634,55 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
             _proofRow('OTP Verified At', task.otpVerifiedAddress!),
           if (task.photoProofUrl != null && task.photoProofUrl!.isNotEmpty) ...[
             const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: OrientedImage.network(
-                task.photoProofUrl!,
-                height: 120,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  height: 120,
-                  width: double.infinity,
-                  color: Colors.grey.shade200,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.broken_image_outlined, size: 40, color: Colors.grey.shade600),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Image not found',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey.shade700,
-                          fontWeight: FontWeight.w500,
+            Stack(
+              children: [
+                GestureDetector(
+                  onTap: () => _openPhotoViewer(task.photoProofUrl!),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: OrientedImage.network(
+                      task.photoProofUrl!,
+                      height: 120,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        height: 120,
+                        width: double.infinity,
+                        color: Colors.grey.shade200,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.broken_image_outlined,
+                              size: 40,
+                              color: Colors.grey.shade600,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Image not found',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade700,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: _viewButton(
+                    () => _openPhotoViewer(task.photoProofUrl!),
+                  ),
+                ),
+              ],
             ),
-          ] else if (task.photoProofUrl == null || task.photoProofUrl!.isEmpty) ...[
+          ] else if (task.photoProofUrl == null ||
+              task.photoProofUrl!.isEmpty) ...[
             const SizedBox(height: 8),
             Container(
               height: 120,
@@ -670,7 +694,11 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.image_not_supported_outlined, size: 40, color: Colors.grey.shade600),
+                  Icon(
+                    Icons.image_not_supported_outlined,
+                    size: 40,
+                    color: Colors.grey.shade600,
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     'Image not found',
@@ -900,26 +928,126 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: GoogleMap(
-          initialCameraPosition: CameraPosition(target: center, zoom: 14),
-          onMapCreated: (controller) {
-            if (displayRoute.length > 1) {
-              Future.delayed(const Duration(milliseconds: 300), () {
-                controller.animateCamera(
-                  CameraUpdate.newLatLngBounds(_computeBounds(displayRoute), 40),
-                );
-              });
-            }
-          },
-          polylines: displayRoute.length > 1
-              ? {
-                  TravelledRouteStyle.polyline('route', displayRoute),
-                }
-              : {},
-          markers: markers,
-          mapToolbarEnabled: false,
-          zoomControlsEnabled: true,
-          myLocationButtonEnabled: false,
+        child: Stack(
+          children: [
+            _routeMap(center, displayRoute, markers),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: _viewButton(
+                () => _openMapViewer(center, displayRoute, markers),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _routeMap(
+    LatLng center,
+    List<LatLng> displayRoute,
+    Set<Marker> markers,
+  ) {
+    return GoogleMap(
+      initialCameraPosition: CameraPosition(target: center, zoom: 14),
+      onMapCreated: (controller) {
+        if (displayRoute.length > 1) {
+          Future.delayed(const Duration(milliseconds: 300), () {
+            controller.animateCamera(
+              CameraUpdate.newLatLngBounds(_computeBounds(displayRoute), 40),
+            );
+          });
+        }
+      },
+      polylines: displayRoute.length > 1
+          ? {TravelledRouteStyle.polyline('route', displayRoute)}
+          : {},
+      markers: markers,
+      mapToolbarEnabled: false,
+      zoomControlsEnabled: true,
+      myLocationButtonEnabled: false,
+    );
+  }
+
+  Widget _viewButton(VoidCallback onTap) {
+    return Material(
+      color: Colors.black.withOpacity(0.6),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.fullscreen_rounded, size: 16, color: Colors.white),
+              SizedBox(width: 4),
+              Text(
+                'View',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openPhotoViewer(String imageUrl) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            title: const Text('Photo Proof', style: TextStyle(fontSize: 16)),
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              minScale: 1,
+              maxScale: 5,
+              child: OrientedImage.network(
+                imageUrl,
+                width: double.infinity,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Text(
+                  'Unable to load image',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openMapViewer(
+    LatLng center,
+    List<LatLng> displayRoute,
+    Set<Marker> markers,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(
+            backgroundColor: AppColors.background,
+            foregroundColor: AppColors.textPrimary,
+            title: const Text(
+              'Route Map',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+            centerTitle: true,
+            elevation: 0,
+          ),
+          body: _routeMap(center, displayRoute, markers),
         ),
       ),
     );

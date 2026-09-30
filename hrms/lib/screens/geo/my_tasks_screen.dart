@@ -27,6 +27,7 @@ import 'package:hrms/screens/geo/arrived_screen.dart';
 import 'package:hrms/screens/geo/completed_task_detail_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hrms/screens/geo/task_detail_screen.dart';
+import 'package:hrms/screens/geo/my_day_route_screen.dart';
 import 'package:intl/intl.dart';
 import 'package:hrms/utils/date_display_util.dart';
 import 'package:hrms/utils/error_message_utils.dart';
@@ -63,6 +64,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   bool _isLoadingCustomers = true;
 
   bool _isInternalStaff = false;
+  bool _isFieldEmployee = false;
   List<Map<String, dynamic>> _allowances = [];
   bool _isLoadingAllowances = false;
   List<Task> _historyTasks = [];
@@ -119,6 +121,13 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   // show 10 cards per page with a page-number + arrow bar like the task list.
   int _customersPage = 1;
   static const int _customersPerPage = 10;
+
+  // One grid for the Tasks tab header (search, stats, status filter, journey
+  // banner) so every block shares the same margins, gaps, radius and heights.
+  static const double _kHeaderHPad = 12;
+  static const double _kHeaderGap = 10;
+  static const double _kHeaderRadius = 14;
+  static const double _kHeaderControlHeight = 48;
 
   /// Card header date + time. HRMSbackend sends `assignedDate` as a date only
   /// ("2026-09-29"), so the time comes from when the task was started
@@ -643,23 +652,33 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   }
 
   Widget _buildSearchAndRefreshRow() {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      color: colorScheme.surface,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+    // Same page background, width and corner radius as the cards below it.
+    const soft = OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(_kHeaderRadius)),
+      borderSide: BorderSide(color: Color(0xFFE2E8F0)),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(_kHeaderHPad, _kHeaderGap, _kHeaderHPad, 0),
       child: TextField(
         controller: _searchController,
         decoration: InputDecoration(
           hintText: 'Customer name, task name, task ID',
-          prefixIcon: const Icon(Icons.search, size: 20),
+          hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
+          prefixIcon: const Icon(Icons.search, size: 20, color: Color(0xFF94A3B8)),
           isDense: true,
+          // 48px tall, same as the status filter.
+          constraints: const BoxConstraints(minHeight: _kHeaderControlHeight),
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 12,
-            vertical: 10,
+            vertical: 14,
           ),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          border: soft,
+          enabledBorder: soft,
+          focusedBorder: soft.copyWith(
+            borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+          ),
           filled: true,
-          fillColor: colorScheme.surfaceContainerLowest,
+          fillColor: Colors.white,
         ),
         onChanged: (_) {
           // Filtering is client-side, so the list updates as the user types
@@ -1247,6 +1266,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       if (mounted) {
         setState(() {
           _isInternalStaff = isInternal;
+          // Internal or External Field Employee (Employee Access) — My Route is for them only.
+          _isFieldEmployee = (fieldType ?? '').toLowerCase().contains('field');
         });
       }
 
@@ -1336,9 +1357,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     final pending = _tasks.length - completed;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      padding: const EdgeInsets.fromLTRB(_kHeaderHPad, _kHeaderGap, _kHeaderHPad, 0),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
@@ -1351,7 +1372,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   filled: false,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: _kHeaderGap),
               Expanded(
                 child: _buildStatCard(
                   label: 'COMPLETED',
@@ -1363,56 +1384,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          // New Task button and status filter share one row: the filter
-          // expands to fill the space, the button sits compact beside it.
-          // IntrinsicHeight bounds the row's height so CrossAxisAlignment.stretch
-          // has a finite constraint to stretch against — without it, the row
-          // inherits the Column's unbounded height and throws
-          // "BoxConstraints forces an infinite height".
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: _buildStatusFilterDropdown()),
-                if (!_isInternalStaff) ...[
-                  const SizedBox(width: 12),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              AddTaskScreen(staffId: _loggedInStaffId ?? ''),
-                        ),
-                      ).then((_) => _fetchTasks());
-                    },
-                    icon: const Icon(
-                      Icons.add_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    label: const Text(
-                      'New Task',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 0,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+          const SizedBox(height: _kHeaderGap),
+          // Status filter, full width. (The "New Task" button was removed;
+          // tasks are still added from the app bar ➕ and the Add Task button.)
+          _buildStatusFilterDropdown(),
         ],
       ),
     );
@@ -1422,10 +1397,11 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   Widget _buildStatusFilterDropdown() {
     final isActive = _statusFilter != null;
     return Container(
+      height: _kHeaderControlHeight,
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
         color: AppColors.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(_kHeaderRadius),
         border: Border.all(
           color: AppColors.primary.withValues(alpha: isActive ? 0.5 : 0.25),
         ),
@@ -1483,65 +1459,76 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         : AppColors.primary.withValues(alpha: 0.12);
     final iconColor = filled ? Colors.white : AppColors.primary;
 
+    // Compact: icon tile on the left, label + count beside it (no empty space).
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(_kHeaderRadius),
+        border: filled ? null : Border.all(color: const Color(0xFFF1F5F9)),
         boxShadow: [
           BoxShadow(
             color: filled
-                ? AppColors.primary.withValues(alpha: 0.3)
+                ? AppColors.primary.withValues(alpha: 0.25)
                 : Colors.black.withValues(alpha: 0.04),
             blurRadius: 10,
-            offset: const Offset(0, 4),
+            offset: const Offset(0, 3),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
           Container(
-            width: 36,
-            height: 36,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: iconBg,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 20, color: iconColor),
+            child: Icon(icon, size: 21, color: iconColor),
           ),
-          const SizedBox(height: 12),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
-              color: labelColor,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                    color: labelColor,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: valueColor,
+                        height: 1,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text(
+                        caption,
+                        style: TextStyle(fontSize: 12, color: labelColor),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 4),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: valueColor,
-                  height: 1,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 3),
-                child: Text(
-                  caption,
-                  style: TextStyle(fontSize: 13, color: labelColor),
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -1549,49 +1536,88 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   }
 
   Widget _buildTaskPaginationBar(ColorScheme colorScheme) {
-    final totalPages = _totalTaskPages;
     if (_filteredTasks.isEmpty) return const SizedBox.shrink();
-    return Container(
-      color: Colors.transparent,
-      padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
-      child: DecoratedBox(
+    return _buildPagerPill(
+      current: _currentTaskPage,
+      total: _totalTaskPages,
+      onPrev: () => setState(() => _tasksPage = _currentTaskPage - 1),
+      onNext: () => setState(() => _tasksPage = _currentTaskPage + 1),
+      onPage: (p) => setState(() => _tasksPage = p),
+    );
+  }
+
+  /// Centred numbered pager ("‹ 1 2 3 4 5 ›", current page filled) shared by
+  /// the Tasks and Customers tabs. Shows a window of up to 5 page numbers
+  /// around the current page; always visible so the page count is clear.
+  Widget _buildPagerPill({
+    required int current,
+    required int total,
+    required VoidCallback onPrev,
+    required VoidCallback onNext,
+    ValueChanged<int>? onPage,
+  }) {
+    final pages = total < 1 ? 1 : total;
+    final cur = current.clamp(1, pages);
+    const window = 5;
+    var first = (cur - window ~/ 2).clamp(1, pages);
+    final last = (first + window - 1).clamp(1, pages);
+    first = (last - window + 1).clamp(1, pages);
+
+    Widget arrow(IconData icon, bool enabled, VoidCallback onTap, String tip) => IconButton(
+          onPressed: enabled ? onTap : null,
+          tooltip: tip,
+          visualDensity: VisualDensity.compact,
+          iconSize: 22,
+          color: AppColors.primary,
+          disabledColor: const Color(0xFFCBD5E1),
+          icon: Icon(icon),
+        );
+
+    Widget number(int p) {
+      final selected = p == cur;
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: selected || onPage == null ? null : () => onPage(p),
+          child: Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected ? AppColors.primary : Colors.transparent,
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              '$p',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: selected ? Colors.white : const Color(0xFF334155),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 6, offset: Offset(0, 2))],
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            children: [
-              const Spacer(),
-              IconButton(
-                onPressed: _currentTaskPage > 1
-                    ? () => setState(() => _tasksPage = _currentTaskPage - 1)
-                    : null,
-                tooltip: 'Previous page',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.chevron_left_rounded),
-              ),
-              Text(
-                '$_currentTaskPage/$totalPages',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: colorScheme.onSurface,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              IconButton(
-                onPressed: _currentTaskPage < totalPages
-                    ? () => setState(() => _tasksPage = _currentTaskPage + 1)
-                    : null,
-                tooltip: 'Next page',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.chevron_right_rounded),
-              ),
-              const Spacer(),
-            ],
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            arrow(Icons.chevron_left_rounded, cur > 1, onPrev, 'Previous page'),
+            for (var p = first; p <= last; p++) number(p),
+            arrow(Icons.chevron_right_rounded, cur < pages, onNext, 'Next page'),
+          ],
         ),
       ),
     );
@@ -1615,12 +1641,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     } else {
       return const SizedBox.shrink();
     }
-    return Material(
-      color: colorScheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-        child: bar,
-      ),
+    // Transparent footer: just the pager pill on the page background.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: bar,
     );
   }
 
@@ -1785,54 +1809,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   /// Page-number + arrow bar for the (client-side paginated) customer list.
   Widget _buildCustomerPaginationBar(ColorScheme colorScheme) {
     if (_customers.isEmpty) return const SizedBox.shrink();
-    final totalPages = _customersTotalPages;
-    return Container(
-      color: Colors.transparent,
-      padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: colorScheme.outlineVariant),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            children: [
-              const Spacer(),
-              IconButton(
-                onPressed: _currentCustomerPage > 1
-                    ? () => setState(
-                        () => _customersPage = _currentCustomerPage - 1,
-                      )
-                    : null,
-                tooltip: 'Previous page',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.chevron_left_rounded),
-              ),
-              Text(
-                '$_currentCustomerPage/$totalPages',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: colorScheme.onSurface,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              IconButton(
-                onPressed: _currentCustomerPage < totalPages
-                    ? () => setState(
-                        () => _customersPage = _currentCustomerPage + 1,
-                      )
-                    : null,
-                tooltip: 'Next page',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.chevron_right_rounded),
-              ),
-              const Spacer(),
-            ],
-          ),
-        ),
-      ),
+    return _buildPagerPill(
+      current: _currentCustomerPage,
+      total: _customersTotalPages,
+      onPrev: () => setState(() => _customersPage = _currentCustomerPage - 1),
+      onNext: () => setState(() => _customersPage = _currentCustomerPage + 1),
+      onPage: (p) => setState(() => _customersPage = p),
     );
   }
 
@@ -2057,6 +2039,17 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                             ],
                     ),
               actions: [
+                // The day's route: punch-in → Field In/Out flags and leg distances.
+                // Field employees only (the backend refuses anyone else).
+                if (!_isSelectionMode && _isFieldEmployee)
+                  IconButton(
+                    icon: Icon(Icons.route_rounded, color: AppColors.primary, size: 24),
+                    tooltip: 'My Route',
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const MyDayRouteScreen()),
+                    ),
+                  ),
                 if (!_isSelectionMode && !_isInternalStaff && (_mainTabController.index == 0 || _mainTabController.index == 1))
                   IconButton(
                     icon: Icon(Icons.add_circle_outline_rounded, color: AppColors.primary, size: 26),
@@ -2186,11 +2179,13 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                               )
                             else
                               SliverPadding(
+                                // Bottom room so the last card scrolls clear of
+                                // the floating Add Task button.
                                 padding: const EdgeInsets.fromLTRB(
-                                  12,
-                                  8,
-                                  12,
-                                  12,
+                                  _kHeaderHPad,
+                                  _kHeaderGap,
+                                  _kHeaderHPad,
+                                  96,
                                 ),
                                 // +1 for the pagination footer that scrolls
                                 // with the list instead of being pinned above
@@ -2660,7 +2655,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       : RefreshIndicator(
                           onRefresh: _fetchCustomers,
                           child: ListView.builder(
-                            padding: const EdgeInsets.all(12),
+                            // Room below the last card for the Add Customer button.
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
                             itemCount: _pagedCustomers.length,
                             itemBuilder: (context, index) {
                               final customer = _pagedCustomers[index];
@@ -2775,23 +2771,24 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   Widget _buildFieldJourneyBanner(ColorScheme colorScheme) {
     final hasActive = _activeJourney != null;
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.fromLTRB(_kHeaderHPad, _kHeaderGap, _kHeaderHPad, 0),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: hasActive ? Colors.green.shade50 : Colors.blue.shade50,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(_kHeaderRadius),
         border: Border.all(
           color: hasActive ? Colors.green.shade200 : Colors.blue.shade200,
-          width: 1.2,
         ),
       ),
       child: Row(
         children: [
+          // Same 40px rounded tile as the stat cards' icons.
           Container(
-            padding: const EdgeInsets.all(10),
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: hasActive ? Colors.green.shade100 : Colors.blue.shade100,
-              shape: BoxShape.circle,
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               hasActive ? Icons.directions_walk_rounded : Icons.explore_outlined,
@@ -2799,7 +2796,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               size: 22,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2838,8 +2835,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               style: ElevatedButton.styleFrom(
                 backgroundColor: hasActive ? Colors.green.shade700 : AppColors.primary,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                minimumSize: const Size(0, 38),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 elevation: 0,
               ),
               child: Text(
