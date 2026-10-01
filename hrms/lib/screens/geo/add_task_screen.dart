@@ -444,7 +444,16 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           (_useCustomerAddressForDest && _selectedCustomer!.pincode.isNotEmpty)
           ? _selectedCustomer!.pincode
           : null;
-      if (!_useCustomerAddressForDest && _manualDestLatLng != null) {
+      final customerPin = (_selectedCustomer?.latitude != null &&
+              _selectedCustomer?.longitude != null &&
+              !(_selectedCustomer!.latitude == 0 && _selectedCustomer!.longitude == 0))
+          ? LatLng(_selectedCustomer!.latitude!, _selectedCustomer!.longitude!)
+          : null;
+      // Customer's own address with a saved pin: the server uses that pin (no override sent).
+      final useCustomerPin = _useCustomerAddressForDest && customerPin != null;
+      if (useCustomerPin) {
+        dropoff = customerPin;
+      } else if (!_useCustomerAddressForDest && _manualDestLatLng != null) {
         // Exact pin from the map picker — use it directly, don't re-geocode.
         dropoff = _manualDestLatLng!;
         destPincode ??= _manualDestPincode;
@@ -504,6 +513,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           'address': sourceAddress,
         },
         destinationLocation: destLocation,
+        // Geocoding the address can land away from the customer's real pin, which then moves
+        // the arrival geofence; only send a location the staff member actually chose.
+        overrideDestination: !useCustomerPin,
       );
       if (!mounted) return;
       // Creation only assigns the task (status 'assigned'); it does NOT auto-start

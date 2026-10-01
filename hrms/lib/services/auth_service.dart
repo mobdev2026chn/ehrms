@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import '../config/constants.dart';
+import '../core/network/face_pass.dart';
 import '../utils/error_message_utils.dart';
 import '../utils/swr_cache.dart';
 import '../utils/user_session_reset.dart';
@@ -1122,6 +1123,8 @@ class AuthService {
           ? Map<String, dynamic>.from(response.data as Map)
           : <String, dynamic>{};
       final match = body['match'] == true;
+      // The punch / break that follows must present this pass (FacePassInterceptor).
+      if (match) FacePassStore.save(body['facePass']?.toString());
       return {
         'success': body['success'] == true,
         'match': match,

@@ -570,6 +570,10 @@ class BreakService {
                 break;
               }
             } catch (_) {}
+          } else if (de.response != null) {
+            // A real refusal (face pass, geofence, ...): the legacy routes below would only
+            // answer 404, which reads as "no open break" and wrongly clears the break here.
+            break;
           }
         } catch (_) {}
       }

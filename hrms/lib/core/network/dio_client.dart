@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/constants.dart';
 import '../../utils/user_session_reset.dart';
 import 'device_id.dart';
+import 'face_pass.dart';
 
 /// Clears persisted auth tokens + user snapshot and default Dio Authorization header.
 Future<void> clearStoredAuthSession() async {
@@ -301,6 +302,7 @@ class DioClient {
     }
     dio.interceptors.addAll([
       DeviceIdInterceptor(),
+      FacePassInterceptor(),
       FormDataContentTypeInterceptor(),
       TokenRefreshInterceptor(dio),
       SessionExpiryInterceptor(dio),

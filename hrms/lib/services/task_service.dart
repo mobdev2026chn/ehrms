@@ -258,6 +258,9 @@ class TaskService {
     String status = 'assigned',
     Map<String, dynamic>? sourceLocation,
     Map<String, dynamic>? destinationLocation,
+    /// False when the destination is the customer's own address and pin: HRMSbackend then
+    /// uses the customer's saved location instead of coordinates from the app.
+    bool overrideDestination = true,
   }) async {
     await _setToken();
     final prefs = await SharedPreferences.getInstance();
@@ -305,7 +308,7 @@ class TaskService {
     body['title'] = taskTitle;
     body['startDate'] = dateOnly(earliestCompletionDate ?? DateTime.now());
     body['endDate'] = dateOnly(latestCompletionDate ?? expectedCompletionDate);
-    if (destinationLocation != null) {
+    if (destinationLocation != null && overrideDestination) {
       final addr = (destinationLocation['fullAddress'] ?? destinationLocation['address'])?.toString();
       if (addr != null && addr.isNotEmpty) body['customerAddress'] = addr;
       final lat = destinationLocation['lat'] ?? destinationLocation['latitude'];
@@ -1399,13 +1402,18 @@ class TaskService {
 
     try {
       await _api.dio.post<dynamic>('/staff/geo-task/live-tracking/status', data: data);
-    } catch (_) {
-      try {
-        await _api.dio.post<dynamic>('/tracking/exit', data: data);
-      } catch (e) {
-        debugPrint('[exitRide] endpoint fallback caught: $e');
-      }
+    } on DioException catch (e) {
+      // Only a missing route falls back to the legacy one. A refusal (not your task, wrong
+      // status) or no connection must reach the screen - the task was NOT put on hold/exited.
+      if (!_isMissingRoute(e)) throw Exception(_refusalMessage(e, 'Could not exit the task'));
+      await _api.dio.post<dynamic>('/tracking/exit', data: data);
     }
+  }
+
+  /// The server's reason for refusing, or a connection hint when there was no answer.
+  static String _refusalMessage(DioException e, String fallback) {
+    if (e.response == null) return '$fallback. Please check your connection and try again.';
+    return _serverMessage(e) ?? '$fallback. Please try again.';
   }
 
   /// Arrived at destination: record in tasks + trackings, set status arrived.
@@ -1433,23 +1441,19 @@ class TaskService {
       if (travelledRoute != null && travelledRoute.isNotEmpty) 'travelledRoute': travelledRoute,
     };
 
-    // Primary: update task on staff GEO route (which validates Field In geofence for internal branch visits)
+    // Primary: Field In on the staff GEO route (geofence-checked). Any refusal stops here -
+    // the app must not show Arrived when the server did not record it.
     try {
       await _api.dio.put<dynamic>('/staff/geo-task/$taskMongoId', data: updatePayload);
     } on DioException catch (e) {
-      if (e.response != null && e.response?.statusCode == 400) {
-        final msg = (e.response?.data is Map)
-            ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
-            : null;
-        throw Exception(msg ?? 'Field In location verification failed');
-      }
-    } catch (e) {
-      if (e is Exception && !e.toString().contains('DioException')) {
-        rethrow;
+      // A retry after the status call below failed: Field In is already on record.
+      final already = (_serverMessage(e) ?? '').toLowerCase().contains('already');
+      if (!already && !_isMissingRoute(e)) {
+        throw Exception(_refusalMessage(e, 'Could not record your arrival'));
       }
     }
 
-    // Update live tracking status
+    // Mark the task Arrived.
     try {
       await _api.dio.post<dynamic>('/staff/geo-task/live-tracking/status', data: {
         'taskId': taskMongoId,
@@ -1461,7 +1465,9 @@ class TaskService {
         if (travelActivityDuration != null) 'travelActivityDuration': travelActivityDuration,
         if (travelledRoute != null && travelledRoute.isNotEmpty) 'travelledRoute': travelledRoute,
       });
-    } catch (_) {}
+    } on DioException catch (e) {
+      if (!_isMissingRoute(e)) throw Exception(_refusalMessage(e, 'Could not record your arrival'));
+    }
 
     final data = <String, dynamic>{
       'taskId': taskMongoId,
@@ -1588,16 +1594,9 @@ class TaskService {
         if (payload != null) return Task.fromJson(payload);
       }
     } on DioException catch (e) {
-      if (e.response != null && e.response?.statusCode == 400) {
-        final msg = (e.response?.data is Map)
-            ? (e.response!.data['message'] ?? e.response!.data['error'])?.toString()
-            : null;
-        throw Exception(msg ?? 'Field Out location verification failed');
-      }
-    } catch (e) {
-      if (e is Exception && !e.toString().contains('DioException')) {
-        rethrow;
-      }
+      // Any refusal (geofence, form, wrong status) or no connection: the task is NOT
+      // completed, so stop here. Only a missing route tries the legacy one below.
+      if (!_isMissingRoute(e)) throw Exception(_refusalMessage(e, 'Could not complete the task'));
     }
 
     // 2. Legacy fallback

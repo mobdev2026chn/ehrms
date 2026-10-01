@@ -547,7 +547,8 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            "You're inside the 500m radius",
+                            // The server checked the real radius (task / customer / branch) at Arrived.
+                            "You're at the task location",
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.grey.shade600,
@@ -958,24 +959,21 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
   Future<void> _submitExitRide(String exitType, String reason) async {
     final mongoId = widget.taskMongoId ?? task?.id ?? task?.taskId ?? widget.taskId;
     if (mongoId.isEmpty) return;
-    try {
-      final exitLocation = await _resolveExitLocation();
-      await TaskService().exitRide(
-        mongoId,
-        reason,
-        exitType: exitType,
-        lat: exitLocation.lat,
-        lng: exitLocation.lng,
-        fullAddress: exitLocation.address,
-        pincode: exitLocation.pincode,
-        tripDistanceKm: widget.totalDistanceKm,
-        tripDurationSeconds: widget.totalDuration.inSeconds,
-        travelledRoute: widget.travelledRoute,
-      );
-      unawaited(PresenceTrackingService().resumePresenceTracking());
-    } catch (e) {
-      debugPrint('[ArrivedScreen] _submitExitRide caught: $e');
-    }
+    final exitLocation = await _resolveExitLocation();
+    // Errors propagate to ExitRideBottomSheet, which shows them and stays open.
+    await TaskService().exitRide(
+      mongoId,
+      reason,
+      exitType: exitType,
+      lat: exitLocation.lat,
+      lng: exitLocation.lng,
+      fullAddress: exitLocation.address,
+      pincode: exitLocation.pincode,
+      tripDistanceKm: widget.totalDistanceKm,
+      tripDurationSeconds: widget.totalDuration.inSeconds,
+      travelledRoute: widget.travelledRoute,
+    );
+    unawaited(PresenceTrackingService().resumePresenceTracking());
   }
 
   Future<({double? lat, double? lng, String? address, String? pincode})>

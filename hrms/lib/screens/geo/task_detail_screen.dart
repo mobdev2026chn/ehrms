@@ -2228,16 +2228,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           task.status == TaskStatus.staffapproved ||
           task.status == TaskStatus.onlineReady);
 
-  /// Show "Resume Ride" when task is on hold, holdOnArrival, reopenedOnArrival, exited with hold, or admin reopened.
+  /// Show "Resume Ride" only for a task on Hold - the only status the server resumes.
+  /// An Exited task needs an admin to reopen it first.
   bool get _showResumeAfterExitButton =>
       task.id != null &&
       task.id!.isNotEmpty &&
-      (task.status == TaskStatus.hold ||
-          task.status == TaskStatus.holdOnArrival ||
-          task.status == TaskStatus.reopenedOnArrival ||
-          task.status == TaskStatus.exited &&
-              (task.taskExitStatus == 'hold' || task.taskExitStatus == null) ||
-          task.status == TaskStatus.reopened);
+      (task.status == TaskStatus.hold || task.status == TaskStatus.holdOnArrival);
 
   /// Show "Resume Ride" when task is in progress.
   bool get _showResumeRideButton =>
@@ -2245,23 +2241,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       task.id!.isNotEmpty &&
       task.status == TaskStatus.inProgress;
 
-  /// Show only Back when completed, waiting_for_approval, or rejected.
+  /// Show only Back when completed or rejected.
   bool get _showBackOnly =>
-      task.status == TaskStatus.completed ||
-      task.status == TaskStatus.waitingForApproval ||
-      task.status == TaskStatus.rejected;
-
-  /// Show Approve/Reject when autoApprove is false and status is waiting for approval.
-  bool get _showApprovalButtons =>
-      !task.autoApprove &&
-      task.status == TaskStatus.waitingForApproval &&
-      task.id != null &&
-      task.id!.isNotEmpty &&
-      !_showResumeRideButton &&
-      !_showResumeAfterExitButton;
-
-  /// Staff can always approve; OTP verification applies only at arrival (arrived screen).
-  bool get _canApprove => true;
+      task.status == TaskStatus.completed || task.status == TaskStatus.rejected;
 
   /// Resolve pickup (source) LatLng: task.sourceLocation > current GPS.
   LatLng? get _pickupLatLng {
@@ -2288,53 +2270,21 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return _destinationLatLng;
   }
 
-  Future<void> _onApprove() async {
-    final resolvedId = (task.id != null && task.id!.isNotEmpty) ? task.id! : task.taskId;
-    if (resolvedId.isEmpty || _actionLoading) return;
-    setState(() => _actionLoading = true);
+  /// Where the staff member is right now: a fresh fix, or a last-known one under 2 minutes
+  /// old. Null when GPS cannot say - never a planned or made-up point.
+  Future<Position?> _freshPosition() async {
     try {
-      final updated = await TaskService().updateTask(
-        resolvedId,
-        status: 'approved',
-      );
-      if (mounted) {
-        setState(() {
-          task = updated;
-          _actionLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _actionLoading = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.toUserFriendlyMessage(e),
-          isError: true,
-        );
-      }
-    }
-  }
-
-  Future<void> _onReject() async {
-    final resolvedId = (task.id != null && task.id!.isNotEmpty) ? task.id! : task.taskId;
-    if (resolvedId.isEmpty || _actionLoading) return;
-    setState(() => _actionLoading = true);
+      return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      ).timeout(const Duration(seconds: 10));
+    } catch (_) {}
     try {
-      await TaskService().updateTask(resolvedId, status: 'rejected');
-      if (mounted) {
-        setState(() => _actionLoading = false);
-        Navigator.of(context).pop();
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null && DateTime.now().difference(last.timestamp) < const Duration(minutes: 2)) {
+        return last;
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _actionLoading = false);
-        SnackBarUtils.showSnackBar(
-          context,
-          ErrorMessageUtils.toUserFriendlyMessage(e),
-          isError: true,
-        );
-      }
-    }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _onStartRide() async {
@@ -2342,32 +2292,23 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     if (resolvedId.isEmpty || _actionLoading) return;
     setState(() => _actionLoading = true);
 
-    LatLng? pickup = _pickupLatLng;
-    if (pickup == null) {
-      try {
-        final last = await Geolocator.getLastKnownPosition();
-        if (last != null) {
-          pickup = LatLng(last.latitude, last.longitude);
-          _currentPosition = last;
-        }
-      } catch (_) {}
-
-      if (pickup == null) {
-        try {
-          final pos = await Geolocator.getCurrentPosition(
-            locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
-          ).timeout(const Duration(seconds: 4));
-          pickup = LatLng(pos.latitude, pos.longitude);
-          _currentPosition = pos;
-        } catch (_) {
-          final last = await Geolocator.getLastKnownPosition();
-          if (last != null) {
-            pickup = LatLng(last.latitude, last.longitude);
-            _currentPosition = last;
-          }
-        }
+    // The ride starts where the staff member actually is; the server checks that point
+    // against the start geofence and measures the trip from it.
+    final here = await _freshPosition();
+    if (here == null) {
+      if (mounted) {
+        setState(() => _actionLoading = false);
+        SnackBarUtils.showSnackBar(
+          context,
+          'Could not get your current location. Turn on GPS (Location) and try again.',
+          isError: true,
+        );
       }
+      return;
     }
+    _currentPosition = here;
+    final hereLatLng = LatLng(here.latitude, here.longitude);
+    final LatLng pickup = _pickupLatLng ?? hereLatLng;
 
     LatLng? dropoff = _dropoffLatLng;
     if (dropoff == null) {
@@ -2384,13 +2325,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       }
     }
 
-    // Ultimate fallback: if geocoding fails, use current position or fallback coords so staff can always start
-    dropoff ??= pickup ?? const LatLng(13.0827, 80.2707);
-    pickup ??= dropoff;
+    // Map only: with no known destination the ride still starts (the server holds the real one).
+    final mapPickup = pickup;
+    final mapDropoff = dropoff ?? hereLatLng;
 
     try {
-      final startLat = _currentPosition?.latitude ?? pickup.latitude;
-      final startLng = _currentPosition?.longitude ?? pickup.longitude;
+      final startLat = here.latitude;
+      final startLng = here.longitude;
       Task updated;
       if (task.status == TaskStatus.exited ||
           task.status == TaskStatus.hold ||
@@ -2448,8 +2389,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               builder: (context) => LiveTrackingScreen(
                 taskId: updated.taskId,
                 taskMongoId: updated.id,
-                pickupLocation: pickup!,
-                dropoffLocation: dropoff!,
+                pickupLocation: mapPickup,
+                dropoffLocation: mapDropoff,
                 task: updated,
               ),
             ),
@@ -2498,8 +2439,19 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       }
     }
 
-    LatLng? dropoff = _dropoffLatLng ?? pickup ?? const LatLng(13.0827, 80.2707);
-    pickup ??= dropoff;
+    if (pickup == null) {
+      // Resuming only reopens the tracking screen; it still needs a real map point.
+      if (mounted) {
+        setState(() => _actionLoading = false);
+        SnackBarUtils.showSnackBar(
+          context,
+          'Could not get your current location. Turn on GPS (Location) and try again.',
+          isError: true,
+        );
+      }
+      return;
+    }
+    LatLng? dropoff = _dropoffLatLng ?? pickup;
 
     try {
       // Refresh task to get latest state; do NOT update status or startTime.
@@ -2581,71 +2533,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             : Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_showApprovalButtons) ...[
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _actionLoading
-                                ? null
-                                : () => _onReject(),
-                            icon: const Icon(Icons.close_rounded, size: 20),
-                            label: Text('Reject'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.red.shade700,
-                              side: BorderSide(color: Colors.red.shade300),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: (_actionLoading || !_canApprove)
-                                ? null
-                                : () => _onApprove(),
-                            icon: _actionLoading
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.check_circle_rounded,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                            label: Text(
-                              _actionLoading ? 'Approving...' : 'Approve',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.success,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              elevation: 2,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_showStartRideButton ||
-                        _showResumeRideButton ||
-                        _showResumeAfterExitButton)
-                      const SizedBox(height: 12),
-                  ],
                   if (_showStartRideButton || _showResumeAfterExitButton)
                     SizedBox(
                       width: double.infinity,
@@ -2726,8 +2613,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         ),
                       ),
                     ),
-                  if ((task.status == TaskStatus.exited &&
-                          task.taskExitStatus == 'exited') ||
+                  if (task.status == TaskStatus.exited ||
                       task.status == TaskStatus.exitedOnArrival) ...[
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -2765,8 +2651,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         ],
                       ),
                     ),
-                  if (!_showApprovalButtons &&
-                      !_showStartRideButton &&
+                  if (!_showStartRideButton &&
                       !_showResumeRideButton &&
                       !_showResumeAfterExitButton)
                     Row(

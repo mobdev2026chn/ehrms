@@ -87,15 +87,15 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   String? _employeeTypeFilter;
   String _selectedDateRange = 'All Dates';
 
-  // Dropdown options matching the web portal exactly.
+  // One group per status the backend actually has (Assigned, Pending, Requested, Started,
+  // Arrived, Hold, Exited, Completed, plus the computed Expired); each status in exactly one.
   static const List<({String label, String? group})> _statusFilterOptions = [
     (label: 'All Statuses', group: null),
     (label: 'Assigned', group: 'Assigned'),
-    (label: 'Started', group: 'Started'),
-    (label: 'Pending Approval', group: 'Pending Approval'),
-    (label: 'Completed', group: 'Completed'),
+    (label: 'In Progress', group: 'Started'),
     (label: 'Requested', group: 'Requested'),
-    (label: 'Expired', group: 'Expired'),
+    (label: 'Completed', group: 'Completed'),
+    (label: 'Expired / Exited', group: 'Expired'),
   ];
 
   static const List<({String label, String? type})> _employeeTypeOptions = [
@@ -286,10 +286,6 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       case 'started':
       case 'inprogress':
         return {TaskStatus.inProgress, TaskStatus.arrived, TaskStatus.hold, TaskStatus.holdOnArrival};
-      case 'pending approval':
-      case 'pendingapproval':
-      case 'waitingforapproval':
-        return {TaskStatus.waitingForApproval, TaskStatus.holdOnArrival};
       case 'completed':
         return {TaskStatus.completed, TaskStatus.approved, TaskStatus.staffapproved};
       case 'requested':
@@ -304,29 +300,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     }
   }
 
+  /// Same grouping as the filter, so a count always matches what the filter shows.
   int _statusGroupCount(String group) {
-    switch (group) {
-      case 'Started':
-      case 'inProgress':
-        return _tasks
-            .where(
-              (t) =>
-                  t.status == TaskStatus.inProgress ||
-                  t.status == TaskStatus.arrived,
-            )
-            .length;
-      case 'Completed':
-      case 'completed':
-        return _tasks
-            .where(
-              (t) =>
-                  t.status == TaskStatus.completed ||
-                  t.status == TaskStatus.waitingForApproval,
-            )
-            .length;
-      default:
-        return 0;
-    }
+    final statuses = _statusesForGroup(group);
+    return _tasks.where((t) => statuses.contains(t.status)).length;
   }
 
   bool get _hasAnyFilters =>

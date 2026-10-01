@@ -1133,11 +1133,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           travelledRoute: routeCoords,
         );
       } catch (e) {
+        // Not held/exited on the server: keep tracking and stay on this screen.
         debugPrint('[LiveTracking] exitRide error: $e');
-      } finally {
-        await LiveTrackingService().stopTracking().catchError((_) {});
-        await PresenceTrackingService().resumePresenceTracking().catchError((_) {});
+        if (mounted) {
+          SnackBarUtils.showSnackBar(context, ErrorMessageUtils.toUserFriendlyMessage(e), isError: true);
+        }
+        return;
       }
+      await LiveTrackingService().stopTracking().catchError((_) {});
+      await PresenceTrackingService().resumePresenceTracking().catchError((_) {});
     }
     if (mounted) {
       // A geofence error from this task must not follow the user to the next screen.

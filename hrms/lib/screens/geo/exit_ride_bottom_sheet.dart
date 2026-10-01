@@ -89,8 +89,9 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
       if (!mounted) return;
       debugPrint('[ExitRideBottomSheet] submit error: $e');
       setState(() => _submitting = false);
-      // Still allow the exit even if network fails
-      Navigator.of(context).pop(true);
+      // The server did not hold/exit the task: stay open with its reason so the staff
+      // member can retry, instead of leaving as if it had worked.
+      SnackBarUtils.showSnackBar(context, e.toString().replaceFirst('Exception: ', ''), isError: true);
     }
   }
 
