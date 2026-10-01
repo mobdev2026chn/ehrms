@@ -122,7 +122,8 @@ class LocationService {
       notificationBody: 'Live tracking in progress. Tap to open.',
       channelName: 'Live Tracking',
       cancelTrackingActionText: 'Stop tracking',
-      enableCancelTrackingAction: true,
+      // Task tracking ends with Exit / Arrived, not from the notification.
+      enableCancelTrackingAction: false,
       trackingInterval: Duration(seconds: 5),
       // null = time-based updates every 5s even when stationary. Critical for background.
       distanceFilterMeters: null,

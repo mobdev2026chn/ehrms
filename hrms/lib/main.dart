@@ -149,7 +149,8 @@ void main() {
               notificationBody: 'Live tracking in progress. Tap to open.',
               channelName: 'Live Tracking',
               cancelTrackingActionText: 'Stop tracking',
-              enableCancelTrackingAction: true,
+              // Tracking runs from punch-in to punch-out; no "Stop tracking" button.
+              enableCancelTrackingAction: false,
               trackingInterval: _defaultBackgroundLocationInterval,
               distanceFilterMeters: null,
             ),

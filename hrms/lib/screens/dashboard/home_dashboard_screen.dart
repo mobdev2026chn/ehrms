@@ -29,6 +29,7 @@ import '../../widgets/app_tab_loader.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/geo/live_tracking_service.dart';
+import '../../services/geo/tracking_health_service.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../geo/live_tracking_screen.dart';
 import '../../services/request_service.dart';
@@ -2473,6 +2474,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _buildWebWelcomeCard(),
             const SizedBox(height: 14),
 
+            // Phone settings blocking punch-in tracking (shown only while it is).
+            _buildTrackingHealthBanner(),
+
             // Active break card removed from the top of Home: the bottom bar
             // already shows the ongoing break with End Break.
 
@@ -2939,6 +2943,68 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Red banner listing what on the phone is stopping tracking, each with a Fix button.
+  Widget _buildTrackingHealthBanner() {
+    return ValueListenableBuilder<List<TrackingIssue>>(
+      valueListenable: TrackingHealthService.instance.issues,
+      builder: (context, issues, _) {
+        if (issues.isEmpty) return const SizedBox.shrink();
+        return Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFEF2F2),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFFCA5A5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.location_off_rounded, color: Color(0xFFDC2626), size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Your route is not being tracked',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF991B1B)),
+                    ),
+                  ),
+                ],
+              ),
+              for (final issue in issues)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          issue.fix,
+                          style: const TextStyle(fontSize: 12.5, color: Color(0xFF7F1D1D)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () => TrackingHealthService.fix(issue),
+                        style: TextButton.styleFrom(
+                          backgroundColor: const Color(0xFFDC2626),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          minimumSize: Size.zero,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        child: const Text('Fix', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 

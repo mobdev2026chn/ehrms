@@ -32,6 +32,7 @@ import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/geo/accurate_location_helper.dart';
 import 'package:hrms/services/geo/live_tracking_service.dart';
 import 'package:hrms/services/geo/movement_classification_service.dart';
+import 'package:hrms/services/geo/tracking_health_service.dart';
 import 'package:hrms/services/geo/tracking_outlier_filter_service.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
@@ -138,7 +139,8 @@ class PresenceTrackingService {
         notificationBody: 'Attendance presence tracking active. Tap to open.',
         channelName: 'Presence Tracking',
         cancelTrackingActionText: 'Stop tracking',
-        enableCancelTrackingAction: true,
+        // Tracking runs from punch-in to punch-out; the employee cannot switch it off here.
+        enableCancelTrackingAction: false,
         trackingInterval: trackingInterval,
         distanceFilterMeters: null,
       );
@@ -1694,10 +1696,13 @@ class PresenceTrackingService {
       // Already running (e.g. dashboard reload after punch in): keep the current timer
       // instead of forcing an extra GPS fix + upload.
       await _ensureBackgroundPresenceTracking();
+      unawaited(TrackingHealthService.instance.start());
       return;
     }
 
     _isTracking = true;
+    // From punch-in on, alert the employee if the phone blocks tracking.
+    unawaited(TrackingHealthService.instance.start());
     await MovementClassificationService().start();
     await flushPendingPresenceQueue();
     await _ensureBackgroundPresenceTracking();
@@ -1871,6 +1876,8 @@ class PresenceTrackingService {
     if (_taskInProgress) return;
     if (!await isTrackingAllowed()) return;
     _isTracking = true;
+    // Back from settings: clear or re-raise the tracking alert right away.
+    unawaited(TrackingHealthService.instance.start());
     await flushPendingPresenceQueue();
     await _periodicTick();
     _trackingTimer?.cancel();
@@ -1890,6 +1897,7 @@ class PresenceTrackingService {
     _taskInProgress = false;
     _trackingTimer?.cancel();
     _trackingTimer = null;
+    await TrackingHealthService.instance.stop();
     await MovementClassificationService().stop();
     await clearTrackingAllowed();
     await _stopBackgroundPresenceTrackingIfIdle();
