@@ -20,7 +20,6 @@ import '../../widgets/confetti_burst.dart';
 import '../../widgets/cloud_punch_card.dart';
 import '../../widgets/break_status_card.dart';
 import '../../utils/break_datetime_util.dart';
-import '../../services/fcm_service.dart';
 import '../../utils/face_enrollment_gate.dart';
 import '../announcements/announcements_screen.dart';
 import '../notifications/notifications_screen.dart';
@@ -30,6 +29,7 @@ import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/geo/live_tracking_service.dart';
 import '../../services/geo/tracking_health_service.dart';
+import '../profile/profile_screen.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../geo/live_tracking_screen.dart';
 import '../../services/request_service.dart';
@@ -231,9 +231,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     } catch (_) {}
   }
 
+  /// Re-reads the bell's unread count whenever the app returns to the foreground.
+  AppLifecycleListener? _lifecycleListener;
+
   @override
   void initState() {
     super.initState();
+    _lifecycleListener = AppLifecycleListener(onResume: () => _refreshNotificationBadge());
     _loadData();
     _checkLiveTracking();
     widget.refreshTrigger?.addListener(_onRefreshTriggered);
@@ -252,6 +256,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   @override
   void dispose() {
+    _lifecycleListener?.dispose();
     widget.refreshTrigger?.removeListener(_onRefreshTriggered);
     BreakService.stateRevision.removeListener(_onBreakStateChanged);
     super.dispose();
@@ -1105,8 +1110,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final activeBreakFuture = _fetchLocalActiveBreak();
       final permissionFuture = _fetchTodayPermission();
       final perfFuture = _fetchPerformanceSummary();
-      final fcmFuture = FcmService.getStoredNotifications();
-      final fcmSeenFuture = FcmService.getNotificationsLastSeen();
       if (kDebugMode) {
         debugPrint(
           '[DashboardLoad] parallel requests started at ${sw.elapsedMilliseconds}ms',
@@ -1122,23 +1125,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           dashboardLoadTimeout,
           onTimeout: () => {'success': false, 'data': null},
         ),
-        // Local file read — never let it hold the dashboard loader.
-        fcmFuture.timeout(
-          const Duration(seconds: 3),
-          onTimeout: () => <Map<String, dynamic>>[],
-        ),
       ]);
 
       final result = settled[0] as Map<String, dynamic>;
       final liveTodayResult = settled[1] as Map<String, dynamic>;
-      final fcmList = settled[2] as List<dynamic>;
-      final fcmLastSeen = await fcmSeenFuture;
       if (kDebugMode) {
         debugPrint(
           '[DashboardLoad] core requests settled in ${sw.elapsedMilliseconds}ms | '
           'dashboardSuccess=${result['success']} | '
-          'liveTodaySuccess=${liveTodayResult['success']} | '
-          'fcmCount=${fcmList.length}',
+          'liveTodaySuccess=${liveTodayResult['success']}',
         );
       }
 
@@ -1265,10 +1260,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 );
               }
             }
-            _fcmNotificationCount = FcmService.unreadCountFor(
-              fcmList,
-              fcmLastSeen,
-            );
           });
           if (kDebugMode) {
             debugPrint(
@@ -1298,14 +1289,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               'message=${result['message']}',
             );
           }
-          setState(
-            () => _fcmNotificationCount = FcmService.unreadCountFor(
-              fcmList,
-              fcmLastSeen,
-            ),
-          );
         }
-        // After the on-device count above, so the server's count wins.
+        // Bell badge: the server's unread count only (same as web).
         unawaited(_refreshNotificationBadge());
       }
 
@@ -2923,21 +2908,30 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             onTap: _openNotifications,
           ),
           const SizedBox(width: 8),
-          // Initial Circle Avatar
-          Container(
-            width: 44,
-            height: 44,
-            decoration: const BoxDecoration(
-              color: Color(0xFFFEF3C7),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              initial,
-              style: const TextStyle(
-                fontSize: 19,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFFD97706),
+          // Initial Circle Avatar - opens the profile (same as the drawer's Profile item).
+          Tooltip(
+            message: 'Profile',
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ProfileScreen(dashboardTabIndex: 3)),
+              ),
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFEF3C7),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  initial,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFFD97706),
+                  ),
+                ),
               ),
             ),
           ),
@@ -4529,22 +4523,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
-  /// Opens the notifications list. Marks everything as read up front so the bell
-  /// badge clears the instant the user taps it, then reconciles on return in
-  /// case new notifications arrived while the list was open.
+  /// Opens the notifications list. Like web, opening it does not mark anything read; the
+  /// badge is re-read from the server on return (reads/clears made in the list show then).
   Future<void> _openNotifications() async {
-    final navigator = Navigator.of(context);
-    await FcmService.markNotificationsSeen();
-    if (mounted) setState(() => _fcmNotificationCount = 0);
-    await navigator.push(
+    await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const NotificationsScreen()),
     );
     await _refreshNotificationBadge();
   }
 
-  /// Bell badge = the server's unread count, the same source the notifications
-  /// list shows. The on-device FCM store misses pushes the OS displayed while
-  /// the app was closed, so it is only the fallback when the server is unreachable.
+  /// Bell badge = the server's unread count, the same source the notifications list shows
+  /// (and the web bell). Kept as is when the server cannot be reached.
   Future<void> _refreshNotificationBadge() async {
     try {
       final res = await _notificationService.getStaffNotifications();

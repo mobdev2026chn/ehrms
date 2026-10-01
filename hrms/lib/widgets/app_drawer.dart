@@ -26,6 +26,7 @@ import '../screens/admin/approvals/admin_fine_approvals_screen.dart';
 import '../screens/admin/approvals/admin_reimbursement_approvals_screen.dart';
 import '../screens/admin/approvals/admin_payslip_approvals_screen.dart';
 import '../screens/admin/dashboard/admin_dashboard_screen.dart';
+import '../screens/notifications/notifications_screen.dart';
 import '../screens/admin/recruitment/admin_job_openings_screen.dart';
 import '../screens/admin/recruitment/admin_candidates_screen.dart';
 import '../screens/admin/recruitment/admin_appointments_screen.dart';
@@ -532,7 +533,11 @@ class _AppDrawerState extends State<AppDrawer> {
                 _adminSubItem(Icons.circle_outlined, 'Weekly Off Templates', () => Navigator.pop(context), isNested: true),
               ],
             ),
-            _adminSubItem(Icons.notifications_outlined, 'Notifications', () => Navigator.pop(context)),
+            _adminSubItem(Icons.notifications_outlined, 'Notifications', () {
+              final navigator = Navigator.of(context);
+              navigator.pop();
+              navigator.push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+            }),
           ],
         ),
 

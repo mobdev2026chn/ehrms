@@ -5,12 +5,12 @@ import 'package:intl/intl.dart';
 import '../../../config/app_colors.dart';
 import '../../../services/admin_staff_service.dart';
 import '../../../services/api_client.dart';
-import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/app_tab_loader.dart';
 import '../staff/admin_staff_list_screen.dart';
 import '../staff/admin_attendance_screen.dart';
 import '../approvals/admin_approvals_screen.dart';
+import '../../notifications/notifications_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -78,10 +78,39 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     'Design': 1,
   };
 
+  /// Unread admin notifications for the bell (server `meta.unread`, as on web).
+  int _unreadNotifications = 0;
+  Timer? _notificationPoll;
+
   @override
   void initState() {
     super.initState();
     _loadDashboardData();
+    _refreshNotificationBadge();
+    // Same cadence as the web admin bell.
+    _notificationPoll = Timer.periodic(const Duration(seconds: 15), (_) => _refreshNotificationBadge());
+  }
+
+  @override
+  void dispose() {
+    _notificationPoll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshNotificationBadge() async {
+    try {
+      final res = await _api.request<dynamic>('/admin/notifications', queryParameters: {'limit': 1});
+      final meta = res.data is Map ? (res.data as Map)['meta'] : null;
+      final unread = meta is Map ? (meta['unread'] as num?)?.toInt() : null;
+      if (unread != null && mounted && unread != _unreadNotifications) {
+        setState(() => _unreadNotifications = unread);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+    await _refreshNotificationBadge();
   }
 
   Future<void> _loadDashboardData({bool showLoader = true}) async {
@@ -253,8 +282,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             tooltip: 'Refresh analytics',
           ),
           IconButton(
-            icon: const Icon(Icons.notifications_none_rounded, color: Color(0xFF64748B), size: 22),
-            onPressed: () => SnackBarUtils.showSnackBar(context, 'Notifications'),
+            tooltip: 'Notifications',
+            icon: Badge(
+              isLabelVisible: _unreadNotifications > 0,
+              label: Text(_unreadNotifications > 99 ? '99+' : '$_unreadNotifications'),
+              backgroundColor: const Color(0xFFEFAA1F),
+              child: const Icon(Icons.notifications_none_rounded, color: Color(0xFF64748B), size: 22),
+            ),
+            onPressed: _openNotifications,
           ),
           const SizedBox(width: 4),
         ],
