@@ -67,9 +67,13 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   /// Field In. Null when the day has no such leg (older days / tracking off).
   _TaskLeg? _leg;
 
+  /// Leg line colour — same as L1 on My Route; never clashes with the green /
+  /// red flags or the blue / orange Field In/Out dots.
+  static const Color _legColor = Color(0xFF7C3AED);
+
   /// Flag icons for the leg's Start (green) and Stop (red) on the map.
-  BitmapDescriptor? _startFlag;
-  BitmapDescriptor? _stopFlag;
+  ({BitmapDescriptor icon, Offset anchor})? _startFlag;
+  ({BitmapDescriptor icon, Offset anchor})? _stopFlag;
 
   /// "F1 in" / "F1 out" dots for this visit.
   ({BitmapDescriptor icon, Offset anchor})? _inDot;
@@ -100,9 +104,9 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   Future<void> _loadFlagIcons() async {
     if (!mounted) return;
     try {
-      final start = await flagMarkerIcon(context, const Color(0xFF16A34A));
+      final start = await plainFlagMarkerIcon(context, const Color(0xFF16A34A));
       if (!mounted) return;
-      final stop = await flagMarkerIcon(context, const Color(0xFFDC2626));
+      final stop = await plainFlagMarkerIcon(context, const Color(0xFFDC2626));
       if (!mounted) return;
       setState(() {
         _startFlag = start;
@@ -1051,8 +1055,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         markerId: const MarkerId('leg-start'),
         position: leg.line.first,
         // Green flag — same icon as the "Start" caption below the map.
-        icon: _startFlag ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-        anchor: _startFlag != null ? const Offset(0.5, 0.5) : const Offset(0.5, 1),
+        icon: _startFlag?.icon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        anchor: _startFlag?.anchor ?? const Offset(0.5, 1),
         zIndexInt: 2,
         infoWindow: InfoWindow(
           title: 'Start',
@@ -1063,8 +1067,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         markerId: const MarkerId('leg-stop'),
         position: leg.line.last,
         // Red flag — same icon as the "Stop" caption below the map.
-        icon: _stopFlag ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        anchor: _stopFlag != null ? const Offset(0.5, 0.5) : const Offset(0.5, 1),
+        icon: _stopFlag?.icon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        anchor: _stopFlag?.anchor ?? const Offset(0.5, 1),
         zIndexInt: 3,
         infoWindow: InfoWindow(
           title: 'Stop',
@@ -1216,12 +1220,12 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: TravelledRouteStyle.color.withValues(alpha: 0.1),
+                color: _legColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
                 '${leg.km!.toStringAsFixed(1)} km',
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: TravelledRouteStyle.color),
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: _legColor),
               ),
             ),
           ],
@@ -1250,7 +1254,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       },
       polylines: {
         // The task's leg (Start → Stop) as the main green route line.
-        if (leg != null) TravelledRouteStyle.polyline('task-leg', leg.line),
+        if (leg != null)
+          TravelledRouteStyle.polyline('task-leg', leg.line).copyWith(colorParam: _legColor),
         // GPS recorded on the task itself (e.g. at the client): thinner blue, on top.
         if (displayRoute.length > 1)
           leg == null

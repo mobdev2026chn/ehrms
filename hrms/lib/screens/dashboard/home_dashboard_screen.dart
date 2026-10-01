@@ -1304,6 +1304,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             ),
           );
         }
+        // After the on-device count above, so the server's count wins.
+        unawaited(_refreshNotificationBadge());
       }
 
       // Reveal the dashboard the moment the core data (stats + today) is applied
@@ -1936,13 +1938,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         if (mounted) {
           setState(() {
             _tasks = taskList;
-            _assignedTasksCount = taskList.isNotEmpty ? taskList.length : 10;
-          });
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _assignedTasksCount = 10;
+            _assignedTasksCount = taskList.length;
           });
         }
       }
@@ -4130,35 +4126,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                 ),
                               );
                             }))
-                          else ...[
+                          else
                             const Padding(
-                              padding: EdgeInsets.only(bottom: 3),
+                              padding: EdgeInsets.symmetric(vertical: 4),
                               child: Text(
-                                '• Internal DB Backup Sync',
-                                style: TextStyle(fontSize: 10.5, color: Colors.white70),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                                'No tasks assigned',
+                                style: TextStyle(fontSize: 11, color: Colors.white54),
                               ),
                             ),
-                            const Padding(
-                              padding: EdgeInsets.only(bottom: 3),
-                              child: Text(
-                                '• Access Room Mapping',
-                                style: TextStyle(fontSize: 10.5, color: Colors.white70),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
                           const Spacer(),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Flexible(
                                 child: Text(
-                                  _tasks.isNotEmpty
-                                      ? '${_tasks.length} tasks'
-                                      : '10 tasks',
+                                  '${_tasks.length} tasks',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(fontSize: 9.5, color: Colors.white54),
@@ -4188,36 +4170,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   }
 
   void _showAllAssignedTasksModal() {
-    final List<Map<String, String>> defaultTasks = [
-      {'id': 'TSK-001', 'title': 'Internal DB Backup Sync', 'date': '2026-07-29'},
-      {'id': 'TSK-002', 'title': 'Access Room Mapping', 'date': '2026-07-29'},
-      {'id': 'TSK-003', 'title': 'Verify POS Setup', 'date': '2026-07-28'},
-      {'id': 'TSK-004', 'title': 'Customer Urgent Invoice Sign', 'date': '2026-07-28'},
-      {'id': 'TSK-005', 'title': 'Setup Local Wi-Fi Geofence', 'date': '2026-07-27'},
-      {'id': 'TSK-006', 'title': 'Resolve Security Alarms', 'date': '2026-07-27'},
-      {'id': 'TSK-007', 'title': 'Scanner Calibration Check', 'date': '2026-07-26'},
-      {'id': 'TSK-008', 'title': 'Concrete Pouring Log Check', 'date': '2026-07-25'},
-      {'id': 'TSK-009', 'title': 'Local Inventory Signoff', 'date': '2026-07-25'},
-      {'id': 'TSK-010', 'title': 'Broadband Line Inspection', 'date': '2026-07-24'},
-    ];
-
-    final List<Map<String, String>> displayTasks = _tasks.isNotEmpty
-        ? _tasks.map((t) {
-            final tId = t.taskId.isNotEmpty
-                ? t.taskId
-                : (t.id != null && t.id!.isNotEmpty
-                    ? 'TSK-${t.id!.substring(0, math.min(6, t.id!.length))}'
-                    : 'TSK-001');
-            final dateStr = DateFormat('yyyy-MM-dd').format(
-              t.assignedDate ?? t.expectedCompletionDate,
-            );
-            return {
-              'id': tId,
-              'title': t.taskTitle,
-              'date': dateStr,
-            };
-          }).toList()
-        : defaultTasks;
+    final List<Map<String, String>> displayTasks = _tasks.map((t) {
+      final tId = t.taskId.isNotEmpty
+          ? t.taskId
+          : (t.id != null && t.id!.isNotEmpty
+              ? 'TSK-${t.id!.substring(0, math.min(6, t.id!.length))}'
+              : '—');
+      final dateStr = DateFormat('yyyy-MM-dd').format(
+        t.assignedDate ?? t.expectedCompletionDate,
+      );
+      return {
+        'id': tId,
+        'title': t.taskTitle,
+        'date': dateStr,
+      };
+    }).toList();
 
     showDialog(
       context: context,
@@ -4268,6 +4235,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 const Divider(height: 1, color: Color(0xFF2D2D2D)),
 
                 // Tasks List
+                if (displayTasks.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 32),
+                    child: Text(
+                      'No tasks assigned to you.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF94A3B8),
+                      ),
+                    ),
+                  )
+                else
                 Flexible(
                   child: ListView.separated(
                     padding: const EdgeInsets.all(16),
@@ -4493,11 +4473,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     await navigator.push(
       MaterialPageRoute(builder: (_) => const NotificationsScreen()),
     );
+    await _refreshNotificationBadge();
+  }
+
+  /// Bell badge = the server's unread count, the same source the notifications
+  /// list shows. The on-device FCM store misses pushes the OS displayed while
+  /// the app was closed, so it is only the fallback when the server is unreachable.
+  Future<void> _refreshNotificationBadge() async {
     try {
       final res = await _notificationService.getStaffNotifications();
+      if (res['success'] != true) return;
       final apiUnread = (res['unreadCount'] as int?) ?? 0;
-      final fcmCount = await FcmService.getUnreadNotificationCount();
-      if (mounted) setState(() => _fcmNotificationCount = apiUnread + fcmCount);
+      if (mounted) setState(() => _fcmNotificationCount = apiUnread);
     } catch (_) {}
   }
 

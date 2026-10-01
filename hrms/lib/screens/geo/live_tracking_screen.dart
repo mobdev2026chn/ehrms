@@ -1140,6 +1140,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       }
     }
     if (mounted) {
+      // A geofence error from this task must not follow the user to the next screen.
+      SnackBarUtils.dismiss(context);
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const MyTasksScreen()),
         (route) => false,

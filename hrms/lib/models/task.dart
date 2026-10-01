@@ -522,7 +522,8 @@ class Task {
       customerId: _stringFromId(customerIdVal),
       customer: customer,
       expectedCompletionDate:
-          _dateFromJson(json['expectedCompletionDate'] ?? json['date'] ?? json['endDate']) ?? DateTime.now(),
+          // HRMSbackend sends `date` as the START date; the due date is `endDate`.
+          _dateFromJson(json['expectedCompletionDate'] ?? json['endDate'] ?? json['date']) ?? DateTime.now(),
       completedDate: completedDateVal,
       assignedDate:
           _dateFromJson(json['assignedDate'] ?? json['startDate'] ?? json['createdAt']),

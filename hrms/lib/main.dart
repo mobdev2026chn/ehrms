@@ -14,6 +14,7 @@ import 'package:background_location_tracker/background_location_tracker.dart';
 import 'services/alarm_service.dart';
 import 'services/fcm_service.dart';
 import 'config/app_route_observer.dart';
+import 'utils/snackbar_utils.dart';
 import 'services/geo/live_tracking_service.dart';
 import 'services/presence_tracking_service.dart';
 import 'providers/theme_provider.dart';
@@ -244,7 +245,7 @@ class MyApp extends StatelessWidget {
         );
         return MaterialApp(
           navigatorKey: navigatorKey,
-          navigatorObservers: [appRouteObserver],
+          navigatorObservers: [appRouteObserver, SnackBarUtils.navigatorObserver],
           title: 'ektaHr',
           debugShowCheckedModeBanner: false,
           // Lets country_code_picker resolve English (etc.) country names so the

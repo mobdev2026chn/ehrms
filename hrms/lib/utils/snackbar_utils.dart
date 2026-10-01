@@ -9,6 +9,12 @@ import 'punch_flow_log.dart';
 class SnackBarUtils {
   static OverlayEntry? _currentEntry;
   static Timer? _timer;
+  static bool _currentIsError = false;
+
+  /// Closes routes' leftover error toasts when another screen opens. The toast
+  /// lives on the root overlay, so without this an error from the previous
+  /// screen (e.g. a task's geofence failure) stays on top of the next one.
+  static final NavigatorObserver navigatorObserver = _ErrorToastRouteObserver();
 
   /// [duration] optional; if null, defaults to 3 seconds.
   static void showSnackBar(
@@ -62,6 +68,7 @@ class SnackBarUtils {
       ),
     );
 
+    _currentIsError = isError;
     overlay.insert(_currentEntry!);
 
     // Auto-dismiss after [duration] or default 3 seconds
@@ -76,6 +83,12 @@ class SnackBarUtils {
       _clearMaterialSnackBars(context);
     }
     _removeCurrentSnackBarSync();
+  }
+
+  /// Dismisses the current toast only if it is an error; success messages shown
+  /// right before navigating (e.g. "Customer added") are left to time out.
+  static void dismissError() {
+    if (_currentIsError) _removeCurrentSnackBarSync();
   }
 
   static void _clearMaterialSnackBars(BuildContext context) {
@@ -112,6 +125,20 @@ class SnackBarUtils {
       }
       _currentEntry = null;
     }
+    _currentIsError = false;
+  }
+}
+
+class _ErrorToastRouteObserver extends NavigatorObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    // Dialogs and bottom sheets are part of the current screen; only a new page clears it.
+    if (route is PageRoute) SnackBarUtils.dismissError();
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (newRoute is PageRoute) SnackBarUtils.dismissError();
   }
 }
 
