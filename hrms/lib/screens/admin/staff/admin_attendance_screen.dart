@@ -630,11 +630,11 @@ class _AdminAttendanceScreenState extends State<AdminAttendanceScreen> {
                           children: [
                             _statPill('Present', '$_presentCount', const Color(0xFF16A34A), const Color(0xFFDCFCE7)),
                             _statPill('Absent', '$_absentCount', const Color(0xFFDC2626), const Color(0xFFFEE2E2)),
-                            _statPill('Punched In', '$_punchedInCount', const Color(0xFFD97706), const Color(0xFFFEF3C7)),
-                            _statPill('Punched Out', '$_punchedOutCount', const Color(0xFFD97706), const Color(0xFFFEF3C7)),
+                            _statPill('Punched In', '$_punchedInCount', AppColors.brandDark, const Color(0xFFFEF3C7)),
+                            _statPill('Punched Out', '$_punchedOutCount', AppColors.brandDark, const Color(0xFFFEF3C7)),
                             _statPill('On Leave', '$_onLeaveCount', const Color(0xFF2563EB), const Color(0xFFEFF6FF)),
                             _statPill('Holiday', '$_holidayCount', const Color(0xFF7C3AED), const Color(0xFFF3E8FF)),
-                            _statPill('Not Marked', '$_notMarkedCount', const Color(0xFFEA580C), const Color(0xFFFFEDD5)),
+                            _statPill('Not Marked', '$_notMarkedCount', AppColors.brandDark, const Color(0xFFFFEDD5)),
                             _statPill('Pending', '$_pendingCount', const Color(0xFFCA8A04), const Color(0xFFFEF9C3)),
                           ],
                         ),
@@ -740,7 +740,7 @@ class _AdminAttendanceScreenState extends State<AdminAttendanceScreen> {
       stFg = const Color(0xFF16A34A);
     } else if (r.status == 'Late') {
       stBg = const Color(0xFFFEF3C7);
-      stFg = const Color(0xFFD97706);
+      stFg = AppColors.brandDark;
     } else {
       stBg = const Color(0xFFFEE2E2);
       stFg = const Color(0xFFDC2626);
@@ -842,7 +842,7 @@ class _AdminAttendanceScreenState extends State<AdminAttendanceScreen> {
             runSpacing: 6,
             children: [
               _actionMiniBtn('P PRESENT', const Color(0xFF16A34A), r.status == 'On Time', () => _showPresentModal(r)),
-              _actionMiniBtn('HD HALF DAY', const Color(0xFFD97706), r.status == 'Half Day', () => SnackBarUtils.showSnackBar(context, 'Mark Half Day for ${r.name}')),
+              _actionMiniBtn('HD HALF DAY', AppColors.brandDark, r.status == 'Half Day', () => SnackBarUtils.showSnackBar(context, 'Mark Half Day for ${r.name}')),
               _actionMiniBtn('A ABSENT', const Color(0xFFDC2626), r.status == 'Absent', () => _showAbsentModal(r)),
               _actionMiniBtn('F FINE', const Color(0xFFE11D48), r.fineAmount != null, () => SnackBarUtils.showSnackBar(context, 'Fine details: ₹${r.fineAmount ?? 0}')),
               _actionMiniBtn('OT OVERTIME', const Color(0xFF7C3AED), false, () => SnackBarUtils.showSnackBar(context, 'Overtime scheduler for ${r.name}')),

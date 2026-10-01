@@ -1,5 +1,6 @@
 // Shared bits for the staff Interaction screens (chats, polls, announcements).
 
+import 'package:hrms/config/app_colors.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -56,7 +57,7 @@ String initialsOf(String name) {
 /// Stable soft colour per name, for initials avatars.
 Color avatarTint(String seed) {
   const palette = [
-    Color(0xFFF59E0B), Color(0xFF6366F1), Color(0xFF10B981), Color(0xFFEF4444),
+    AppColors.brand, Color(0xFF6366F1), Color(0xFF10B981), Color(0xFFEF4444),
     Color(0xFF0EA5E9), Color(0xFF8B5CF6), Color(0xFFEC4899), Color(0xFF14B8A6),
   ];
   var h = 0;

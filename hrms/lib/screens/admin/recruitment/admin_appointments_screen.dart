@@ -231,7 +231,7 @@ class _AdminAppointmentsScreenState extends State<AdminAppointmentsScreen> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               title: Row(
                 children: [
-                  const Icon(Icons.schedule_rounded, color: Color(0xFFD97706), size: 20),
+                  const Icon(Icons.schedule_rounded, color: AppColors.brandDark, size: 20),
                   const SizedBox(width: 8),
                   const Text('Reschedule Interview', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
                 ],
@@ -702,7 +702,7 @@ class _AdminAppointmentsScreenState extends State<AdminAppointmentsScreen> {
       stFg = const Color(0xFFDC2626);
     } else if (apt.status == 'Rescheduled') {
       stBg = const Color(0xFFFEF3C7);
-      stFg = const Color(0xFFD97706);
+      stFg = AppColors.brandDark;
     } else {
       stBg = const Color(0xFFE0E7FF);
       stFg = const Color(0xFF4338CA);
@@ -799,11 +799,11 @@ class _AdminAppointmentsScreenState extends State<AdminAppointmentsScreen> {
 
           Row(
             children: [
-              const Icon(Icons.access_time_rounded, size: 14, color: Color(0xFFD97706)),
+              const Icon(Icons.access_time_rounded, size: 14, color: AppColors.brandDark),
               const SizedBox(width: 6),
               Text(
                 '${apt.interviewDate} at ${apt.interviewTime}',
-                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFD97706)),
+                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.brandDark),
               ),
               const Spacer(),
               // Actions
@@ -862,7 +862,7 @@ class _AdminAppointmentsScreenState extends State<AdminAppointmentsScreen> {
             ),
             calendarStyle: CalendarStyle(
               todayDecoration: BoxDecoration(color: const Color(0xFFFFFBEB), shape: BoxShape.circle, border: Border.all(color: const Color(0xFFEFAA1F))),
-              todayTextStyle: const TextStyle(color: Color(0xFFD97706), fontWeight: FontWeight.w800),
+              todayTextStyle: const TextStyle(color: AppColors.brandDark, fontWeight: FontWeight.w800),
               selectedDecoration: const BoxDecoration(color: Color(0xFFEFAA1F), shape: BoxShape.circle),
               selectedTextStyle: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w900),
             ),

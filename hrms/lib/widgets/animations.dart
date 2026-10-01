@@ -1,3 +1,4 @@
+import 'package:hrms/config/app_colors.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -279,7 +280,7 @@ class RayLights extends StatefulWidget {
       Color(0xFF2563EB), // blue
       Color(0xFF0EA5E9), // sky
       Color(0xFFDB2777), // magenta
-      Color(0xFFF59E0B), // amber
+      AppColors.brand, // amber
     ],
   });
 
@@ -428,7 +429,7 @@ class _UniversePainter extends CustomPainter {
       // Twinkle 0..1 via a smooth sine.
       final twinkle =
           0.35 + 0.65 * (0.5 + 0.5 * math.sin(progress * s.twinkleSpeed * 2 * math.pi + s.phase));
-      final color = s.gold ? const Color(0xFFFFB300) : const Color(0xFF5B6CFF);
+      final color = s.gold ? AppColors.brand : const Color(0xFF5B6CFF);
       starPaint.color = color.withValues(alpha: (twinkle * opacity).clamp(0.0, 1.0));
       // Soft glow + crisp core.
       starPaint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.2);

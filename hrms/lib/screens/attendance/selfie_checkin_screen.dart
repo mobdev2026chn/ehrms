@@ -689,7 +689,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
       SnackBarUtils.showSnackBar(
         context,
         'Waiting for location...',
-        backgroundColor: Colors.orange,
+        backgroundColor: AppColors.brand,
       );
 
       return;
@@ -1196,15 +1196,15 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                         margin: const EdgeInsets.only(bottom: 16),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
+                          color: AppColors.brandLight,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange.shade200),
+                          border: Border.all(color: AppColors.brandBorder),
                         ),
                         child: Row(
                           children: [
                             Icon(
                               Icons.info_outline,
-                              color: Colors.orange.shade700,
+                              color: AppColors.brandDark,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -1212,7 +1212,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
                                 _halfDayLeaveMessage!,
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: Colors.orange.shade900,
+                                  color: AppColors.brandDark,
                                 ),
                               ),
                             ),

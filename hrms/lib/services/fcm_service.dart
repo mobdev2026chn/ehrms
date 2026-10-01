@@ -15,6 +15,7 @@ import 'alarm_service.dart';
 import 'break_reminder_service.dart';
 import '../config/app_colors.dart';
 import '../screens/requests/my_requests_screen.dart';
+import '../screens/loans/loans_screen.dart';
 import '../screens/attendance/attendance_screen.dart';
 import '../screens/attendance/break_screen.dart';
 import '../screens/performance/performance_module_screen.dart';
@@ -847,8 +848,8 @@ class FcmService {
                   // decoration: BoxDecoration(
                   //   gradient: LinearGradient(
                   //     colors: [
-                  //       Colors.orange.shade700,
-                  //       Colors.orange.shade600,
+                  //       AppColors.brandDark,
+                  //       AppColors.brand,
                   //     ],
                   //     begin: Alignment.topLeft,
                   //     end: Alignment.bottomRight,
@@ -856,7 +857,7 @@ class FcmService {
                   //   borderRadius: BorderRadius.circular(20),
                   //   boxShadow: [
                   //     BoxShadow(
-                  //       color: Colors.orange.withOpacity(0.4),
+                  //       color: AppColors.brand.withOpacity(0.4),
                   //       blurRadius: 20,
                   //       offset: const Offset(0, 10),
                   //     ),
@@ -1343,7 +1344,7 @@ class FcmService {
       case 'leave':
         return MyRequestsScreen(initialTabIndex: 0);
       case 'loan':
-        return MyRequestsScreen(initialTabIndex: 1);
+        return const LoansScreen();
       case 'expense':
         return MyRequestsScreen(initialTabIndex: 2);
       case 'permission':
@@ -1511,17 +1512,13 @@ class FcmService {
       );
       return true;
     }
-    // Loan: My Requests, tab 1
+    // Loan / salary advance: the Loans screen (tab 1 of My Requests is Permission now).
     if (effModule == 'loan' ||
         type == 'loan_approved' ||
         type == 'loan_rejected') {
-      _log(
-        'handleNotificationData: navigating to MyRequestsScreen tab 1 (loan)',
-      );
+      _log('handleNotificationData: navigating to LoansScreen');
       navPush(
-        MaterialPageRoute<void>(
-          builder: (_) => MyRequestsScreen(initialTabIndex: 1),
-        ),
+        MaterialPageRoute<void>(builder: (_) => const LoansScreen()),
       );
       return true;
     }

@@ -202,13 +202,13 @@ class _AdminOfferLetterScreenState extends State<AdminOfferLetterScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: const [
                       Text('EKTA HRMS', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0F172A), letterSpacing: 1)),
-                      Text('OFFICIAL EMPLOYMENT OFFER', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFFD97706))),
+                      Text('OFFICIAL EMPLOYMENT OFFER', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
                     ],
                   ),
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8)),
-                    child: const Icon(Icons.mail_outline_rounded, color: Color(0xFFD97706), size: 20),
+                    child: const Icon(Icons.mail_outline_rounded, color: AppColors.brandDark, size: 20),
                   ),
                 ],
               ),
@@ -429,7 +429,7 @@ class _AdminOfferLetterScreenState extends State<AdminOfferLetterScreen> {
 
   Widget _buildOfferCard(AdminOfferLetterItem item) {
     Color stBg = const Color(0xFFFEF3C7);
-    Color stFg = const Color(0xFFD97706);
+    Color stFg = AppColors.brandDark;
     if (item.status == 'Accepted') {
       stBg = const Color(0xFFDCFCE7);
       stFg = const Color(0xFF16A34A);

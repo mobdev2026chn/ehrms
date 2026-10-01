@@ -480,10 +480,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       return (Colors.green.shade50, Colors.green.shade800);
     }
     if (s.contains('hold')) {
-      return (Colors.orange.shade50, Colors.orange.shade900);
+      return (AppColors.brandLight, AppColors.brandDark);
     }
     if (s == 'pending') {
-      return (Colors.amber.shade50, Colors.amber.shade900);
+      return (AppColors.brandLight, AppColors.brandDark);
     }
     return (Colors.grey.shade100, Colors.grey.shade800);
   }
@@ -3597,7 +3597,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     '* This is an estimated calculation. Final amount will be based on processed payroll.',
                     style: TextStyle(
                       fontSize: 11,
-                      color: Colors.amber.shade900,
+                      color: AppColors.brandDark,
                     ),
                   ),
                 ],
@@ -4356,7 +4356,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               ),
               _buildOverviewStatChip(
                 'Leave: ${_formatDayChip(_leaveDays)}',
-                Colors.orange,
+                AppColors.brand,
               ),
               _buildOverviewStatChip(
                 'Absent: ${_formatDayChip(absentForChips)}',
@@ -4365,7 +4365,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               if (pendingDaysCount > 0)
                 _buildOverviewStatChip(
                   'Pending: $pendingDaysCount',
-                  Colors.orange,
+                  AppColors.brand,
                 ),
             ],
           ),
@@ -4674,7 +4674,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   _buildAttStat(
                     'Holidays',
                     '$holidays',
-                    color: Colors.orange,
+                    color: AppColors.brand,
                     isPrimaryCard: true,
                   ),
                 ],
@@ -4717,8 +4717,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               _buildBreakdownPill(
                 'Unpaid Leaves',
                 '${_formatDayChip(_webUnpaidLeaves)} days',
-                Colors.orange.shade100,
-                Colors.orange.shade900,
+                AppColors.brandLight,
+                AppColors.brandDark,
               ),
             ],
           ),
@@ -5862,7 +5862,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     // Scheduled holiday / week-off before raw row — avoids Sundays showing as "On Leave".
     if (isHoliday) {
       status = 'Holiday';
-      statusColor = Colors.orange;
+      statusColor = AppColors.brand;
       statusIcon = Icons.celebration;
     } else if (isWeekOff) {
       status = 'Week Off';
@@ -5928,7 +5928,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         salaryForDay = 0;
         fineAmount = 0;
       } else if (recordStatus == 'pending') {
-        statusColor = Colors.orange;
+        statusColor = AppColors.brand;
         statusIcon = Icons.pending;
         salaryForDay = 0;
         fineAmount = 0;
@@ -6319,13 +6319,13 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           _buildDayDetailRow(
                             'Late Check-in',
                             '$actualLateMinutes minutes',
-                            valueColor: Colors.orange.shade700,
+                            valueColor: AppColors.brandDark,
                           ),
                         if (earlyMinutes > 0)
                           _buildDayDetailRow(
                             'Early Check-out',
                             '$earlyMinutes minutes',
-                            valueColor: Colors.orange.shade700,
+                            valueColor: AppColors.brandDark,
                           ),
                       ],
                     ),

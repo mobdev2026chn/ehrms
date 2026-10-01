@@ -605,8 +605,8 @@ class _SessionCard extends StatelessWidget {
                     icon: const Icon(Icons.stop_circle_outlined, size: 18),
                     label: const Text('End Session'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.orange,
-                      side: const BorderSide(color: Colors.orange),
+                      foregroundColor: AppColors.brand,
+                      side: const BorderSide(color: AppColors.brand),
                     ),
                   ),
                 if ((isUpcoming || isLive) && (!_isCreator || isUpcoming))
@@ -1079,7 +1079,7 @@ class _LeaveSessionSheetState extends State<_LeaveSessionSheet> {
                             ? Icons.star
                             : Icons.star_border,
                         size: 32,
-                        color: Colors.amber,
+                        color: AppColors.brand,
                       ),
                       onPressed: () => setState(
                         () => _rating = _rating == star ? null : star,

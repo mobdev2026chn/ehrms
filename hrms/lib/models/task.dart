@@ -293,6 +293,9 @@ class Task {
   final DateTime expectedCompletionDate;
   final DateTime? completedDate;
   final DateTime? assignedDate;
+  /// First day the task may be worked on (HRMSbackend `startDate`; `date` on older
+  /// payloads). With [expectedCompletionDate] it is the task's window ("today's tasks").
+  final DateTime? scheduledStartDate;
   final TaskStatus status;
   final bool isOtpRequired;
   final bool isGeoFenceRequired;
@@ -391,6 +394,7 @@ class Task {
     required this.expectedCompletionDate,
     this.completedDate,
     this.assignedDate,
+    this.scheduledStartDate,
     required this.status,
     this.isOtpRequired = false,
     this.isGeoFenceRequired = false,
@@ -527,6 +531,7 @@ class Task {
       completedDate: completedDateVal,
       assignedDate:
           _dateFromJson(json['assignedDate'] ?? json['startDate'] ?? json['createdAt']),
+      scheduledStartDate: _dateFromJson(json['startDate'] ?? json['date']),
       status: statusFromJson(statusStr),
       // HRMSbackend hardcodes otpRequired (false on the list, true by id); the admin's
       // template (requirements) is the real answer whenever it is present.
@@ -863,6 +868,7 @@ class Task {
           expectedCompletionDate ?? this.expectedCompletionDate,
       completedDate: completedDate ?? this.completedDate,
       assignedDate: assignedDate ?? this.assignedDate,
+      scheduledStartDate: scheduledStartDate,
       status: status ?? this.status,
       isOtpRequired: isOtpRequired ?? this.isOtpRequired,
       isGeoFenceRequired: isGeoFenceRequired ?? this.isGeoFenceRequired,

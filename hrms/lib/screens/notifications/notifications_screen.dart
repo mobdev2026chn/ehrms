@@ -25,6 +25,8 @@ import '../admin/approvals/admin_permission_approvals_screen.dart';
 import '../admin/approvals/admin_punch_approvals_screen.dart';
 import '../admin/approvals/admin_reimbursement_approvals_screen.dart';
 import '../admin/approvals/admin_payslip_approvals_screen.dart';
+import '../admin/loans/admin_loan_request_screen.dart';
+import '../admin/loans/admin_loans_screen.dart';
 import '../geo/my_tasks_screen.dart';
 import '../geo/task_detail_screen.dart';
 import '../profile/profile_screen.dart';
@@ -266,6 +268,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           (label: 'Permission', key: 'permission', icon: Icons.access_time_rounded),
           (label: 'Reimbursement', key: 'reimbursement', icon: Icons.receipt_long_outlined),
           (label: 'Payslip', key: 'payslip', icon: Icons.description_outlined),
+          (label: 'Loan', key: 'loan', icon: Icons.account_balance_outlined),
         ]
       : const [
           (label: 'Requests', key: 'requests', icon: Icons.assignment_outlined),
@@ -370,6 +373,11 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           screen = const AdminReimbursementApprovalsScreen();
         case 'payslip':
           screen = const AdminPayslipApprovalsScreen();
+        case 'loan':
+          // The notification's referenceId is the loan request.
+          screen = item.referenceId.isNotEmpty
+              ? AdminLoanRequestScreen(requestId: item.referenceId)
+              : const AdminLoansScreen();
         default:
           // Loan and anything new: the approvals list, as on web.
           screen = const AdminApprovalsScreen();
@@ -652,7 +660,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                 decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(8)),
-                child: Text('$badgeCount', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFFD97706))),
+                child: Text('$badgeCount', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
               ),
             ],
           ],
@@ -694,7 +702,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 ),
                 child: Text(
                   '$unread',
-                  style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: isSelected ? Colors.white : const Color(0xFFD97706)),
+                  style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: isSelected ? Colors.white : AppColors.brandDark),
                 ),
               ),
             ],

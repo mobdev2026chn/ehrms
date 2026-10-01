@@ -1676,17 +1676,17 @@ class _ShiftScreenState extends State<ShiftScreen> {
                   _dayDetailSection('Fine Details', Icons.money_off, [
                     if (lateMin > 0)
                       _dayDetailRow('Late Check-In Fine', _fmtMins(lateMin),
-                          valueColor: Colors.orange.shade700),
+                          valueColor: AppColors.brandDark),
                     if (earlyMin > 0)
                       _dayDetailRow('Early Exit Fine', _fmtMins(earlyMin),
-                          valueColor: Colors.orange.shade700),
+                          valueColor: AppColors.brandDark),
                     if (breakFineMin > 0)
                       _dayDetailRow('Break Fine', _fmtMins(breakFineMin),
-                          valueColor: Colors.orange.shade700),
+                          valueColor: AppColors.brandDark),
                     if (permissionFineMin > 0)
                       _dayDetailRow(
                           'Permission Fine', _fmtMins(permissionFineMin),
-                          valueColor: Colors.orange.shade700),
+                          valueColor: AppColors.brandDark),
                     if (totalFineMin > 0)
                       _dayDetailRow('Total Fine Minutes', _fmtMins(totalFineMin),
                           valueColor: Colors.red.shade700),
@@ -1761,7 +1761,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Icon(Icons.info_outline,
-                                size: 15, color: Colors.orange.shade700),
+                                size: 15, color: AppColors.brandDark),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
@@ -1769,7 +1769,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                                 style: TextStyle(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w500,
-                                  color: Colors.orange.shade800,
+                                  color: AppColors.brandDark,
                                 ),
                               ),
                             ),

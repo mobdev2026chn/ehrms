@@ -284,7 +284,7 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                           style: const TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFFB45309),
+                            color: AppColors.brandDark,
                           ),
                         ),
                       ),

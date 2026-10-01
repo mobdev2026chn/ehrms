@@ -22,7 +22,7 @@ class ThemeProvider with ChangeNotifier {
     const Color(0xFF1E88E5),
     const Color(0xFFE53935),
     const Color(0xFF8E24AA),
-    const Color(0xFFFB8C00),
+    // (the orange option was dropped: oranges now use the brand gold, listed first)
     const Color(0xFFE91E63),
     const Color(0xFF000000),
   ];

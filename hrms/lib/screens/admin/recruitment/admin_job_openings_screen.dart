@@ -345,7 +345,7 @@ class _AdminJobOpeningsScreenState extends State<AdminJobOpeningsScreen> {
                               color: const Color(0xFFFEF3C7),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Icon(Icons.filter_list_rounded, size: 18, color: Color(0xFFD97706)),
+                            child: const Icon(Icons.filter_list_rounded, size: 18, color: AppColors.brandDark),
                           ),
                           const SizedBox(width: 10),
                           const Text(
@@ -688,7 +688,7 @@ class _AdminJobOpeningsScreenState extends State<AdminJobOpeningsScreen> {
                               Icon(
                                 Icons.filter_list_rounded,
                                 size: 17,
-                                color: _activeFilterCount > 0 ? const Color(0xFFD97706) : const Color(0xFF475569),
+                                color: _activeFilterCount > 0 ? AppColors.brandDark : const Color(0xFF475569),
                               ),
                               const SizedBox(width: 6),
                               Text(
@@ -696,7 +696,7 @@ class _AdminJobOpeningsScreenState extends State<AdminJobOpeningsScreen> {
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w700,
-                                  color: _activeFilterCount > 0 ? const Color(0xFFD97706) : const Color(0xFF334155),
+                                  color: _activeFilterCount > 0 ? AppColors.brandDark : const Color(0xFF334155),
                                 ),
                               ),
                               if (_activeFilterCount > 0) ...[
@@ -704,7 +704,7 @@ class _AdminJobOpeningsScreenState extends State<AdminJobOpeningsScreen> {
                                 Container(
                                   padding: const EdgeInsets.all(4),
                                   decoration: const BoxDecoration(
-                                    color: Color(0xFFD97706),
+                                    color: AppColors.brandDark,
                                     shape: BoxShape.circle,
                                   ),
                                   child: Text(
@@ -758,7 +758,7 @@ class _AdminJobOpeningsScreenState extends State<AdminJobOpeningsScreen> {
       statusFg = const Color(0xFF16A34A);
     } else if (job.status == 'DRAFT') {
       statusBg = const Color(0xFFFEF3C7);
-      statusFg = const Color(0xFFD97706);
+      statusFg = AppColors.brandDark;
     } else {
       statusBg = const Color(0xFFFEE2E2);
       statusFg = const Color(0xFFDC2626);

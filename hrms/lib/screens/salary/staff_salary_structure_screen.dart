@@ -405,7 +405,7 @@ class _RevisionNoticeCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.info_outline, color: Colors.amber.shade800, size: 22),
+          Icon(Icons.info_outline, color: AppColors.brandDark, size: 22),
           const SizedBox(width: 10),
           Expanded(
             child: Column(

@@ -266,7 +266,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           subtitle:
               '${_formatDistanceKm(widget.walkingDistanceKm!)} covered',
           icon: Icons.directions_walk_rounded,
-          iconColor: Colors.amber.shade700,
+          iconColor: AppColors.brandDark,
         ),
       );
     }

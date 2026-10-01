@@ -242,7 +242,7 @@ class _AdminVerificationDetailScreenState extends State<AdminVerificationDetailS
                 const Text('STATUS SUMMARY', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
                 const SizedBox(height: 8),
                 _metricRow('Verified Documents', '$_verifiedDocs', const Color(0xFF16A34A), const Color(0xFFDCFCE7)),
-                _metricRow('Pending Review', '$_pendingReviewDocs', const Color(0xFFD97706), const Color(0xFFFEF3C7)),
+                _metricRow('Pending Review', '$_pendingReviewDocs', AppColors.brandDark, const Color(0xFFFEF3C7)),
                 _metricRow('Outstanding Documents', '$_outstandingDocs', const Color(0xFFDC2626), const Color(0xFFFEE2E2)),
                 const SizedBox(height: 14),
 
@@ -273,7 +273,7 @@ class _AdminVerificationDetailScreenState extends State<AdminVerificationDetailS
                       child: OutlinedButton(
                         onPressed: () => SnackBarUtils.showSnackBar(context, 'Process held for ${_c.fullName}'),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFD97706),
+                          foregroundColor: AppColors.brandDark,
                           side: const BorderSide(color: Color(0xFFFDE68A)),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           padding: const EdgeInsets.symmetric(vertical: 8),
@@ -387,7 +387,7 @@ class _AdminVerificationDetailScreenState extends State<AdminVerificationDetailS
                 ),
                 child: Text(
                   isVerified ? 'VERIFIED' : 'PENDING REVIEW',
-                  style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: isVerified ? const Color(0xFF16A34A) : const Color(0xFFD97706)),
+                  style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: isVerified ? const Color(0xFF16A34A) : AppColors.brandDark),
                 ),
               ),
             ],

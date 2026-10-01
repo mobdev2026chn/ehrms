@@ -314,7 +314,7 @@ class _AdminFineApprovalsScreenState extends State<AdminFineApprovalsScreen> {
                                   children: [
                                     Row(
                                       children: [
-                                        const Icon(Icons.calendar_today_rounded, size: 13, color: Color(0xFFD97706)),
+                                        const Icon(Icons.calendar_today_rounded, size: 13, color: AppColors.brandDark),
                                         const SizedBox(width: 6),
                                         Text(DateFormat('dd MMM yyyy').format(_selectedDate), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
                                       ],
@@ -487,7 +487,7 @@ class _AdminFineApprovalsScreenState extends State<AdminFineApprovalsScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(10)),
-                      child: Text(shiftTime, style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFFD97706))),
+                      child: Text(shiftTime, style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
                     ),
                   ],
                 ),
@@ -575,7 +575,7 @@ class _AdminFineApprovalsScreenState extends State<AdminFineApprovalsScreen> {
                         style: TextStyle(
                           fontSize: 9.5,
                           fontWeight: FontWeight.w800,
-                          color: isPending ? const Color(0xFFD97706) : const Color(0xFF16A34A),
+                          color: isPending ? AppColors.brandDark : const Color(0xFF16A34A),
                         ),
                       ),
                     ],
@@ -653,7 +653,7 @@ class _AdminFineApprovalsScreenState extends State<AdminFineApprovalsScreen> {
                     children: [
                       Row(
                         children: const [
-                          Text('₹', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFFD97706))),
+                          Text('₹', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: AppColors.brandDark)),
                           SizedBox(width: 4),
                           Text('FINE ADJUSTMENT', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
                         ],
@@ -663,7 +663,7 @@ class _AdminFineApprovalsScreenState extends State<AdminFineApprovalsScreen> {
                       // Late Fine
                       _buildFineSection(
                         title: 'Late Fine',
-                        color: const Color(0xFFEA580C),
+                        color: AppColors.brandDark,
                         actualHrs: r.lateActualHrs,
                         updatedHrs: r.lateUpdatedHrs,
                         option: r.lateFineOption,

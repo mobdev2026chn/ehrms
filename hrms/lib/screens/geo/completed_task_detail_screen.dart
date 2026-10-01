@@ -337,7 +337,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       case 'movement':
         return Colors.blue;
       case 'exit':
-        return Colors.orange;
+        return AppColors.brand;
       case 'restart':
         return Colors.teal;
       case 'arrived':
@@ -397,7 +397,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                             'Using cached data. $_error',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Colors.orange.shade800,
+                              color: AppColors.brandDark,
                             ),
                           ),
                         ),
@@ -1543,7 +1543,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                             'Reason: ${timeline[i].exitReason}',
                             style: TextStyle(
                               fontSize: 11,
-                              color: Colors.orange.shade800,
+                              color: AppColors.brandDark,
                             ),
                           ),
                         ],

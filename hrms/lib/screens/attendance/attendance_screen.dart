@@ -2325,7 +2325,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // Status color
     Color statusColor = Colors.green;
     if (status == 'Pending') {
-      statusColor = Colors.orange;
+      statusColor = AppColors.brand;
     } else if (status == 'Absent' || status == 'Rejected') {
       statusColor = Colors.red;
     } else if (status == 'On Leave') {
@@ -2335,7 +2335,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     } else if (status == 'Weekend') {
       statusColor = Colors.deepPurple;
     } else if (status == 'Holiday') {
-      statusColor = Colors.amber;
+      statusColor = AppColors.brand;
     }
 
     final colorScheme = Theme.of(context).colorScheme;
@@ -2451,25 +2451,25 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                             _buildDayDetailRow(
                               'Late Check-in',
                               '${lateMinutes.toInt()} minutes',
-                              valueColor: Colors.orange.shade700,
+                              valueColor: AppColors.brandDark,
                             ),
                           if (earlyMinutes != null && earlyMinutes.toInt() > 0)
                             _buildDayDetailRow(
                               'Early Check-out',
                               '${earlyMinutes.toInt()} minutes',
-                              valueColor: Colors.orange.shade700,
+                              valueColor: AppColors.brandDark,
                             ),
                           if (breakFineMins != null && breakFineMins.toInt() > 0)
                             _buildDayDetailRow(
                               'Break Fine',
                               '${breakFineMins.toInt()} mins',
-                              valueColor: Colors.orange.shade700,
+                              valueColor: AppColors.brandDark,
                             ),
                           if (permissionFineMins > 0)
                             _buildDayDetailRow(
                               'Permission Fine',
                               '${permissionFineMins.toInt()} mins',
-                              valueColor: Colors.orange.shade700,
+                              valueColor: AppColors.brandDark,
                             ),
                           if (totalFineMinsDisplay > 0)
                             _buildDayDetailRow(
@@ -2509,14 +2509,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                               _buildDayDetailRow(
                                 'Permission Late Arrival',
                                 '${permissionLateMinutes.toInt()} mins',
-                                valueColor: Colors.deepOrange.shade700,
+                                valueColor: AppColors.brandDark,
                               ),
                             if (permissionEarlyMinutes != null &&
                                 permissionEarlyMinutes > 0)
                               _buildDayDetailRow(
                                 'Permission Early Exit',
                                 '${permissionEarlyMinutes.toInt()} mins',
-                                valueColor: Colors.deepOrange.shade700,
+                                valueColor: AppColors.brandDark,
                               ),
                           ],
                         ),
@@ -3330,10 +3330,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         alignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          color: Colors.orange.shade50,
-          border: Border.all(color: Colors.orange.shade200),
+          color: AppColors.brandLight,
+          border: Border.all(color: AppColors.brandBorder),
         ),
-        child: Icon(Icons.logout_rounded, size: 20, color: Colors.orange.shade800),
+        child: Icon(Icons.logout_rounded, size: 20, color: AppColors.brandDark),
       );
     } else if (tileIcon == 'break') {
       leading = Container(
@@ -3378,10 +3378,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         alignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          color: Colors.amber.shade50,
-          border: Border.all(color: Colors.amber.shade200),
+          color: AppColors.brandLight,
+          border: Border.all(color: AppColors.brandBorder),
         ),
-        child: Icon(Icons.currency_rupee_rounded, size: 20, color: Colors.amber.shade900),
+        child: Icon(Icons.currency_rupee_rounded, size: 20, color: AppColors.brandDark),
       );
     } else if (tileIcon == 'permission') {
       leading = Container(
@@ -3402,8 +3402,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         alignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          color: Colors.orange.shade50,
-          border: Border.all(color: Colors.orange.shade200),
+          color: AppColors.brandLight,
+          border: Border.all(color: AppColors.brandBorder),
         ),
         child: Icon(Icons.access_time_rounded, size: 20, color: AppColors.primary),
       );
@@ -8557,18 +8557,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     bool showHolidayCard = false;
     String holidayText = "Today Holiday";
     IconData holidayIcon = Icons.beach_access;
-    Color holidayColor = Colors.orange;
+    Color holidayColor = AppColors.brand;
 
     if (_isCompensationWeekOff) {
       showHolidayCard = true;
       holidayText = "Today is compensation week off";
       holidayIcon = Icons.event_busy;
-      holidayColor = Colors.orange;
+      holidayColor = AppColors.brand;
     } else if (_isCompensationCompOff) {
       showHolidayCard = true;
       holidayText = "Today is comp off";
       holidayIcon = Icons.event_busy;
-      holidayColor = Colors.orange;
+      holidayColor = AppColors.brand;
     } else if (_isPaidLeaveContext && !isCheckedIn) {
       showHolidayCard = true;
       holidayText = "Paid Leave Today";
@@ -8589,7 +8589,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       holidayText =
           "Today is a Holiday"; // As per request: "Today is a holiday" for weekly off too
       holidayIcon = Icons.event_available;
-      holidayColor = Colors.orange;
+      holidayColor = AppColors.brand;
     }
 
     // Loading: until fetch completed, or staff has template but we're still loading/retrying (never show "Template not mapped" then refresh to punch)
@@ -8611,10 +8611,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _staffHasAttendanceTemplate != true) {
       return Card(
         elevation: 0,
-        color: Colors.orange.withOpacity(0.05),
+        color: AppColors.brand.withOpacity(0.05),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.orange.withOpacity(0.2)),
+          side: BorderSide(color: AppColors.brand.withOpacity(0.2)),
         ),
         child: Padding(
           padding: const EdgeInsets.all(32.0),
@@ -8622,7 +8622,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.schedule, size: 48, color: Colors.orange),
+                Icon(Icons.schedule, size: 48, color: AppColors.brand),
                 const SizedBox(height: 16),
                 Text(
                   'Template not mapped. Contact HR.',
@@ -8630,7 +8630,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: Colors.orange,
+                    color: AppColors.brand,
                   ),
                 ),
               ],
@@ -8806,7 +8806,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                       ? Icons.check_circle
                                       : Icons.info_outline,
                                   color: status == 'Pending'
-                                      ? Colors.orange
+                                      ? AppColors.brand
                                       : status == 'Approved' ||
                                             status == 'Present'
                                       ? AppColors.success
@@ -8819,7 +8819,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                                       : status,
                                   style: TextStyle(
                                     color: status == 'Pending'
-                                        ? Colors.orange
+                                        ? AppColors.brand
                                         : status == 'Approved' ||
                                               status == 'Present'
                                         ? AppColors.success
@@ -8991,15 +8991,15 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.2),
+                        color: AppColors.brand.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.orange, width: 0.5),
+                        border: Border.all(color: AppColors.brand, width: 0.5),
                       ),
                       child: Text(
                         'Late',
                         style: TextStyle(
                           fontSize: 10,
-                          color: Colors.deepOrange,
+                          color: AppColors.brandDark,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -9422,7 +9422,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                 if (tags.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Wrap(spacing: 4, children: tags.map((t) {
-                    final c = t == 'Late In' || t == 'Late Out' ? Colors.orange
+                    final c = t == 'Late In' || t == 'Late Out' ? AppColors.brand
                         : t == 'Early Exit' ? Colors.blue : Colors.red;
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),

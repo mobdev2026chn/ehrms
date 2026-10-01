@@ -239,7 +239,7 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.fingerprint_rounded, color: Color(0xFFD97706), size: 18),
+                  child: const Icon(Icons.fingerprint_rounded, color: AppColors.brandDark, size: 18),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -355,7 +355,7 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                 style: TextStyle(
                   fontSize: 9.5,
                   fontWeight: FontWeight.w900,
-                  color: value == 'Approved' || value == 'present' ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+                  color: value == 'Approved' || value == 'present' ? const Color(0xFF16A34A) : AppColors.brandDark,
                 ),
               ),
             )
@@ -451,7 +451,7 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                                         children: [
                                           Row(
                                             children: [
-                                              const Icon(Icons.calendar_today_rounded, size: 13, color: Color(0xFFD97706)),
+                                              const Icon(Icons.calendar_today_rounded, size: 13, color: AppColors.brandDark),
                                               const SizedBox(width: 6),
                                               Text(DateFormat('dd MMM yyyy').format(_selectedDate), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
                                             ],
@@ -576,7 +576,7 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(10)),
-                child: Text('${list.length}', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFFD97706))),
+                child: Text('${list.length}', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
               ),
             ],
           ),
@@ -693,7 +693,7 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                       style: TextStyle(
                         fontSize: 7.5,
                         fontWeight: FontWeight.w900,
-                        color: isApproved ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+                        color: isApproved ? const Color(0xFF16A34A) : AppColors.brandDark,
                       ),
                     ),
                   ),

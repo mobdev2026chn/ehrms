@@ -1413,12 +1413,12 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             decoration: BoxDecoration(
               color: _geofenceStatusMessage!.startsWith('📡')
                   ? Colors.blue.shade50
-                  : Colors.orange.shade50,
+                  : AppColors.brandLight,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: _geofenceStatusMessage!.startsWith('📡')
                     ? Colors.blue.shade200
-                    : Colors.orange.shade200,
+                    : AppColors.brandBorder,
               ),
             ),
             child: Row(
@@ -1430,7 +1430,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                   size: 20,
                   color: _geofenceStatusMessage!.startsWith('📡')
                       ? Colors.blue.shade700
-                      : Colors.orange.shade800,
+                      : AppColors.brandDark,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1441,7 +1441,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                       fontWeight: FontWeight.w500,
                       color: _geofenceStatusMessage!.startsWith('📡')
                           ? Colors.blue.shade800
-                          : Colors.orange.shade900,
+                          : AppColors.brandDark,
                     ),
                   ),
                 ),

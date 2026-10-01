@@ -814,7 +814,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                                       child: Text(
                                                         'group admin',
                                                         style: TextStyle(
-                                                          color: Colors.orange.shade700,
+                                                          color: AppColors.brandDark,
                                                           fontSize: 11,
                                                           fontWeight: FontWeight.w600,
                                                         ),
@@ -2132,7 +2132,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                         color: Colors.white.withValues(alpha: 0.6),
                         borderRadius: BorderRadius.circular(8),
                         border: Border(
-                          left: BorderSide(color: const Color(0xFFF59E0B), width: 3),
+                          left: BorderSide(color: AppColors.brand, width: 3),
                         ),
                       ),
                       child: Column(
@@ -2142,7 +2142,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                             parsedReply.sender!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFF59E0B)),
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.brand),
                           ),
                           const SizedBox(height: 2),
                           Text(

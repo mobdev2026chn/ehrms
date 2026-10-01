@@ -761,9 +761,9 @@ class _BreakScreenState extends State<BreakScreen> {
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: Colors.orange.shade50,
+                            color: AppColors.brandLight,
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orange.shade200),
+                            border: Border.all(color: AppColors.brandBorder),
                           ),
                           child: const Text(
                             'You are already on break. End that break to start a new one.',
@@ -779,21 +779,21 @@ class _BreakScreenState extends State<BreakScreen> {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
+                          color: AppColors.brandLight,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange.shade300),
+                          border: Border.all(color: AppColors.brandBorder),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.info_outline, size: 16, color: Colors.orange.shade700),
+                            Icon(Icons.info_outline, size: 16, color: AppColors.brandDark),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 _breakInfoNotice!,
                                 style: TextStyle(
                                   fontWeight: FontWeight.w500,
-                                  color: Colors.orange.shade800,
+                                  color: AppColors.brandDark,
                                 ),
                               ),
                             ),

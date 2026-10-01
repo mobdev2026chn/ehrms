@@ -1798,24 +1798,24 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   Color _getStatusChipColor(TaskStatus status) {
     switch (status) {
       case TaskStatus.pending:
-        return Colors.orange.shade600;
+        return AppColors.brand;
       case TaskStatus.inProgress:
         return Colors.blue.shade600;
       case TaskStatus.arrived:
         return Colors.indigo.shade600;
       case TaskStatus.exited:
-        return Colors.amber.shade700;
+        return AppColors.brandDark;
       case TaskStatus.exitedOnArrival:
-        return Colors.orange.shade800;
+        return AppColors.brandDark;
       case TaskStatus.hold:
       case TaskStatus.holdOnArrival:
-        return Colors.amber.shade700;
+        return AppColors.brandDark;
       case TaskStatus.reopenedOnArrival:
         return Colors.teal.shade600;
       case TaskStatus.completed:
         return Colors.green.shade600;
       case TaskStatus.waitingForApproval:
-        return Colors.amber.shade600;
+        return AppColors.brand;
       case TaskStatus.assigned:
         return Colors.green.shade600;
       case TaskStatus.scheduled:
@@ -2874,7 +2874,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           final rate = item['ratePerKm'] ?? item['transport']?['rate'];
           final transportName = item['transport']?['name']?.toString();
 
-          Color statusColor = Colors.orange.shade700;
+          Color statusColor = AppColors.brandDark;
           if (status.toLowerCase() == 'approved') {
             statusColor = Colors.green.shade700;
           } else if (status.toLowerCase() == 'rejected') {

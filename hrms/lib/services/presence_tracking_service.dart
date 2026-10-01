@@ -133,14 +133,22 @@ class PresenceTrackingService {
 
   /// Interval for inserting presence tracking into DB (trackings collection).
   /// Applied to both foreground timer and native Android background tracker.
-  static Duration get trackingInterval => Duration(seconds: _intervalSeconds);
+  ///
+  /// Live tracking checks the position every 30 s (never less often), however
+  /// long the admin's save interval is; points within [_duplicateLocationThresholdMeters]
+  /// of the last sent one are not sent at all (idle = no new points).
+  static Duration get trackingInterval =>
+      Duration(seconds: _intervalSeconds < _kLiveCheckSeconds ? _intervalSeconds : _kLiveCheckSeconds);
+  static const int _kLiveCheckSeconds = 30;
 
   static Future<void> _loadIntervalFromPrefs([SharedPreferences? p]) async {
     final prefs = p ?? await SharedPreferences.getInstance();
     final v = prefs.getInt(_kPresenceIntervalSec);
     if (v != null && v >= 10 && v <= 300) _intervalSeconds = v;
   }
-  static const double _duplicateLocationThresholdMeters = 10;
+  /// A fix within this distance of the last sent point is "same place" and is
+  /// never sent — not even periodically — so an idle employee adds no points.
+  static const double _duplicateLocationThresholdMeters = 15;
 
   static const double defaultOfficeRadiusMeters = 200;
   static const double _maxAccuracyBufferM = 80;
@@ -209,23 +217,9 @@ class PresenceTrackingService {
     final distanceM = gl.Geolocator.distanceBetween(lastLat, lastLng, lat, lng);
     if (distanceM >= _duplicateLocationThresholdMeters) return false;
 
-    final lastSentMs = prefs.getInt(_kPresenceLastSentTime);
-    if (lastSentMs == null || lastSentMs <= 0) return false;
+    // Same place (within 15 m): neglect it, however long since the last point.
+    final lastSentMs = prefs.getInt(_kPresenceLastSentTime) ?? 0;
     final elapsedMs = DateTime.now().millisecondsSinceEpoch - lastSentMs;
-    if (elapsedMs >= trackingInterval.inMilliseconds) {
-      if (kDebugMode && AppConstants.logTrackingsToConsole) {
-        debugPrint(
-          '[Trackings] $logLabel duplicate_check '
-          'lastLat=${lastLat.toStringAsFixed(6)} lastLng=${lastLng.toStringAsFixed(6)} '
-          'currentLat=${lat.toStringAsFixed(6)} currentLng=${lng.toStringAsFixed(6)} '
-          'distance=${distanceM.toStringAsFixed(2)}m '
-          'elapsedSinceSuccess=${(elapsedMs / 1000).toStringAsFixed(0)}s '
-          'decision=allow_periodic',
-        );
-      }
-      return false;
-    }
-
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
         '[Trackings] $logLabel duplicate_check '
@@ -784,17 +778,15 @@ class PresenceTrackingService {
     final day = int.tryParse(parts[2]);
     if (year == null || month == null || day == null) return false;
 
-    // TESTING ONLY:
-    // Keep presence tracking alive after midnight so overnight/background
-    // tracking can be verified. Re-enable the block below after testing.
-    //
-    // final now = DateTime.now();
-    // final endOfCheckInDay = DateTime(year, month, day, 23, 59, 59, 999);
-    //
-    // if (now.isAfter(endOfCheckInDay)) {
-    //   await prefs.remove(_kPresenceTrackingDate);
-    //   return false;
-    // }
+    // Tracking started on the punch-in day ends at noon the next day: an overnight
+    // shift is still tracked past midnight, but a shift left open (no punch-out) no
+    // longer keeps tracking for days. (Was disabled "for testing", so open shifts
+    // tracked indefinitely.)
+    final trackingEndsAt = DateTime(year, month, day + 1, 12);
+    if (DateTime.now().isAfter(trackingEndsAt)) {
+      await prefs.remove(_kPresenceTrackingDate);
+      return false;
+    }
     return true;
   }
 

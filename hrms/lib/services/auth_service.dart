@@ -522,6 +522,25 @@ class AuthService {
     }
   }
 
+  /// The signed-in staff member's id from a [getProfile] result. HRMSbackend returns the
+  /// Staff record itself as `data` (`data._id`); older backends nested it under
+  /// `staffData` / `staff` / `user`. Empty when none is present.
+  static String staffIdOf(Map<String, dynamic> profileResult) {
+    final data = profileResult['data'];
+    if (data is! Map) return '';
+    for (final candidate in [
+      data['_id'],
+      data['id'],
+      data['staffData'] is Map ? data['staffData']['_id'] : null,
+      data['staff'] is Map ? data['staff']['_id'] : null,
+      data['user'] is Map ? data['user']['id'] ?? data['user']['_id'] : null,
+    ]) {
+      final id = candidate?.toString().trim() ?? '';
+      if (id.isNotEmpty) return id;
+    }
+    return '';
+  }
+
   Future<Map<String, dynamic>> getProfile({
     bool useWebHrmsApi = false,
     bool forceRefresh = false,

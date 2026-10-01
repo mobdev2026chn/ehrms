@@ -481,7 +481,7 @@ class _AdminOvertimeScreenState extends State<AdminOvertimeScreen> {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.schedule_rounded, color: Color(0xFFD97706), size: 20),
+                            const Icon(Icons.schedule_rounded, color: AppColors.brandDark, size: 20),
                             const SizedBox(width: 8),
                             Text(
                               currentStep == 1 ? 'Select Employees for Overtime' : 'Configure Overtime Schedule',
@@ -828,7 +828,7 @@ class _AdminOvertimeScreenState extends State<AdminOvertimeScreen> {
           children: [
             Row(
               children: [
-                Icon(icon, size: 14, color: isSelected ? const Color(0xFFD97706) : const Color(0xFF64748B)),
+                Icon(icon, size: 14, color: isSelected ? AppColors.brandDark : const Color(0xFF64748B)),
                 const SizedBox(width: 4),
                 Expanded(child: Text(title, style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B)))),
               ],
@@ -920,7 +920,7 @@ class _AdminOvertimeScreenState extends State<AdminOvertimeScreen> {
                     children: [
                       Expanded(child: _topStatCard('TOTAL REQUESTS', '$_totalRequestsCount', Icons.schedule_rounded, const Color(0xFF2563EB), const Color(0xFFEFF6FF), 'All Statuses')),
                       const SizedBox(width: 8),
-                      Expanded(child: _topStatCard('PENDING', '$_pendingCount', Icons.warning_amber_rounded, const Color(0xFFD97706), const Color(0xFFFFFBEB), 'Pending')),
+                      Expanded(child: _topStatCard('PENDING', '$_pendingCount', Icons.warning_amber_rounded, AppColors.brandDark, const Color(0xFFFFFBEB), 'Pending')),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -1055,7 +1055,7 @@ class _AdminOvertimeScreenState extends State<AdminOvertimeScreen> {
     final isPending = r.status.toLowerCase() == 'pending';
 
     Color stBg = isAccepted ? const Color(0xFFDCFCE7) : (isPending ? const Color(0xFFFEF3C7) : const Color(0xFFFEE2E2));
-    Color stFg = isAccepted ? const Color(0xFF16A34A) : (isPending ? const Color(0xFFD97706) : const Color(0xFFDC2626));
+    Color stFg = isAccepted ? const Color(0xFF16A34A) : (isPending ? AppColors.brandDark : const Color(0xFFDC2626));
     IconData stIcon = isAccepted ? Icons.check_circle_outline_rounded : (isPending ? Icons.schedule_rounded : Icons.cancel_outlined);
 
     return Container(

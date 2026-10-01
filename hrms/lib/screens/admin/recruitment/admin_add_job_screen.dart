@@ -460,9 +460,9 @@ class _AdminAddJobScreenState extends State<AdminAddJobScreen> {
                     runSpacing: 6,
                     children: _skillsList.map((skill) {
                       return Chip(
-                        label: Text(skill, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFD97706))),
+                        label: Text(skill, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.brandDark)),
                         backgroundColor: const Color(0xFFFFFBEB),
-                        deleteIcon: const Icon(Icons.close_rounded, size: 14, color: Color(0xFFD97706)),
+                        deleteIcon: const Icon(Icons.close_rounded, size: 14, color: AppColors.brandDark),
                         onDeleted: () => setState(() => _skillsList.remove(skill)),
                         side: const BorderSide(color: Color(0xFFFDE68A)),
                         padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -635,7 +635,7 @@ class _AdminAddJobScreenState extends State<AdminAddJobScreen> {
                   style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFD97706),
+                  backgroundColor: AppColors.brandDark,
                   elevation: 0,
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

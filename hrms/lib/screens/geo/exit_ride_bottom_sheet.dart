@@ -140,11 +140,11 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
                     width: 80,
                     height: 80,
                     decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
+                      color: AppColors.brandLight,
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.orange.withOpacity(0.2),
+                          color: AppColors.brand.withOpacity(0.2),
                           blurRadius: 16,
                           offset: const Offset(0, 4),
                         ),
@@ -337,7 +337,7 @@ class _ExitRideBottomSheetState extends State<ExitRideBottomSheet> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           elevation: 2,
-                          shadowColor: Colors.orange.withOpacity(0.4),
+                          shadowColor: AppColors.brand.withOpacity(0.4),
                         ),
                         icon: _submitting
                             ? const SizedBox(

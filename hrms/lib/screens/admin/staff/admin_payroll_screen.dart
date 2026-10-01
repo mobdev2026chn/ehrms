@@ -491,8 +491,8 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () => SnackBarUtils.showSnackBar(context, 'Bulk payroll generation completed successfully!'),
-                          icon: const Icon(Icons.bolt_rounded, size: 14, color: Color(0xFFD97706)),
-                          label: const Text('Bulk Generate', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFD97706))),
+                          icon: const Icon(Icons.bolt_rounded, size: 14, color: AppColors.brandDark),
+                          label: const Text('Bulk Generate', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.brandDark)),
                           style: OutlinedButton.styleFrom(
                             side: const BorderSide(color: Color(0xFFFDE68A)),
                             backgroundColor: const Color(0xFFFFFBEB),
@@ -593,9 +593,9 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
                   // ── 4 Statistics Cards (Screenshot 1 & 4) ──
                   Row(
                     children: [
-                      Expanded(child: _payrollStatCard('GROSS SALARY', '₹${_grossSalaryTotal.toStringAsFixed(2)}', 'This month', Icons.currency_rupee_rounded, const Color(0xFFD97706), const Color(0xFFFFFBEB))),
+                      Expanded(child: _payrollStatCard('GROSS SALARY', '₹${_grossSalaryTotal.toStringAsFixed(2)}', 'This month', Icons.currency_rupee_rounded, AppColors.brandDark, const Color(0xFFFFFBEB))),
                       const SizedBox(width: 8),
-                      Expanded(child: _payrollStatCard('DEDUCTIONS', '₹${_deductionsTotal.toStringAsFixed(2)}', 'PF, ESI, Tax', Icons.currency_rupee_rounded, const Color(0xFFD97706), const Color(0xFFFFFBEB))),
+                      Expanded(child: _payrollStatCard('DEDUCTIONS', '₹${_deductionsTotal.toStringAsFixed(2)}', 'PF, ESI, Tax', Icons.currency_rupee_rounded, AppColors.brandDark, const Color(0xFFFFFBEB))),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -729,7 +729,7 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
                   style: TextStyle(
                     fontSize: 8.5,
                     fontWeight: FontWeight.w900,
-                    color: isProcessed ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+                    color: isProcessed ? const Color(0xFF16A34A) : AppColors.brandDark,
                   ),
                 ),
               ),
@@ -747,7 +747,7 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
                 },
                 itemBuilder: (ctx) => [
                   const PopupMenuItem(value: 'statement', child: Row(children: [Icon(Icons.receipt_long_rounded, size: 16, color: Color(0xFF2563EB)), SizedBox(width: 8), Text('View Statement', style: TextStyle(fontSize: 11.5))])),
-                  const PopupMenuItem(value: 'download', child: Row(children: [Icon(Icons.download_rounded, size: 16, color: Color(0xFFD97706)), SizedBox(width: 8), Text('Download Payslip', style: TextStyle(fontSize: 11.5))])),
+                  const PopupMenuItem(value: 'download', child: Row(children: [Icon(Icons.download_rounded, size: 16, color: AppColors.brandDark), SizedBox(width: 8), Text('Download Payslip', style: TextStyle(fontSize: 11.5))])),
                   if (!isProcessed)
                     const PopupMenuItem(value: 'approve', child: Row(children: [Icon(Icons.check_circle_outline_rounded, size: 16, color: Color(0xFF16A34A)), SizedBox(width: 8), Text('Approve', style: TextStyle(fontSize: 11.5))])),
                 ],

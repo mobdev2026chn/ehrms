@@ -1,4 +1,5 @@
 // lib/screens/admin/recruitment/admin_interview_flow_details_screen.dart
+import 'package:hrms/config/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../../../services/api_client.dart';
 import '../../../utils/snackbar_utils.dart';
@@ -371,7 +372,7 @@ class _AdminInterviewFlowDetailsScreenState extends State<AdminInterviewFlowDeta
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFFDE68A))),
-                child: Text('ROUND ${round.roundNumber}', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: Color(0xFFD97706))),
+                child: Text('ROUND ${round.roundNumber}', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: AppColors.brandDark)),
               ),
               const SizedBox(width: 8),
               Container(
@@ -414,7 +415,7 @@ class _AdminInterviewFlowDetailsScreenState extends State<AdminInterviewFlowDeta
           const SizedBox(height: 4),
           Row(
             children: [
-              const Icon(Icons.person_outline_rounded, size: 14, color: Color(0xFFD97706)),
+              const Icon(Icons.person_outline_rounded, size: 14, color: AppColors.brandDark),
               const SizedBox(width: 4),
               Expanded(child: Text('Evaluator: ${round.interviewer}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)))),
             ],

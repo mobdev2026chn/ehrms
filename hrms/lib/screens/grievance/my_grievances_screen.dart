@@ -99,7 +99,7 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
       case 'Critical':
         return AppColors.error;
       case 'High':
-        return Colors.orange;
+        return AppColors.brand;
       case 'Medium':
         return AppColors.warning;
       case 'Low':

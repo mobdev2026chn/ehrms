@@ -7,7 +7,18 @@ class AppColors {
   static Color primary      = const Color(0xFFEFAA1F); // Amber gold
   static Color primaryDark  = const Color(0xFFC98E1A); // Darker gold
   static Color primaryLight = const Color(0xFFFFF3D6); // Tinted amber bg
-  static const Color accent = Color(0xFFFFA000);
+  static const Color accent = brand;
+
+  // Constant brand shades, usable inside `const` widgets. Every orange/amber in the
+  // app uses these, so the app has one gold instead of assorted oranges:
+  //   brand       - fills, icons, accents (the primary colour)
+  //   brandDark   - text / icons on light backgrounds (readable gold)
+  //   brandLight  - tinted backgrounds
+  //   brandBorder - borders on tinted backgrounds
+  static const Color brand       = Color(0xFFEFAA1F);
+  static const Color brandDark   = Color(0xFFC98E1A);
+  static const Color brandLight  = Color(0xFFFFF3D6);
+  static const Color brandBorder = Color(0xFFF7D58A);
 
   // ── Secondary accent (Figma indigo) ─────────────────────────────────────
   // Highlight values like Performance score and "This Month Net" (₹ amount).
@@ -30,8 +41,8 @@ class AppColors {
   // ── Semantic ───────────────────────────────────────────────────────────
   static const Color success        = Color(0xFF059669);
   static const Color successBg      = Color(0xFFD1FAE5);
-  static const Color warning        = Color(0xFFD97706);
-  static const Color warningBg      = Color(0xFFFEF3C7);
+  static const Color warning        = brandDark;
+  static const Color warningBg      = brandLight;
   static const Color error          = Color(0xFFDC2626);
   static const Color errorBg        = Color(0xFFFEE2E2);
   static const Color info           = Color(0xFF2563EB);

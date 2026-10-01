@@ -440,7 +440,7 @@ class _AdminCandidatesScreenState extends State<AdminCandidatesScreen> {
             CircleAvatar(
               radius: 16,
               backgroundColor: const Color(0xFFFFFBEB),
-              child: Text(c.initials, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFD97706))),
+              child: Text(c.initials, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -744,7 +744,7 @@ class _AdminCandidatesScreenState extends State<AdminCandidatesScreen> {
       stFg = const Color(0xFFDC2626);
     } else if (c.status == 'Interviewing') {
       stBg = const Color(0xFFFEF3C7);
-      stFg = const Color(0xFFD97706);
+      stFg = AppColors.brandDark;
     } else {
       stBg = const Color(0xFFE0E7FF);
       stFg = const Color(0xFF4338CA);
@@ -813,7 +813,7 @@ class _AdminCandidatesScreenState extends State<AdminCandidatesScreen> {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    const Icon(Icons.star_border_rounded, size: 13, color: Color(0xFFD97706)),
+                    const Icon(Icons.star_border_rounded, size: 13, color: AppColors.brandDark),
                     const SizedBox(width: 4),
                     Text('Skills: ${c.primarySkill}', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B))),
                   ],
@@ -839,7 +839,7 @@ class _AdminCandidatesScreenState extends State<AdminCandidatesScreen> {
                     onPressed: () => _showProfileModal(c),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFFFFBEB),
-                      foregroundColor: const Color(0xFFD97706),
+                      foregroundColor: AppColors.brandDark,
                       elevation: 0,
                       side: const BorderSide(color: Color(0xFFFDE68A)),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

@@ -331,7 +331,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
           Icon(
             Icons.coffee_rounded,
             size: 14,
-            color: Colors.orangeAccent.shade200,
+            color: AppColors.brand,
           ),
           const SizedBox(width: 6),
           Text(
@@ -348,7 +348,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
             'Total ${BreakSummary.formatDuration(completedSeconds)}',
             style: TextStyle(
               fontSize: 12,
-              color: Colors.orangeAccent.shade200,
+              color: AppColors.brand,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -441,7 +441,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
               ? DateFormat('hh:mm a').format(b.endTime!)
               : '--:--');
     final durColor = b.ongoing
-        ? Colors.orangeAccent.shade200
+        ? AppColors.brand
         : Colors.white.withValues(alpha: 0.85);
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -452,7 +452,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
             height: 8,
             decoration: BoxDecoration(
               color: b.ongoing
-                  ? Colors.orangeAccent.shade200
+                  ? AppColors.brand
                   : Colors.white.withValues(alpha: 0.35),
               shape: BoxShape.circle,
             ),
@@ -464,7 +464,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
               style: TextStyle(
                 fontSize: 12,
                 color: b.ongoing
-                    ? Colors.orangeAccent.shade100
+                    ? AppColors.brandLight
                     : Colors.white.withValues(alpha: 0.8),
                 fontWeight: b.ongoing ? FontWeight.bold : FontWeight.w500,
               ),
@@ -474,10 +474,10 @@ class _CloudPunchCardState extends State<CloudPunchCard>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: Colors.orangeAccent.shade200.withValues(alpha: 0.2),
+                color: AppColors.brand.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(
-                  color: Colors.orangeAccent.shade200.withValues(alpha: 0.4),
+                  color: AppColors.brand.withValues(alpha: 0.4),
                 ),
               ),
               child: Text(
@@ -485,7 +485,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
-                  color: Colors.orangeAccent.shade200,
+                  color: AppColors.brand,
                 ),
               ),
             )

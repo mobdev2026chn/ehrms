@@ -153,7 +153,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
       case 'accepted':
         return const Color(0xFF059669);
       case 'pending':
-        return const Color(0xFFD97706);
+        return AppColors.brandDark;
       case 'rejected':
         return const Color(0xFFDC2626);
       case 'expired':
@@ -215,7 +215,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                       const Icon(
                         Icons.calendar_month_rounded,
                         size: 18,
-                        color: Color(0xFFD97706),
+                        color: AppColors.brandDark,
                       ),
                       const SizedBox(width: 8),
                       Text(
@@ -284,7 +284,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                               child: const Icon(
                                 Icons.access_time_filled_rounded,
                                 size: 16,
-                                color: Color(0xFFD97706),
+                                color: AppColors.brandDark,
                               ),
                             ),
                           ],
@@ -580,7 +580,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                                 const Icon(
                                   Icons.calendar_today_rounded,
                                   size: 15,
-                                  color: Color(0xFFD97706),
+                                  color: AppColors.brandDark,
                                 ),
                                 const SizedBox(width: 8),
                                 Text(

@@ -1539,7 +1539,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       final avail = b['remaining'] as num? ?? b['availableBalance'] as num? ?? (total > used ? total - used : 0);
                       final isCasual = name.toLowerCase().contains('casual');
                       final badgeBg = isCasual ? const Color(0xFFECFDF5) : const Color(0xFFFFFBEB);
-                      final badgeColor = isCasual ? const Color(0xFF047857) : const Color(0xFFD97706);
+                      final badgeColor = isCasual ? const Color(0xFF047857) : AppColors.brandDark;
 
                       return Container(
                         padding: const EdgeInsets.symmetric(vertical: 10),
@@ -2032,7 +2032,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
             : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
         final Color statusText = isApproved
             ? const Color(0xFF059669)
-            : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+            : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
 
         final leaveType = leave['leaveType']?.toString() ?? 'Leave';
         final days = leave['days']?.toString() ?? '1';
@@ -2237,7 +2237,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                   : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
               final Color statusText = isApproved
                   ? const Color(0xFF059669)
-                  : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+                  : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
 
               final leaveType = leave['leaveType']?.toString() ?? 'Leave';
               final days = leave['days']?.toString() ?? '1';
@@ -2489,7 +2489,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                   : (type == 'unpaid' ? const Color(0xFFFAF5FF) : const Color(0xFFFFFBEB)),
               'badgeText': type == 'paid'
                   ? const Color(0xFF059669)
-                  : (type == 'unpaid' ? const Color(0xFF9333EA) : const Color(0xFFD97706)),
+                  : (type == 'unpaid' ? const Color(0xFF9333EA) : AppColors.brandDark),
               'balance': avail?.toDouble() ?? 0.0,
               'allocated': alloc?.toDouble(),
               'used': used?.toDouble() ?? 0.0,
@@ -3204,7 +3204,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFFD97706),
+                              color: AppColors.brandDark,
                             ),
                           ),
                         ),
@@ -3241,7 +3241,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           ),
                           Text(
                             '${bal.toInt()} Left',
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFD97706)),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.brandDark),
                           ),
                         ],
                       ),
@@ -5628,7 +5628,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
         : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
     final Color statusText = isApproved
         ? const Color(0xFF059669)
-        : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+        : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
 
     final desc = (expense['description'] ?? '').toString().trim();
     final amount = _formatAmount(expense['amount']);
@@ -5827,7 +5827,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                   : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
               final Color statusText = isApproved
                   ? const Color(0xFF059669)
-                  : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+                  : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
 
               final desc = (raw['description'] ?? '-').toString().trim();
               final amount = _formatAmount(raw['amount']);
@@ -7263,7 +7263,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
       case 'Cancelled':
         return Colors.grey;
       default:
-        return Colors.orange;
+        return AppColors.brand;
     }
   }
 
@@ -7786,7 +7786,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
         : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
     final Color statusText = isApproved
         ? const Color(0xFF059669)
-        : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+        : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
 
     final type = _fmtType(req['type']?.toString());
     final isEarly = type.toLowerCase().contains('early');
@@ -7799,7 +7799,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
         : (isLate ? const Color(0xFFFED7AA) : const Color(0xFFE9D5FF));
     final Color typeText = isEarly
         ? const Color(0xFF1D4ED8)
-        : (isLate ? const Color(0xFFC2410C) : const Color(0xFF7E22CE));
+        : (isLate ? AppColors.brandDark : const Color(0xFF7E22CE));
 
     final dateStr = _fmtDate(req['date']);
     final requestedMinutes = req['requestedMinutes'] ?? 0;
@@ -7996,7 +7996,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
               final Color statusText = isApproved
                   ? const Color(0xFF059669)
-                  : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+                  : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
 
               final type = _fmtType(req['type']?.toString());
               final isEarly = type.toLowerCase().contains('early');
@@ -8009,7 +8009,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   : (isLate ? const Color(0xFFFED7AA) : const Color(0xFFE9D5FF));
               final Color typeText = isEarly
                   ? const Color(0xFF1D4ED8)
-                  : (isLate ? const Color(0xFFC2410C) : const Color(0xFF7E22CE));
+                  : (isLate ? AppColors.brandDark : const Color(0xFF7E22CE));
 
               final dateStr = _fmtDate(req['date']);
               final requestedMinutes = req['requestedMinutes'] ?? 0;
@@ -10068,7 +10068,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
         : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
     final Color statusText = isApproved
         ? const Color(0xFF059669)
-        : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+        : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
 
     final reason = (req['reason'] ?? '').toString().trim();
     final rejectionReason = (req['actionReason'] ?? req['rejectionReason'])?.toString().trim();
@@ -10316,7 +10316,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                   : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
               final Color statusText = isApproved
                   ? const Color(0xFF059669)
-                  : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFD97706));
+                  : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
 
               final reason = (raw['reason'] ?? '-').toString().trim();
               final rejReason = (raw['actionReason'] ?? raw['rejectionReason'] ?? '-').toString().trim();

@@ -1200,7 +1200,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             if (task.isOtpRequired) _chip('✓ OTP Required', Colors.green),
             if (task.isGeoFenceRequired)
               _chip('📍 Geo-Fence (500m)', Colors.purple),
-            if (task.isPhotoRequired) _chip('📷 Photo Required', Colors.orange),
+            if (task.isPhotoRequired) _chip('📷 Photo Required', AppColors.brand),
             if (task.isFormRequired) _chip('📝 Fill Form', Colors.teal),
           ],
         ),
@@ -1371,7 +1371,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           Icon(
             verified ? Icons.verified_rounded : Icons.pending_rounded,
             size: 20,
-            color: verified ? AppColors.primary : Colors.orange.shade700,
+            color: verified ? AppColors.primary : AppColors.brandDark,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1567,7 +1567,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               ? exit.exitReason
               : (exit.address ?? 'Trip paused'),
           icon: Icons.pause_circle_filled_rounded,
-          iconColor: Colors.orange.shade700,
+          iconColor: AppColors.brandDark,
         ),
       );
     }
@@ -1935,13 +1935,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
+                  color: AppColors.brandLight,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   Icons.history_rounded,
                   size: 20,
-                  color: Colors.orange.shade700,
+                  color: AppColors.brandDark,
                 ),
               ),
               const SizedBox(width: 12),
@@ -1991,7 +1991,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 e.value.address,
                 e.value.pincode,
                 Icons.exit_to_app_rounded,
-                Colors.orange,
+                AppColors.brand,
               ),
             ),
           ],
@@ -2634,18 +2634,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       margin: const EdgeInsets.only(bottom: 12),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.orange.shade50,
+                        color: AppColors.brandLight,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.orange.shade200),
+                        border: Border.all(color: AppColors.brandBorder),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.hourglass_top_rounded, size: 18, color: Colors.orange.shade800),
+                          Icon(Icons.hourglass_top_rounded, size: 18, color: AppColors.brandDark),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               'Waiting for admin approval. You can start this task once it is approved.',
-                              style: TextStyle(fontSize: 12.5, color: Colors.orange.shade900, fontWeight: FontWeight.w600),
+                              style: TextStyle(fontSize: 12.5, color: AppColors.brandDark, fontWeight: FontWeight.w600),
                             ),
                           ),
                         ],

@@ -646,7 +646,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          CircularProgressIndicator(color: Colors.orange),
+                          CircularProgressIndicator(color: AppColors.brand),
                           SizedBox(height: 16),
                           Text(
                             'Opening camera…',
@@ -880,7 +880,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0xFFB45309).withValues(alpha: 0.92),
+          color: AppColors.brandDark.withValues(alpha: 0.92),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(

@@ -219,7 +219,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                     children: [
                       Row(
                         children: const [
-                          Icon(Icons.filter_alt_outlined, color: Color(0xFFD97706), size: 20),
+                          Icon(Icons.filter_alt_outlined, color: AppColors.brandDark, size: 20),
                           SizedBox(width: 8),
                           Text(
                             'ADVANCED FILTERS',
@@ -450,7 +450,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                         color: Color(0xFFFFFBEB),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.auto_awesome_rounded, color: Color(0xFFD97706), size: 22),
+                      child: const Icon(Icons.auto_awesome_rounded, color: AppColors.brandDark, size: 22),
                     ),
                     IconButton(
                       icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
@@ -487,7 +487,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                           Container(
                             padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFD97706),
+                              color: AppColors.brandDark,
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 16),
@@ -534,7 +534,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          const Icon(Icons.check_rounded, color: Color(0xFFD97706), size: 16),
+                          const Icon(Icons.check_rounded, color: AppColors.brandDark, size: 16),
                           const SizedBox(width: 6),
                           Text('Plan Type: $planType', style: const TextStyle(fontSize: 12, color: Color(0xFF475569))),
                         ],
@@ -542,7 +542,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          const Icon(Icons.check_rounded, color: Color(0xFFD97706), size: 16),
+                          const Icon(Icons.check_rounded, color: AppColors.brandDark, size: 16),
                           const SizedBox(width: 6),
                           Text('Total Seats Allocated: $totalSeats', style: const TextStyle(fontSize: 12, color: Color(0xFF475569))),
                         ],
@@ -714,7 +714,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                               Icon(
                                 Icons.tune_rounded,
                                 size: 16,
-                                color: _hasActiveFilters ? const Color(0xFFD97706) : const Color(0xFF64748B),
+                                color: _hasActiveFilters ? AppColors.brandDark : const Color(0xFF64748B),
                               ),
                               const SizedBox(width: 6),
                               Text(
@@ -722,7 +722,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                                 style: TextStyle(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w700,
-                                  color: _hasActiveFilters ? const Color(0xFFD97706) : const Color(0xFF334155),
+                                  color: _hasActiveFilters ? AppColors.brandDark : const Color(0xFF334155),
                                 ),
                               ),
                               if (_hasActiveFilters) ...[
@@ -731,7 +731,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                                   width: 6,
                                   height: 6,
                                   decoration: const BoxDecoration(
-                                    color: Color(0xFFD97706),
+                                    color: AppColors.brandDark,
                                     shape: BoxShape.circle,
                                   ),
                                 ),
@@ -764,7 +764,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                           },
                           child: const Text(
                             'Reset filters',
-                            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFD97706)),
+                            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.brandDark),
                           ),
                         ),
                     ],
@@ -860,7 +860,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
       typeColor = const Color(0xFF9333EA);
     } else if (type.contains('PART')) {
       typeBg = const Color(0xFFFFFBEB);
-      typeColor = const Color(0xFFD97706);
+      typeColor = AppColors.brandDark;
     }
 
     return Container(
@@ -967,7 +967,7 @@ class _AdminStaffListScreenState extends State<AdminStaffListScreen> {
                 alignment: Alignment.center,
                 child: Text(
                   initial,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFFD97706)),
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppColors.brandDark),
                 ),
               ),
               const SizedBox(width: 10),

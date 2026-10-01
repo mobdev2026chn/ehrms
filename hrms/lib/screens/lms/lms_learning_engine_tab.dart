@@ -112,7 +112,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Material(
-                  color: Colors.orange.shade50,
+                  color: AppColors.brandLight,
                   borderRadius: BorderRadius.circular(8),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
@@ -124,7 +124,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                         Icon(
                           Icons.info_outline,
                           size: 20,
-                          color: Colors.orange.shade800,
+                          color: AppColors.brandDark,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
@@ -132,7 +132,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                             _loadError!,
                             style: TextStyle(
                               fontSize: 13,
-                              color: Colors.orange.shade900,
+                              color: AppColors.brandDark,
                             ),
                           ),
                         ),
@@ -179,7 +179,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                     title: 'AVG ASSESSMENT SCORE',
                     value: _scoresLoading ? '—' : '$overallScore%',
                     icon: Icons.emoji_events_outlined,
-                    color: Colors.amber,
+                    color: AppColors.brand,
                   ),
                 ),
               ],
@@ -419,7 +419,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
               children: [
                 Icon(
                   Icons.emoji_events_outlined,
-                  color: Colors.amber[700],
+                  color: AppColors.brandDark,
                   size: 22,
                 ),
                 const SizedBox(width: 8),
@@ -494,7 +494,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                         completed: _int(medium['completed']),
                         total: _int(medium['total']),
                         percent: _int(medium['percent']),
-                        color: Colors.amber,
+                        color: AppColors.brand,
                       ),
                       const SizedBox(height: 8),
                       _QuizDifficultyRow(
@@ -573,11 +573,11 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
             final bg = urgency == 'overdue'
                 ? Colors.red.withOpacity(0.1)
                 : (urgency == 'soon'
-                      ? Colors.amber.withOpacity(0.1)
+                      ? AppColors.brand.withOpacity(0.1)
                       : Colors.green.withOpacity(0.1));
             final border = urgency == 'overdue'
                 ? Colors.red
-                : (urgency == 'soon' ? Colors.amber : Colors.green);
+                : (urgency == 'soon' ? AppColors.brand : Colors.green);
 
             final daysText = days < 0
                 ? '${-days}d overdue'
@@ -618,7 +618,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                       ),
                       decoration: BoxDecoration(
                         color: isSoon
-                            ? Colors.orange.withOpacity(0.2)
+                            ? AppColors.brand.withOpacity(0.2)
                             : border.withOpacity(0.15),
                         borderRadius: BorderRadius.circular(6),
                       ),
@@ -627,7 +627,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: isSoon ? Colors.orange.shade800 : border,
+                          color: isSoon ? AppColors.brandDark : border,
                         ),
                       ),
                     ),
@@ -1212,7 +1212,7 @@ class _QuizDifficultyRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isGreen = color == Colors.green;
-    final isAmber = color == Colors.amber;
+    final isAmber = color == AppColors.brand;
     final bgColor = isGreen
         ? const Color(0xFFf0fdf4)
         : (isAmber ? const Color(0xFFfffbeb) : const Color(0xFFfef2f2));

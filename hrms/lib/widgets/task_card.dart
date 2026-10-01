@@ -1,3 +1,4 @@
+import 'package:hrms/config/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/utils/date_display_util.dart';
@@ -19,7 +20,7 @@ class TaskCard extends StatelessWidget {
         statusText = 'Assigned';
         break;
       case TaskStatus.pending:
-        statusColor = Colors.orange;
+        statusColor = AppColors.brand;
         statusText = 'Pending';
         break;
       case TaskStatus.scheduled:
@@ -40,15 +41,15 @@ class TaskCard extends StatelessWidget {
         statusText = 'Arrived';
         break;
       case TaskStatus.exited:
-        statusColor = Colors.amber;
+        statusColor = AppColors.brand;
         statusText = 'Exited';
         break;
       case TaskStatus.exitedOnArrival:
-        statusColor = Colors.orange;
+        statusColor = AppColors.brand;
         statusText = 'Exited on Arrival';
         break;
       case TaskStatus.holdOnArrival:
-        statusColor = Colors.amber;
+        statusColor = AppColors.brand;
         statusText = 'Hold on Arrival';
         break;
       case TaskStatus.reopenedOnArrival:
@@ -56,7 +57,7 @@ class TaskCard extends StatelessWidget {
         statusText = 'Reopened on Arrival';
         break;
       case TaskStatus.waitingForApproval:
-        statusColor = Colors.amber;
+        statusColor = AppColors.brand;
         statusText = 'Waiting for Approval';
         break;
       case TaskStatus.completed:
@@ -76,7 +77,7 @@ class TaskCard extends StatelessWidget {
         statusText = 'Reopened';
         break;
       case TaskStatus.hold:
-        statusColor = Colors.amber;
+        statusColor = AppColors.brand;
         statusText = 'Hold';
         break;
       case TaskStatus.onlineReady:
@@ -84,7 +85,7 @@ class TaskCard extends StatelessWidget {
         statusText = 'Ready';
         break;
       case TaskStatus.requested:
-        statusColor = Colors.orange;
+        statusColor = AppColors.brand;
         statusText = 'Requested';
         break;
       // Any status added later must not break the build (switch must be exhaustive).
@@ -302,8 +303,8 @@ class TaskCard extends StatelessWidget {
                 if (task.isFormRequired)
                   _buildRequirementChip(
                     'Form',
-                    Colors.orange.shade100,
-                    Colors.orange.shade800,
+                    AppColors.brandLight,
+                    AppColors.brandDark,
                   ),
               ],
             ),

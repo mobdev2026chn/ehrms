@@ -5,6 +5,7 @@
 // Distances are measured by the backend from the GPS trail and are only shown
 // when tracking is enabled for the employee.
 
+import 'package:hrms/config/app_colors.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -313,7 +314,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     Color(0xFF7C3AED), // violet
     Color(0xFF0D9488), // teal
     Color(0xFFDB2777), // pink
-    Color(0xFFB45309), // amber / brown
+    AppColors.brandDark, // amber / brown
     Color(0xFF4F46E5), // indigo
     Color(0xFF0891B2), // cyan
   ];
@@ -440,7 +441,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   Color _flagColor(String type) => switch (type) {
         'punch_in' => const Color(0xFF16A34A),
         'field_in' => const Color(0xFF0284C7),
-        'field_out' => const Color(0xFFEA580C),
+        'field_out' => AppColors.brandDark,
         'punch_out' => const Color(0xFFDC2626),
         _ => _muted,
       };

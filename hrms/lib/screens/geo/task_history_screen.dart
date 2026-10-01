@@ -103,7 +103,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                           'Using cached data. $_error',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.orange.shade800,
+                            color: AppColors.brandDark,
                           ),
                         ),
                       ),
@@ -152,7 +152,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         _sectionTitle(
                           'Exits',
                           Icons.exit_to_app_rounded,
-                          Colors.orange,
+                          AppColors.brand,
                         ),
                         const SizedBox(height: 8),
                         ...exits.asMap().entries.map(
@@ -693,13 +693,13 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: Colors.orange.shade50,
+              color: AppColors.brandLight,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               Icons.exit_to_app_rounded,
               size: 26,
-              color: Colors.orange.shade700,
+              color: AppColors.brandDark,
             ),
           ),
           const SizedBox(width: 14),

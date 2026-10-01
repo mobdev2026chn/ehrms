@@ -27,6 +27,8 @@ import '../screens/admin/approvals/admin_reimbursement_approvals_screen.dart';
 import '../screens/admin/approvals/admin_payslip_approvals_screen.dart';
 import '../screens/admin/dashboard/admin_dashboard_screen.dart';
 import '../screens/notifications/notifications_screen.dart';
+import '../screens/loans/loans_screen.dart';
+import '../screens/admin/loans/admin_loans_screen.dart';
 import '../screens/admin/recruitment/admin_job_openings_screen.dart';
 import '../screens/admin/recruitment/admin_candidates_screen.dart';
 import '../screens/admin/recruitment/admin_appointments_screen.dart';
@@ -242,7 +244,7 @@ class _AppDrawerState extends State<AppDrawer> {
             height: 36,
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFFEFAA1F), Color(0xFFD97706)],
+                colors: [Color(0xFFEFAA1F), AppColors.brandDark],
               ),
               shape: BoxShape.circle,
             ),
@@ -327,6 +329,10 @@ class _AppDrawerState extends State<AppDrawer> {
         _item(Icons.dashboard_rounded, 'Dashboard', () => _navigateToTab(0)),
         _item(Icons.calendar_month_rounded, 'Attendance', () => _navigateToTab(4)),
         _item(Icons.fact_check_rounded, 'Requests', () => _navigateToTab(1)),
+        _item(Icons.account_balance_outlined, 'Loans', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const LoansScreen()));
+        }),
         _item(Icons.assignment_turned_in_rounded, 'GEOtasks', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
@@ -517,6 +523,10 @@ class _AppDrawerState extends State<AppDrawer> {
                 _adminSubItem(Icons.circle_outlined, 'Payslip Requests', () {
                   Navigator.pop(context);
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminPayslipApprovalsScreen()));
+                }, isNested: true),
+                _adminSubItem(Icons.circle_outlined, 'Loans', () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminLoansScreen()));
                 }, isNested: true),
               ],
             ),

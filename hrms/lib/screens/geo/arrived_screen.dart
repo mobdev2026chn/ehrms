@@ -647,7 +647,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.orange.shade800,
+                                color: AppColors.brandDark,
                               ),
                             ),
                           ),
@@ -661,7 +661,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.orange.shade800,
+                                color: AppColors.brandDark,
                               ),
                             ),
                           ),

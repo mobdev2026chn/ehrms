@@ -267,7 +267,7 @@ class _AdminInterviewRoundsScreenState extends State<AdminInterviewRoundsScreen>
 
   Widget _buildRoundCard(AdminEvaluationRoundItem item) {
     Color stBg = const Color(0xFFFEF3C7);
-    Color stFg = const Color(0xFFD97706);
+    Color stFg = AppColors.brandDark;
     if (item.status.contains('Pass')) {
       stBg = const Color(0xFFDCFCE7);
       stFg = const Color(0xFF16A34A);
@@ -333,7 +333,7 @@ class _AdminInterviewRoundsScreenState extends State<AdminInterviewRoundsScreen>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(4), border: Border.all(color: const Color(0xFFFDE68A))),
-                        child: Text('ROUND ${item.roundNumber}', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFFD97706))),
+                        child: Text('ROUND ${item.roundNumber}', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
                       ),
                     ],
                   ),
@@ -372,7 +372,7 @@ class _AdminInterviewRoundsScreenState extends State<AdminInterviewRoundsScreen>
                 const SizedBox(width: 6),
                 Text('${item.interviewDate} at ${item.interviewTime}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF64748B))),
                 const Spacer(),
-                const Text('View Scorecard ❯', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFD97706))),
+                const Text('View Scorecard ❯', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
               ],
             ),
           ],

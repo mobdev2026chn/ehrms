@@ -527,7 +527,7 @@ class _AdminInterviewFlowScreenState extends State<AdminInterviewFlowScreen> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFFDE68A))),
-                child: const Icon(Icons.work_outline_rounded, size: 18, color: Color(0xFFD97706)),
+                child: const Icon(Icons.work_outline_rounded, size: 18, color: AppColors.brandDark),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -629,7 +629,7 @@ class _AdminInterviewFlowScreenState extends State<AdminInterviewFlowScreen> {
                 label: const Text('Configure ❯', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFFFFBEB),
-                  foregroundColor: const Color(0xFFD97706),
+                  foregroundColor: AppColors.brandDark,
                   elevation: 0,
                   side: const BorderSide(color: Color(0xFFFDE68A)),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),

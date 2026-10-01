@@ -29,6 +29,7 @@ import '../../widgets/menu_icon_button.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/geo/live_tracking_service.dart';
 import '../../services/geo/tracking_health_service.dart';
+import '../../services/api_client.dart';
 import '../profile/profile_screen.dart';
 import '../../services/geo/address_resolution_service.dart';
 import '../geo/live_tracking_screen.dart';
@@ -188,6 +189,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   // Current-month attendance summary from HRMSbackend (see _fetchAttendanceSummary).
   num? _presentCountMonth;
+
+  /// Available leave across the staff member's leave types (same as the web card); null
+  /// until loaded.
+  num? _availableLeaveBalance;
+
+  /// Whether a salary structure is assigned (Salary Overview shows "not assigned" otherwise).
+  bool _hasSalaryStructure = false;
   num? _payableDaysMonth;
   num? _totalPayableDaysMonth;
 
@@ -1103,9 +1111,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       final profileFuture = _authService.getProfile();
       final businessFuture = _settingsService.getBusiness();
       final monthFuture = _fetchMonthAttendance(forceRefresh: true);
-      final loansFuture = _fetchActiveLoans();
       final tasksFuture = _fetchTasks();
       unawaited(_fetchAttendanceSummary());
+      unawaited(_fetchLeaveBalance());
       final breakFuture = _fetchBreakSummary();
       final activeBreakFuture = _fetchLocalActiveBreak();
       final permissionFuture = _fetchTodayPermission();
@@ -1309,7 +1317,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       unawaited(
         Future.wait<void>([
           monthFuture.catchError((_) {}),
-          loansFuture.catchError((_) {}),
           breakFuture.catchError((_) {}),
           permissionFuture.catchError((_) {}),
           perfFuture.catchError((_) {}),
@@ -1588,11 +1595,29 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
     final att = t['attendance'] is Map ? t['attendance'] as Map : null;
     final pd = att?['presentDetails'] is Map ? att!['presentDetails'] as Map : null;
-    return clean(_punchInGeoAddress) ??
+    // The address stored with the punch (what web shows) first; a fresh geocode of the
+    // punch coordinates only when the server has none.
+    return clean(t['location']) ??
         clean(pd?['location']) ??
         clean(t['punchInAddress']) ??
         clean(t['checkInAddress']) ??
-        clean(t['location']);
+        clean(_punchInGeoAddress);
+  }
+
+  /// Today's status as the server decided it (today-punch `status`: present, late,
+  /// half_day, absent, leave, week_off, holiday), for the Status column - as on web.
+  (String, Color)? _serverDayStatus() {
+    final raw = _todayAttendance?['status']?.toString().trim().toLowerCase().replaceAll(' ', '_') ?? '';
+    return switch (raw) {
+      'present' => ('Present', const Color(0xFF10B981)),
+      'late' => ('Late', AppColors.brandDark),
+      'half_day' || 'halfday' => ('Half Day', AppColors.brandDark),
+      'absent' => ('Absent', AppColors.error),
+      'leave' || 'on_leave' => ('On Leave', AppColors.info),
+      'week_off' || 'weekoff' || 'weekly_off' => ('Weekly Off', const Color(0xFF3B82F6)),
+      'holiday' => ('Holiday', AppColors.brandDark),
+      _ => null,
+    };
   }
 
   /// Today's punch-in lat/lng (`attendance.presentDetails.checkInCoordinates`).
@@ -1625,8 +1650,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     setState(() => _punchInGeoAddress = addr);
   }
 
-  /// Hours today's shift expects (end - start, overnight-aware), for the dial.
+  /// Hours today's shift expects, for the dial: the shift's configured work hours
+  /// (today-punch `shift.workHours`, as on web); end - start only when that is missing.
   double? _serverShiftTargetHours() {
+    final shift = _todayAttendance?['shift'];
+    final workHours = shift is Map ? shift['workHours'] : null;
+    if (workHours is num && workHours > 0) return workHours.toDouble();
     final t = _todayAttendanceTemplateMap();
     int? mins(dynamic v) {
       final s = trimmedTimeField(v);
@@ -1891,6 +1920,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   /// Present / payable days for the current month from HRMSbackend
   /// `GET /admin/staff/attendance/staff/:staffId` — the same summary the web
   /// staff Attendance page shows (Working Days = `totalPayableDays`).
+  /// Pending Leaves card: sum of `availableBalance` over GET /staff/requests/leave/types
+  /// (the leave types of the staff member's template) - the same number the web shows.
+  Future<void> _fetchLeaveBalance() async {
+    try {
+      final res = await ApiClient().dio.get<dynamic>('/staff/requests/leave/types');
+      final data = res.data is Map ? (res.data as Map)['data'] : null;
+      final types = data is Map ? data['leaveTypes'] : data;
+      if (types is! List) return;
+      num total = 0;
+      for (final t in types) {
+        if (t is Map && t['availableBalance'] is num) total += t['availableBalance'] as num;
+      }
+      if (mounted) setState(() => _availableLeaveBalance = total);
+    } catch (_) {}
+  }
+
   Future<void> _fetchAttendanceSummary() async {
     try {
       // Same /admin/staff/attendance/staff/:id month payload the calendar card
@@ -1913,46 +1958,32 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
   }
 
+  /// Today's tasks, as on web: the staff member's tasks whose date range covers today
+  /// (start <= today <= end). `/staff/geo-task/tasks` also returns future tasks.
   Future<void> _fetchTasks() async {
     try {
       final profile = await _authService.getProfile();
-      final staffId = profile['data']?['staffData']?['_id']?.toString() ??
-          profile['data']?['user']?['id']?.toString() ??
-          '';
-      if (staffId.isNotEmpty) {
-        final taskList = await _taskService.getAssignedTasks(staffId);
-        if (mounted) {
-          setState(() {
-            _tasks = taskList;
-            _assignedTasksCount = taskList.length;
-          });
-        }
+      // The list endpoint serves the signed-in staff member; the id is only a fallback hint.
+      final taskList = await _taskService.getAssignedTasks(AuthService.staffIdOf(profile));
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      DateTime dayOf(DateTime d) {
+        final l = d.toLocal();
+        return DateTime(l.year, l.month, l.day);
       }
-    } catch (_) {}
-  }
 
-  Future<void> _fetchActiveLoans() async {
-    try {
-      final result = await _requestService.getLoanRequests(
-        status: 'Active',
-        page: 1,
-        limit: 100, // Get all active loans
-      );
-      if (mounted && result['success']) {
-        List<dynamic> loans = [];
-        if (result['data'] is Map) {
-          loans = result['data']['loans'] ?? [];
-        } else if (result['data'] is List) {
-          loans = result['data'];
-        }
+      final todays = taskList.where((t) {
+        final start = dayOf(t.scheduledStartDate ?? t.assignedDate ?? t.expectedCompletionDate);
+        final end = dayOf(t.expectedCompletionDate);
+        return !today.isBefore(start) && !today.isAfter(end.isBefore(start) ? start : end);
+      }).toList();
+      if (mounted) {
         setState(() {
-          _activeLoans = loans;
-          _activeLoansCount = loans.length;
+          _tasks = todays;
+          _assignedTasksCount = todays.length;
         });
       }
-    } catch (e) {
-      // Ignore
-    }
+    } catch (_) {}
   }
 
   Future<void> _calculateSalaryFromModule() async {
@@ -1966,13 +1997,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       if (profileResult['success'] != true) return;
 
       final staffData = profileResult['data']?['staffData'];
-      String? staffId = staffData?['_id']?.toString() ??
-          staffData?['id']?.toString() ??
-          profileResult['data']?['user']?['id']?.toString() ??
-          profileResult['data']?['user']?['_id']?.toString() ??
-          profileResult['data']?['user']?['staffId']?.toString();
+      String? staffId = AuthService.staffIdOf(profileResult);
 
-      if (staffId == null || staffId.isEmpty) {
+      if (staffId.isEmpty) {
         final prefs = await SharedPreferences.getInstance();
         final userRaw = prefs.getString('user');
         if (userRaw != null) {
@@ -1995,6 +2022,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
           if (mounted) {
             setState(() {
+              _hasSalaryStructure = true;
               if (grossVal != null && grossVal > 0) _overallMonthlyGrossSalary = grossVal.toDouble();
               if (netVal != null && netVal > 0) _overallMonthlyNetSalary = netVal.toDouble();
               if (ctcVal != null && ctcVal > 0) _totalCTC = ctcVal.toDouble();
@@ -2426,25 +2454,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final formatter = NumberFormat('#,##0.00');
-    final estimatedNetFromToday = (_todayAttendance?['estimatedNetSalary'] as num?)?.toDouble() ?? 0.0;
-    final mtdNet = _calculatedMonthSalary > 0
-        ? _calculatedMonthSalary
-        : (estimatedNetFromToday > 0 ? estimatedNetFromToday : _overallMonthlyNetSalary);
-    final monthlyNet = _overallMonthlyNetSalary;
-    final hasSalary = mtdNet > 0 || monthlyNet > 0;
-    final mtdDisplay = hasSalary ? '₹${formatter.format(mtdNet)}' : '--';
-    final monthlyDisplay = hasSalary
-        ? '₹${formatter.format(monthlyNet)}'
-        : null;
-    final presentDaysVal =
-        _stats?['attendanceSummary']?['presentDays']?.toString() ?? '0';
-    final paidLeaveDaysVal =
-        _stats?['attendanceSummary']?['paidLeaveDays']?.toString() ?? '0';
-    final presentDaysInt = int.tryParse(presentDaysVal) ?? 0;
-    final paidLeaveInt = int.tryParse(paidLeaveDaysVal) ?? 0;
-    final presentDays = paidLeaveInt > 0
-        ? '$presentDaysInt days present + $paidLeaveInt PL'
-        : (presentDaysInt > 0 ? '$presentDaysInt days present' : '');
+    // This Month Net = the server's estimate for the month so far (today-punch
+    // `estimatedNetSalary`, the web's source) - ₹0.00 on the 1st, not the full month's net.
+    final estimatedNet = (_todayAttendance?['estimatedNetSalary'] as num?)?.toDouble();
+    final mtdDisplay = estimatedNet != null ? '₹${formatter.format(estimatedNet)}' : '--';
 
     final content = RefreshIndicator(
       color: AppColors.primary,
@@ -2474,13 +2487,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             const SizedBox(height: 14),
 
             // 4. Summary Metric Cards (Pending Leaves, Net, Attendance, Celebrations, My Tasks)
-            _buildWebKpiCards(
-              mtdDisplay,
-              presentDaysInt,
-              _workingDaysForSalary > 0
-                  ? _workingDaysForSalary
-                  : 30,
-            ),
+            _buildWebKpiCards(mtdDisplay),
             const SizedBox(height: 14),
 
             // 5. Info Cards Row (Recent Leaves, Celebrations, Announcements, Active Tasks, Worked Today)
@@ -2929,7 +2936,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   style: const TextStyle(
                     fontSize: 19,
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFFD97706),
+                    color: AppColors.brandDark,
                   ),
                 ),
               ),
@@ -3072,7 +3079,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
-            child: Icon(icon, color: const Color(0xFFD97706), size: 20),
+            child: Icon(icon, color: AppColors.brandDark, size: 20),
           ),
           const SizedBox(height: 6),
           SizedBox(
@@ -3127,9 +3134,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final isPunchedOut = _todayAttendance?['punchOut'] != null &&
         _todayAttendance!['punchOut'].toString().trim().isNotEmpty &&
         _todayAttendance!['punchOut'].toString().trim() != 'null';
-    // Punch-in address once punched in; before that the branch/company name.
+    // Punch-in address once punched in; before that the server's location for the day
+    // (work-mode / branch address, as on web), then the company name.
     final punchAddress = isPunchedIn ? _todayPunchInAddress() : null;
-    final locationText = punchAddress ?? (_companyName.isNotEmpty ? _companyName : null);
+    final serverLocation = _todayAttendance?['location']?.toString().trim();
+    final locationText = punchAddress ??
+        ((serverLocation != null && serverLocation.isNotEmpty && serverLocation != 'null') ? serverLocation : null) ??
+        (_companyName.isNotEmpty ? _companyName : null);
+    final dayStatus = _serverDayStatus();
+    // Overtime pay for today (today-punch `overtimeAdjustment.amount`), as on web.
+    final ot = _todayAttendance?['overtimeAdjustment'];
+    final otAmount = ot is Map && ot['amount'] is num ? (ot['amount'] as num).toDouble() : 0.0;
+    // Break allowance for today (today-punch `breakStatus`), e.g. "0 / 60 min".
+    final bs = _todayAttendance?['breakStatus'];
+    final breakAllowance = (bs is Map && bs['breakTemplateAssigned'] == true && bs['allowedMinutes'] is num)
+        ? (used: (bs['usedMinutes'] as num?)?.toInt() ?? 0, allowed: (bs['allowedMinutes'] as num).toInt(), excess: (bs['excessMinutes'] as num?)?.toInt() ?? 0)
+        : null;
     final shiftLine = _serverTodayShiftLine();
     final shiftStart = _serverShiftTime12h('shiftStartTime');
     final shiftEnd = _serverShiftTime12h('shiftEndTime');
@@ -3159,7 +3179,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     Color badgeBg = const Color(0xFFD1FAE5);
     if (isOnBreak) {
       badgeLabel = 'ON BREAK';
-      badgeColor = const Color(0xFFF59E0B);
+      badgeColor = AppColors.brand;
       badgeBg = const Color(0xFFFEF3C7);
     } else if (isWeekOff) {
       badgeLabel = 'WEEK OFF';
@@ -3167,7 +3187,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       badgeBg = const Color(0xFFDBEAFE);
     } else if (isHoliday) {
       badgeLabel = 'HOLIDAY';
-      badgeColor = const Color(0xFFF59E0B);
+      badgeColor = AppColors.brand;
       badgeBg = const Color(0xFFFEF3C7);
     }
 
@@ -3185,7 +3205,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         ? (widget.onEndBreakTap ?? () => widget.onNavigate?.call(2))
         : (isWeekOff ? null : () => widget.onNavigate?.call(4));
     Color btnBg = isOnBreak ? const Color(0xFFFEF3C7) : const Color(0xFFF1F5F9);
-    Color btnFg = isOnBreak ? const Color(0xFFD97706) : const Color(0xFF64748B);
+    Color btnFg = isOnBreak ? AppColors.brandDark : const Color(0xFF64748B);
 
     return AppCard(
       padding: const EdgeInsets.all(16),
@@ -3327,7 +3347,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 _buildWebPunchTimeCol(
                   'Break Start',
                   breakStartStr,
-                  valueColor: const Color(0xFFF59E0B),
+                  valueColor: AppColors.brand,
                 ),
               _buildWebPunchTimeCol(
                 'Punch Out',
@@ -3340,15 +3360,57 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     ? 'Weekly Off'
                     : (isOnBreak
                         ? 'On Break'
-                        : (isPunchedIn ? 'Present' : 'Not Punched')),
+                        : (dayStatus?.$1 ?? (isPunchedIn ? 'Present' : 'Not Punched'))),
                 valueColor: isWeekOff
                     ? const Color(0xFF3B82F6)
                     : (isOnBreak
-                        ? const Color(0xFFF59E0B)
-                        : (isPunchedIn ? const Color(0xFF10B981) : null)),
+                        ? AppColors.brand
+                        : (dayStatus?.$2 ?? (isPunchedIn ? const Color(0xFF10B981) : null))),
               ),
             ],
           ),
+          if (breakAllowance != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(Icons.free_breakfast_outlined, size: 15, color: Color(0xFF64748B)),
+                const SizedBox(width: 6),
+                const Text('Break', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+                const Spacer(),
+                Text(
+                  '${breakAllowance.used} / ${breakAllowance.allowed} min'
+                  '${breakAllowance.excess > 0 ? ' (+${breakAllowance.excess} over)' : ''}',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: breakAllowance.excess > 0 ? AppColors.error : const Color(0xFF0F172A),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (otAmount > 0) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.successBg,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.more_time_rounded, size: 15, color: AppColors.success),
+                  const SizedBox(width: 6),
+                  const Text('OT Pay', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.success)),
+                  const Spacer(),
+                  Text(
+                    '₹ ${otAmount.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.success),
+                  ),
+                ],
+              ),
+            ),
+          ],
           // Today's fine as the backend calculated it (today-punch `totalFine`,
           // late + early + break) — same row as the web Today card, only when > 0.
           if (todayFine > 0) ...[
@@ -3413,7 +3475,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     width: 8,
                     height: 8,
                     decoration: const BoxDecoration(
-                      color: Color(0xFFF59E0B),
+                      color: AppColors.brand,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -3427,7 +3489,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFFB45309),
+                            color: AppColors.brandDark,
                           ),
                         ),
                         const SizedBox(height: 2),
@@ -3451,7 +3513,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFF59E0B),
+                      backgroundColor: AppColors.brand,
                       foregroundColor: Colors.white,
                       elevation: 0,
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -3760,25 +3822,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     );
   }
 
-  Widget _buildWebKpiCards(String mtdNetStr, int presentDaysCount, int workingDaysCount) {
+  /// KPI cards, from the same server values as the web staff dashboard.
+  Widget _buildWebKpiCards(String mtdNetStr) {
     String fmtDays(num n) => n == n.roundToDouble() ? n.toInt().toString() : n.toStringAsFixed(1);
-    // Prefer the HRMSbackend monthly summary; fall back to the dashboard stats.
-    final num present = _presentCountMonth ?? presentDaysCount;
-    final num working = _totalPayableDaysMonth ?? workingDaysCount;
-    final num? payable = _payableDaysMonth;
+    // Attendance: today-punch presentDays / totalWorkingDays (web), month summary as fallback.
+    final num present = (_todayAttendance?['presentDays'] as num?) ?? _presentCountMonth ?? 0;
+    final num working = (_todayAttendance?['totalWorkingDays'] as num?) ?? _totalPayableDaysMonth ?? 22;
     final double attendancePct = working > 0
         ? (present / working * 100).clamp(0.0, 100.0).toDouble()
         : 0.0;
-    final String attendanceSubtitle = payable != null
-        ? 'Payable: ${fmtDays(payable)} days'
-        : '${attendancePct.toStringAsFixed(1)}% this month';
-    final dynamic availableLeavesRaw = _stats?['availableLeaves'] ??
-        _stats?['leaveBalance'] ??
-        _stats?['pendingLeaves'] ??
-        _stats?['attendanceSummary']?['availableBalance'];
-    final int availableLeave = availableLeavesRaw is num
-        ? availableLeavesRaw.toInt().clamp(0, 999)
-        : 1;
+    final String attendanceSubtitle = '${attendancePct.toStringAsFixed(0)}% attendance this month';
+    // Available leave across the leave types (web); '--' until loaded - never a made-up number.
+    final String availableLeave =
+        _availableLeaveBalance == null ? '--' : fmtDays(_availableLeaveBalance!);
 
     return Column(
       children: [
@@ -3816,7 +3872,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               child: _buildWebKpiItem(
                 title: 'PENDING LEAVES',
                 icon: Icons.calendar_today_outlined,
-                value: '$availableLeave',
+                value: availableLeave,
                 subtitle: 'Available balance',
                 onTap: () => widget.onNavigate?.call(1, subTabIndex: 0),
               ),
@@ -3827,10 +3883,25 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 title: 'MY TASKS',
                 icon: Icons.checklist_rtl_rounded,
                 value: '$_assignedTasksCount',
-                subtitle: 'Total assigned tasks',
+                subtitle: 'Assigned for today',
                 onTap: _showAllAssignedTasksModal,
               ),
             ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _buildWebKpiItem(
+                title: "TODAY'S CELEBRATIONS",
+                icon: Icons.celebration_outlined,
+                value: '${_todayCelebrations.length}',
+                subtitle: _todayCelebrations.isEmpty ? 'No celebrations today' : 'Birthdays & anniversaries',
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(child: SizedBox.shrink()),
           ],
         ),
       ],
@@ -3881,7 +3952,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       color: const Color(0xFFFEF3C7),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Icon(icon, size: 13, color: const Color(0xFFD97706)),
+                    child: Icon(icon, size: 13, color: AppColors.brandDark),
                   ),
                 ],
               ),
@@ -3935,7 +4006,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF59E0B),
+                        color: AppColors.brand,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Column(
@@ -3963,12 +4034,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           if (_recentLeaves.isNotEmpty)
                             ...(_recentLeaves.take(2).map((l) {
                               final m = l is Map ? l : <String, dynamic>{};
-                              final title = m['leaveType']?.toString() ?? 'Leave';
+                              // HRMSbackend leave requests carry `leaveTypeName` (as on web).
+                              final title = (m['leaveTypeName'] ?? m['leaveType'] ?? 'Leave').toString();
                               final status = m['status']?.toString() ?? '';
+                              final start = DateTime.tryParse(m['startDate']?.toString() ?? '')?.toLocal();
+                              final when = start != null ? ' · ${DateFormat('d MMM').format(start)}' : '';
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 4),
                                 child: Text(
-                                  '• $title ($status)',
+                                  '• $title$when ($status)',
                                   style: const TextStyle(fontSize: 10.5, color: Colors.white),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -4009,7 +4083,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                         children: [
                           Row(
                             children: const [
-                              Icon(Icons.cake_outlined, color: Color(0xFFF59E0B), size: 15),
+                              Icon(Icons.cake_outlined, color: AppColors.brand, size: 15),
                               SizedBox(width: 6),
                               Expanded(
                                 child: Text(
@@ -4017,7 +4091,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFFF59E0B),
+                                    color: AppColors.brand,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -4092,7 +4166,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                         children: [
                           Row(
                             children: const [
-                              Icon(Icons.campaign_outlined, color: Color(0xFFF59E0B), size: 15),
+                              Icon(Icons.campaign_outlined, color: AppColors.brand, size: 15),
                               SizedBox(width: 6),
                               Expanded(
                                 child: Text(
@@ -4100,7 +4174,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFFF59E0B),
+                                    color: AppColors.brand,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -4157,7 +4231,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                         children: [
                           Row(
                             children: const [
-                              Icon(Icons.checklist_rounded, color: Color(0xFFF59E0B), size: 15),
+                              Icon(Icons.checklist_rounded, color: AppColors.brand, size: 15),
                               SizedBox(width: 6),
                               Expanded(
                                 child: Text(
@@ -4165,7 +4239,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFFF59E0B),
+                                    color: AppColors.brand,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -4190,7 +4264,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             const Padding(
                               padding: EdgeInsets.symmetric(vertical: 4),
                               child: Text(
-                                'No tasks assigned',
+                                'No tasks today',
                                 style: TextStyle(fontSize: 11, color: Colors.white54),
                               ),
                             ),
@@ -4200,7 +4274,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             children: [
                               Flexible(
                                 child: Text(
-                                  '${_tasks.length} tasks',
+                                  '${_tasks.length} task${_tasks.length == 1 ? '' : 's'} today',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(fontSize: 9.5, color: Colors.white54),
@@ -4211,7 +4285,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   'Show More',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 10.5, color: Color(0xFFF59E0B), fontWeight: FontWeight.w700),
+                                  style: TextStyle(fontSize: 10.5, color: AppColors.brand, fontWeight: FontWeight.w700),
                                 ),
                               ),
                             ],
@@ -4273,7 +4347,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           Icon(Icons.checklist_rounded, color: Color(0xFFEFAA1F), size: 22),
                           SizedBox(width: 10),
                           Text(
-                            'All Assigned Tasks',
+                            "Today's Tasks",
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w800,
@@ -4299,7 +4373,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16, vertical: 32),
                     child: Text(
-                      'No tasks assigned to you.',
+                      'No tasks for today.',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
@@ -4397,9 +4471,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final gross = _overallMonthlyGrossSalary > 0
         ? '₹ ${formatter.format(_overallMonthlyGrossSalary)}'
         : '--';
+    // Straight from the assigned salary structure (as on web) - no app-side estimate.
     final net = _overallMonthlyNetSalary > 0
         ? '₹ ${formatter.format(_overallMonthlyNetSalary)}'
-        : (_calculatedMonthSalary > 0 ? '₹ ${formatter.format(_calculatedMonthSalary)}' : '--');
+        : '--';
     final ctc = _totalCTC > 0
         ? '₹ ${formatter.format(_totalCTC)}'
         : '--';
@@ -4422,7 +4497,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   color: const Color(0xFFFEF3C7),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.currency_rupee_rounded, size: 16, color: Color(0xFFD97706)),
+                child: const Icon(Icons.currency_rupee_rounded, size: 16, color: AppColors.brandDark),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -4440,24 +4515,33 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: _buildSalaryItemBox('Gross', gross),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildSalaryItemBox('Net', net),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildSalaryItemBox('CTC', ctc),
-                ),
-              ],
+          if (!_hasSalaryStructure)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'No salary structure assigned yet',
+                style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
+              ),
+            )
+          else
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: _buildSalaryItemBox('Gross', gross),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildSalaryItemBox('Net', net),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildSalaryItemBox('CTC', ctc),
+                  ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -4476,7 +4560,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         children: [
           Container(
             width: 3.5,
-            color: const Color(0xFFF59E0B),
+            color: AppColors.brand,
           ),
           Expanded(
             child: Padding(
@@ -4688,7 +4772,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               const Icon(
                 Icons.celebration,
                 size: 20,
-                color: Color(0xFFFFC107), // gold
+                color: AppColors.brand, // gold
               ),
               const SizedBox(width: 6),
               const Text(
@@ -6139,7 +6223,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
     final statusColorFg = _todayAttendance != null
         ? (_todayAttendance?['status'] == 'Pending'
-              ? Colors.orange
+              ? AppColors.brand
               : (_todayAttendance?['status'] == 'Rejected' ||
                         _todayAttendance?['status'] == 'Absent'
                     ? Colors.red
@@ -7685,7 +7769,7 @@ class _LiveWorkClockState extends State<_LiveWorkClock>
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: widget.onBreak && _running
-                        ? const Color(0xFFD97706)
+                        ? AppColors.brandDark
                         : const Color(0xFF64748B),
                   ),
                 ),

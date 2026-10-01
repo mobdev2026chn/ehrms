@@ -299,7 +299,7 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: paymentRoute == 'Immediate' ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0)),
                           ),
-                          child: Text('Immediate Transfer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: paymentRoute == 'Immediate' ? const Color(0xFFD97706) : const Color(0xFF64748B))),
+                          child: Text('Immediate Transfer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: paymentRoute == 'Immediate' ? AppColors.brandDark : const Color(0xFF64748B))),
                         ),
                       ),
                     ),
@@ -874,7 +874,7 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
                         style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: r.paymentRoute == 'Payroll' ? const Color(0xFF2563EB) : const Color(0xFF16A34A)),
                       ),
                       if (r.approvedBy.isNotEmpty)
-                        Text(isRejected ? 'Rejected: ${r.remarks}' : 'Approved by: ${r.approvedBy}', style: const TextStyle(fontSize: 9.5, color: Color(0xFFD97706), fontWeight: FontWeight.w700)),
+                        Text(isRejected ? 'Rejected: ${r.remarks}' : 'Approved by: ${r.approvedBy}', style: const TextStyle(fontSize: 9.5, color: AppColors.brandDark, fontWeight: FontWeight.w700)),
                     ],
                   ),
                 ],

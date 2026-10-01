@@ -275,7 +275,7 @@ class _AdminCandidateScorecardScreenState extends State<AdminCandidateScorecardS
                   runSpacing: 8,
                   children: [
                     _decisionBtn('Pass Round', 'Pass', Icons.check_circle_outline_rounded, const Color(0xFF16A34A)),
-                    _decisionBtn('Hold Candidate', 'Hold', Icons.pause_circle_outline_rounded, const Color(0xFFD97706)),
+                    _decisionBtn('Hold Candidate', 'Hold', Icons.pause_circle_outline_rounded, AppColors.brandDark),
                     _decisionBtn('Reject Candidate', 'Reject', Icons.cancel_outlined, const Color(0xFFDC2626)),
                     _decisionBtn('Schedule Next', 'Schedule', Icons.calendar_today_outlined, const Color(0xFF2563EB)),
                     _decisionBtn('Selected', 'Selected', Icons.verified_rounded, const Color(0xFF059669)),
@@ -343,7 +343,7 @@ class _AdminCandidateScorecardScreenState extends State<AdminCandidateScorecardS
                 color: isPass
                     ? const Color(0xFF16A34A)
                     : isAmber
-                        ? const Color(0xFFD97706)
+                        ? AppColors.brandDark
                         : const Color(0xFF0F172A),
               ),
             ),
@@ -417,7 +417,7 @@ class _AdminCandidateScorecardScreenState extends State<AdminCandidateScorecardS
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('EXPECTED SCENARIO ANSWER:', style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: Color(0xFFD97706))),
+              const Text('EXPECTED SCENARIO ANSWER:', style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: AppColors.brandDark)),
               const SizedBox(height: 2),
               Text(expected, style: const TextStyle(fontSize: 10.5, color: Color(0xFF78350F))),
             ],

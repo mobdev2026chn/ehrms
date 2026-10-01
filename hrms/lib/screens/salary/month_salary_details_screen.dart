@@ -383,14 +383,14 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
               _buildStatChip('Half Day: $halfDays', Colors.blue),
               _buildStatChip(
                 'Leave: ${_formatDayChip(leaveDays)}',
-                Colors.orange,
+                AppColors.brand,
               ),
               _buildStatChip(
                 'Absent: ${_formatDayChip(absentDays)}',
                 Colors.red,
               ),
               if (pendingDays > 0)
-                _buildStatChip('Pending: $pendingDays', Colors.orange),
+                _buildStatChip('Pending: $pendingDays', AppColors.brand),
             ],
           ),
           if (leaveDays > 0) ...[
@@ -760,14 +760,14 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
         salaryForDay = 0;
         fineAmount = 0;
       } else if (recordStatus == 'pending') {
-        statusColor = Colors.orange;
+        statusColor = AppColors.brand;
         statusIcon = Icons.pending;
         salaryForDay = 0;
         fineAmount = 0;
       }
     } else if (isHoliday) {
       status = 'Holiday';
-      statusColor = Colors.orange;
+      statusColor = AppColors.brand;
       statusIcon = Icons.celebration;
     } else if (isWeekOff) {
       status = 'Week Off';

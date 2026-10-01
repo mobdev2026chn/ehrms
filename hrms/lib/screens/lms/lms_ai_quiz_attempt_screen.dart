@@ -344,7 +344,7 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
             Icon(
               Icons.emoji_events,
               size: 64,
-              color: passed ? Colors.amber : Colors.grey,
+              color: passed ? AppColors.brand : Colors.grey,
             ),
             const SizedBox(height: 16),
             const Text(
@@ -368,7 +368,7 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
                 _resultCard(
                   'Proficiency',
                   '$percentage%',
-                  passed ? Colors.green : Colors.orange,
+                  passed ? Colors.green : AppColors.brand,
                 ),
                 const SizedBox(width: 16),
                 _resultCard('Score', '$score/$totalPoints', AppColors.primary),

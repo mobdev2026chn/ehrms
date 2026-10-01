@@ -638,9 +638,9 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
                       value: 'notice',
                       child: Row(
                         children: const [
-                          Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFD97706)),
+                          Icon(Icons.warning_amber_rounded, size: 14, color: AppColors.brandDark),
                           SizedBox(width: 6),
-                          Text('Please generate payroll', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFFD97706))),
+                          Text('Please generate payroll', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.brandDark)),
                         ],
                       ),
                     ),
@@ -691,7 +691,7 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       if (r.approvedBy != '—')
-                        Text('Approved By: ${r.approvedBy}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFD97706))),
+                        Text('Approved By: ${r.approvedBy}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.brandDark)),
                       if (r.remarks != '—')
                         Expanded(
                           child: Text(

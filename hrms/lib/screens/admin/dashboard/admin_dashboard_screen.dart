@@ -28,23 +28,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   String _attendancePeriod = 'Today'; // 'Today' | '7 Days'
   String _selectedChartDept = 'All Departments';
 
-  // Analytics State
-  int _totalStaff = 19;
-  int _activeStaff = 17;
-  int _inactiveStaff = 2;
-  int _recentOnboardings = 9;
+  // Analytics State. Start at zero - these used to start at sample numbers (19 staff,
+  // 35 fines, …), which showed until the real data loaded, or for good if it failed.
+  int _totalStaff = 0;
+  int _activeStaff = 0;
+  int _inactiveStaff = 0;
+  int _recentOnboardings = 0;
 
   // Attendance stats for Today
-  int _todayPresent = 4;
-  int _todayLate = 1;
+  int _todayPresent = 0;
+  int _todayLate = 0;
   int _todayAbsent = 0;
-  int _todayPending = 12;
+  int _todayPending = 0;
 
   // Attendance stats for 7 Days
-  int _weekPresent = 31;
-  int _weekLate = 17;
+  int _weekPresent = 0;
+  int _weekLate = 0;
   int _weekAbsent = 0;
-  int _weekPending = 84;
+  int _weekPending = 0;
 
   int get _presentCount => _attendancePeriod == 'Today' ? _todayPresent : _weekPresent;
   int get _lateCount => _attendancePeriod == 'Today' ? _todayLate : _weekLate;
@@ -52,12 +53,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int get _pendingAttendanceCount => _attendancePeriod == 'Today' ? _todayPending : _weekPending;
 
   // Approvals stats
-  int _pendingPunchCount = 9;
-  int _leaveRequestsCount = 4;
+  int _pendingPunchCount = 0;
+  int _leaveRequestsCount = 0;
   int _permissionRequestsCount = 0;
-  int _fineApprovalsCount = 35;
-  int _reimbursementCount = 3;
-  int _payslipRequestsCount = 9;
+  int _fineApprovalsCount = 0;
+  int _reimbursementCount = 0;
+  int _payslipRequestsCount = 0;
 
   int get _totalPendingActions =>
       _pendingPunchCount +
@@ -72,11 +73,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   List<Map<String, dynamic>> _upcomingAnniversaries = [];
 
   // Department counts
-  Map<String, int> _deptCounts = {
-    'Engineering': 9,
-    'IT': 7,
-    'Design': 1,
-  };
+  Map<String, int> _deptCounts = {};
 
   /// Unread admin notifications for the bell (server `meta.unread`, as on web).
   int _unreadNotifications = 0;
@@ -264,7 +261,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFFD97706),
+                  color: AppColors.brandDark,
                   letterSpacing: 0.6,
                 ),
               ),
@@ -315,7 +312,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           color: const Color(0xFFFEF3C7),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.auto_awesome_mosaic_rounded, color: Color(0xFFD97706), size: 20),
+                        child: const Icon(Icons.auto_awesome_mosaic_rounded, color: AppColors.brandDark, size: 20),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -376,7 +373,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(
-                          colors: [Color(0xFFEFAA1F), Color(0xFFD97706)],
+                          colors: [Color(0xFFEFAA1F), AppColors.brandDark],
                         ),
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: const [
@@ -433,7 +430,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.people_outline_rounded, size: 18, color: Color(0xFFD97706)),
+                  const Icon(Icons.people_outline_rounded, size: 18, color: AppColors.brandDark),
                   const SizedBox(width: 8),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -485,7 +482,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   'Late',
                   '$_lateCount',
                   Icons.schedule_rounded,
-                  const Color(0xFFF59E0B),
+                  AppColors.brand,
                   () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminAttendanceScreen(initialFilter: 'Late'))),
                 ),
               ),
@@ -605,7 +602,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Flexible(
                 child: Row(
                   children: const [
-                    Icon(Icons.assignment_turned_in_outlined, size: 18, color: Color(0xFFD97706)),
+                    Icon(Icons.assignment_turned_in_outlined, size: 18, color: AppColors.brandDark),
                     SizedBox(width: 8),
                     Flexible(
                       child: Text(
@@ -628,7 +625,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
                 child: Text(
                   '$_totalPendingActions actions needed',
-                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFFD97706)),
+                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: AppColors.brandDark),
                 ),
               ),
             ],
@@ -653,7 +650,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.fingerprint_rounded, size: 20, color: Color(0xFFD97706)),
+                  const Icon(Icons.fingerprint_rounded, size: 20, color: AppColors.brandDark),
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Text(
@@ -663,10 +660,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ),
                   Text(
                     '$_pendingPunchCount',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFFD97706)),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppColors.brandDark),
                   ),
                   const SizedBox(width: 6),
-                  const Icon(Icons.chevron_right_rounded, size: 18, color: Color(0xFFD97706)),
+                  const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.brandDark),
                 ],
               ),
             ),
@@ -785,7 +782,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               children: [
                 Row(
                   children: const [
-                    Icon(Icons.cake_outlined, size: 16, color: Color(0xFFD97706)),
+                    Icon(Icons.cake_outlined, size: 16, color: AppColors.brandDark),
                     SizedBox(width: 6),
                     Expanded(
                       child: Text(
@@ -831,7 +828,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: isToday ? const Color(0xFFD97706) : const Color(0xFFE2E8F0),
+                                  color: isToday ? AppColors.brandDark : const Color(0xFFE2E8F0),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
@@ -879,7 +876,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               children: [
                 Row(
                   children: const [
-                    Icon(Icons.military_tech_outlined, size: 16, color: Color(0xFFD97706)),
+                    Icon(Icons.military_tech_outlined, size: 16, color: AppColors.brandDark),
                     SizedBox(width: 6),
                     Expanded(
                       child: Text(
@@ -921,7 +918,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           ),
                           Text(
                             '${a['years']} Year(s) — ${a['date']}',
-                            style: const TextStyle(fontSize: 10, color: Color(0xFFD97706), fontWeight: FontWeight.w700),
+                            style: const TextStyle(fontSize: 10, color: AppColors.brandDark, fontWeight: FontWeight.w700),
                           ),
                         ],
                       ),
@@ -966,7 +963,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       color: const Color(0xFFFEF3C7),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.people_alt_outlined, color: Color(0xFFD97706), size: 20),
+                    child: const Icon(Icons.people_alt_outlined, color: AppColors.brandDark, size: 20),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -1083,7 +1080,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     Container(
                       padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(6)),
-                      child: const Icon(Icons.domain_rounded, size: 16, color: Color(0xFFD97706)),
+                      child: const Icon(Icons.domain_rounded, size: 16, color: AppColors.brandDark),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -1171,7 +1168,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
-                          color: isSelected ? const Color(0xFFD97706) : const Color(0xFF94A3B8),
+                          color: isSelected ? AppColors.brandDark : const Color(0xFF94A3B8),
                         ),
                       ),
                       const SizedBox(height: 4),

@@ -609,7 +609,7 @@ class _AdminSelectedRejectedScreenState extends State<AdminSelectedRejectedScree
 
   Widget _buildCandidateCard(AdminDecisionCandidate c) {
     Color stBg = const Color(0xFFFEF3C7);
-    Color stFg = const Color(0xFFD97706);
+    Color stFg = AppColors.brandDark;
     if (c.status == 'OFFERED' || c.status == 'SELECTED') {
       stBg = const Color(0xFFDCFCE7);
       stFg = const Color(0xFF16A34A);

@@ -253,7 +253,7 @@ class _AdminVerificationsScreenState extends State<AdminVerificationsScreen> {
                                   ),
                                   child: Text(
                                     doc.status,
-                                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: isVerified ? const Color(0xFF16A34A) : const Color(0xFFD97706)),
+                                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: isVerified ? const Color(0xFF16A34A) : AppColors.brandDark),
                                   ),
                                 ),
                               ],
@@ -495,7 +495,7 @@ class _AdminVerificationsScreenState extends State<AdminVerificationsScreen> {
                 ),
                 child: Text(
                   isCompleted ? 'COMPLETED' : 'PENDING',
-                  style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: isCompleted ? const Color(0xFF16A34A) : const Color(0xFFD97706)),
+                  style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: isCompleted ? const Color(0xFF16A34A) : AppColors.brandDark),
                 ),
               ),
             ],
@@ -525,7 +525,7 @@ class _AdminVerificationsScreenState extends State<AdminVerificationsScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text('Verification: ${c.verifiedCount}/${c.documents.length} Verified', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
-                    Text('${(progress * 100).toInt()}%', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: isCompleted ? const Color(0xFF16A34A) : const Color(0xFFD97706))),
+                    Text('${(progress * 100).toInt()}%', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: isCompleted ? const Color(0xFF16A34A) : AppColors.brandDark)),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -563,7 +563,7 @@ class _AdminVerificationsScreenState extends State<AdminVerificationsScreen> {
                 label: const Text('Verify Checklist', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFFFFBEB),
-                  foregroundColor: const Color(0xFFD97706),
+                  foregroundColor: AppColors.brandDark,
                   elevation: 0,
                   side: const BorderSide(color: Color(0xFFFDE68A)),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),

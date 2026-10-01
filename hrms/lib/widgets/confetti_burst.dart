@@ -1,3 +1,4 @@
+import 'package:hrms/config/app_colors.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
@@ -21,7 +22,7 @@ class ConfettiBurst extends StatefulWidget {
       Color(0xFF059669), // green
       Color(0xFFFF6F91), // pink
       Color(0xFF2563EB), // blue
-      Color(0xFFF97316), // orange
+      AppColors.brand, // orange
     ],
   });
 

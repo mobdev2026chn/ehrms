@@ -3092,7 +3092,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     switch (status) {
       case 'PENDING':
         displayText = 'Under Review';
-        badgeColor = Colors.orange;
+        badgeColor = AppColors.brand;
         icon = Icons.access_time;
         break;
       case 'COMPLETED':

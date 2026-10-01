@@ -1,3 +1,4 @@
+import 'package:hrms/config/app_colors.dart';
 import 'package:flutter/material.dart';
 
 enum TrackingEventType { punchIn, drive, walk, stop, arrived, trackingStopped }
@@ -43,7 +44,7 @@ class TrackingEvent {
       case TrackingEventType.walk:
         return Colors.green;
       case TrackingEventType.stop:
-        return Colors.orange;
+        return AppColors.brand;
       case TrackingEventType.arrived:
         return Colors.purple;
       case TrackingEventType.trackingStopped:

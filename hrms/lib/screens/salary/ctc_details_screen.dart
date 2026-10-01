@@ -374,7 +374,7 @@ class _Banner extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline, color: Colors.amber.shade800, size: 20),
+              Icon(Icons.info_outline, color: AppColors.brandDark, size: 20),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(

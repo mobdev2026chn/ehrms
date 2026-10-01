@@ -293,7 +293,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.description_outlined, color: Color(0xFFD97706), size: 18),
+                  child: const Icon(Icons.description_outlined, color: AppColors.brandDark, size: 18),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -412,7 +412,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
                 style: TextStyle(
                   fontSize: 9.5,
                   fontWeight: FontWeight.w900,
-                  color: value == 'Approved' ? const Color(0xFF16A34A) : (value == 'Pending' ? const Color(0xFFD97706) : const Color(0xFFDC2626)),
+                  color: value == 'Approved' ? const Color(0xFF16A34A) : (value == 'Pending' ? AppColors.brandDark : const Color(0xFFDC2626)),
                 ),
               ),
             )
@@ -620,7 +620,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
-          labelColor: const Color(0xFFD97706),
+          labelColor: AppColors.brandDark,
           unselectedLabelColor: const Color(0xFF64748B),
           indicatorColor: const Color(0xFFEFAA1F),
           indicatorWeight: 3,
@@ -752,7 +752,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
     final isEarly = r.type == 'Early';
 
     Color typeBg = isLate ? const Color(0xFFFEF3C7) : (isEarly ? const Color(0xFFEFF6FF) : const Color(0xFFF3E8FF));
-    Color typeFg = isLate ? const Color(0xFFD97706) : (isEarly ? const Color(0xFF2563EB) : const Color(0xFF7C3AED));
+    Color typeFg = isLate ? AppColors.brandDark : (isEarly ? const Color(0xFF2563EB) : const Color(0xFF7C3AED));
 
     return InkWell(
       onTap: () => _showPermissionDetailModal(r),
@@ -793,9 +793,9 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(isApproved ? Icons.check_circle_outline_rounded : (isPending ? Icons.schedule_rounded : Icons.cancel_outlined), size: 11, color: isApproved ? const Color(0xFF16A34A) : (isPending ? const Color(0xFFD97706) : const Color(0xFFDC2626))),
+                      Icon(isApproved ? Icons.check_circle_outline_rounded : (isPending ? Icons.schedule_rounded : Icons.cancel_outlined), size: 11, color: isApproved ? const Color(0xFF16A34A) : (isPending ? AppColors.brandDark : const Color(0xFFDC2626))),
                       const SizedBox(width: 4),
-                      Text(r.status, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: isApproved ? const Color(0xFF16A34A) : (isPending ? const Color(0xFFD97706) : const Color(0xFFDC2626)))),
+                      Text(r.status, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: isApproved ? const Color(0xFF16A34A) : (isPending ? AppColors.brandDark : const Color(0xFFDC2626)))),
                     ],
                   ),
                 ),
@@ -874,7 +874,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
               Flexible(
                 child: Row(
                   children: const [
-                    Icon(Icons.calendar_month_outlined, color: Color(0xFFD97706), size: 18),
+                    Icon(Icons.calendar_month_outlined, color: AppColors.brandDark, size: 18),
                     SizedBox(width: 6),
                     Flexible(child: Text('Permission Calendar', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800))),
                   ],
@@ -923,7 +923,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               const Text('Legend:', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-              _legendItem('Late Arrival', const Color(0xFFD97706)),
+              _legendItem('Late Arrival', AppColors.brandDark),
               _legendItem('Early Leaving', const Color(0xFF2563EB)),
               _legendItem('Custom Break', const Color(0xFF7C3AED)),
               _legendItem('Rejected / Cancelled', const Color(0xFFDC2626)),
@@ -982,7 +982,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
                         margin: const EdgeInsets.only(bottom: 1),
                         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
                         decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(2)),
-                        child: Text(p.name, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.w700, color: Color(0xFFD97706)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        child: Text(p.name, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.w700, color: AppColors.brandDark), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     )),
               ],

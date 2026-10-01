@@ -216,9 +216,9 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
               controller: _tabController,
               isScrollable: true,
               tabAlignment: TabAlignment.start,
-              labelColor: const Color(0xFFD97706),
+              labelColor: AppColors.brandDark,
               unselectedLabelColor: const Color(0xFF64748B),
-              indicatorColor: const Color(0xFFD97706),
+              indicatorColor: AppColors.brandDark,
               indicatorWeight: 3,
               labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
               unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
@@ -277,7 +277,7 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
       children: [
         Expanded(child: _summaryBox('Total', '${_summary['total'] ?? 0}', const Color(0xFF64748B))),
         const SizedBox(width: 8),
-        Expanded(child: _summaryBox('Pending', '${_summary['pending'] ?? 0}', const Color(0xFFD97706))),
+        Expanded(child: _summaryBox('Pending', '${_summary['pending'] ?? 0}', AppColors.brandDark)),
         const SizedBox(width: 8),
         Expanded(child: _summaryBox('Approved', '${_summary['approved'] ?? 0}', const Color(0xFF10B981))),
         const SizedBox(width: 8),
@@ -381,7 +381,7 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
       stFg = const Color(0xFFDC2626);
     } else {
       stBg = const Color(0xFFFEF3C7);
-      stFg = const Color(0xFFD97706);
+      stFg = AppColors.brandDark;
     }
 
     return Container(

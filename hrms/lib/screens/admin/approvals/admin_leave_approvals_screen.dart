@@ -311,7 +311,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.description_outlined, color: Color(0xFFD97706), size: 18),
+                  child: const Icon(Icons.description_outlined, color: AppColors.brandDark, size: 18),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -430,7 +430,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                 style: TextStyle(
                   fontSize: 9.5,
                   fontWeight: FontWeight.w900,
-                  color: value == 'Approved' ? const Color(0xFF16A34A) : (value == 'Pending' ? const Color(0xFFD97706) : const Color(0xFFDC2626)),
+                  color: value == 'Approved' ? const Color(0xFF16A34A) : (value == 'Pending' ? AppColors.brandDark : const Color(0xFFDC2626)),
                 ),
               ),
             )
@@ -579,7 +579,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
-          labelColor: const Color(0xFFD97706),
+          labelColor: AppColors.brandDark,
           unselectedLabelColor: const Color(0xFF64748B),
           indicatorColor: const Color(0xFFEFAA1F),
           indicatorWeight: 3,
@@ -762,9 +762,9 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(isApproved ? Icons.check_circle_outline_rounded : Icons.schedule_rounded, size: 11, color: isApproved ? const Color(0xFF16A34A) : const Color(0xFFD97706)),
+                      Icon(isApproved ? Icons.check_circle_outline_rounded : Icons.schedule_rounded, size: 11, color: isApproved ? const Color(0xFF16A34A) : AppColors.brandDark),
                       const SizedBox(width: 4),
-                      Text(r.status, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: isApproved ? const Color(0xFF16A34A) : const Color(0xFFD97706))),
+                      Text(r.status, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: isApproved ? const Color(0xFF16A34A) : AppColors.brandDark)),
                     ],
                   ),
                 ),
@@ -844,7 +844,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
               Flexible(
                 child: Row(
                   children: const [
-                    Icon(Icons.calendar_month_outlined, color: Color(0xFFD97706), size: 18),
+                    Icon(Icons.calendar_month_outlined, color: AppColors.brandDark, size: 18),
                     SizedBox(width: 6),
                     Flexible(child: Text('Leave Calendar', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800))),
                   ],
@@ -907,7 +907,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
               _legendItem('Sick Leave', const Color(0xFF0284C7)),
               _legendItem('Casual Leave', const Color(0xFF16A34A)),
               _legendItem('Medical Leave', const Color(0xFF7C3AED)),
-              _legendItem('Pending Approval', const Color(0xFFD97706)),
+              _legendItem('Pending Approval', AppColors.brandDark),
               _legendItem('Rejected / Cancelled', const Color(0xFFDC2626)),
             ],
           ),
@@ -968,7 +968,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                     '${leavesForDay.length} on leave',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.w800, color: Color(0xFFD97706)),
+                    style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.w800, color: AppColors.brandDark),
                   ),
                 ),
                 const SizedBox(height: 2),

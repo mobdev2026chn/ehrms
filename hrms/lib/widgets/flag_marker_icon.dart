@@ -1,3 +1,4 @@
+import 'package:hrms/config/app_colors.dart';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -55,7 +56,7 @@ Future<({BitmapDescriptor icon, Offset anchor})> plainFlagMarkerIcon(
 
 /// Field In / Field Out dots: blue = in, orange = out.
 const Color kFieldInDotColor = Color(0xFF0284C7);
-const Color kFieldOutDotColor = Color(0xFFEA580C);
+const Color kFieldOutDotColor = AppColors.brandDark;
 
 /// A small white-ringed dot with a short label tag beside it ("F1 in",
 /// "F1 out"). [labelLeft] puts the tag on the dot's left — used for "out" so an
