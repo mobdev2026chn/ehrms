@@ -86,7 +86,8 @@ class RouteSnappingService {
   static List<LatLng> cleanLatLng(List<LatLng> raw) {
     final cleaned = <LatLng>[];
     LatLng? lastKept;
-    for (final p in raw) {
+    for (var i = 0; i < raw.length; i++) {
+      final p = raw[i];
       if (!_isValidCoordinate(p.latitude, p.longitude)) continue;
       if (lastKept != null) {
         final distanceM = gl.Geolocator.distanceBetween(
@@ -96,7 +97,9 @@ class RouteSnappingService {
           p.longitude,
         );
         if (distanceM < _minSeparationMeters) continue;
-        if (distanceM > _maxJumpWithoutTimeMeters) continue;
+        // The last point is the route's end (e.g. a leg's Stop): never drop it as a
+        // glitch, or a long Start → Stop leg would lose its end and not be drawn.
+        if (distanceM > _maxJumpWithoutTimeMeters && i != raw.length - 1) continue;
       }
       cleaned.add(p);
       lastKept = p;
@@ -150,9 +153,19 @@ class RouteSnappingService {
   // (travelledDistanceKm) still snaps, exactly as before.
 
   static const double _denseSpacingMeters = 60;
-  static const String _snapCachePrefix = 'route_snap_v1:';
-  static const String _snapCacheIndex = 'route_snap_v1_index';
+  // v2: gaps are routed along the roads (Directions) instead of drawn straight, so
+  // routes cached by v1 are rebuilt once.
+  static const String _snapCachePrefix = 'route_snap_v2:';
+  static const String _snapCacheIndex = 'route_snap_v2_index';
   static const int _snapCacheMax = 80;
+
+  /// Consecutive points farther apart than this are too sparse for snapToRoads to
+  /// follow the streets (it interpolates only short gaps); the road route between them
+  /// comes from the Directions API instead.
+  static const double _gapMeters = 250;
+
+  /// Directions requests per route at most (each is billed); further gaps stay straight.
+  static const int _maxDirectionsPerRoute = 10;
 
   /// Display route for [raw] tracking points of task [cacheKey].
   static Future<List<LatLng>> buildDisplayRoute(
@@ -174,7 +187,9 @@ class RouteSnappingService {
   ) async {
     if (cleaned.length < 2) return cleaned;
     final spacing = _pathLengthMeters(cleaned) / (cleaned.length - 1);
-    if (spacing <= _denseSpacingMeters) return cleaned;
+    // A dense recording already follows the streets - unless it has a gap somewhere
+    // (tracking paused, few points saved), which would still be drawn straight.
+    if (spacing <= _denseSpacingMeters && !_hasGap(cleaned)) return cleaned;
 
     // Same task + same number of points = same route; reuse the snapped copy.
     final key = '$_snapCachePrefix$cacheKey:${cleaned.length}';
@@ -188,13 +203,17 @@ class RouteSnappingService {
         }).toList();
         if (pts.length >= 2) return pts;
       }
+      // 1) snapToRoads for the parts with nearby points; 2) the road route for every gap
+      //    it could not follow.
       List<LatLng> snapped;
       try {
         snapped = await _snapToRoads(cleaned);
+        if (snapped.length < cleaned.length) snapped = cleaned;
       } catch (_) {
-        return cleaned;
+        snapped = cleaned;
       }
-      if (snapped.length < cleaned.length) return cleaned;
+      snapped = await _routeGaps(snapped);
+      if (snapped.length < 2) return cleaned;
       await prefs.setString(
         key,
         snapped
@@ -269,6 +288,88 @@ class RouteSnappingService {
       );
     }
     return m;
+  }
+
+  static double _metersBetween(LatLng a, LatLng b) =>
+      gl.Geolocator.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude);
+
+  static bool _hasGap(List<LatLng> path) {
+    for (var i = 1; i < path.length; i++) {
+      if (_metersBetween(path[i - 1], path[i]) > _gapMeters) return true;
+    }
+    return false;
+  }
+
+  /// Replaces each straight jump longer than [_gapMeters] with the road route between
+  /// its two ends (Directions API). Any request that fails leaves that gap straight.
+  static Future<List<LatLng>> _routeGaps(List<LatLng> path) async {
+    final key = AppConstants.googleMapsApiKey.trim();
+    if (key.isEmpty || path.length < 2) return path;
+    final out = <LatLng>[path.first];
+    var requests = 0;
+    for (var i = 1; i < path.length; i++) {
+      final a = path[i - 1];
+      final b = path[i];
+      if (_metersBetween(a, b) > _gapMeters && requests < _maxDirectionsPerRoute) {
+        requests++;
+        try {
+          final road = await _directions(a, b, key);
+          // Keep the recorded ends; take the road geometry in between.
+          if (road.length > 2) out.addAll(road.sublist(1, road.length - 1));
+        } catch (e) {
+          if (kDebugMode) debugPrint('[RouteSnapping] directions failed, gap stays straight: $e');
+        }
+      }
+      out.add(b);
+    }
+    return out;
+  }
+
+  /// Driving route geometry from [a] to [b] (Directions API, overview polyline).
+  static Future<List<LatLng>> _directions(LatLng a, LatLng b, String key) async {
+    final uri = Uri.parse(
+      'https://maps.googleapis.com/maps/api/directions/json'
+      '?origin=${a.latitude},${a.longitude}'
+      '&destination=${b.latitude},${b.longitude}'
+      '&mode=driving'
+      '&key=$key',
+    );
+    final response = await http.get(uri).timeout(const Duration(seconds: 12));
+    if (response.statusCode != 200) {
+      throw Exception('Directions HTTP ${response.statusCode}');
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    if (data['status'] != 'OK') throw Exception('Directions ${data['status']}');
+    final routes = data['routes'] as List<dynamic>?;
+    if (routes == null || routes.isEmpty) return const [];
+    final overview = (routes.first as Map)['overview_polyline'];
+    final encoded = overview is Map ? overview['points']?.toString() : null;
+    if (encoded == null || encoded.isEmpty) return const [];
+    return _decodePolyline(encoded);
+  }
+
+  /// Google encoded-polyline decoder.
+  static List<LatLng> _decodePolyline(String encoded) {
+    final points = <LatLng>[];
+    var index = 0, lat = 0, lng = 0;
+    while (index < encoded.length) {
+      for (var coord = 0; coord < 2; coord++) {
+        var shift = 0, result = 0, b = 0;
+        do {
+          b = encoded.codeUnitAt(index++) - 63;
+          result |= (b & 0x1f) << shift;
+          shift += 5;
+        } while (b >= 0x20 && index < encoded.length);
+        final delta = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+        if (coord == 0) {
+          lat += delta;
+        } else {
+          lng += delta;
+        }
+      }
+      points.add(LatLng(lat / 1e5, lng / 1e5));
+    }
+    return points;
   }
 
   static Future<List<LatLng>> _snapToRoads(List<LatLng> points) async {

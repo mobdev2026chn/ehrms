@@ -3,6 +3,56 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+/// Plain flag (no circle behind it): the flag glyph in [color] with a thin white
+/// outline so it stays readable on the map. Returns the icon and the anchor at
+/// the foot of the flag pole, so the pole stands on the map point.
+/// Punch In = green, Punch Out = red.
+Future<({BitmapDescriptor icon, Offset anchor})> plainFlagMarkerIcon(
+  BuildContext context,
+  Color color, {
+  double size = 30,
+}) async {
+  final dpr = MediaQuery.of(context).devicePixelRatio;
+  const icon = Icons.flag_rounded;
+  TextPainter paint(Paint? fg, Color? c) => TextPainter(
+        text: TextSpan(
+          text: String.fromCharCode(icon.codePoint),
+          style: TextStyle(
+            fontSize: size * dpr,
+            fontFamily: icon.fontFamily,
+            package: icon.fontPackage,
+            foreground: fg,
+            color: fg == null ? c : null,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+  final outline = paint(
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3 * dpr
+      ..strokeJoin = StrokeJoin.round
+      ..color = Colors.white,
+    null,
+  );
+  final fill = paint(null, color);
+  final pad = 2 * dpr;
+  final w = fill.width + pad * 2;
+  final h = fill.height + pad * 2;
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  outline.paint(canvas, Offset(pad, pad));
+  fill.paint(canvas, Offset(pad, pad));
+  final img = await recorder.endRecording().toImage(w.ceil(), h.ceil());
+  final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+  return (
+    icon: BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), imagePixelRatio: dpr),
+    // Material "flag": pole at ~21% of the width, foot at ~88% of the height.
+    anchor: const Offset(0.24, 0.86),
+  );
+}
+
 /// Field In / Field Out dots: blue = in, orange = out.
 const Color kFieldInDotColor = Color(0xFF0284C7);
 const Color kFieldOutDotColor = Color(0xFFEA580C);

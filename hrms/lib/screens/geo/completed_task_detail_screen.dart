@@ -187,7 +187,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       setState(() => _leg = taskLeg);
       unawaited(_loadVisitDots(taskLeg.visitNo));
 
-      if (path.length >= 3) {
+      // Even a bare Start → Stop leg is drawn along the roads (Directions fills the gap).
+      if (path.length >= 2) {
         final snapped = await RouteSnappingService.buildDisplayRouteFromLatLng('task-leg-$taskMongoId', path);
         if (!mounted || snapped.length < 2) return;
         setState(() {

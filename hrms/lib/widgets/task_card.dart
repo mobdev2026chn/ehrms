@@ -83,6 +83,14 @@ class TaskCard extends StatelessWidget {
         statusColor = Colors.grey;
         statusText = 'Ready';
         break;
+      case TaskStatus.requested:
+        statusColor = Colors.orange;
+        statusText = 'Requested';
+        break;
+      // Any status added later must not break the build (switch must be exhaustive).
+      default:
+        statusColor = Colors.grey;
+        statusText = task.status.name;
     }
 
     bool isTaskActionable =

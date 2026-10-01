@@ -103,14 +103,19 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
 
   Timer? _refresh;
 
+  /// Latest saved position today and its time (server `lastPoint`) - shown as the live
+  /// "last location" marker while still punched in.
+  (LatLng, DateTime)? _lastPoint;
+
   @override
   void initState() {
     super.initState();
     final d = widget.initialDay ?? DateTime.now();
     _day = DateTime(d.year, d.month, d.day);
     _load();
-    // Today, still punched in: keep the route current without resetting the map.
-    _refresh = Timer.periodic(const Duration(seconds: 60), (_) {
+    // Today, still punched in: keep the route current without resetting the map
+    // (every 30 s - the phone saves a point at most every 30 s).
+    _refresh = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted && !_loading && _isToday && !_punchedOut) _load(silent: true);
     });
   }
@@ -245,6 +250,10 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         _totalKm = (data['totalKm'] as num?)?.toDouble();
         _trailKm = (data['trailKm'] as num?)?.toDouble();
         _punchedOut = flags.any((f) => f.type == 'punch_out');
+        final lp = data['lastPoint'];
+        _lastPoint = (lp is Map && lp['lat'] is num && lp['lng'] is num)
+            ? (LatLng((lp['lat'] as num).toDouble(), (lp['lng'] as num).toDouble()), _parseAt(lp['t']))
+            : null;
         _flags = flags;
         _legs = legs;
         final segs = _buildSegments(flags, legs, trailT);
@@ -297,14 +306,16 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     }
   }
 
-  /// Distinct leg colours so L1, L2, … are easy to tell apart on the map.
+  /// Distinct leg colours so L1, L2, … are easy to tell apart on the map —
+  /// chosen to never clash with the green/red Punch flags or the blue/orange
+  /// Field In/Out dots.
   static const List<Color> _legPalette = [
-    Color(0xFF2E7D32), // green
-    Color(0xFF1565C0), // blue
-    Color(0xFF6A1B9A), // purple
-    Color(0xFFEF6C00), // orange
-    Color(0xFF00838F), // teal
-    Color(0xFFC2185B), // pink
+    Color(0xFF7C3AED), // violet
+    Color(0xFF0D9488), // teal
+    Color(0xFFDB2777), // pink
+    Color(0xFFB45309), // amber / brown
+    Color(0xFF4F46E5), // indigo
+    Color(0xFF0891B2), // cyan
   ];
 
   /// When the growing last piece was last snapped (throttles Roads API calls).
@@ -391,17 +402,21 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           _icons[key] = dot.icon;
           _dotAnchors[key] = dot.anchor;
         } else {
-          _icons[key] = await flagMarkerIcon(context, _flagColor(f.type));
+          // Punch In / Punch Out: plain green / red flag, pole standing on the point.
+          final flag = await plainFlagMarkerIcon(context, _flagColor(f.type));
+          _icons[key] = flag.icon;
+          _dotAnchors[key] = flag.anchor;
         }
       } catch (_) {}
     }
     if (mounted) setState(() {});
 
     for (final s in segs) {
-      if (s.points.length < 3) continue; // 2 points = nothing to snap
+      // Even a 2-point piece is drawn along the roads (the gap is routed, not straight).
+      if (s.points.length < 2) continue;
       if (s.display.length >= 2) {
-        // Already snapped; the growing piece is re-snapped at most every 5 min.
-        final due = _openSnapAt == null || DateTime.now().difference(_openSnapAt!) >= const Duration(minutes: 5);
+        // Already snapped; the growing piece is re-snapped at most every 2 min.
+        final due = _openSnapAt == null || DateTime.now().difference(_openSnapAt!) >= const Duration(minutes: 2);
         if (!s.provisional || !due) continue;
       }
       if (s.provisional || (!_punchedOut && identical(s, segs.last))) _openSnapAt = DateTime.now();
@@ -463,6 +478,18 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
               ),
               zIndexInt: _isVisit(f) ? 2 : 3, // flags above dots
             ),
+        // Live: where the staff member is now (today, still punched in).
+        if (_lastPoint != null && _isToday && !_punchedOut)
+          Marker(
+            markerId: const MarkerId('last-location'),
+            position: _lastPoint!.$1,
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+            infoWindow: InfoWindow(
+              title: 'Last location',
+              snippet: DateFormat('hh:mm a').format(_lastPoint!.$2),
+            ),
+            zIndexInt: 4,
+          ),
       };
 
   /// One continuous route: the pieces in order, each in its leg colour (grey
@@ -824,7 +851,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     final title = switch (f.type) {
       'punch_in' => 'Punch In',
       'punch_out' => 'Punch Out',
-      _ => '${f.code} · ${f.title.replaceFirst('Field In · ', '')}',
+      _ => '${f.code} in · ${f.title.replaceFirst('Field In · ', '')}',
     };
     return InkWell(
       onTap: f.pos == null ? null : () => _map?.animateCamera(CameraUpdate.newLatLngZoom(f.pos!, 16)),
@@ -836,16 +863,24 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
               width: 36,
               child: Column(
                 children: [
-                  Container(
+                  // Punch In / Out: plain green / red flag. Field In: blue dot.
+                  SizedBox(
                     width: 30,
                     height: 30,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 4)],
+                    child: Center(
+                      child: f.type == 'field_in'
+                          ? Container(
+                              width: 14,
+                              height: 14,
+                              decoration: BoxDecoration(
+                                color: kFieldInDotColor,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2.5),
+                                boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3)],
+                              ),
+                            )
+                          : Icon(Icons.flag_rounded, size: 26, color: color),
                     ),
-                    child: const Icon(Icons.flag_rounded, size: 16, color: Colors.white),
                   ),
                   if (!isLast)
                     Expanded(child: Container(width: 2, color: const Color(0xFFE2E8F0))),
