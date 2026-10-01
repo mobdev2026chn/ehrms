@@ -148,7 +148,8 @@ class _AppDrawerState extends State<AppDrawer> {
   }
 
   Future<void> _logout(BuildContext context) async {
-    await PresenceTrackingService().stopTracking();
+    // Logout: unsent points must not upload later under someone else's login.
+    await PresenceTrackingService().stopTracking(discardOfflineQueue: true);
     await AuthService().logout();
     if (!context.mounted) return;
     context.read<AuthBloc>().add(const AuthLogoutRequested());

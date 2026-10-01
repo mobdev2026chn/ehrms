@@ -352,8 +352,9 @@ class AuthService {
     _api.clearAuthToken();
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
-    // Day (presence) tracking belongs to this user too: stop it now, not at the next tick.
-    await PresenceTrackingService().stopTracking();
+    // Day (presence) tracking belongs to this user too: stop it now, not at the next tick,
+    // and drop unsent points so they never upload under the next login.
+    await PresenceTrackingService().stopTracking(discardOfflineQueue: true);
     await FcmService.clearStoredNotifications();
     await prefs.remove('token');
     await prefs.remove(AppConstants.refreshTokenPrefsKey);
@@ -772,8 +773,9 @@ class AuthService {
     SwrCache.clearAll();
     await AttendanceTemplateStore.clear();
     await LiveTrackingService().stopTracking();
-    // Day (presence) tracking belongs to this user too: stop it now, not at the next tick.
-    await PresenceTrackingService().stopTracking();
+    // Day (presence) tracking belongs to this user too: stop it now, not at the next tick,
+    // and drop unsent points so they never upload under the next login.
+    await PresenceTrackingService().stopTracking(discardOfflineQueue: true);
     await FcmService.clearStoredNotifications();
     invalidateProfileCache();
     await prefs.clear();

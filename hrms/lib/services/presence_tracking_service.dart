@@ -18,12 +18,14 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:background_location_tracker/background_location_tracker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart' as gl;
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'package:hrms/config/constants.dart';
@@ -70,7 +72,15 @@ const String _kPresenceConsecutiveLowSpeed = 'presence_consecutive_low_speed';
 /// JSON: { id, latitude, longitude, radius } — sub-zone from branch.geofence.locations hit at check-in.
 const String _kPresencePinnedGeofenceLocation =
     'presence_pinned_geofence_location_json';
-const int _maxPendingPresence = 80;
+/// Offline presence points kept on the phone. Stationary points are not queued, so this
+/// covers well over a working day of real movement; beyond it the oldest are dropped.
+const int _maxPendingPresence = 3000;
+
+/// A queued point must be this far from the last queued one (same movement) to be kept.
+const double _minQueueMoveM = 15;
+
+/// Offline points are replayed in requests of this many.
+const int _flushBatchSize = 200;
 
 enum _PresenceSendResult { sent, skipped, failed }
 
@@ -324,7 +334,9 @@ class PresenceTrackingService {
     return fresh;
   }
 
-  Future<void> clearTrackingAllowed() async {
+  /// [discardOfflineQueue]: also delete points not yet uploaded. Only on logout - after a
+  /// punch-out they are still this user's shift and upload when the app is next online.
+  Future<void> clearTrackingAllowed({bool discardOfflineQueue = false}) async {
     final prefs = await SharedPreferences.getInstance();
     await TrackingOutlierFilterService.clearScope(
       TrackingOutlierFilterService.presenceScope,
@@ -332,7 +344,7 @@ class PresenceTrackingService {
     await prefs.remove(_kPresenceTrackingDate);
     await prefs.remove(_kPresenceBackgroundEnabled);
     await prefs.remove(_kPresenceAppLifecycleState);
-    await prefs.remove(_kPresencePendingQueue);
+    if (discardOfflineQueue) await _savePendingQueue(const []);
     await prefs.remove(_kPresenceLastSentLat);
     await prefs.remove(_kPresenceLastSentLng);
     await prefs.remove(_kPresenceLastSentTime);
@@ -1344,9 +1356,24 @@ class PresenceTrackingService {
     }
   }
 
+  /// Offline points live in a file, not SharedPreferences: the queue can hold a full day
+  /// (thousands of rows), and the background isolate and the app both read/write it.
+  static Future<File> _pendingQueueFile() async {
+    final dir = await getApplicationSupportDirectory();
+    return File('${dir.path}/$_kPresencePendingQueue.json');
+  }
+
   Future<List<Map<String, dynamic>>> _loadPendingQueue() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_kPresencePendingQueue);
+    String? raw;
+    try {
+      final file = await _pendingQueueFile();
+      if (await file.exists()) raw = await file.readAsString();
+    } catch (_) {}
+    if (raw == null) {
+      // Rows queued by an older build, before the file existed.
+      final prefs = await SharedPreferences.getInstance();
+      raw = prefs.getString(_kPresencePendingQueue);
+    }
     if (raw == null || raw.isEmpty) return [];
     try {
       final decoded = jsonDecode(raw);
@@ -1369,10 +1396,19 @@ class PresenceTrackingService {
 
   Future<void> _savePendingQueue(List<Map<String, dynamic>> list) async {
     final prefs = await SharedPreferences.getInstance();
-    if (list.isEmpty) {
-      await prefs.remove(_kPresencePendingQueue);
-    } else {
-      await prefs.setString(_kPresencePendingQueue, jsonEncode(list));
+    await prefs.remove(_kPresencePendingQueue); // migrated to the file
+    try {
+      final file = await _pendingQueueFile();
+      if (list.isEmpty) {
+        if (await file.exists()) await file.delete();
+        return;
+      }
+      // Write-then-rename, so a kill mid-write never leaves a half-written queue.
+      final tmp = File('${file.path}.tmp');
+      await tmp.writeAsString(jsonEncode(list), flush: true);
+      await tmp.rename(file.path);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[PresenceTracking] save offline queue failed: $e');
     }
   }
 
@@ -1394,6 +1430,20 @@ class PresenceTrackingService {
   }) async {
     var list = await _loadPendingQueue();
     final queueBefore = list.length;
+    // Standing still adds nothing new: skip a point within _minQueueMoveM of the last queued
+    // one with the same movement (the server would not save it either). A status change is
+    // always kept, so idle start/end survive offline.
+    if (list.isNotEmpty) {
+      final last = list.last;
+      final lastLat = (last['lat'] as num?)?.toDouble();
+      final lastLng = (last['lng'] as num?)?.toDouble();
+      if (lastLat != null &&
+          lastLng != null &&
+          last['movementType'] == movementType &&
+          gl.Geolocator.distanceBetween(lastLat, lastLng, lat, lng) < _minQueueMoveM) {
+        return;
+      }
+    }
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
         '[Trackings] presence_offline local_insert_prepare '
@@ -1435,12 +1485,16 @@ class PresenceTrackingService {
   }
 
   /// Replay locally stored periodic presence points (e.g. after offline). Call on app resume.
+  /// Not gated on being punched in: points from a shift that ended while offline still
+  /// belong to it - the server accepts each one by its own time (inside the shift).
   Future<void> flushPendingPresenceQueue() async {
     if (_taskInProgress) return;
-    if (!await isTrackingAllowed()) return;
 
     var list = await _loadPendingQueue();
     if (list.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    if (token == null || token.isEmpty) return; // logged out: wait for this user's login
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
         '[Trackings] presence_offline flush_start pending=${list.length}',
@@ -1455,53 +1509,65 @@ class PresenceTrackingService {
       String keyOf(Map<String, dynamic> m) =>
           '${m['timestamp']}|${m['lat']}|${m['lng']}';
       final sentKeys = <String>{};
-      final points = <Map<String, dynamic>>[];
+      final rows = <(String, Map<String, dynamic>)>[];
       for (final m in list) {
         final lat = (m['lat'] as num?)?.toDouble();
         final lng = (m['lng'] as num?)?.toDouble();
         final ts = m['timestamp'] as String?;
-        if (lat == null || lng == null || ts == null) continue;
-        sentKeys.add(keyOf(m));
-        points.add({
-          ...m,
-          'latitude': lat,
-          'longitude': lng,
-          'presenceStatus':
-              (m['presenceStatus'] as String?) ?? 'out_of_office',
-          'status': (m['status'] as String?) ?? 'offline',
-        });
+        if (lat == null || lng == null || ts == null) {
+          sentKeys.add(keyOf(m)); // unusable row: drop it
+          continue;
+        }
+        rows.add((
+          keyOf(m),
+          {
+            ...m,
+            'latitude': lat,
+            'longitude': lng,
+            'presenceStatus':
+                (m['presenceStatus'] as String?) ?? 'out_of_office',
+            'status': (m['status'] as String?) ?? 'offline',
+          },
+        ));
       }
 
-      var dropQueued = points.isEmpty;
-      if (points.isNotEmpty) {
-        await _setToken();
+      // Oldest first, _flushBatchSize per request; stop at the first failure so the rest
+      // stays queued for the next attempt.
+      if (rows.isNotEmpty) await _setToken();
+      for (var i = 0; i < rows.length; i += _flushBatchSize) {
+        final chunk = rows.sublist(i, (i + _flushBatchSize).clamp(0, rows.length));
         try {
           await _api.dio.post<dynamic>(
             _kPresenceBatchPath,
-            data: {'points': points},
+            data: {'points': chunk.map((r) => r.$2).toList()},
           );
-          dropQueued = true;
+          sentKeys.addAll(chunk.map((r) => r.$1));
           if (kDebugMode && AppConstants.logTrackingsToConsole) {
-            _offlineSendingCount += points.length;
+            _offlineSendingCount += chunk.length;
             debugPrint(
-              '[Trackings] presence_offline flush_batch OK sent=${points.length} '
+              '[Trackings] presence_offline flush_batch OK sent=${chunk.length} '
               'total=$_offlineSendingCount',
             );
           }
         } on DioException catch (e) {
           // 400 = nothing valid in the payload; retrying would never succeed.
-          if (e.response?.statusCode == 400) dropQueued = true;
+          if (e.response?.statusCode == 400) {
+            sentKeys.addAll(chunk.map((r) => r.$1));
+            continue;
+          }
           if (kDebugMode && AppConstants.logTrackingsToConsole) {
             debugPrint(
               '[Trackings] presence_offline flush_batch FAIL '
               '${e.response?.statusCode} → ${e.response?.data}',
             );
           }
+          break;
         } catch (e) {
           if (kDebugMode) debugPrint('[PresenceTracking] flush error: $e');
+          break;
         }
       }
-      if (dropQueued) {
+      if (sentKeys.isNotEmpty) {
         // Re-read: rows queued while the request was in flight must survive.
         final current = await _loadPendingQueue();
         final remaining = current
@@ -1874,7 +1940,11 @@ class PresenceTrackingService {
   /// After app returns to foreground — timer often pauses in background; send now and restart interval.
   Future<void> onAppLifecycleResumed() async {
     if (_taskInProgress) return;
-    if (!await isTrackingAllowed()) return;
+    // Points left over from a shift that ended while offline upload here too.
+    if (!await isTrackingAllowed()) {
+      await flushPendingPresenceQueue();
+      return;
+    }
     _isTracking = true;
     // Back from settings: clear or re-raise the tracking alert right away.
     unawaited(TrackingHealthService.instance.start());
@@ -1888,8 +1958,11 @@ class PresenceTrackingService {
 
   /// Punch out / tracking disabled / logout: stop the timer and the native presence tracker
   /// (unless a task ride owns it) and clear the day's presence state.
-  Future<void> stopTracking() async {
-    // Best effort: upload offline-queued points before the queue is cleared.
+  ///
+  /// Points not yet uploaded are kept (they upload on the next app resume) unless
+  /// [discardOfflineQueue] - pass it on logout, so they never go out under another login.
+  Future<void> stopTracking({bool discardOfflineQueue = false}) async {
+    // Best effort: upload offline-queued points now.
     try {
       await flushPendingPresenceQueue();
     } catch (_) {}
@@ -1899,7 +1972,7 @@ class PresenceTrackingService {
     _trackingTimer = null;
     await TrackingHealthService.instance.stop();
     await MovementClassificationService().stop();
-    await clearTrackingAllowed();
+    await clearTrackingAllowed(discardOfflineQueue: discardOfflineQueue);
     await _stopBackgroundPresenceTrackingIfIdle();
   }
 
