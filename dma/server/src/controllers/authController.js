@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { IDLE_THRESHOLD_SECONDS } = require('../config');
 const { liveDevices } = require('../db/mongo');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'AEvaHRMS@123';
@@ -193,6 +194,8 @@ async function login(req, res) {
     res.json({
       message: 'EktaHR Login Successful',
       token,
+      // Agent idle setting (central, from .env)
+      idleThresholdSeconds: IDLE_THRESHOLD_SECONDS,
       user: {
         userId: user.userId,
         username: user.username,

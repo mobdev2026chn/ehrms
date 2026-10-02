@@ -10,8 +10,8 @@ const STORAGE_DIR = path.resolve(process.env.DMA_STORAGE_DIR || path.join(__dirn
 const SCREENSHOT_DIR = path.join(STORAGE_DIR, 'screenshots');
 const IDLE_DIR = path.join(STORAGE_DIR, 'idle-logs');
 const TIMEZONE = process.env.DMA_TIMEZONE || 'Asia/Kolkata';
-// Matches the agent: no input for 2 minutes = idle
-const IDLE_THRESHOLD_SECONDS = 120;
+// Central idle setting (dma/server/.env IDLE_THRESHOLD_SECONDS), same value the agents use
+const { IDLE_THRESHOLD_SECONDS } = require('../config');
 
 fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 fs.mkdirSync(IDLE_DIR, { recursive: true });
@@ -149,17 +149,19 @@ function resolveScreenshotFile({ businessId, fileBusinessId, deviceId, day, file
   return full;
 }
 
-// Deletes screenshot day-folders older than SCREENSHOT_RETENTION_DAYS (default 30)
+// Keeps the last SCREENSHOT_RETENTION_DAYS days including today (default 30); 1 = today only
 function cleanupOldScreenshots() {
-  const retentionDays = Number(process.env.SCREENSHOT_RETENTION_DAYS || 30);
-  if (!(retentionDays > 0)) return;
-  const cutoff = dayKey(new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000));
+  // Whole days only, minimum 1 — a fraction like 0.5 would push the cutoff to tomorrow and delete today
+  const retentionDays = Math.floor(Number(process.env.SCREENSHOT_RETENTION_DAYS || 30));
+  if (!(retentionDays >= 1)) return;
+  const cutoff = dayKey(new Date(Date.now() - (retentionDays - 1) * 24 * 60 * 60 * 1000));
   let removed = 0;
 
   for (const biz of listDirs(SCREENSHOT_DIR)) {
     for (const dev of listDirs(path.join(SCREENSHOT_DIR, biz))) {
       for (const day of listDirs(path.join(SCREENSHOT_DIR, biz, dev))) {
-        if (day < cutoff) {
+        // Only yyyy-mm-dd folders are ever deleted; anything else (e.g. a manual backup folder) is left alone
+        if (/^\d{4}-\d{2}-\d{2}$/.test(day) && day < cutoff) {
           fs.rmSync(path.join(SCREENSHOT_DIR, biz, dev, day), { recursive: true, force: true });
           removed++;
         }
@@ -173,7 +175,7 @@ function startRetentionJob() {
   try { cleanupOldScreenshots(); } catch (e) { console.error('[Storage] Cleanup error:', e.message); }
   setInterval(() => {
     try { cleanupOldScreenshots(); } catch (e) { console.error('[Storage] Cleanup error:', e.message); }
-  }, 6 * 60 * 60 * 1000).unref();
+  }, 60 * 60 * 1000).unref(); // hourly, so the previous day is cleared within an hour of midnight
 }
 
 // ================= IDLE LOGS =================

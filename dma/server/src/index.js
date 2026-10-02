@@ -19,6 +19,7 @@ connectMongo();
 initIdleTracker();
 startRetentionJob();
 console.log(`[Storage] Screenshots & idle logs saved on disk at ${STORAGE_DIR}`);
+console.log(`[Config] Idle after ${require('./config').IDLE_THRESHOLD_SECONDS}s without input (IDLE_THRESHOLD_SECONDS in .env)`);
 
 const { LAN_ONLY, isPrivateIp, lanOnlyHttp } = require('./lanGuard');
 

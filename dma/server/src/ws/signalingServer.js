@@ -6,6 +6,7 @@ const path = require('path');
 const { registerOrUpdateDevice, markDeviceOffline, getDevicesList } = require('../db/mongo');
 const idleTracker = require('../db/idleTracker');
 const { allowLanUpgrade } = require('../lanGuard');
+const { IDLE_THRESHOLD_SECONDS } = require('../config');
 
 const agentSockets = new Map();
 const viewerSockets = new Map();
@@ -182,6 +183,11 @@ function handleAgentConnection(ws, query, request) {
   }
 
   agentSockets.set(deviceId, ws);
+
+  // Push central settings so agents follow .env without being rebuilt
+  try {
+    ws.send(JSON.stringify({ type: 'CONFIG', idleThresholdSeconds: IDLE_THRESHOLD_SECONDS }));
+  } catch (e) {}
 
   const updatedDev = registerOrUpdateDevice(deviceId, {
     hostname: ws.hostname,

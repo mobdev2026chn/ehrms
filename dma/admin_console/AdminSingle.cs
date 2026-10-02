@@ -78,6 +78,18 @@ namespace EktaHR.AdminConsole
             }
 
             string userDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EktaHRAdminConsoleApp");
+
+            // This private Edge profile may still hold the old (Flutter) favicon; drop its favicon cache so
+            // the window / taskbar always shows the current EktaHR icon. Only this app's own profile is touched.
+            foreach (string cacheFile in new[] { "Favicons", "Favicons-journal" })
+            {
+                try
+                {
+                    string cachePath = Path.Combine(userDataDir, "Default", cacheFile);
+                    if (File.Exists(cachePath)) File.Delete(cachePath);
+                }
+                catch { }
+            }
             string arguments = string.Format("--app=\"{0}\" --user-data-dir=\"{1}\" --start-maximized", url, userDataDir);
 
             try

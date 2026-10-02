@@ -113,8 +113,23 @@ namespace EktaDMAAgent
         public static int ShiftSeconds = 0;
         public static int ActiveSeconds = 0;
         public static int IdleSeconds = 0;
-        // No mouse / keyboard input for this long = IDLE (idle screenshot + admin alert)
-        public const int IDLE_THRESHOLD_SECONDS = 120;
+        // No mouse / keyboard input for this long = IDLE (idle screenshot + admin alert).
+        // Set centrally on the DMA server (IDLE_THRESHOLD_SECONDS in dma/server/.env) and sent to the
+        // agent at login and on every WebSocket connect; 300 is only the fallback.
+        public static int IDLE_THRESHOLD_SECONDS = 300;
+
+        public static void ApplyIdleThresholdFromServer(string json)
+        {
+            int seconds = ExtractInt(json, "idleThresholdSeconds");
+            if (seconds >= 30 && seconds <= 7200) IDLE_THRESHOLD_SECONDS = seconds;
+        }
+
+        public static string IdleThresholdLabel()
+        {
+            int s = IDLE_THRESHOLD_SECONDS;
+            if (s % 60 == 0) return (s / 60) + (s == 60 ? " minute" : " minutes");
+            return s + " seconds";
+        }
         public static long TotalKeystrokes = 0;
         public static long TotalMouseClicks = 0;
         public static int TotalScreenshots = 0;
@@ -751,6 +766,7 @@ namespace EktaDMAAgent
                             LoggedUser = email;
                             if (email.Contains("@")) EmployeeName = email.Split('@')[0];
                             BusinessId = ExtractJsonValue(respText, "businessId");
+                            ApplyIdleThresholdFromServer(respText);
                             if (string.IsNullOrEmpty(BusinessId)) BusinessId = ExtractJsonValue(respText, "companyId");
                             if (string.IsNullOrEmpty(BusinessId)) BusinessId = "default";
                             return true;
@@ -1153,7 +1169,7 @@ namespace EktaDMAAgent
                     uint idleMs = GetIdleTimeMs();
                     IdleSeconds = (int)(idleMs / 1000);
 
-                    // If idle for 2+ minutes (IDLE_THRESHOLD_SECONDS) without mouse / keyboard input, pause active time & notify
+                    // If idle for IDLE_THRESHOLD_SECONDS (server setting) without mouse / keyboard input, pause active time & notify
                     bool isSystemIdle = IdleSeconds >= IDLE_THRESHOLD_SECONDS;
 
                     if (isSystemIdle && !wasIdleState)
@@ -1162,7 +1178,7 @@ namespace EktaDMAAgent
                         AgentStatus = "Idle";
                         SendInstantStatusUpdate("IDLE");
                         ShowIdleTrayNotification(true);
-                        // Idle for 2+ minutes: capture the screen at that moment (idle badge + admin alert in Admin Console)
+                        // Idle threshold reached: capture the screen at that moment (idle badge + admin alert in Admin Console)
                         Task.Run(() => CaptureAndUploadScreenshot("idle_start"));
                     }
                     else if (!isSystemIdle && wasIdleState)
@@ -1201,7 +1217,7 @@ namespace EktaDMAAgent
                     {
                         if (isIdle)
                         {
-                            EktaAgentForm.Instance.ShowTrayBalloon("ektaHr Monitoring: System Idle", "No mouse movement detected for 2 minutes. Active timer paused.", ToolTipIcon.Warning);
+                            EktaAgentForm.Instance.ShowTrayBalloon("ektaHr Monitoring: System Idle", "No mouse movement detected for " + Program.IdleThresholdLabel() + ". Active timer paused.", ToolTipIcon.Warning);
                         }
                         else
                         {
@@ -1293,7 +1309,11 @@ namespace EktaDMAAgent
                     {
                         string json = Encoding.UTF8.GetString(buffer, 0, result.Count);
 
-                        if (json.Contains("START_STREAM"))
+                        if (json.Contains("\"CONFIG\""))
+                        {
+                            ApplyIdleThresholdFromServer(json);
+                        }
+                        else if (json.Contains("START_STREAM"))
                         {
                             IsStreaming = true;
                             LiveStreamStatus = "Streaming";
@@ -2016,26 +2036,13 @@ namespace EktaDMAAgent
             this.BackColor = Color.FromArgb(30, 30, 30);
             this.ForeColor = Color.White;
 
-            try
-            {
-                string explicitIco = @"d:\Projects\ektaHr\dma\agent\publish\ektaHr.ico";
-                if (File.Exists(explicitIco)) this.Icon = new Icon(explicitIco);
-                else this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            }
-            catch
-            {
-                try
-                {
-                    string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ektaHr.ico");
-                    if (File.Exists(icoPath)) this.Icon = new Icon(icoPath);
-                }
-                catch { }
-            }
+            // EktaHR icon embedded in the exe (never an ektaHr.ico file next to it, which could be stale)
+            this.Icon = LoadEmbeddedAppIcon(SystemInformation.IconSize) ?? this.Icon;
 
             // System Tray Icon
             trayIcon = new NotifyIcon()
             {
-                Icon = (this.Icon != null) ? this.Icon : SystemIcons.Application,
+                Icon = LoadEmbeddedAppIcon(SystemInformation.SmallIconSize) ?? this.Icon ?? SystemIcons.Application,
                 Text = "ektaHr Attendance Monitoring",
                 Visible = true
             };
@@ -2635,6 +2642,37 @@ namespace EktaDMAAgent
             lblNavHome.ForeColor = (viewName == "HOME") ? Color.FromArgb(239, 170, 31) : Color.FromArgb(156, 163, 175);
             lblNavSummary.ForeColor = (viewName == "SUMMARY") ? Color.FromArgb(239, 170, 31) : Color.FromArgb(156, 163, 175);
             lblNavSettings.ForeColor = (viewName == "SETTINGS") ? Color.FromArgb(239, 170, 31) : Color.FromArgb(156, 163, 175);
+        }
+
+        // Builds the EktaHR icon from the 256px logo PNG compiled into the exe
+        // (csc -resource:ektaHr_icon_256.png,EktaHr.AppIcon.png), so it never depends on an .ico file on disk
+        private static Icon LoadEmbeddedAppIcon(Size size)
+        {
+            try
+            {
+                using (Stream stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("EktaHr.AppIcon.png"))
+                {
+                    if (stream != null)
+                    {
+                        using (Bitmap logo = new Bitmap(stream))
+                        using (Bitmap scaled = new Bitmap(size.Width, size.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                        {
+                            using (Graphics g = Graphics.FromImage(scaled))
+                            {
+                                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                                g.Clear(Color.Transparent);
+                                g.DrawImage(logo, 0, 0, size.Width, size.Height);
+                            }
+                            return Icon.FromHandle(scaled.GetHicon());
+                        }
+                    }
+                }
+            }
+            catch { }
+            try { return Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+            return null;
         }
 
         private void BtnLogin_Click(object sender, EventArgs e)

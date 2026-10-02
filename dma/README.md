@@ -62,8 +62,18 @@ A dedicated, high-performance, LAN-only Live Desktop Streaming & Remote Access s
 - Admins open the console at `http://<server-lan-ip>:2005`.
 - Rebuild the agent (no .NET SDK needed):
   ```bash
-  C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -target:winexe -win32icon:ektaHr.ico -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll -out:publish/EktaHR-Agent.exe AgentSingle.cs
+  C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -target:winexe -win32icon:ektaHr.ico -resource:ektaHr_icon_256.png,EktaHr.AppIcon.png -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll -out:publish/EktaHR-Agent.exe AgentSingle.cs
   ```
+
+## ⚙️ Idle Time Setting (one place)
+
+Set in `server/.env` only, then restart the server:
+
+```
+IDLE_THRESHOLD_SECONDS=300   # 300 = 5 min, 120 = 2 min, 600 = 10 min (allowed 30–7200)
+```
+
+No mouse/keyboard input for this long marks the employee IDLE (idle screenshot, idle badge, admin alert). The server sends the value to every agent at login and on each connect, so the agent exe does **not** need rebuilding; the admin console uses the server's `isIdle` flag. Code: `server/src/config.js`.
 
 ## 🚀 How to Run
 

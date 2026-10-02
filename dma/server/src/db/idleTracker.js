@@ -57,7 +57,7 @@ function trackStatus(deviceId, info) {
     if (!period) {
       if (!isValidUser(info.currentUser)) return;
       const now = Date.now();
-      // Agent flags IDLE only after its threshold (2 min) without input, so the idle period actually began idleSeconds ago
+      // Agent flags IDLE only after IDLE_THRESHOLD_SECONDS without input, so the idle period actually began idleSeconds ago
       const startAt = new Date(now - (Number(info.idleSeconds) || 0) * 1000);
       openIdle.set(deviceId, {
         deviceId,
