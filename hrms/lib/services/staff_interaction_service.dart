@@ -287,6 +287,10 @@ class StaffAnnouncement {
     required this.sections,
     required this.attachments,
     required this.threads,
+    this.audience = '',
+    this.isDraft = false,
+    this.rawPublishDate,
+    this.createdAt,
   });
 
   final String id;
@@ -300,6 +304,29 @@ class StaffAnnouncement {
   final List<({String title, String body, String image})> sections;
   final List<ChatAttachment> attachments;
   final List<AnnouncementThread> threads;
+  final String audience;
+  final bool isDraft;
+
+  /// The publish date as set (no createdAt fallback), for the Scheduled status.
+  final DateTime? rawPublishDate;
+  final DateTime? createdAt;
+
+  /// Same rule as the web staff page: Draft → Expired (expiry before today) →
+  /// Scheduled (publish date after today) → Published. Compared by calendar day.
+  String get status {
+    if (isDraft) return 'Draft';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    DateTime? day(DateTime? d) {
+      if (d == null) return null;
+      final l = d.toLocal();
+      return DateTime(l.year, l.month, l.day);
+    }
+    final expiry = day(expiryDate);
+    if (expiry != null && expiry.isBefore(today)) return 'Expired';
+    final publish = day(rawPublishDate);
+    return publish != null && publish.isAfter(today) ? 'Scheduled' : 'Published';
+  }
 
   factory StaffAnnouncement.fromJson(Map<String, dynamic> j) {
     final sections = _list(j['subsections']).map(_map).map((s) {
@@ -358,6 +385,10 @@ class StaffAnnouncement {
       sections: sections,
       attachments: atts,
       threads: threads,
+      audience: _str(j['audience']),
+      isDraft: j['isDraft'] == true,
+      rawPublishDate: _date(j['publishDate']),
+      createdAt: _date(j['createdAt']),
     );
   }
 }

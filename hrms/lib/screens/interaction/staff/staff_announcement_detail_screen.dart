@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 
 import '../../../services/staff_interaction_service.dart';
 import '../../../utils/snackbar_utils.dart';
+import 'attachment_viewer.dart';
 import 'staff_interaction_widgets.dart';
 
 class StaffAnnouncementDetailScreen extends StatefulWidget {
@@ -222,9 +223,21 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
                     color: att.type == 'pdf' ? const Color(0xFFDC2626) : const Color(0xFF6366F1),
                   ),
                   title: Text(att.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: att.size > 0 ? Text(fileSizeLabel(att.size)) : null,
-                  trailing: const Icon(Icons.open_in_new_rounded, size: 18),
-                  onTap: () => att.isImage ? showImageViewer(context, att.url, title: att.name) : openAttachment(context, att),
+                  subtitle: Text(
+                    att.url.trim().isEmpty
+                        ? 'File not uploaded'
+                        : (att.size > 0 ? fileSizeLabel(att.size) : (att.type == 'pdf' ? 'PDF' : 'File')),
+                    style: TextStyle(color: att.url.trim().isEmpty ? const Color(0xFFB91C1C) : null),
+                  ),
+                  trailing: att.url.trim().isEmpty
+                      ? null
+                      : TextButton.icon(
+                          onPressed: () => viewAttachment(context, att),
+                          icon: const Icon(Icons.visibility_outlined, size: 18),
+                          label: const Text('View', style: TextStyle(fontWeight: FontWeight.w800)),
+                          style: TextButton.styleFrom(foregroundColor: kInteractionAccent),
+                        ),
+                  onTap: () => viewAttachment(context, att),
                 ),
             ],
           ),

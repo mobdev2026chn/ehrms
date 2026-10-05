@@ -450,6 +450,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             info['dropoffLng'] as double,
           ),
           task: null,
+          selfLogged: info['selfLogged'] == true,
         ),
       ),
     );
@@ -1030,7 +1031,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     return DateFormat('hh:mm a').format(d);
   }
 
-  Future<void> _loadData() async {
+  /// [force]: pull-to-refresh — refetch month attendance too. Routine loads
+  /// (open, tab return, refresh trigger) reuse the 5-minute month cache, which a
+  /// punch already clears.
+  Future<void> _loadData({bool force = false}) async {
     // Single-flight: ignore overlapping triggers while a load is already running
     // so we don't fire duplicate parallel request bursts.
     if (_isLoadDataInFlight) return;
@@ -1110,7 +1114,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       );
       final profileFuture = _authService.getProfile();
       final businessFuture = _settingsService.getBusiness();
-      final monthFuture = _fetchMonthAttendance(forceRefresh: true);
+      final monthFuture = _fetchMonthAttendance(forceRefresh: force);
       final tasksFuture = _fetchTasks();
       unawaited(_fetchAttendanceSummary());
       unawaited(_fetchLeaveBalance());
@@ -2461,7 +2465,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
     final content = RefreshIndicator(
       color: AppColors.primary,
-      onRefresh: _loadData,
+      onRefresh: () => _loadData(force: true),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -3889,21 +3893,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _buildWebKpiItem(
-                title: "TODAY'S CELEBRATIONS",
-                icon: Icons.celebration_outlined,
-                value: '${_todayCelebrations.length}',
-                subtitle: _todayCelebrations.isEmpty ? 'No celebrations today' : 'Birthdays & anniversaries',
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Expanded(child: SizedBox.shrink()),
-          ],
-        ),
+        // No "Today's Celebrations" tile here: the Celebrations card below
+        // already lists them, and the two duplicated each other.
       ],
     );
   }
@@ -7550,7 +7541,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 ///  * an HH:MM:SS readout where only the digits that change roll up.
 /// Anchored to [checkInAt] (not incremented), so it never drifts and resumes
 /// correctly after a reload. Ticks in its own State so only this card rebuilds.
-/// Once punched out it shows the recorded total ("8.5 Hrs", "Worked today").
+/// Once punched out it shows the recorded total ("8h 51m", "Worked today").
 class _LiveWorkClock extends StatefulWidget {
   const _LiveWorkClock({
     required this.checkInAt,
@@ -7623,6 +7614,15 @@ class _LiveWorkClockState extends State<_LiveWorkClock>
   String _fmtHours(double h) =>
       h == h.roundToDouble() ? h.toStringAsFixed(0) : h.toStringAsFixed(1);
 
+  /// Worked time as hours and minutes: the backend stores punch-out minus
+  /// punch-in as decimal hours (8.85 = 531 min), shown "8h 51m".
+  String _fmtHoursMinutes(double h) {
+    final mins = (h * 60).round();
+    final hh = mins ~/ 60, mm = mins % 60;
+    if (hh == 0) return '${mm}m';
+    return mm == 0 ? '${hh}h' : '${hh}h ${mm}m';
+  }
+
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
@@ -7631,7 +7631,7 @@ class _LiveWorkClockState extends State<_LiveWorkClock>
     final total = widget.totalHours ?? 0;
     final display = _running
         ? '${two(elapsed.inHours)}:${two(elapsed.inMinutes % 60)}:${two(elapsed.inSeconds % 60)}'
-        : (total > 0 ? '${_fmtHours(total)} Hrs' : '0 Hrs');
+        : (total > 0 ? _fmtHoursMinutes(total) : '0h 0m');
 
     final workedHours = _running ? elapsed.inSeconds / 3600.0 : total;
     final target = widget.targetHours;

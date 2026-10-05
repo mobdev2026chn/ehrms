@@ -21,6 +21,8 @@ class LiveTrackingService {
   static const _keyDropoffLat = 'live_tracking_dropoff_lat';
   static const _keyDropoffLng = 'live_tracking_dropoff_lng';
   static const _keyTaskJson = 'live_tracking_task_json';
+  /// The active trip is a self-logged Field In / Field Out journey (no assigned task).
+  static const _keySelfLogged = 'live_tracking_self_logged';
   static const _keyBaseUrl = 'live_tracking_base_url';
   static const _keyToken = 'live_tracking_token';
   static const _keyAppLifecycleState = 'live_tracking_app_lifecycle_state';
@@ -78,6 +80,7 @@ class LiveTrackingService {
     required double dropoffLat,
     required double dropoffLng,
     String? taskJson,
+    bool selfLogged = false,
   }) async {
     await TrackingOutlierFilterService.clearScope(
       TrackingOutlierFilterService.taskScope(taskMongoId),
@@ -96,6 +99,7 @@ class LiveTrackingService {
     await prefs.setDouble(_keyDropoffLng, dropoffLng);
     await prefs.setString(_keyAppLifecycleState, 'foreground');
     if (taskJson != null) await prefs.setString(_keyTaskJson, taskJson);
+    await prefs.setBool(_keySelfLogged, selfLogged);
     await prefs.setString(_keyBaseUrl, AppConstants.baseUrl);
     await prefs.setDouble(_keyLastSentLat, pickupLat);
     await prefs.setDouble(_keyLastSentLng, pickupLng);
@@ -141,6 +145,7 @@ class LiveTrackingService {
     await prefs.remove(_keyDropoffLat);
     await prefs.remove(_keyDropoffLng);
     await prefs.remove(_keyTaskJson);
+    await prefs.remove(_keySelfLogged);
     await prefs.remove(_keyBaseUrl);
     await prefs.remove(_keyToken);
     await prefs.remove(_keyAppLifecycleState);
@@ -406,6 +411,7 @@ class LiveTrackingService {
       'dropoffLat': prefs.getDouble(_keyDropoffLat) ?? 0.0,
       'dropoffLng': prefs.getDouble(_keyDropoffLng) ?? 0.0,
       'taskJson': prefs.getString(_keyTaskJson),
+      'selfLogged': prefs.getBool(_keySelfLogged) ?? false,
     };
   }
 

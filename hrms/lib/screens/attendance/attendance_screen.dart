@@ -365,7 +365,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       // cache (clearMonth: false) so the calendar can paint instantly from data
       // the Dashboard already loaded, instead of sitting blank while a fresh
       // month fetch runs on every tab open.
-      _attendanceService.clearCachesForRefresh(clearMonth: false);
+      // Today's data fetched moments ago (shell / Home) is reused instead of wiped
+      // and fetched a second time on every tab open.
+      final freshToday = _attendanceService.freshTodayByDateEnvelope();
+      if (freshToday == null) {
+        _attendanceService.clearCachesForRefresh(clearMonth: false);
+      }
       // Profile and today attendance are independent network calls; fetch them
       // in parallel (was sequential) to save one round-trip on every open, then
       // process profile first since today's template flags depend on it.
@@ -376,10 +381,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         // 1. Fresh profile (shift key snapshot for template reconciliation).
         _withTimeoutRetry(_authService.getProfile, tag: 'Profile fetch'),
         // 2. Fresh today attendance (template, branch, shift, holiday, etc.)
-        _withTimeoutRetry(
-          () => _attendanceService.getAttendanceByDate(todayStr),
-          tag: 'Today attendance fetch',
-        ),
+        freshToday != null
+            ? Future.value(freshToday)
+            : _withTimeoutRetry(
+                () => _attendanceService.getAttendanceByDate(todayStr),
+                tag: 'Today attendance fetch',
+              ),
+        // 3. Business shifts lookup (was awaited after everything else).
+        _loadBusinessForAppliedShiftLookup()
+            .then((_) => <String, dynamic>{})
+            .catchError((_) => <String, dynamic>{}),
       ]);
       if (!mounted) return;
       final profileResult = fetched[0];
@@ -2450,20 +2461,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                           if (lateMinutes != null && lateMinutes.toInt() > 0)
                             _buildDayDetailRow(
                               'Late Check-in',
-                              '${lateMinutes.toInt()} minutes',
-                              valueColor: AppColors.brandDark,
+                              _fineLegLabel(lateMinutes, record['lateFineAmount']),
+                              valueColor: _fineLegColor(record['lateFineAmount']),
                             ),
                           if (earlyMinutes != null && earlyMinutes.toInt() > 0)
                             _buildDayDetailRow(
                               'Early Check-out',
-                              '${earlyMinutes.toInt()} minutes',
-                              valueColor: AppColors.brandDark,
+                              _fineLegLabel(earlyMinutes, record['earlyExitFineAmount']),
+                              valueColor: _fineLegColor(record['earlyExitFineAmount']),
                             ),
                           if (breakFineMins != null && breakFineMins.toInt() > 0)
                             _buildDayDetailRow(
                               'Break Fine',
-                              '${breakFineMins.toInt()} mins',
-                              valueColor: AppColors.brandDark,
+                              _fineLegLabel(breakFineMins, breakFineAmount),
+                              valueColor: _fineLegColor(breakFineAmount),
                             ),
                           if (permissionFineMins > 0)
                             _buildDayDetailRow(
@@ -2477,13 +2488,16 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                               '${totalFineMinsDisplay.toInt()} mins',
                               valueColor: Colors.red.shade700,
                             ),
-                          if (totalFineAmountDisplay > 0)
-                            _buildDayDetailRow(
-                              'Fine Amount',
-                              '₹${NumberFormat('#,##0.00').format(totalFineAmountDisplay)}',
-                              valueColor: Colors.red.shade700,
-                              isBold: true,
-                            ),
+                          // Always shown, ₹0.00 included, so minutes inside the grace
+                          // time read as "no fine" rather than "fine not calculated".
+                          _buildDayDetailRow(
+                            'Fine Amount',
+                            '₹${NumberFormat('#,##0.00').format(totalFineAmountDisplay)}',
+                            valueColor: totalFineAmountDisplay > 0
+                                ? Colors.red.shade700
+                                : Colors.green.shade700,
+                            isBold: true,
+                          ),
                         ]),
                       ],
                       if (hasPermissionInfo) ...[
@@ -3656,6 +3670,19 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }
 
   /// Row for section content (matches salary breakdown form style)
+  /// "17 min · ₹25.39", or "3 min · ₹0.00 (within grace)" when the backend
+  /// charged nothing for those minutes. Without a backend amount (older
+  /// records) only the minutes are shown.
+  String _fineLegLabel(num minutes, dynamic amount) {
+    final mins = '${minutes.toInt()} min';
+    if (amount is! num) return mins;
+    final rupees = '₹${NumberFormat('#,##0.00').format(amount)}';
+    return amount > 0 ? '$mins · $rupees' : '$mins · $rupees (within grace)';
+  }
+
+  Color _fineLegColor(dynamic amount) =>
+      amount is num && amount <= 0 ? Colors.green.shade700 : AppColors.brandDark;
+
   Widget _buildDayDetailRow(
     String label,
     String value, {
@@ -3931,6 +3958,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     return null;
   }
 
+  /// 136 → "2 h 16 min", 45 → "45 min".
+  String _formatMinutesLabel(int minutes) {
+    final h = minutes ~/ 60, m = minutes % 60;
+    if (h == 0) return '$m min';
+    return m == 0 ? '$h h' : '$h h $m min';
+  }
+
   String _buildLateAlertMessage({
     required String baseMessage,
     required int lateMinutes,
@@ -3938,8 +3972,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
   }) {
     // No app-side ₹ estimate: the backend calculates the fine (as on web).
     return '$baseMessage\n'
-        'LateMinutes: $lateMinutes\n'
-        'Any fine is calculated by the system after you punch (same as web) and shown on your Today card.';
+        'Late by: ${_formatMinutesLabel(lateMinutes)}\n'
+        'Any applicable fine will be calculated after you punch and shown on your Today card.';
   }
 
   String _buildEarlyAlertMessage({
@@ -3948,8 +3982,8 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     required double fineAmount,
   }) {
     return '$baseMessage\n'
-        'EarlyMinutes: $earlyMinutes\n'
-        'Any fine is calculated by the system after you punch (same as web) and shown on your Today card.';
+        'Early by: ${_formatMinutesLabel(earlyMinutes)}\n'
+        'Any applicable fine will be calculated after you punch and shown on your Today card.';
   }
 
   Map<String, String> _resolveFineLogForAction(String actionApplyToType) {
@@ -5542,7 +5576,10 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final mins = _workHoursToMinutes(workHours);
     if (mins == null) return 'N/A';
     if (mins == 0) return '0 mins';
-    return '$mins min${mins == 1 ? '' : 's'}';
+    // Hours and minutes (531 → "8h 51m"); under an hour stays "45 mins".
+    if (mins < 60) return '$mins min${mins == 1 ? '' : 's'}';
+    final m = mins % 60;
+    return m == 0 ? '${mins ~/ 60}h' : '${mins ~/ 60}h ${m}m';
   }
 
   /// Formats work hours as HH:mm (e.g. 483 mins -> "08:03").

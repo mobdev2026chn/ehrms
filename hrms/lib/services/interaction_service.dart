@@ -261,8 +261,82 @@ class InteractionService {
     return res.data ?? {};
   }
 
-  /// Web parity: announcements feed from interaction service.
+  // ── Announcements ───────────────────────────────────────────────────────────
+  // HRMSbackend serves staff announcements at `/staff/announcements` (what the web
+  // staff page uses). The older `/interaction/announcements` routes are kept as a
+  // fallback for servers that still have them.
+
+  static bool _isMissingRoute(DioException e) {
+    final code = e.response?.statusCode ?? 0;
+    return code == 404 || code == 405;
+  }
+
+  /// GET `/staff/announcements/:id` → the announcement doc, or null when that
+  /// route is not on the server.
+  Future<Map<String, dynamic>?> _staffAnnouncement(String id) async {
+    try {
+      final res = await ApiClient().dio.get<Map<String, dynamic>>(
+        '/staff/announcements/$id',
+      );
+      final data = res.data?['data'];
+      final ann = data is Map ? data['announcement'] : null;
+      return ann is Map ? Map<String, dynamic>.from(ann) : null;
+    } on DioException catch (e) {
+      if (_isMissingRoute(e)) return null;
+      rethrow;
+    }
+  }
+
+  /// HRMSbackend engagement threads (`{comment, hrResponses, replies}`) in the
+  /// thread shape the announcement detail screen renders.
+  static List<Map<String, dynamic>> _engagementThreads(dynamic engagements) {
+    if (engagements is! List) return [];
+    final threads = <Map<String, dynamic>>[];
+    for (final e in engagements) {
+      if (e is! Map) continue;
+      final replies = <Map<String, dynamic>>[];
+      for (final key in const ['hrResponses', 'replies']) {
+        final list = e[key];
+        if (list is! List) continue;
+        for (final r in list) {
+          if (r is! Map) continue;
+          replies.add({
+            'replyText': r['message'],
+            'responseTime': r['createdAt'],
+            'fromName': r['senderName'] ?? 'HR/Admin',
+            'kind': 'response',
+          });
+        }
+      }
+      replies.sort((a, b) => '${a['responseTime']}'.compareTo('${b['responseTime']}'));
+      threads.add({
+        '_id': e['id'],
+        'message': e['comment'],
+        'createdAt': e['createdAt'],
+        'replies': replies,
+      });
+    }
+    return threads;
+  }
+
+  /// Published announcements for this staff member.
   Future<Map<String, dynamic>> getAnnouncements() async {
+    try {
+      final res = await ApiClient().dio.get<Map<String, dynamic>>(
+        '/staff/announcements',
+        queryParameters: {'status': 'Published', 'limit': 100},
+      );
+      final data = res.data?['data'];
+      final list = data is Map ? data['announcements'] : null;
+      if (list is List) return {'success': true, 'data': list};
+    } on DioException catch (e) {
+      if (!_isMissingRoute(e)) {
+        return {
+          'success': false,
+          'message': ErrorMessageUtils.toUserFriendlyMessage(e),
+        };
+      }
+    } catch (_) {}
     try {
       final res = await _client().get<Map<String, dynamic>>(
         '/interaction/announcements',
@@ -295,8 +369,14 @@ class InteractionService {
     } on DioException catch (e) {
       final code = e.response?.statusCode ?? 0;
       if (code == 404 || code == 405) {
-        final res = await _client().get<Map<String, dynamic>>(path);
-        return res.data ?? {};
+        try {
+          final res = await _client().get<Map<String, dynamic>>(path);
+          return res.data ?? {};
+        } on DioException catch (e2) {
+          // Not tracked on this server (HRMSbackend has no read receipts).
+          if (_isMissingRoute(e2)) return {};
+          rethrow;
+        }
       }
       rethrow;
     }
@@ -313,8 +393,14 @@ class InteractionService {
     } on DioException catch (e) {
       final code = e.response?.statusCode ?? 0;
       if (code == 404 || code == 405) {
-        final res = await _client().get<Map<String, dynamic>>(path);
-        return res.data ?? {};
+        try {
+          final res = await _client().get<Map<String, dynamic>>(path);
+          return res.data ?? {};
+        } on DioException catch (e2) {
+          // Not tracked on this server (HRMSbackend has no read receipts).
+          if (_isMissingRoute(e2)) return {};
+          rethrow;
+        }
       }
       rethrow;
     }
@@ -323,15 +409,23 @@ class InteractionService {
   Future<Map<String, dynamic>> getAnnouncementMyReplies(
     String announcementId,
   ) async {
-    final res = await _client().get<Map<String, dynamic>>(
-      '/interaction/announcements/$announcementId/my-replies',
-    );
-    return res.data ?? {};
+    try {
+      final res = await _client().get<Map<String, dynamic>>(
+        '/interaction/announcements/$announcementId/my-replies',
+      );
+      return res.data ?? {};
+    } on DioException catch (e) {
+      // HRMSbackend returns my threads inside the announcement instead.
+      if (_isMissingRoute(e)) return {};
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> getAnnouncementById(
     String announcementId,
   ) async {
+    final ann = await _staffAnnouncement(announcementId);
+    if (ann != null) return {'success': true, 'data': ann};
     final res = await _client().get<Map<String, dynamic>>(
       '/interaction/announcements/$announcementId',
     );
@@ -343,6 +437,10 @@ class InteractionService {
   Future<Map<String, dynamic>> getAnnouncementEngagement(
     String announcementId,
   ) async {
+    final ann = await _staffAnnouncement(announcementId);
+    if (ann != null) {
+      return {'success': true, 'data': _engagementThreads(ann['engagements'])};
+    }
     final paths = <String>[
       '/interaction/announcements/$announcementId/engagement',
       '/interaction/announcements/$announcementId/my-replies',
@@ -372,6 +470,20 @@ class InteractionService {
     final id = announcementId.trim();
     if (id.isEmpty) {
       return {'success': false, 'message': 'Missing announcement id.'};
+    }
+    try {
+      final res = await ApiClient().dio.post<Map<String, dynamic>>(
+        '/staff/announcements/$id/engagements',
+        data: {'comment': message},
+      );
+      return res.data ?? {'success': true};
+    } on DioException catch (e) {
+      if (!_isMissingRoute(e)) {
+        return {
+          'success': false,
+          'message': ErrorMessageUtils.toUserFriendlyMessage(e),
+        };
+      }
     }
     final attempts = <(String, Map<String, dynamic>)>[
       ('/interaction/announcements/$id/reply', {'replyText': message}),

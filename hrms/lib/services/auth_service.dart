@@ -514,12 +514,16 @@ class AuthService {
   }
 
   static Map<String, dynamic> _copyProfileResult(Map<String, dynamic> result) {
-    try {
-      // Deep copy: callers mutate the returned maps.
-      return Map<String, dynamic>.from(jsonDecode(jsonEncode(result)) as Map);
-    } catch (_) {
-      return Map<String, dynamic>.from(result);
+    // Deep copy (callers mutate the returned maps) by walking the maps/lists directly.
+    // Was jsonDecode(jsonEncode(..)) - a full serialise + parse of the populated
+    // profile on the UI thread, 6-8 times during startup.
+    dynamic copy(dynamic v) {
+      if (v is Map) return <String, dynamic>{for (final e in v.entries) e.key.toString(): copy(e.value)};
+      if (v is List) return [for (final x in v) copy(x)];
+      return v;
     }
+
+    return copy(result) as Map<String, dynamic>;
   }
 
   /// The signed-in staff member's id from a [getProfile] result. HRMSbackend returns the

@@ -20,7 +20,7 @@ import '../screens/attendance/attendance_screen.dart';
 import '../screens/attendance/break_screen.dart';
 import '../screens/performance/performance_module_screen.dart';
 import '../screens/announcements/announcements_screen.dart';
-import '../screens/announcements/announcement_detail_screen.dart';
+import '../screens/interaction/staff/staff_announcement_detail_screen.dart';
 import '../screens/salary/all_payslips_screen.dart';
 import '../screens/grievance/grievance_shell_screen.dart';
 import '../screens/interaction/staff/staff_interaction_screen.dart';
@@ -28,7 +28,6 @@ import '../screens/assets/assets_listing_screen.dart';
 import '../screens/lms/lms_shell_screen.dart';
 import '../screens/geo/my_tasks_screen.dart';
 import '../widgets/notification_reaction_overlay.dart';
-import 'interaction_service.dart';
 
 /// Channel ID for FCM notifications. Must match Android default channel when using data-only messages.
 const String kFcmNotificationChannelId = 'hrms_fcm_channel';
@@ -1652,35 +1651,17 @@ class FcmService {
     )) {
       final announcementId = _announcementIdFromData(data);
       if (announcementId != null && announcementId.isNotEmpty) {
-        try {
-          final res =
-              await InteractionService.instance.getAnnouncementById(announcementId);
-          if (!navigatorKey!.currentContext!.mounted) return false;
-          Map<String, dynamic>? ann;
-          final raw = res['data'];
-          if (raw is Map<String, dynamic>) {
-            ann = Map<String, dynamic>.from(raw);
-          } else if (raw is Map) {
-            ann = Map<String, dynamic>.from(raw);
-          }
-          if (ann != null && ann.isNotEmpty) {
-            final announcementMap = Map<String, dynamic>.from(ann);
-            navPush(
-              MaterialPageRoute<void>(
-                builder: (_) => AnnouncementDetailScreen(
-                  announcement: announcementMap,
-                  accent: AppColors.primary,
-                ),
-              ),
-            );
-            _log(
-              'handleNotificationData: navigating to AnnouncementDetailScreen id=$announcementId',
-            );
-            return true;
-          }
-        } catch (e) {
-          _log('handleNotificationData: announcement detail fetch failed: $e');
-        }
+        // Same detail screen as the Announcements module (HRMSbackend
+        // /staff/announcements/:id); it loads the announcement itself.
+        navPush(
+          MaterialPageRoute<void>(
+            builder: (_) => StaffAnnouncementDetailScreen(announcementId: announcementId),
+          ),
+        );
+        _log(
+          'handleNotificationData: navigating to StaffAnnouncementDetailScreen id=$announcementId',
+        );
+        return true;
       }
       if (!navigatorKey!.currentContext!.mounted) return false;
       navPush(

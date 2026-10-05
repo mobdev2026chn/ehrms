@@ -74,13 +74,18 @@ class CustomerService {
     }
   }
 
-  Future<Customer> createCustomer(Customer customer) async {
+  Future<Customer> createCustomer(
+    Customer customer, {
+    /// Admin custom customer fields `{ fieldId: value }` (HRMSbackend validates required ones).
+    Map<String, String>? customFields,
+  }) async {
     await _setToken();
     final raw = Map<String, dynamic>.from(customer.toJson());
     raw.removeWhere(
       (k, v) =>
           v == null || (v is String && v.trim().isEmpty),
     );
+    if (customFields != null && customFields.isNotEmpty) raw['customFields'] = customFields;
     Response<dynamic>? response;
     DioException? lastError;
     for (final path in [

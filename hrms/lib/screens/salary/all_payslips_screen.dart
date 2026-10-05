@@ -6,6 +6,9 @@ import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:dio/dio.dart';
+import '../../services/payslip_service.dart';
+import 'payslip_screen.dart';
 
 import '../../config/app_colors.dart';
 import '../../services/request_service.dart';
@@ -46,6 +49,41 @@ String? payslipPayrollIdOf(dynamic req) {
 /// `GET /admin/staff/payroll/statement/:id/view?download=true`), saves it under
 /// Downloads/Payslips and opens it.
 Future<void> openPayslipPdfForPayrollId(
+  BuildContext context,
+  String payrollId, {
+  String? period,
+}) async {
+  // Mobile payslip (native view + Download PDF / Share, black EktaHR logo).
+  // Falls back to the server's A4 statement only if the staff payslip API is
+  // missing on this backend.
+  try {
+    await PayslipService().getPayslip(payrollId);
+    if (!context.mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => PayslipScreen(payrollId: payrollId, period: period),
+    ));
+    return;
+  } on DioException catch (e) {
+    final code = e.response?.statusCode;
+    if (code != 404 && code != 405) {
+      if (context.mounted) {
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => PayslipScreen(payrollId: payrollId, period: period),
+        ));
+      }
+      return;
+    }
+    // Route missing (older backend) → A4 statement PDF below.
+  } catch (_) {}
+  if (!context.mounted) return;
+  await openPayslipStatementPdf(context, payrollId, period: period);
+}
+
+/// The server's A4 payslip statement as a PDF (HRMSbackend
+/// `GET /admin/staff/payroll/statement/:id/view?download=true`): saved under
+/// Downloads/Payslips and opened. Used when the mobile payslip API is not on the
+/// backend yet.
+Future<void> openPayslipStatementPdf(
   BuildContext context,
   String payrollId, {
   String? period,

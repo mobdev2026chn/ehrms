@@ -13,6 +13,7 @@ import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/screens/geo/pin_destination_map_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:hrms/widgets/custom_fields_form.dart';
 
 class AddCustomerScreen extends StatefulWidget {
   const AddCustomerScreen({super.key});
@@ -23,6 +24,8 @@ class AddCustomerScreen extends StatefulWidget {
 
 class _AddCustomerScreenState extends State<AddCustomerScreen> {
   final _formKey = GlobalKey<FormState>();
+  /// Admin custom customer fields (Settings → Custom Fields).
+  final _customFieldsKey = GlobalKey<CustomFieldsFormState>();
   final _nameController = TextEditingController();
   final _numberController = TextEditingController();
   final _companyController = TextEditingController();
@@ -158,6 +161,11 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   Future<void> _submit() async {
     SnackBarUtils.dismiss(context);
     if (!_formKey.currentState!.validate()) return;
+    final customError = _customFieldsKey.currentState?.validate();
+    if (customError != null) {
+      SnackBarUtils.showSnackBar(context, customError, isError: true);
+      return;
+    }
     setState(() => _submitting = true);
     try {
       final rawDigits = _numberController.text.replaceAll(RegExp(r'\D'), '');
@@ -202,7 +210,10 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
         radius: _defaultCustomerRadiusM,
       );
 
-      await CustomerService().createCustomer(customer);
+      await CustomerService().createCustomer(
+        customer,
+        customFields: _customFieldsKey.currentState?.values,
+      );
       if (!mounted) return;
       // Success: app-wide tooltip toast, then close after a short beat.
       SnackBarUtils.showSnackBar(
@@ -564,6 +575,8 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
+                    // Required fields the admin set up (e.g. Company Registration Number).
+                    CustomFieldsForm(key: _customFieldsKey, category: 'customer'),
                   ],
                 ),
               ),

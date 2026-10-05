@@ -1671,15 +1671,15 @@ class _ShiftScreenState extends State<ShiftScreen> {
                   _dayDetailSection('Attendance Details',
                       Icons.access_time_rounded, _attendanceRows(record)),
                 ],
-                if (totalFineMin > 0 || totalFineAmount > 0) ...[
+                if (totalFineMin > 0 || totalFineAmount > 0 || lateMin > 0 || earlyMin > 0) ...[
                   const SizedBox(height: 16),
                   _dayDetailSection('Fine Details', Icons.money_off, [
                     if (lateMin > 0)
-                      _dayDetailRow('Late Check-In Fine', _fmtMins(lateMin),
-                          valueColor: AppColors.brandDark),
+                      _dayDetailRow('Late Check-In Fine', _fineLeg(lateMin, record?['lateFineAmount']),
+                          valueColor: _fineLegColor(record?['lateFineAmount'])),
                     if (earlyMin > 0)
-                      _dayDetailRow('Early Exit Fine', _fmtMins(earlyMin),
-                          valueColor: AppColors.brandDark),
+                      _dayDetailRow('Early Exit Fine', _fineLeg(earlyMin, record?['earlyExitFineAmount']),
+                          valueColor: _fineLegColor(record?['earlyExitFineAmount'])),
                     if (breakFineMin > 0)
                       _dayDetailRow('Break Fine', _fmtMins(breakFineMin),
                           valueColor: AppColors.brandDark),
@@ -1690,13 +1690,14 @@ class _ShiftScreenState extends State<ShiftScreen> {
                     if (totalFineMin > 0)
                       _dayDetailRow('Total Fine Minutes', _fmtMins(totalFineMin),
                           valueColor: Colors.red.shade700),
-                    if (totalFineAmount > 0)
-                      _dayDetailRow(
-                        'Fine Amount',
-                        '₹${NumberFormat('#,##0.00').format(totalFineAmount)}',
-                        valueColor: Colors.red.shade700,
-                        bold: true,
-                      ),
+                    // Always shown, ₹0.00 included: minutes inside the grace time
+                    // are "no fine", not "fine not calculated".
+                    _dayDetailRow(
+                      'Fine Amount',
+                      '₹${NumberFormat('#,##0.00').format(totalFineAmount)}',
+                      valueColor: totalFineAmount > 0 ? Colors.red.shade700 : Colors.green.shade700,
+                      bold: true,
+                    ),
                   ]),
                 ],
                 Builder(builder: (_) {
@@ -1838,6 +1839,18 @@ class _ShiftScreenState extends State<ShiftScreen> {
       ],
     );
   }
+
+  /// "17 min · ₹25.39", or "3 min · ₹0.00 (within grace)" when the backend
+  /// charged nothing; minutes only for records without a backend amount.
+  String _fineLeg(int minutes, dynamic amount) {
+    final mins = _fmtMins(minutes);
+    if (amount is! num) return mins;
+    final rupees = '₹${NumberFormat('#,##0.00').format(amount)}';
+    return amount > 0 ? '$mins · $rupees' : '$mins · $rupees (within grace)';
+  }
+
+  Color _fineLegColor(dynamic amount) =>
+      amount is num && amount <= 0 ? Colors.green.shade700 : AppColors.brandDark;
 
   Widget _dayDetailRow(String label, String value,
       {Color? valueColor, bool bold = false}) {

@@ -20,6 +20,7 @@ import 'package:hrms/utils/error_message_utils.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/profile_app_bar_actions.dart';
+import 'package:hrms/widgets/custom_fields_form.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String staffId;
@@ -32,6 +33,8 @@ class AddTaskScreen extends StatefulWidget {
 
 class _AddTaskScreenState extends State<AddTaskScreen> {
   final _formKey = GlobalKey<FormState>();
+  /// Admin custom task fields (Settings → Custom Fields).
+  final _customFieldsKey = GlobalKey<CustomFieldsFormState>();
   final _taskTitleController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _sourceController = TextEditingController();
@@ -337,6 +340,11 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     }
 
     if (!_formKey.currentState!.validate()) return;
+    final customError = _customFieldsKey.currentState?.validate();
+    if (customError != null) {
+      SnackBarUtils.showSnackBar(context, customError, isError: true);
+      return;
+    }
     final typedCustomer = _customerSearchController.text.trim();
     if (_selectedCustomer == null && typedCustomer.isEmpty) {
       SnackBarUtils.showSnackBar(context, 'Please enter or select a customer');
@@ -516,6 +524,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         // Geocoding the address can land away from the customer's real pin, which then moves
         // the arrival geofence; only send a location the staff member actually chose.
         overrideDestination: !useCustomerPin,
+        customFields: _customFieldsKey.currentState?.values,
       );
       if (!mounted) return;
       // Creation only assigns the task (status 'assigned'); it does NOT auto-start
@@ -632,7 +641,10 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               _buildSourceField(),
               const SizedBox(height: 16),
               _buildDestinationField(),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+              // Required fields the admin set up (e.g. Priority Level).
+              CustomFieldsForm(key: _customFieldsKey, category: 'task'),
+              const SizedBox(height: 8),
               // Create Task button scrolls with the form rather than being
               // pinned to the bottom of the screen.
               SizedBox(

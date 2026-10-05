@@ -42,10 +42,15 @@ class MyTasksScreen extends StatefulWidget {
   final int? dashboardTabIndex;
   final void Function(int index)? onNavigateToIndex;
 
+  /// Open on the History tab (the last tab), e.g. when coming back from a
+  /// Task Completion Report.
+  final bool openHistory;
+
   const MyTasksScreen({
     super.key,
     this.dashboardTabIndex,
     this.onNavigateToIndex,
+    this.openHistory = false,
   });
 
   @override
@@ -147,7 +152,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _mainTabController = TabController(length: 4, vsync: this);
+    // History is the last tab (index 3 for external staff; re-picked below once
+    // the field type is known and internal staff get 3 tabs).
+    _mainTabController = TabController(length: 4, vsync: this, initialIndex: widget.openHistory ? 3 : 0);
     _mainTabController.addListener(() {
       if (!_mainTabController.indexIsChanging && mounted) setState(() {});
     });
@@ -794,7 +801,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   }
 
   Future<void> _fetchCustomers() async {
-    setState(() => _isLoadingCustomers = true);
+    // Spinner only when there is nothing to show yet; refreshes keep the list.
+    if (_customers.isEmpty) setState(() => _isLoadingCustomers = true);
     try {
       final customers = await CustomerService().getAllCustomers();
       if (mounted) {
@@ -964,6 +972,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
             pickupLng: pos.longitude,
             dropoffLat: pos.latitude,
             dropoffLng: pos.longitude,
+            selfLogged: true,
           );
           unawaited(
             TaskService()
@@ -1148,7 +1157,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   }
 
   Future<void> _fetchAllowances() async {
-    setState(() => _isLoadingAllowances = true);
+    if (_allowances.isEmpty) setState(() => _isLoadingAllowances = true);
     try {
       final list = await TaskService().getStaffAllowances();
       if (mounted) {
@@ -1163,7 +1172,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   }
 
   Future<void> _fetchHistory() async {
-    setState(() => _isLoadingHistory = true);
+    if (_historyTasks.isEmpty) setState(() => _isLoadingHistory = true);
     try {
       final list = await TaskService().getStaffTaskHistory();
       if (mounted) {
@@ -1235,7 +1244,11 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       final newLength = isInternal ? 3 : 4;
       if (_mainTabController.length != newLength) {
         _mainTabController.dispose();
-        _mainTabController = TabController(length: newLength, vsync: this);
+        _mainTabController = TabController(
+          length: newLength,
+          vsync: this,
+          initialIndex: widget.openHistory ? newLength - 1 : 0,
+        );
         _mainTabController.addListener(() {
           if (!_mainTabController.indexIsChanging && mounted) setState(() {});
         });
@@ -2779,7 +2792,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  hasActive ? 'Field Journey In-Progress' : 'Field Movement / Journey',
+                  hasActive ? 'At client' : 'Field Visit',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
@@ -2788,9 +2801,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 ),
                 const SizedBox(height: 2),
                 Text(
+                  // Matches the allowance rule: travel is paid Punch In → Field In,
+                  // Field Out → next Field In, …, last Field Out → Punch Out; the time
+                  // between a visit's Field In and Field Out is time at the client.
                   hasActive
-                      ? 'Field In: ${_activeJourney!['fieldInTime'] ?? _activeJourney!['startTime'] ?? 'Active'} • Tap Field Out when done'
-                      : 'Self-log travel between visits to calculate allowance',
+                      ? 'Field In at ${_activeJourney!['fieldInTime'] ?? _activeJourney!['startTime'] ?? '—'} • Tap Field Out when you leave'
+                      : 'Field In when you reach a client · Field Out when you leave',
                   style: TextStyle(
                     fontSize: 11.5,
                     color: hasActive ? Colors.green.shade800 : Colors.blue.shade800,

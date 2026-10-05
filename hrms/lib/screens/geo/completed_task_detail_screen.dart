@@ -300,9 +300,11 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
     return events;
   }
 
+  /// Back / "Return to Tasks": open Tasks on the History tab, where this
+  /// completed task is listed.
   void _goToMyTasks(BuildContext context) {
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) => const MyTasksScreen()),
+      MaterialPageRoute(builder: (context) => const MyTasksScreen(openHistory: true)),
       (route) => false,
     );
   }

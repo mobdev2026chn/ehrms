@@ -20,6 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_colors.dart';
 import '../../services/geo/live_tracking_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/attendance_service.dart';
 import '../auth/login_screen.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../geo/live_tracking_screen.dart';
@@ -226,7 +227,16 @@ class _SplashScreenState extends State<SplashScreen>
       await AuthService().clearSessionIfBaseUrlChanged();
       final prefs = await SharedPreferences.getInstance();
       final t = prefs.getString('token');
-      if (t != null && t.isNotEmpty) unawaited(AuthService().getProfile());
+      if (t != null && t.isNotEmpty) {
+        unawaited(AuthService().getProfile());
+        // Also warm what Home shows first; both are shared (deduped + cached), so the
+        // dashboard picks these results up instead of starting its own requests.
+        final now = DateTime.now();
+        unawaited(AttendanceService().getTodayAttendance().catchError((_) => <String, dynamic>{}));
+        unawaited(AttendanceService()
+            .getMonthAttendance(now.year, now.month)
+            .catchError((_) => <String, dynamic>{}));
+      }
       return t;
     }();
     await Future.wait<void>([
@@ -268,6 +278,7 @@ class _SplashScreenState extends State<SplashScreen>
                 activeInfo['dropoffLng'] as double,
               ),
               task: null,
+              selfLogged: activeInfo['selfLogged'] == true,
             ),
           ),
         );

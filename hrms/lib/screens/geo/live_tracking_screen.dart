@@ -44,6 +44,10 @@ class LiveTrackingScreen extends StatefulWidget {
   /// Optional task (with customer) for Arrived → OTP → Task Completed flow.
   final Task? task;
 
+  /// Self-logged Field In / Field Out journey (no assigned task), as saved when
+  /// tracking started - known before the task itself loads on a reopen.
+  final bool selfLogged;
+
   const LiveTrackingScreen({
     super.key,
     required this.taskId,
@@ -51,6 +55,7 @@ class LiveTrackingScreen extends StatefulWidget {
     required this.pickupLocation,
     required this.dropoffLocation,
     this.task,
+    this.selfLogged = false,
   });
 
   @override
@@ -75,6 +80,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   bool _updatingDestination = false;
 
   Task? get _task => _taskState ?? widget.task;
+
+  /// A self-logged Field In / Field Out journey (no assigned task): there is no
+  /// planned destination, so the trip-progress figures are not shown.
+  bool get _isUnassignedJourney =>
+      widget.selfLogged || _task?.selfLogged == true;
+
+  /// Trip Progress only for a task known to be assigned. While a reopened trip's
+  /// task is still loading it stays hidden rather than flashing up for a journey.
+  bool get _showTripProgress => _task != null && !_isUnassignedJourney;
 
   /// Path built ONLY from actual GPS coordinates (List<LatLng> from location stream).
   Polyline? _routePolyline;
@@ -268,13 +282,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       pickupLng: widget.pickupLocation.longitude,
       dropoffLat: _dropoffLatLng.latitude,
       dropoffLng: _dropoffLatLng.longitude,
+      // Keep the journey flag: this call re-saves the trip on every open.
+      selfLogged: _isUnassignedJourney,
     );
     // Server startTime is authoritative if prefs were cleared on cold start (race) or mistaken sync.
     DateTime? serverStart;
     try {
       final t = await TaskService().getTaskById(widget.taskMongoId!);
       serverStart = t.startTime;
-      if (mounted) _taskState = t;
+      if (mounted) setState(() => _taskState = t);
     } catch (_) {}
 
     DateTime? resolved = serverStart ?? widget.task?.startTime;
@@ -1343,6 +1359,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (_showTripProgress) ...[
         Text(
           'Trip Progress',
           style: TextStyle(
@@ -1405,6 +1422,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             ],
           ),
         ),
+        ],
         if (_geofenceStatusMessage != null) ...[
           const SizedBox(height: 12),
           Container(
@@ -1449,6 +1467,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             ),
           ),
         ],
+        if (_showTripProgress) ...[
         const SizedBox(height: 12),
         // Walking / Driving details (below arrival time, above Arrived button).
         Container(
@@ -1564,6 +1583,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             ),
           ),
         ),
+        ],
         const SizedBox(height: 16),
         Row(
           children: [
@@ -1885,6 +1905,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                     ),
                   ),
                   const SizedBox(height: 8),
+                  if (_showTripProgress)
                   Align(
                     alignment: Alignment.topCenter,
                     child: Container(

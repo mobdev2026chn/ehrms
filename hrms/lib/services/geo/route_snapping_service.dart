@@ -14,6 +14,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:hrms/config/constants.dart';
 import 'package:hrms/models/task.dart';
@@ -153,10 +154,28 @@ class RouteSnappingService {
   // (travelledDistanceKm) still snaps, exactly as before.
 
   static const double _denseSpacingMeters = 60;
-  // v2: gaps are routed along the roads (Directions) instead of drawn straight, so
-  // routes cached by v1 are rebuilt once.
-  static const String _snapCachePrefix = 'route_snap_v2:';
-  static const String _snapCacheIndex = 'route_snap_v2_index';
+  // v3: road snapping / gap routing is only kept when it fits the recorded GPS
+  // (metro, train, footpaths stay as recorded), so routes cached by v2 are rebuilt once.
+  static const String _snapCachePrefix = 'route_snap_v3:';
+  static const String _snapCacheIndex = 'route_snap_v3_index';
+
+  /// A gap longer than this is a GPS blackout (underground metro, tunnel) or a
+  /// tracking pause, not a road the person was seen on: it stays straight.
+  static const double _maxRoutableGapMeters = 1500;
+
+  /// The road route for a gap is used only if it is at most this much longer than
+  /// the straight line between its ends; a bigger detour means the person went
+  /// another way (metro / rail line, footpath) and the gap stays straight.
+  static const double _maxGapDetourRatio = 1.35;
+
+  /// A snapped route is rejected (raw GPS drawn instead) when it is this much
+  /// longer than the recorded path …
+  static const double _maxSnapLengthRatio = 1.3;
+
+  /// … or when more than [_maxOffRoadShare] of the recorded points are farther than
+  /// this from it (they were not on a road: metro, train, open ground).
+  static const double _maxOffRoadMeters = 60;
+  static const double _maxOffRoadShare = 0.3;
   static const int _snapCacheMax = 80;
 
   /// Consecutive points farther apart than this are too sparse for snapToRoads to
@@ -209,6 +228,12 @@ class RouteSnappingService {
       try {
         snapped = await _snapToRoads(cleaned);
         if (snapped.length < cleaned.length) snapped = cleaned;
+        // Keep the road version only if it fits the recorded GPS (else: metro, train,
+        // footpath — draw what was actually recorded).
+        if (!identical(snapped, cleaned) && !_fitsRecorded(cleaned, snapped)) {
+          if (kDebugMode) debugPrint('[RouteSnapping] snapped route does not fit the GPS - using raw points');
+          snapped = cleaned;
+        }
       } catch (_) {
         snapped = cleaned;
       }
@@ -293,6 +318,40 @@ class RouteSnappingService {
   static double _metersBetween(LatLng a, LatLng b) =>
       gl.Geolocator.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude);
 
+  /// Whether a road-snapped route is believable for the recorded points: not much
+  /// longer than the recorded path, and most recorded points lie close to it.
+  static bool _fitsRecorded(List<LatLng> recorded, List<LatLng> snapped) {
+    if (snapped.length < 2 || recorded.length < 2) return true;
+    final recLen = _pathLengthMeters(recorded);
+    final snapLen = _pathLengthMeters(snapped);
+    if (snapLen > recLen * _maxSnapLengthRatio + 100) return false;
+    var offRoad = 0;
+    for (final p in recorded) {
+      var best = double.infinity;
+      for (var i = 1; i < snapped.length; i++) {
+        final d = _distanceToSegment(p, snapped[i - 1], snapped[i]);
+        if (d < best) best = d;
+        if (best <= _maxOffRoadMeters) break;
+      }
+      if (best > _maxOffRoadMeters) offRoad++;
+    }
+    return offRoad <= recorded.length * _maxOffRoadShare;
+  }
+
+  /// Metres from [p] to segment [a]-[b] (flat-earth approximation; fine at city scale).
+  static double _distanceToSegment(LatLng p, LatLng a, LatLng b) {
+    const mPerDegLat = 111320.0;
+    final mPerDegLng = 111320.0 * math.cos(p.latitude * math.pi / 180);
+    final ax = (a.longitude - p.longitude) * mPerDegLng, ay = (a.latitude - p.latitude) * mPerDegLat;
+    final bx = (b.longitude - p.longitude) * mPerDegLng, by = (b.latitude - p.latitude) * mPerDegLat;
+    final dx = bx - ax, dy = by - ay;
+    final len2 = dx * dx + dy * dy;
+    var t = len2 == 0 ? 0.0 : -(ax * dx + ay * dy) / len2;
+    t = t.clamp(0.0, 1.0);
+    final cx = ax + t * dx, cy = ay + t * dy;
+    return math.sqrt(cx * cx + cy * cy);
+  }
+
   static bool _hasGap(List<LatLng> path) {
     for (var i = 1; i < path.length; i++) {
       if (_metersBetween(path[i - 1], path[i]) > _gapMeters) return true;
@@ -310,12 +369,18 @@ class RouteSnappingService {
     for (var i = 1; i < path.length; i++) {
       final a = path[i - 1];
       final b = path[i];
-      if (_metersBetween(a, b) > _gapMeters && requests < _maxDirectionsPerRoute) {
+      final gap = _metersBetween(a, b);
+      // Only short gaps are routed along the roads; a long one is a GPS blackout
+      // (underground metro, tunnel) or a pause and stays straight.
+      if (gap > _gapMeters && gap <= _maxRoutableGapMeters && requests < _maxDirectionsPerRoute) {
         requests++;
         try {
           final road = await _directions(a, b, key);
-          // Keep the recorded ends; take the road geometry in between.
-          if (road.length > 2) out.addAll(road.sublist(1, road.length - 1));
+          // Keep the recorded ends; take the road geometry in between - but only when the
+          // road roughly follows the straight line (a big detour = metro / rail / footpath).
+          if (road.length > 2 && _pathLengthMeters(road) <= gap * _maxGapDetourRatio) {
+            out.addAll(road.sublist(1, road.length - 1));
+          }
         } catch (e) {
           if (kDebugMode) debugPrint('[RouteSnapping] directions failed, gap stays straight: $e');
         }

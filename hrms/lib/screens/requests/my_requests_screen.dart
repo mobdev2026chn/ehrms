@@ -16,6 +16,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:dio/dio.dart';
+import '../salary/payslip_screen.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import '../../config/app_colors.dart';
 import '../../config/app_text_styles.dart';
@@ -1018,6 +1019,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     'Approved',
     'Pending',
     'Rejected',
+    'Cancelled',
   ];
   Timer? _debounce;
   final TextEditingController _searchController = TextEditingController();
@@ -1329,17 +1331,22 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
         int approvedCount = 0;
         int rejectedCount = 0;
         int pendingCount = 0;
+        int cancelledCount = 0;
         for (final l in _leaves) {
-          final s = l['status']?.toString();
-          if (s == 'Approved') {
+          // Case-insensitive: "cancelled"/"Cancelled" both count.
+          final s = l['status']?.toString().trim().toLowerCase();
+          if (s == 'approved') {
             approvedCount++;
-          } else if (s == 'Rejected') {
+          } else if (s == 'rejected') {
             rejectedCount++;
-          } else if (s == 'Pending') {
+          } else if (s == 'pending') {
             pendingCount++;
+          } else if (s == 'cancelled' || s == 'canceled') {
+            cancelledCount++;
           }
         }
-        final totalRequests = _leaves.length;
+        // The total is exactly the four lines shown, so it always adds up.
+        final totalRequests = approvedCount + rejectedCount + pendingCount + cancelledCount;
 
         num totalAvailableLeaves = 0;
         for (final b in _leaveBalances) {
@@ -1467,7 +1474,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                     child: Row(
                       children: const [
                         Expanded(
-                          flex: 4,
+                          flex: 3,
                           child: Text(
                             'TYPE',
                             style: TextStyle(
@@ -1478,10 +1485,15 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             ),
                           ),
                         ),
+                        // One line: "ALLOCATED" used to break as "ALLOCAT / ED".
+                        // Wider column, and it shrinks slightly on narrow phones.
                         Expanded(
-                          flex: 2,
-                          child: Text(
+                          flex: 3,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
                             'ALLOCATED',
+                            maxLines: 1,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 11.5,
@@ -1489,6 +1501,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               color: Color(0xFF94A3B8),
                               letterSpacing: 0.5,
                             ),
+                          ),
                           ),
                         ),
                         Expanded(
@@ -1506,14 +1519,19 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                         ),
                         Expanded(
                           flex: 3,
-                          child: Text(
-                            'AVAILABLE',
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF94A3B8),
-                              letterSpacing: 0.5,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              'AVAILABLE',
+                              maxLines: 1,
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF94A3B8),
+                                letterSpacing: 0.5,
+                              ),
                             ),
                           ),
                         ),
@@ -1549,7 +1567,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                         child: Row(
                           children: [
                             Expanded(
-                              flex: 4,
+                              flex: 3,
                               child: Row(
                                 children: [
                                   Container(
@@ -1598,7 +1616,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               ),
                             ),
                             Expanded(
-                              flex: 2,
+                              flex: 3,
                               child: Text(
                                 _trimBalanceNum(total),
                                 textAlign: TextAlign.center,
@@ -1746,6 +1764,20 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 Text(
                                   '$pendingCount',
                                   style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFEFAA1F)),
+                                ),
+                              ],
+                            ),
+                            const Divider(height: 10, color: Color(0xFFF1F5F9)),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Cancelled',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                ),
+                                Text(
+                                  '$cancelledCount',
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFF64748B)),
                                 ),
                               ],
                             ),
@@ -1935,23 +1967,10 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Container(
-                    height: 38,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
-                        icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
-                        items: _statusOptions
-                            .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                            .toList(),
-                        onChanged: (val) {
+                  _StatusFilterPill(
+                    value: _selectedStatus,
+                    options: _statusOptions,
+                    onChanged: (val) {
                           if (val != null) {
                             setState(() {
                           _selectedStatus = val;
@@ -1960,8 +1979,6 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             _fetchLeaves();
                           }
                         },
-                      ),
-                    ),
                   ),
                 ],
               ),
@@ -2279,7 +2296,9 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                     ),
                   ),
                   DataCell(
-                    isPending
+                    _RowActions(
+                      onView: () => _showLeaveDetails(leave is Map<String, dynamic> ? leave : Map<String, dynamic>.from(leave as Map)),
+                      extra: isPending
                         ? OutlinedButton(
                             onPressed: () => _cancelLeave(leave),
                             style: OutlinedButton.styleFrom(
@@ -2300,7 +2319,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               ],
                             ),
                           )
-                        : const Text('-', style: TextStyle(color: Color(0xFF94A3B8))),
+                        : null,
+                    ),
                   ),
                 ],
               );
@@ -3641,6 +3661,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
     'Pending',
     'Approved',
     'Rejected',
+    'Cancelled',
   ];
 
   Timer? _debounce;
@@ -4064,28 +4085,11 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                 Row(
                   children: [
                     Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _statusOptions.contains(_selectedStatus)
-                                ? _selectedStatus
-                                : _statusOptions.first,
-                            isExpanded: true,
-                            items: _statusOptions
-                                .toSet()
-                                .map(
-                                  (e) => DropdownMenuItem(
-                                    value: e,
-                                    child: Text(e),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (val) {
+                      child: _StatusFilterPill(
+                        value: _selectedStatus,
+                        options: _statusOptions,
+                        expanded: true,
+                        onChanged: (val) {
                               if (val != null) {
                                 setState(() {
                           _selectedStatus = val;
@@ -4094,8 +4098,6 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                                 _fetchLoans();
                               }
                             },
-                          ),
-                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -5139,28 +5141,25 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
     }
   }
 
+  /// One day (tap it twice) or a range; matched against the expense date.
   Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _startDate ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-    );
-    if (picked != null) {
-      setState(() {
-        _startDate = DateTime(picked.year, picked.month, picked.day);
-        _endDate = DateTime(
-          picked.year,
-          picked.month,
-          picked.day,
-          23,
-          59,
-          59,
-          999,
-        );
-      });
-      _fetchExpenses();
-    }
+    final range = await _pickRequestDateRange(context, _startDate, _endDate);
+    if (range == null) return;
+    setState(() {
+      _startDate = range.start;
+      _endDate = range.end;
+      _currentPage = 1;
+    });
+    _fetchExpenses();
+  }
+
+  void _clearDateFilter() {
+    setState(() {
+      _startDate = null;
+      _endDate = null;
+      _currentPage = 1;
+    });
+    _fetchExpenses();
   }
 
   // Changed to public for GlobalKey access
@@ -5577,23 +5576,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
               ),
               const SizedBox(width: 8),
               // Status dropdown
-              Container(
-                height: 38,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
-                    icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
-                    items: _statusOptions
-                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                        .toList(),
-                    onChanged: (val) {
+              _StatusFilterPill(
+                value: _selectedStatus,
+                options: _statusOptions,
+                onChanged: (val) {
                       if (val != null) {
                         setState(() {
                           _selectedStatus = val;
@@ -5602,10 +5588,15 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                         _fetchExpenses();
                       }
                     },
-                  ),
-                ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          _DateRangeFilterField(
+            start: _startDate,
+            end: _endDate,
+            onTap: _pickDate,
+            onClear: _clearDateFilter,
           ),
         ],
       ),
@@ -5862,7 +5853,9 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                     ),
                   ),
                   DataCell(
-                    isPending
+                    _RowActions(
+                      onView: () => _showExpenseDetails(raw),
+                      extra: isPending
                         ? OutlinedButton(
                             onPressed: () => _cancelExpense(raw),
                             style: OutlinedButton.styleFrom(
@@ -5883,7 +5876,8 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                               ],
                             ),
                           )
-                        : const Text('-', style: TextStyle(color: Color(0xFF94A3B8))),
+                        : null,
+                    ),
                   ),
                 ],
               );
@@ -7737,23 +7731,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
               ),
               const SizedBox(width: 8),
               // Status dropdown
-              Container(
-                height: 38,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
-                    icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
-                    items: _statusOptions
-                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                        .toList(),
-                    onChanged: (val) {
+              _StatusFilterPill(
+                value: _selectedStatus,
+                options: _statusOptions,
+                onChanged: (val) {
                       if (val != null) {
                         setState(() {
                           _selectedStatus = val;
@@ -7762,8 +7743,6 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                         _fetchRequests();
                       }
                     },
-                  ),
-                ),
               ),
             ],
           ),
@@ -8063,7 +8042,9 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     ),
                   ),
                   DataCell(
-                    isPending
+                    _RowActions(
+                      onView: () => _showPermissionDetails(req),
+                      extra: isPending
                         ? OutlinedButton(
                             onPressed: () => _cancelRequest(req['_id'].toString()),
                             style: OutlinedButton.styleFrom(
@@ -8084,7 +8065,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                               ],
                             ),
                           )
-                        : const Text('-', style: TextStyle(color: Color(0xFF94A3B8))),
+                        : null,
+                    ),
                   ),
                 ],
               );
@@ -9467,7 +9449,27 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
     return '-';
   }
 
+  /// The issued payroll id of a payslip request, when it has one.
+  String? _issuedPayrollId(Map<String, dynamic> req) {
+    final payroll = req['payrollId'];
+    final id = payroll is Map
+        ? (payroll['_id']?.toString() ?? payroll['id']?.toString())
+        : (payroll is String ? payroll : null);
+    return (id == null || id.trim().isEmpty || id == 'null') ? null : id.trim();
+  }
+
+  /// Opens the mobile payslip (with Download PDF / Share) for an issued payroll.
+  Future<bool> _openMobilePayslip(Map<String, dynamic> req) async {
+    final id = _issuedPayrollId(req);
+    if (id == null || !mounted) return false;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => PayslipScreen(payrollId: id, period: req['month']?.toString()),
+    ));
+    return true;
+  }
+
   Future<void> _viewPayslipItem(Map<String, dynamic> req) async {
+    if (await _openMobilePayslip(req)) return;
     try {
       final payroll = req['payrollId'];
       final payrollId = payroll is Map
@@ -9511,6 +9513,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
   }
 
   Future<void> _downloadPayslipItem(Map<String, dynamic> req) async {
+    if (await _openMobilePayslip(req)) return;
     try {
       final payroll = req['payrollId'];
       final payrollId = payroll is Map
@@ -10006,23 +10009,10 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
               ),
               const SizedBox(width: 8),
               // Status dropdown
-              Container(
-                height: 38,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _statusOptions.contains(_selectedStatus) ? _selectedStatus : _statusOptions.first,
-                    icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
-                    items: _statusOptions
-                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                        .toList(),
-                    onChanged: (val) {
+              _StatusFilterPill(
+                value: _selectedStatus,
+                options: _statusOptions,
+                onChanged: (val) {
                       if (val != null) {
                         setState(() {
                           _selectedStatus = val;
@@ -10031,10 +10021,15 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                         _fetchRequests();
                       }
                     },
-                  ),
-                ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          _DateRangeFilterField(
+            start: _startDate,
+            end: _endDate,
+            onTap: _pickDate,
+            onClear: _clearDateFilter,
           ),
         ],
       ),
@@ -10355,14 +10350,16 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                     ),
                   ),
                   DataCell(
-                    isApproved
+                    _RowActions(
+                      onView: () => _showPayslipDetails(raw),
+                      extra: isApproved
                         ? Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
                                 icon: const Icon(Icons.remove_red_eye_outlined, size: 16, color: Color(0xFF0F172A)),
                                 onPressed: () => _viewPayslipItem(raw),
-                                tooltip: 'View',
+                                tooltip: 'View payslip',
                               ),
                               IconButton(
                                 icon: const Icon(Icons.download_rounded, size: 16, color: Color(0xFFEFAA1F)),
@@ -10397,7 +10394,8 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                                   ],
                                 ),
                               )
-                            : const Text('-', style: TextStyle(color: Color(0xFF94A3B8)))),
+                            : null),
+                    ),
                   ),
                 ],
               );
@@ -10442,28 +10440,26 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
     );
   }
 
+  /// One day (tap it twice) or a range; matched against the day the payslip
+  /// was requested.
   Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _startDate ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-    if (picked != null) {
-      setState(() {
-        _startDate = DateTime(picked.year, picked.month, picked.day);
-        _endDate = DateTime(
-          picked.year,
-          picked.month,
-          picked.day,
-          23,
-          59,
-          59,
-          999,
-        );
-      });
-      _fetchRequests();
-    }
+    final range = await _pickRequestDateRange(context, _startDate, _endDate);
+    if (range == null) return;
+    setState(() {
+      _startDate = range.start;
+      _endDate = range.end;
+      _currentPage = 1;
+    });
+    _fetchRequests();
+  }
+
+  void _clearDateFilter() {
+    setState(() {
+      _startDate = null;
+      _endDate = null;
+      _currentPage = 1;
+    });
+    _fetchRequests();
   }
 
   @override
@@ -10886,6 +10882,214 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Status filter in the GEO style: a tinted, curved pill with a filter icon,
+/// stronger border while a status is picked, and a rounded menu.
+class _StatusFilterPill extends StatelessWidget {
+  const _StatusFilterPill({
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.expanded = false,
+  });
+
+  final String value;
+  final List<String> options;
+  final ValueChanged<String?> onChanged;
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final unique = options.toSet().toList();
+    final current = unique.contains(value) ? value : unique.first;
+    final isActive = current != unique.first;
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.primary.withValues(alpha: isActive ? 0.5 : 0.25),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
+        children: [
+          Icon(Icons.filter_list_rounded, size: 16, color: AppColors.primary),
+          const SizedBox(width: 6),
+          Flexible(
+            fit: expanded ? FlexFit.tight : FlexFit.loose,
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: current,
+                isExpanded: expanded,
+                isDense: true,
+                borderRadius: BorderRadius.circular(14),
+                dropdownColor: Colors.white,
+                elevation: 4,
+                icon: Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: AppColors.primary),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1E293B),
+                ),
+                items: unique
+                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                    .toList(),
+                onChanged: onChanged,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Table "Action" cell: View (opens the request's details sheet) followed by the
+/// row's own actions - Cancel while Pending, View/Download for an issued payslip -
+/// the same options the web table offers.
+class _RowActions extends StatelessWidget {
+  const _RowActions({required this.onView, this.extra});
+
+  final VoidCallback onView;
+  final Widget? extra;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        OutlinedButton(
+          onPressed: onView,
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: Color(0xFFE2E8F0)),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            minimumSize: Size.zero,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.visibility_outlined, size: 12, color: Color(0xFF0F172A)),
+              SizedBox(width: 4),
+              Text(
+                'View',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+              ),
+            ],
+          ),
+        ),
+        if (extra != null) ...[const SizedBox(width: 6), extra!],
+      ],
+    );
+  }
+}
+
+/// Date-range picker for the request lists: one day (tap it twice) or a range.
+/// Returns the start at 00:00 and the end at 23:59:59.999 so whole days match.
+Future<DateTimeRange?> _pickRequestDateRange(
+  BuildContext context,
+  DateTime? start,
+  DateTime? end,
+) async {
+  final now = DateTime.now();
+  final picked = await showDateRangePicker(
+    context: context,
+    firstDate: DateTime(2020),
+    lastDate: DateTime(now.year + 1, 12, 31),
+    initialDateRange:
+        start != null && end != null ? DateTimeRange(start: start, end: end) : null,
+    helpText: 'Filter by date',
+    saveText: 'Apply',
+    builder: (ctx, child) => Theme(
+      data: Theme.of(ctx).copyWith(
+        colorScheme: Theme.of(ctx).colorScheme.copyWith(primary: AppColors.primary),
+      ),
+      child: child!,
+    ),
+  );
+  if (picked == null) return null;
+  final s = picked.start, e = picked.end;
+  return DateTimeRange(
+    start: DateTime(s.year, s.month, s.day),
+    end: DateTime(e.year, e.month, e.day, 23, 59, 59, 999),
+  );
+}
+
+/// "Filter by date" field: shows the chosen day or range, with a clear button.
+class _DateRangeFilterField extends StatelessWidget {
+  const _DateRangeFilterField({
+    required this.start,
+    required this.end,
+    required this.onTap,
+    required this.onClear,
+  });
+
+  final DateTime? start;
+  final DateTime? end;
+  final VoidCallback onTap;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = start != null;
+    String label = 'Filter by date';
+    if (start != null) {
+      final f = DateFormat('dd MMM yyyy');
+      final e = end ?? start!;
+      final sameDay = start!.year == e.year && start!.month == e.month && start!.day == e.day;
+      label = sameDay ? f.format(start!) : '${f.format(start!)}  –  ${f.format(e)}';
+    }
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        height: 38,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: active ? AppColors.primary.withValues(alpha: 0.08) : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: active ? AppColors.primary.withValues(alpha: 0.5) : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.calendar_month_outlined,
+              size: 16,
+              color: active ? AppColors.primary : const Color(0xFF94A3B8),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                  color: active ? const Color(0xFF1E293B) : const Color(0xFF94A3B8),
+                ),
+              ),
+            ),
+            if (active)
+              InkWell(
+                onTap: onClear,
+                customBorder: const CircleBorder(),
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.close_rounded, size: 16, color: Color(0xFF64748B)),
+                ),
+              ),
+          ],
         ),
       ),
     );

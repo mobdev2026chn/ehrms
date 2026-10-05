@@ -1,5 +1,6 @@
-// Staff Interaction hub: Chats · Polls & Surveys · Announcements, on HRMSbackend
-// (/api/staff/interaction/chat, /api/staff/interaction/polls, /api/staff/announcements).
+// Staff Interaction hub: Chats · Polls & Surveys, on HRMSbackend
+// (/api/staff/interaction/chat, /api/staff/interaction/polls). Announcements are their
+// own module (screens/announcements/announcements_screen.dart).
 
 import 'dart:async';
 
@@ -10,7 +11,6 @@ import '../../../services/staff_interaction_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/bottom_navigation_bar.dart';
-import 'staff_announcement_detail_screen.dart';
 import 'staff_chat_thread_screen.dart';
 import 'staff_interaction_widgets.dart';
 import 'staff_new_chat_screen.dart';
@@ -18,7 +18,7 @@ import 'staff_new_chat_screen.dart';
 class StaffInteractionScreen extends StatefulWidget {
   const StaffInteractionScreen({super.key, this.initialTab = 0});
 
-  /// 0 = Chats, 1 = Polls & Surveys, 2 = Announcements.
+  /// 0 = Chats, 1 = Polls & Surveys.
   final int initialTab;
 
   @override
@@ -28,9 +28,9 @@ class StaffInteractionScreen extends StatefulWidget {
 class _StaffInteractionScreenState extends State<StaffInteractionScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs = TabController(
-    length: 3,
+    length: 2,
     vsync: this,
-    initialIndex: widget.initialTab.clamp(0, 2),
+    initialIndex: widget.initialTab.clamp(0, 1),
   );
 
   @override
@@ -80,13 +80,12 @@ class _StaffInteractionScreenState extends State<StaffInteractionScreen>
           tabs: const [
             Tab(text: 'Chats'),
             Tab(text: 'Polls & Surveys'),
-            Tab(text: 'Announcements'),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabs,
-        children: const [_ChatsTab(), _PollsTab(), _AnnouncementsTab()],
+        children: const [_ChatsTab(), _PollsTab()],
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
     );
@@ -773,255 +772,6 @@ class _PollCardState extends State<_PollCard> {
                     '${(share * 100).round()}%',
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: kInteractionInk),
                   ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Announcements ─────────────────────────────────────────────────────────────
-
-class _AnnouncementsTab extends StatefulWidget {
-  const _AnnouncementsTab();
-
-  @override
-  State<_AnnouncementsTab> createState() => _AnnouncementsTabState();
-}
-
-class _AnnouncementsTabState extends State<_AnnouncementsTab> with AutomaticKeepAliveClientMixin {
-  final _svc = StaffInteractionService.instance;
-  final _scroll = ScrollController();
-  final List<StaffAnnouncement> _items = [];
-  int _page = 1;
-  int _totalPages = 1;
-  bool _loading = true;
-  bool _loadingMore = false;
-  String? _error;
-  String _search = '';
-  Timer? _debounce;
-
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load(reset: true);
-    _scroll.addListener(() {
-      if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 200) _loadMore();
-    });
-  }
-
-  @override
-  void dispose() {
-    _scroll.dispose();
-    _debounce?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _load({bool reset = false}) async {
-    if (reset) {
-      setState(() {
-        _loading = _items.isEmpty;
-        _error = null;
-      });
-    }
-    final r = await _svc.getAnnouncements(page: 1, search: _search);
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      if (r.ok) {
-        _items
-          ..clear()
-          ..addAll(r.data!.items);
-        _page = 1;
-        _totalPages = r.data!.totalPages;
-      } else {
-        _error = r.error;
-      }
-    });
-  }
-
-  Future<void> _loadMore() async {
-    if (_loadingMore || _page >= _totalPages) return;
-    setState(() => _loadingMore = true);
-    final r = await _svc.getAnnouncements(page: _page + 1, search: _search);
-    if (!mounted) return;
-    setState(() {
-      _loadingMore = false;
-      if (r.ok) {
-        _page++;
-        _items.addAll(r.data!.items);
-        _totalPages = r.data!.totalPages;
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    return Column(
-      children: [
-        Container(
-          color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: TextField(
-            onChanged: (v) {
-              _debounce?.cancel();
-              _debounce = Timer(const Duration(milliseconds: 400), () {
-                _search = v;
-                _load(reset: true);
-              });
-            },
-            decoration: InputDecoration(
-              hintText: 'Search announcements',
-              prefixIcon: const Icon(Icons.search_rounded, size: 20),
-              isDense: true,
-              filled: true,
-              fillColor: const Color(0xFFF1F5F9),
-              contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-            ),
-          ),
-        ),
-        Expanded(child: _body()),
-      ],
-    );
-  }
-
-  Widget _body() {
-    if (_loading) return const Center(child: CircularProgressIndicator(strokeWidth: 2.5));
-    if (_error != null && _items.isEmpty) {
-      return InteractionEmptyState(
-        icon: Icons.wifi_off_rounded,
-        title: 'Could not load announcements',
-        message: _error!,
-        action: OutlinedButton(onPressed: () => _load(reset: true), child: const Text('Retry')),
-      );
-    }
-    return RefreshIndicator(
-      onRefresh: () => _load(reset: true),
-      child: _items.isEmpty
-          ? ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              children: const [
-                SizedBox(
-                  height: 360,
-                  child: InteractionEmptyState(
-                    icon: Icons.campaign_outlined,
-                    title: 'No announcements',
-                    message: 'Company announcements will show here.',
-                  ),
-                ),
-              ],
-            )
-          : ListView.builder(
-              controller: _scroll,
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              itemCount: _items.length + (_loadingMore ? 1 : 0),
-              itemBuilder: (_, i) {
-                if (i >= _items.length) {
-                  return const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                  );
-                }
-                return _card(_items[i]);
-              },
-            ),
-    );
-  }
-
-  Widget _card(StaffAnnouncement a) {
-    final cover = mediaImageProvider(a.coverUrl);
-    final myComments = a.threads.length;
-    final replies = a.threads.fold<int>(0, (s, t) => s + t.replies.length);
-    return GestureDetector(
-      onTap: () async {
-        await Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => StaffAnnouncementDetailScreen(announcementId: a.id, initial: a),
-        ));
-        _load();
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: kInteractionLine),
-          boxShadow: const [BoxShadow(color: Color(0x08000000), blurRadius: 10, offset: Offset(0, 3))],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (cover != null)
-              AspectRatio(
-                aspectRatio: 16 / 7,
-                child: Image(image: cover, fit: BoxFit.cover, errorBuilder: (_, _, _) => const SizedBox()),
-              ),
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.campaign_rounded, size: 16, color: kInteractionAccent),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          a.from.isNotEmpty ? a.from : 'Announcement',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kInteractionMuted),
-                        ),
-                      ),
-                      if (a.publishDate != null)
-                        Text(
-                          DateFormat('d MMM yyyy').format(a.publishDate!),
-                          style: const TextStyle(fontSize: 11.5, color: kInteractionMuted),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    a.title,
-                    style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: kInteractionInk, height: 1.3),
-                  ),
-                  if (a.subject.isNotEmpty || a.description.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      a.subject.isNotEmpty ? a.subject : a.description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13, color: kInteractionMuted, height: 1.4),
-                    ),
-                  ],
-                  if (myComments > 0 || a.attachments.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        if (a.attachments.isNotEmpty) ...[
-                          const Icon(Icons.attach_file_rounded, size: 14, color: kInteractionMuted),
-                          Text(' ${a.attachments.length}', style: const TextStyle(fontSize: 12, color: kInteractionMuted)),
-                          const SizedBox(width: 12),
-                        ],
-                        if (myComments > 0) ...[
-                          const Icon(Icons.chat_bubble_outline_rounded, size: 14, color: kInteractionMuted),
-                          Text(
-                            ' $myComments comment${myComments == 1 ? '' : 's'}${replies > 0 ? ' · $replies repl${replies == 1 ? 'y' : 'ies'}' : ''}',
-                            style: const TextStyle(fontSize: 12, color: kInteractionMuted),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
                 ],
               ),
             ),

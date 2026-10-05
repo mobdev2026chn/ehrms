@@ -261,6 +261,8 @@ class TaskService {
     /// False when the destination is the customer's own address and pin: HRMSbackend then
     /// uses the customer's saved location instead of coordinates from the app.
     bool overrideDestination = true,
+    /// Admin custom task fields `{ fieldId: value }` (HRMSbackend validates required ones).
+    Map<String, String>? customFields,
   }) async {
     await _setToken();
     final prefs = await SharedPreferences.getInstance();
@@ -306,6 +308,7 @@ class TaskService {
     String dateOnly(DateTime d) =>
         '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
     body['title'] = taskTitle;
+    if (customFields != null && customFields.isNotEmpty) body['customFields'] = customFields;
     body['startDate'] = dateOnly(earliestCompletionDate ?? DateTime.now());
     body['endDate'] = dateOnly(latestCompletionDate ?? expectedCompletionDate);
     if (destinationLocation != null && overrideDestination) {

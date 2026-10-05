@@ -80,15 +80,25 @@ class RequestService {
       }
 
       final attendance = AttendanceService();
+      // Month attendance is the slowest call and only a fallback for the day counts
+      // (today-punch already returns presentDays / totalWorkingDays). Start it now so the
+      // shared cache is warm for the calendar cards, but don't hold the dashboard for it.
+      final monthFuture = (staffId != null && staffId.isNotEmpty)
+          ? sharedData(attendance.getMonthAttendance(year, month))
+          : Future<dynamic>.value(null);
       final results = await Future.wait<dynamic>([
         sharedData(attendance.getTodayAttendance()),
         getData('/staff/requests/leave/my-balances'),
-        (staffId != null && staffId.isNotEmpty)
-            ? sharedData(attendance.getMonthAttendance(year, month))
-            : Future<dynamic>.value(null),
+        Future<dynamic>.value(null), // month: resolved below only if needed
         getData('/staff/requests/leave/my-requests'),
         getData('/staff/dashboard/celebrations'),
       ]);
+      final todayData = results[0];
+      if (todayData is! Map || todayData['presentDays'] == null || todayData['totalWorkingDays'] == null) {
+        results[2] = await monthFuture;
+      } else {
+        unawaited(monthFuture);
+      }
 
       // 5. Celebrations ({ birthdays, anniversaries }) -> today / upcoming lists for the card.
       final todayCelebrations = <Map<String, dynamic>>[];
@@ -510,6 +520,7 @@ class RequestService {
   static void resetForNewUser() {
     _reviewerNames = null;
     _reviewerNamesInFlight = null;
+    _reviewerNamesFailedAt = null;
   }
 
   /// Legacy-route fallbacks run only when the primary route does not exist.
@@ -523,9 +534,16 @@ class RequestService {
   static Future<Map<String, String>>? _reviewerNamesInFlight;
 
   /// The request tabs load together; share one directory fetch between them.
+  /// A failed directory fetch is not retried on every list call for 2 minutes.
+  static DateTime? _reviewerNamesFailedAt;
+
   Future<Map<String, String>> _loadReviewerNames() {
     final cached = _reviewerNames;
     if (cached != null) return Future.value(cached);
+    final failedAt = _reviewerNamesFailedAt;
+    if (failedAt != null && DateTime.now().difference(failedAt) < const Duration(minutes: 2)) {
+      return Future.value(<String, String>{});
+    }
     final pending = _reviewerNamesInFlight;
     if (pending != null) return pending;
     final future = _fetchReviewerNames();
@@ -555,7 +573,8 @@ class RequestService {
       }
       _reviewerNames = names;
     } catch (_) {
-      // Leave the cache empty so the next call retries.
+      // Leave the cache empty so a later call retries - but not for 2 minutes.
+      _reviewerNamesFailedAt = DateTime.now();
     }
     return names;
   }
@@ -595,7 +614,9 @@ class RequestService {
         final reviewer = item['reviewedBy'] ?? (storedName is String ? storedName : null);
         final reviewerId = reviewer is Map ? reviewer['_id']?.toString() : reviewer?.toString();
         if (reviewerId != null && reviewerId.isNotEmpty) {
-          directory ??= await _loadReviewerNames();
+          // Names are a nicety: never hold the request list more than 2 s for them.
+          directory ??= await _loadReviewerNames()
+              .timeout(const Duration(seconds: 2), onTimeout: () => <String, String>{});
           name = directory[reviewerId];
         }
       }

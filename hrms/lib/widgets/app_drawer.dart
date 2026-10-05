@@ -38,6 +38,7 @@ import '../screens/admin/recruitment/admin_selected_rejected_screen.dart';
 import '../screens/admin/recruitment/admin_offer_letter_screen.dart';
 import '../screens/admin/recruitment/admin_verifications_screen.dart';
 import '../screens/interaction/staff/staff_interaction_screen.dart';
+import '../screens/announcements/announcements_screen.dart';
 
 class AppDrawer extends StatefulWidget {
   final int? currentIndex;
@@ -344,6 +345,10 @@ class _AppDrawerState extends State<AppDrawer> {
         _item(Icons.forum_rounded, 'Interaction', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const StaffInteractionScreen()));
+        }),
+        _item(Icons.campaign_rounded, 'Announcements', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const AnnouncementsScreen()));
         }),
         const SizedBox(height: 8),
         const Divider(height: 1, color: Color(0xFFE2E8F0)),

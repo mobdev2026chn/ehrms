@@ -398,9 +398,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     unawaited(_fetchPunchStatusForNavBar());
   }
 
-  Future<void> _fetchPunchStatusForNavBar() async {
+  /// [force]: false reuses today's data Home just loaded (cached / in flight).
+  Future<void> _fetchPunchStatusForNavBar({bool force = true}) async {
     _lastPunchNavFetchAt = DateTime.now();
-    final res = await _attendanceService.getTodayAttendance(forceRefresh: true);
+    final res = await _attendanceService.getTodayAttendance(forceRefresh: force);
     if (!mounted) return;
     final data = res['data'] as Map<String, dynamic>?;
     if (res['success'] == true && data != null) {
@@ -696,14 +697,21 @@ class _DashboardScreenState extends State<DashboardScreen>
     return null;
   }
 
+  /// 136 → "2 h 16 min", 45 → "45 min".
+  String _formatMinutesLabel(int minutes) {
+    final h = minutes ~/ 60, m = minutes % 60;
+    if (h == 0) return '$m min';
+    return m == 0 ? '$h h' : '$h h $m min';
+  }
+
   String _buildLateAlertMessage({
     required String baseMessage,
     required int lateMinutes,
     required double fineAmount,
   }) {
     return '$baseMessage\n'
-        'LateMinutes: $lateMinutes\n'
-        'Any fine is calculated by the system after you punch (same as web) and shown on your Today card.';
+        'Late by: ${_formatMinutesLabel(lateMinutes)}\n'
+        'Any applicable fine will be calculated after you punch and shown on your Today card.';
   }
 
   String _buildEarlyAlertMessage({
@@ -712,8 +720,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     required double fineAmount,
   }) {
     return '$baseMessage\n'
-        'EarlyMinutes: $earlyMinutes\n'
-        'Any fine is calculated by the system after you punch (same as web) and shown on your Today card.';
+        'Early by: ${_formatMinutesLabel(earlyMinutes)}\n'
+        'Any applicable fine will be calculated after you punch and shown on your Today card.';
   }
 
   Future<Map<String, int>> _getPermissionAdjustment({
@@ -1258,8 +1266,11 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   /// Runs when the home dashboard finishes a load: open tab, pull-to-refresh, or [refreshTrigger].
   Future<void> _onHomeDashboardDataRefreshed() async {
-    await _refreshSalaryOverviewAccess(preferServer: true);
-    await _fetchPunchStatusForNavBar();
+    // Home has just fetched today's punch: reuse it, and run both in parallel.
+    await Future.wait<void>([
+      _refreshSalaryOverviewAccess(preferServer: true),
+      _fetchPunchStatusForNavBar(force: false),
+    ]);
   }
 
   /// Same rule as [SalaryOverviewScreen]: `salaryDetailsAccessEnabled == true` only.
