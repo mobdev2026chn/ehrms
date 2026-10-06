@@ -203,11 +203,27 @@ class PresenceTrackingService {
   /// Suppresses bursty duplicate uploads when the fix is almost the same, but still allows
   /// one row per [trackingInterval] while checked in (otherwise background/foreground never
   /// writes when you stay near the last point — typical at a desk or small GPS drift).
+  /// Walking pace (~5 km/h). At or above this the employee is genuinely moving,
+  /// so the point is kept to draw the trip — only a near-stationary fix is "same place".
+  static const double _movingSpeedMps = 1.4;
+
+  /// Whether a movement type means the employee is in motion (keep the point).
+  static bool _isMovingMovementType(String? mt) {
+    if (mt == null) return false;
+    final m = mt.toLowerCase();
+    return m.contains('driv') || m.contains('walk') || m.contains('moving');
+  }
+
   Future<bool> _shouldSkipPresenceSend(
     double lat,
     double lng, {
     String logLabel = 'presence_store',
+    bool moving = false,
   }) async {
+    // Genuinely moving (driving/walking): keep every point so the route draws the real
+    // path, even when two fixes land within 15 m of each other. Idle is still neglected.
+    if (moving) return false;
+
     final prefs = await SharedPreferences.getInstance();
     await _loadIntervalFromPrefs(prefs);
     final lastLat = prefs.getDouble(_kPresenceLastSentLat);
@@ -602,6 +618,7 @@ class PresenceTrackingService {
       lat,
       lng,
       logLabel: 'presence_store_bg',
+      moving: speedMps != null && speedMps.isFinite && speedMps >= _movingSpeedMps,
     )) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
@@ -1234,8 +1251,10 @@ class PresenceTrackingService {
     final hasInternet = await _hasInternetConnection();
     final shouldBypassDuplicateCheck =
         !hasInternet || status == 'offline' || appStatus == 'offline';
+    final movingNow = _isMovingMovementType(resolvedMovementType) ||
+        _isMovingMovementType(movementType);
     if (!shouldBypassDuplicateCheck &&
-        await _shouldSkipPresenceSend(lat, lng, logLabel: 'presence_store')) {
+        await _shouldSkipPresenceSend(lat, lng, logLabel: 'presence_store', moving: movingNow)) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
           '[Trackings] presence_store SKIP duplicate '
