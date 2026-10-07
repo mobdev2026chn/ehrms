@@ -147,6 +147,17 @@ namespace EktaDMAAgent
         public static string ServerHttpUrl = "";
         public static string ServerWsUrl = "";
 
+        // EktaHR backend: lets an employee sign in even when no DMA server is on the LAN yet
+        // (e.g. the admin PC that hosts the server has not been opened). Login is NOT blocked;
+        // the agent then keeps looking for a DMA server and attaches to it once it appears, so
+        // the admin can view the agent.
+        public const string HrmsApiUrl = "https://uat.ektahr.com";
+
+        // Credentials of the current session, kept in memory only, so the agent can register
+        // with a DMA server the moment one appears after a serverless login. Cleared on logout.
+        private static string PendingEmail = "";
+        private static string PendingPassword = "";
+
         [STAThread]
         static void Main(string[] args)
         {
@@ -225,7 +236,7 @@ namespace EktaDMAAgent
                     string savedWs = ExtractJsonValue(json, "wsUrl");
 
                     // If cached config contains legacy port :9000 or old IP 192.168.x.x, PURGE IT!
-                    if (!string.IsNullOrEmpty(savedHttp) && (savedHttp.Contains(":9000") || savedHttp.Contains("192.168.0.31") || savedHttp.Contains("192.168.16.121")))
+                    if (!string.IsNullOrEmpty(savedHttp) && (savedHttp.Contains(":9000") || savedHttp.Contains("192.168.16.121")))
                     {
                         try { File.Delete("config.json"); } catch { }
                         savedHttp = "";
@@ -240,7 +251,7 @@ namespace EktaDMAAgent
                 else if (File.Exists("config.txt"))
                 {
                     string txt = File.ReadAllText("config.txt").Trim();
-                    if (txt.Contains(":9000") || txt.Contains("192.168.0.31") || txt.Contains("192.168.16.121"))
+                    if (txt.Contains(":9000") || txt.Contains("192.168.16.121"))
                     {
                         try { File.Delete("config.txt"); } catch { }
                     }
@@ -250,7 +261,7 @@ namespace EktaDMAAgent
                     }
                 }
 
-                if (httpUrl.Contains(":9000") || httpUrl.Contains("192.168.0.31") || httpUrl.Contains("192.168.16.121") || !IsLanUrl(httpUrl))
+                if (httpUrl.Contains(":9000") || httpUrl.Contains("192.168.16.121") || !IsLanUrl(httpUrl))
                 {
                     httpUrl = "";
                     wsUrl = "";
@@ -560,7 +571,7 @@ namespace EktaDMAAgent
             }
         }
 
-        public static string DiscoverActiveLanServerUrl()
+        public static string DiscoverActiveLanServerUrl(bool includeSubnetScan = true)
         {
             // 1. Instant UDP Broadcast Discovery (10ms speed)
             string udpUrl = DiscoverViaUdpBroadcast();
@@ -589,6 +600,7 @@ namespace EktaDMAAgent
             }
 
             // 3. High-speed parallel LAN Subnet Auto-Scanner - every active adapter's /24, best adapter first
+            if (!includeSubnetScan) return null;
             var scanned = new List<string>();
             foreach (var ad in GetLocalIPv4Adapters())
             {
@@ -628,7 +640,7 @@ namespace EktaDMAAgent
             displayName = email;
             errorMsg = "";
 
-            if (string.IsNullOrEmpty(ServerHttpUrl) || ServerHttpUrl.Contains(":9000") || ServerHttpUrl.Contains("192.168.0.31") || ServerHttpUrl.Contains("192.168.16.121") || !IsLanUrl(ServerHttpUrl))
+            if (string.IsNullOrEmpty(ServerHttpUrl) || ServerHttpUrl.Contains(":9000") || ServerHttpUrl.Contains("192.168.16.121") || !IsLanUrl(ServerHttpUrl))
             {
                 ServerHttpUrl = "";
                 ServerWsUrl = "";
@@ -646,7 +658,7 @@ namespace EktaDMAAgent
                     if (File.Exists(path))
                     {
                         string content = File.ReadAllText(path);
-                        if (content.Contains(":9000") || content.Contains("192.168.0.31") || content.Contains("192.168.16.121"))
+                        if (content.Contains(":9000") || content.Contains("192.168.16.121"))
                         {
                             try { File.Delete(path); } catch { }
                         }
@@ -660,7 +672,7 @@ namespace EktaDMAAgent
                 if (File.Exists(ipTxt))
                 {
                     string fileUrl = File.ReadAllText(ipTxt).Trim();
-                    if (fileUrl.Contains(":9000") || fileUrl.Contains("192.168.0.31") || fileUrl.Contains("192.168.16.121"))
+                    if (fileUrl.Contains(":9000") || fileUrl.Contains("192.168.16.121"))
                     {
                         try { File.Delete(ipTxt); } catch { }
                         fileUrl = "";
@@ -717,6 +729,112 @@ namespace EktaDMAAgent
                     : "Unable to connect to LAN server at " + ServerHttpUrl;
             }
             return false;
+        }
+
+        // Signs in straight against the EktaHR backend (no DMA server needed), so login never
+        // blocks when the office has no server running yet. Sets the session identity; the agent
+        // then discovers and attaches to a DMA server in the background (RegisterWhenServerAppearsLoop).
+        public static bool AuthenticateDirectWithHrms(string email, string password, out string displayName, out string errorMsg)
+        {
+            displayName = email;
+            errorMsg = "";
+            try
+            {
+                System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072 | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls;
+                string endpoint = HrmsApiUrl.TrimEnd('/') + "/api/auth/login";
+                string jsonBody = "{\"email\":\"" + EscapeJson(email) + "\",\"password\":\"" + EscapeJson(password) + "\"}";
+                byte[] bodyBytes = Encoding.UTF8.GetBytes(jsonBody);
+
+                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(endpoint);
+                req.Method = "POST";
+                req.ContentType = "application/json";
+                req.ContentLength = bodyBytes.Length;
+                req.Timeout = 15000;
+                using (Stream rs = req.GetRequestStream()) { rs.Write(bodyBytes, 0, bodyBytes.Length); }
+
+                string respText;
+                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                {
+                    respText = sr.ReadToEnd();
+                }
+
+                if (respText.IndexOf("\"requiresOtp\":true", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    errorMsg = "OTP login is enabled for this account and is not supported by the desktop agent.";
+                    return false;
+                }
+                if (respText.IndexOf("\"token\"", StringComparison.Ordinal) < 0)
+                {
+                    errorMsg = ExtractJsonValue(respText, "message");
+                    if (string.IsNullOrEmpty(errorMsg)) errorMsg = "Invalid EktaHR login credentials.";
+                    return false;
+                }
+
+                string role = ExtractJsonValue(respText, "role");
+                string userId = ExtractJsonValue(respText, "id");
+                string adminId = ExtractJsonValue(respText, "adminId");
+                string businessId = string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase) ? userId : adminId;
+                if (string.IsNullOrEmpty(businessId)) businessId = string.IsNullOrEmpty(adminId) ? userId : adminId;
+
+                LoggedUser = email;
+                if (email.Contains("@")) EmployeeName = email.Split('@')[0];
+                BusinessId = string.IsNullOrEmpty(businessId) ? "default" : businessId;
+                DeviceToken = ""; // no DMA server yet; obtained when one is found
+                ApplyIdleThresholdFromServer(respText);
+                return true;
+            }
+            catch (WebException wex)
+            {
+                try
+                {
+                    if (wex.Response != null)
+                    {
+                        using (StreamReader sr = new StreamReader(wex.Response.GetResponseStream()))
+                        {
+                            string errJson = sr.ReadToEnd();
+                            string msg = ExtractJsonValue(errJson, "message");
+                            if (string.IsNullOrEmpty(msg)) msg = ExtractJsonValue(errJson, "error");
+                            if (!string.IsNullOrEmpty(msg)) { errorMsg = msg; return false; }
+                        }
+                    }
+                }
+                catch { }
+                errorMsg = "Cannot reach EktaHR to sign in. Check the internet connection.";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                errorMsg = "Login error: " + ex.Message;
+                return false;
+            }
+        }
+
+        // After a serverless login: keep looking for a DMA server on the LAN, and register with it
+        // the moment it appears, to obtain the device token (for screenshot/idle upload). Live view
+        // works as soon as the WebSocket connects, even before this succeeds.
+        private static async Task RegisterWhenServerAppearsLoop(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested && IsLoggedIn && string.IsNullOrEmpty(DeviceToken))
+            {
+                try
+                {
+                    string found = DiscoverActiveLanServerUrl(false);
+                    if (!string.IsNullOrEmpty(found) && !string.IsNullOrEmpty(PendingEmail))
+                    {
+                        string dn, er;
+                        if (TryValidateAndRegisterSingle(PendingEmail, PendingPassword, found, out dn, out er) && !string.IsNullOrEmpty(DeviceToken))
+                        {
+                            ServerHttpUrl = found.TrimEnd('/');
+                            ServerWsUrl = ToWsUrl(ServerHttpUrl);
+                            SaveLocalConfig(ServerHttpUrl, ServerWsUrl);
+                        }
+                    }
+                }
+                catch { }
+                if (!string.IsNullOrEmpty(DeviceToken)) break;
+                await Task.Delay(15000, token);
+            }
         }
 
         private static bool TryValidateAndRegisterSingle(string email, string password, string httpUrl, out string displayName, out string errorMsg)
@@ -812,27 +930,35 @@ namespace EktaDMAAgent
             }
         }
 
-        public static void StartSession(string user, string httpUrl, string wsUrl, string deviceId, string hostname)
+        public static void StartSession(string user, string httpUrl, string wsUrl, string deviceId, string hostname, string pendingEmail = null, string pendingPassword = null)
         {
             IsLoggedIn = true;
             LoggedUser = user;
             ServerHttpUrl = httpUrl;
             ServerWsUrl = wsUrl;
-            SaveLocalConfig(httpUrl, wsUrl);
+            if (!string.IsNullOrEmpty(httpUrl)) SaveLocalConfig(httpUrl, wsUrl);
+
+            // Serverless login (no DMA server on the LAN yet): keep the credentials so the agent can
+            // register with a server as soon as one appears, and run that discovery loop.
+            PendingEmail = pendingEmail ?? "";
+            PendingPassword = pendingPassword ?? "";
 
             // Load Cumulative Daily Session Stats for User (preserves first CheckInTime of the day & accumulated shift seconds)
             LoadDailyStats(user);
 
             connCts = new CancellationTokenSource();
 
-            string fullWsUrl = wsUrl.TrimEnd('/') + "/agent?deviceId=" + Uri.EscapeDataString(deviceId) +
+            // businessId makes the agent show under the right company the instant it connects.
+            string fullWsUrl = (string.IsNullOrEmpty(wsUrl) ? "" : wsUrl.TrimEnd('/')) + "/agent?deviceId=" + Uri.EscapeDataString(deviceId) +
                             "&hostname=" + Uri.EscapeDataString(hostname) +
-                            "&user=" + Uri.EscapeDataString(user);
+                            "&user=" + Uri.EscapeDataString(user) +
+                            "&businessId=" + Uri.EscapeDataString(BusinessId ?? "");
 
             Task.Run(() => ConnectionLoop(fullWsUrl, connCts.Token));
             Task.Run(() => SendHeartbeatHttpLoop(connCts.Token));
             Task.Run(() => PeriodicScreenshotLoop(connCts.Token));
             Task.Run(() => WorkTimerLoop(connCts.Token));
+            if (!string.IsNullOrEmpty(PendingEmail)) Task.Run(() => RegisterWhenServerAppearsLoop(connCts.Token));
         }
 
         public static void StopSession()
@@ -845,6 +971,8 @@ namespace EktaDMAAgent
 
             IsLoggedIn = false;
             IsStreaming = false;
+            PendingEmail = "";
+            PendingPassword = "";
             CheckOutTime = DateTime.Now.ToString("hh:mm tt");
             SaveDailyStats();
             AgentStatus = "Logged Out";
@@ -908,8 +1036,37 @@ namespace EktaDMAAgent
         // ================= WEBSOCKET LIVE STREAMING LOOP =================
         private static async Task ConnectionLoop(string wsServerUrl, CancellationToken token)
         {
+            int failures = 0;
             while (IsLoggedIn && !token.IsCancellationRequested)
             {
+                // Serverless start (wsServerUrl is a relative "/agent?..."): once a DMA server is
+                // known (the register loop or a rediscovery set ServerWsUrl), attach to it.
+                if (!wsServerUrl.StartsWith("ws://") && !wsServerUrl.StartsWith("wss://") && !string.IsNullOrEmpty(ServerWsUrl))
+                {
+                    int qi = wsServerUrl.IndexOf("/agent", StringComparison.Ordinal);
+                    if (qi >= 0) { wsServerUrl = ServerWsUrl.TrimEnd('/') + wsServerUrl.Substring(qi); failures = 0; }
+                }
+                // No server yet: wait and look again rather than throwing on a relative URL.
+                if (!wsServerUrl.StartsWith("ws://") && !wsServerUrl.StartsWith("wss://"))
+                {
+                    AgentStatus = "Waiting for server";
+                    LiveStreamStatus = "Offline";
+                    await Task.Delay(5000, token);
+                    continue;
+                }
+                if (failures >= 2)
+                {
+                    // Every 2nd/4th/... failure: quick search; every 6th: include the subnet scan.
+                    if (failures % 2 == 0)
+                    {
+                        string switched = TryRediscoverServer(wsServerUrl, failures % 6 == 0);
+                        if (switched != null)
+                        {
+                            wsServerUrl = switched;
+                            failures = 0;
+                        }
+                    }
+                }
                 try
                 {
                     AgentStatus = "Connecting...";
@@ -917,6 +1074,7 @@ namespace EktaDMAAgent
                     using (currentWs = new ClientWebSocket())
                     {
                         await currentWs.ConnectAsync(new Uri(wsServerUrl), token);
+                        failures = 0;
                         AgentStatus = "Active";
                         LiveStreamStatus = "Ready";
 
@@ -929,6 +1087,7 @@ namespace EktaDMAAgent
                 }
                 catch
                 {
+                    failures++;
                     AgentStatus = "Reconnecting";
                     LiveStreamStatus = "Offline";
                 }
@@ -938,6 +1097,29 @@ namespace EktaDMAAgent
                     await Task.Delay(3000, token);
                 }
             }
+        }
+
+        // Finds the DMA server again after the connection was lost. Returns the live-stream URL
+        // rewritten for the server found (same /agent?... query), or null when it is unchanged
+        // or nothing answered. Also points heartbeats, screenshots and the saved config at it.
+        private static string TryRediscoverServer(string currentFullWsUrl, bool includeSubnetScan)
+        {
+            try
+            {
+                string found = DiscoverActiveLanServerUrl(includeSubnetScan);
+                if (string.IsNullOrEmpty(found)) return null;
+                found = found.TrimEnd('/');
+                if (string.Equals(found, (ServerHttpUrl ?? "").TrimEnd('/'), StringComparison.OrdinalIgnoreCase)) return null;
+
+                int q = currentFullWsUrl.IndexOf("/agent", StringComparison.Ordinal);
+                if (q < 0) return null;
+                string newWsBase = ToWsUrl(found);
+                ServerHttpUrl = found;
+                ServerWsUrl = newWsBase;
+                SaveLocalConfig(ServerHttpUrl, ServerWsUrl);
+                return newWsBase + currentFullWsUrl.Substring(q);
+            }
+            catch { return null; }
         }
 
         public static void SendInstantStatusUpdate(string overrideStatus = null)
@@ -2693,12 +2875,20 @@ namespace EktaDMAAgent
             string err;
             bool ok = Program.ValidateAndRegister(email, pass, "", out displayName, out err);
 
-            // Server not discoverable (different subnet, Wi-Fi isolation, broadcast blocked): ask for its IP once
-            if (!ok && !Program.LastLoginReachedServer && AskForServerAddress())
+            // No DMA server on this LAN yet (e.g. the admin PC that hosts it is not open): do NOT
+            // block. Sign in straight against EktaHR and keep looking for a server in the
+            // background - the admin sees the agent once a server is running. A server that
+            // answered and rejected the login (wrong password) is shown as-is, not bypassed.
+            bool serverless = false;
+            if (!ok && !Program.LastLoginReachedServer)
             {
-                lblLoginError.Text = "Signing in...";
-                Application.DoEvents();
-                ok = Program.ValidateAndRegister(email, pass, "", out displayName, out err);
+                ok = Program.AuthenticateDirectWithHrms(email, pass, out displayName, out err);
+                if (ok)
+                {
+                    serverless = true;
+                    Program.ServerHttpUrl = "";
+                    Program.ServerWsUrl = "";
+                }
             }
 
             if (!ok)
@@ -2708,7 +2898,7 @@ namespace EktaDMAAgent
             }
 
             lblLoginError.Text = "";
-            Program.StartSession(displayName, Program.ServerHttpUrl, Program.ServerWsUrl, deviceId, hostname);
+            Program.StartSession(displayName, Program.ServerHttpUrl, Program.ServerWsUrl, deviceId, hostname, serverless ? email : null, serverless ? pass : null);
 
             SwitchToView("HOME");
             trayIcon.Text = "ektaHr Agent - Active (" + displayName + ")";

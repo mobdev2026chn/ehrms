@@ -1764,9 +1764,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Only the route actually travelled is drawn. The suggested road route is still
-    // fetched for the 'shortest remaining' distance and ETA, but not shown as a line.
+    // The suggested road route to the destination (green dashed) so the employee has a
+    // path to follow from the moment the ride starts, plus the route actually travelled
+    // (solid) as they move.
     final allPolylines = <Polyline>{
+      if (_shortestRoutePolyline != null) _shortestRoutePolyline!,
       if (_routePolyline != null) _routePolyline!,
     };
 

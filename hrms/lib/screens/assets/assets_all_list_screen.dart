@@ -389,6 +389,7 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                     )
                   : _assets.isEmpty
                       ? RefreshIndicator(
+                          key: const ValueKey('assets-empty'),
                           onRefresh: () async {
                             setState(() => _page = 1);
                             await _fetchAssets(refresh: true);
@@ -422,6 +423,7 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                           ),
                         )
                       : Column(
+                          key: const ValueKey('assets-list'),
                           children: [
                             Expanded(
                               child: RefreshIndicator(

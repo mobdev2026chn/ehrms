@@ -19,6 +19,14 @@ import '../screens/admin/staff/admin_staff_list_screen.dart';
 import '../screens/admin/staff/admin_attendance_screen.dart';
 import '../screens/admin/staff/admin_overtime_screen.dart';
 import '../screens/admin/staff/admin_payroll_screen.dart';
+import '../screens/admin/geo/admin_field_tracking_screen.dart';
+import '../screens/admin/geo/admin_travel_allowance_screen.dart';
+import '../screens/admin/geo/admin_geo_settings_screen.dart';
+import '../screens/admin/announcements/admin_announcements_screen.dart';
+import '../screens/performance/performance_module_screen.dart';
+import '../screens/lms_admin/lms_admin_shell_screen.dart';
+import '../screens/assets/assets_all_list_screen.dart';
+import '../screens/grievance/grievance_shell_screen.dart';
 import '../screens/admin/approvals/admin_leave_approvals_screen.dart';
 import '../screens/admin/approvals/admin_permission_approvals_screen.dart';
 import '../screens/admin/approvals/admin_punch_approvals_screen.dart';
@@ -55,7 +63,8 @@ class _AppDrawerState extends State<AppDrawer> {
   // Whether the header avatar must be flipped 180° on display (legacy selfies were
   // stored upside-down). Detected from the image via ML Kit, same as the dashboard.
   bool _avatarNeedsFlip = false;
-  final Set<String> _expandedSections = {'staff'};
+  // No section expanded by default — the drawer opens fully collapsed.
+  final Set<String> _expandedSections = {};
   final Set<String> _expandedSubSections = {};
 
   bool get _isAdmin {
@@ -228,7 +237,6 @@ class _AppDrawerState extends State<AppDrawer> {
   Widget _buildAdminHeaderCard() {
     final name = (_userData?['name'] ?? 'akash').toString();
     final role = (_userData?['role'] ?? 'admin').toString();
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'A';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -239,62 +247,23 @@ class _AppDrawerState extends State<AppDrawer> {
       ),
       child: Row(
         children: [
-          // Logo / Avatar
-          Container(
-            width: 36,
-            height: 36,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFFEFAA1F), AppColors.brandDark],
-              ),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              initial,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                color: Colors.white,
-              ),
-            ),
+          // EktaHR logo (same as the splash screen), for the dark header.
+          Image.asset(
+            'assets/images/ektaHr_final.png',
+            height: 28,
+            fit: BoxFit.contain,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      'ekta',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white,
-                      ),
-                    ),
-                    Text(
-                      'HR',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFFEFAA1F),
-                      ),
-                    ),
-                  ],
-                ),
-                Text(
-                  '$name • $role',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFFA1A1AA),
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+            child: Text(
+              '$name • $role',
+              style: const TextStyle(
+                fontSize: 11.5,
+                color: Color(0xFFA1A1AA),
+                fontWeight: FontWeight.w600,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           Container(
@@ -565,15 +534,22 @@ class _AppDrawerState extends State<AppDrawer> {
           isExpanded: _expandedSections.contains('geo'),
           onToggle: () => _toggleSection('geo'),
           children: [
-            _adminSubItem(Icons.dashboard_outlined, 'Dashboard', () => Navigator.pop(context)),
-            _adminSubItem(Icons.storefront_outlined, 'Customer', () => Navigator.pop(context)),
-            _adminSubItem(Icons.currency_rupee_rounded, 'Travel Allowance', () => Navigator.pop(context)),
+            _adminSubItem(Icons.my_location_rounded, 'Field Tracking', () {
+              Navigator.pop(context);
+              _push(const AdminFieldTrackingScreen());
+            }),
+            _adminSubItem(Icons.currency_rupee_rounded, 'Travel Allowance', () {
+              Navigator.pop(context);
+              _push(const AdminTravelAllowanceScreen());
+            }),
             _adminSubItem(Icons.task_alt_rounded, 'Tasks', () {
               Navigator.pop(context);
               Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
             }),
-            _adminSubItem(Icons.explore_outlined, 'Tracking', () => Navigator.pop(context)),
-            _adminSubItem(Icons.tune_rounded, 'Settings', () => Navigator.pop(context)),
+            _adminSubItem(Icons.tune_rounded, 'Settings', () {
+              Navigator.pop(context);
+              _push(const AdminGeoSettingsScreen());
+            }),
           ],
         ),
 
@@ -581,6 +557,43 @@ class _AppDrawerState extends State<AppDrawer> {
         const Divider(height: 1, color: Color(0xFF27272A)),
         const SizedBox(height: 8),
 
+        _item(Icons.account_balance_outlined, 'Loans', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const AdminLoansScreen()));
+        }, isDark: true),
+        _item(Icons.insights_outlined, 'Performance', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const PerformanceModuleScreen()));
+        }, isDark: true),
+        _item(Icons.school_outlined, 'LMS', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const LmsAdminShellScreen()));
+        }, isDark: true),
+        _item(Icons.forum_outlined, 'Interaction', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const StaffInteractionScreen()));
+        }, isDark: true),
+        _item(Icons.devices_other_outlined, 'Asset Management', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const AssetsAllListScreen()));
+        }, isDark: true),
+        _item(Icons.report_gmailerrorred_outlined, 'Grievance', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const GrievanceShellScreen()));
+        }, isDark: true),
+        _item(
+          Icons.campaign_rounded,
+          'Announcements',
+          () {
+            Navigator.pop(context);
+            Future.microtask(() => _push(const AdminAnnouncementsScreen()));
+          },
+          isDark: true,
+        ),
+        _item(Icons.notifications_outlined, 'Notifications', () {
+          Navigator.pop(context);
+          Future.microtask(() => _push(const NotificationsScreen()));
+        }, isDark: true),
         _item(
           Icons.person_outline_rounded,
           'Profile',

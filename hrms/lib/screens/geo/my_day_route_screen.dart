@@ -15,14 +15,20 @@ import 'package:intl/intl.dart';
 
 import '../../services/geo/route_snapping_service.dart';
 import '../../services/task_service.dart';
+import '../../services/admin_geo_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../widgets/flag_marker_icon.dart';
 import '../../widgets/travelled_route_style.dart';
 
 class MyDayRouteScreen extends StatefulWidget {
-  const MyDayRouteScreen({super.key, this.initialDay});
+  const MyDayRouteScreen({super.key, this.initialDay, this.staffId, this.staffName});
 
   final DateTime? initialDay;
+
+  /// Admin view: when set, shows this staff member's route (admin endpoint) instead
+  /// of the signed-in employee's own.
+  final String? staffId;
+  final String? staffName;
 
   @override
   State<MyDayRouteScreen> createState() => _MyDayRouteScreenState();
@@ -161,7 +167,9 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       });
     }
     try {
-      final data = await TaskService().getDayRoute(_day);
+      final data = widget.staffId != null
+          ? await AdminGeoService.instance.getStaffDayRoute(widget.staffId!, _day)
+          : await TaskService().getDayRoute(_day);
       final flags = <_Flag>[];
       for (final raw in (data['flags'] as List? ?? const [])) {
         if (raw is! Map) continue;
@@ -594,7 +602,8 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         foregroundColor: _ink,
-        title: const Text('My Route', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        title: Text(widget.staffName != null ? '${widget.staffName}’s Route' : 'My Route',
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
         actions: [
           IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded), tooltip: 'Refresh'),
         ],

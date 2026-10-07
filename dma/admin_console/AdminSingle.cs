@@ -45,9 +45,19 @@ namespace EktaHR.AdminConsole
 
             AutoDetectPort();
 
+            // No DMA server on this LAN yet: this PC becomes it (bundled server next to the exe).
+            if (string.IsNullOrEmpty(ServerUrl) && TryStartBundledServer())
+            {
+                ServerUrl = "http://127.0.0.1:2005";
+            }
+
             if (string.IsNullOrEmpty(ServerUrl))
             {
-                MessageBox.Show("No EktaHR DMA server found on this LAN.\n\nMake sure you are on the office network, or put the server IP (e.g. 192.168.1.10) in domain.txt next to this app.",
+                // Say why, so it can be fixed on the spot.
+                string reason = string.IsNullOrEmpty(BundledServerProblem)
+                    ? "No EktaHR DMA server found on this LAN."
+                    : BundledServerProblem;
+                MessageBox.Show(reason + "\n\nApp folder: " + AppDomain.CurrentDomain.BaseDirectory,
                     "EktaHR Admin Console", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -62,6 +72,168 @@ namespace EktaHR.AdminConsole
                 }
 
                 LaunchStandaloneEdgeApp(ServerUrl);
+            }
+        }
+
+        // ================= BUNDLED LAN SERVER (this admin PC becomes the DMA server) =================
+        // Layout next to the exe:  dma-server\node\node.exe,  dma-server\server\src\index.js,
+        //                          dma-server\admin_console\dist (portal),  dma-server\agent\publish
+        // The server holds no database credentials: logins and the staff list go through the
+        // EktaHR backend with the user's own token. Screenshots/logs go to %LOCALAPPDATA%\EktaHR DMA.
+        private static string DataDir
+        {
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EktaHR DMA"); }
+        }
+
+        /// Why the bundled server could not be started (shown to the admin), or null.
+        private static string BundledServerProblem = null;
+
+        // Version stamp of the embedded server payload. Bump it whenever the embedded zip changes
+        // so the unpacked copy is refreshed on the next run.
+        private const string ServerPayloadVersion = "2026.10.05.2";
+
+        /// Returns the folder holding node\node.exe and server\src\index.js:
+        ///  - a "dma-server" folder next to the exe, if one was shipped that way; else
+        ///  - the server embedded in this exe, unpacked once to %LOCALAPPDATA%\EktaHR DMA\server-<ver>.
+        /// Sets BundledServerProblem and returns null on failure.
+        private static string ResolveServerRoot()
+        {
+            try
+            {
+                string beside = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dma-server");
+                if (File.Exists(Path.Combine(beside, "node", "node.exe"))) return beside;
+
+                string target = Path.Combine(DataDir, "server-" + ServerPayloadVersion);
+                string ready = Path.Combine(target, "ready.ok");
+                if (File.Exists(ready)) return target;
+
+                var asm = System.Reflection.Assembly.GetExecutingAssembly();
+                using (Stream zip = asm.GetManifestResourceStream("EktaHR.DmaServer.zip"))
+                {
+                    if (zip == null)
+                    {
+                        BundledServerProblem = "This build has no embedded DMA server, and no \"dma-server\" folder is next to the exe.";
+                        return null;
+                    }
+                    // Fresh unpack: clear any half-written earlier attempt.
+                    try { if (Directory.Exists(target)) Directory.Delete(target, true); } catch { }
+                    Directory.CreateDirectory(target);
+                    string tmpZip = Path.Combine(DataDir, "server-payload.zip");
+                    Directory.CreateDirectory(DataDir);
+                    using (var fs = new FileStream(tmpZip, FileMode.Create, FileAccess.Write))
+                    {
+                        zip.CopyTo(fs);
+                    }
+                    System.IO.Compression.ZipFile.ExtractToDirectory(tmpZip, target);
+                    try { File.Delete(tmpZip); } catch { }
+                }
+                File.WriteAllText(ready, DateTime.Now.ToString("s"));
+                return target;
+            }
+            catch (Exception ex)
+            {
+                BundledServerProblem = "Could not unpack the DMA server: " + ex.Message;
+                return null;
+            }
+        }
+
+        private static bool TryStartBundledServer()
+        {
+            string logFile = Path.Combine(DataDir, "logs", "dma-server.log");
+            try
+            {
+                // The server lives INSIDE this exe (unpacked once per version), so a single file is
+                // enough. A "dma-server" folder next to the exe, if present, is used instead.
+                string root = ResolveServerRoot();
+                if (root == null) return false; // ResolveServerRoot set BundledServerProblem
+                string nodeExe = Path.Combine(root, "node", "node.exe");
+                string serverDir = Path.Combine(root, "server");
+                if (!File.Exists(nodeExe) || !File.Exists(Path.Combine(serverDir, "src", "index.js")))
+                {
+                    BundledServerProblem = "The DMA server files are incomplete.\n\nFolder: " + root;
+                    return false;
+                }
+
+                Directory.CreateDirectory(Path.Combine(DataDir, "logs"));
+                Directory.CreateDirectory(Path.Combine(DataDir, "storage"));
+
+                EnsureFirewallOnce(nodeExe);
+
+                // cmd keeps the log redirection alive after this launcher exits (a redirected pipe
+                // would close with the launcher and stop the server).
+                var psi = new ProcessStartInfo("cmd.exe",
+                    "/c \"\"" + nodeExe + "\" src\\index.js >> \"" + logFile + "\" 2>&1\"")
+                {
+                    WorkingDirectory = serverDir,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                psi.EnvironmentVariables["PORT"] = "2005";
+                psi.EnvironmentVariables["LAN_ONLY"] = "true";
+                psi.EnvironmentVariables["DMA_STORAGE_DIR"] = Path.Combine(DataDir, "storage");
+                Process.Start(psi);
+
+                // Wait for it to answer (first start of node can take a few seconds)
+                for (int i = 0; i < 40; i++)
+                {
+                    System.Threading.Thread.Sleep(500);
+                    if (PingHealthEndpointFast("http://127.0.0.1:2005")) return true;
+                }
+                BundledServerProblem = "This PC tried to start the DMA server but it did not answer." + LastLogLines(logFile);
+            }
+            catch (Exception ex)
+            {
+                BundledServerProblem = "This PC could not start the DMA server: " + ex.Message + LastLogLines(logFile);
+            }
+            return false;
+        }
+
+        // The end of the server log, for the error message (antivirus block, port in use, ...).
+        private static string LastLogLines(string logFile)
+        {
+            try
+            {
+                if (!File.Exists(logFile)) return "\n\n(Antivirus may have blocked dma-server\\node\\node.exe.)";
+                string[] lines = File.ReadAllLines(logFile);
+                int from = Math.Max(0, lines.Length - 6);
+                return "\n\nServer log (" + logFile + "):\n" + string.Join("\n", lines, from, lines.Length - from);
+            }
+            catch { return ""; }
+        }
+
+        // Once per PC: mark the office network Private and let other PCs reach the server
+        // (TCP 2005 portal + live stream, UDP 9002 auto-discovery). Needs one UAC "Yes".
+        private static void EnsureFirewallOnce(string nodeExe)
+        {
+            string marker = Path.Combine(DataDir, "firewall.ok");
+            if (File.Exists(marker)) return;
+            try
+            {
+                string script = Path.Combine(Path.GetTempPath(), "ektahr_dma_firewall.ps1");
+                File.WriteAllText(script,
+                    "$r = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1\r\n" +
+                    "if ($r) { Get-NetConnectionProfile -InterfaceIndex $r.ifIndex -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' } | Set-NetConnectionProfile -NetworkCategory Private }\r\n" +
+                    "Get-NetFirewallRule -DisplayName 'EktaDMA *' -ErrorAction SilentlyContinue | Remove-NetFirewallRule\r\n" +
+                    "New-NetFirewallRule -DisplayName 'EktaDMA TCP 2005' -Direction Inbound -Protocol TCP -LocalPort 2005 -Profile Private,Domain -Action Allow | Out-Null\r\n" +
+                    "New-NetFirewallRule -DisplayName 'EktaDMA UDP 9002' -Direction Inbound -Protocol UDP -LocalPort 9002 -Profile Private,Domain -Action Allow | Out-Null\r\n" +
+                    "New-NetFirewallRule -DisplayName 'EktaDMA Server (node)' -Direction Inbound -Program '" + nodeExe.Replace("'", "''") + "' -Profile Private,Domain -Action Allow | Out-Null\r\n");
+                var p = Process.Start(new ProcessStartInfo("powershell.exe",
+                    "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\"")
+                {
+                    Verb = "runas",
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+                if (p != null)
+                {
+                    p.WaitForExit(60000);
+                    if (p.HasExited && p.ExitCode == 0) File.WriteAllText(marker, DateTime.Now.ToString("s"));
+                }
+            }
+            catch
+            {
+                // UAC declined: the server still runs for this PC; other PCs connect once allowed.
             }
         }
 

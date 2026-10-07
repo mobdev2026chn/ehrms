@@ -9,19 +9,25 @@ import 'package:intl/intl.dart';
 import '../services/api_client.dart';
 
 class CustomFieldDef {
-  CustomFieldDef({required this.id, required this.label, required this.type, required this.required});
+  CustomFieldDef({required this.id, required this.label, required this.type, required this.required, this.options = const []});
   final String id;
   final String label;
 
-  /// 'text' | 'number' | 'date'
+  /// 'text' | 'number' | 'date' | 'dropdown'
   final String type;
   final bool required;
+
+  /// Allowed values for a 'dropdown' field (the backend rejects anything else, exact match).
+  final List<String> options;
 
   factory CustomFieldDef.fromJson(Map j) => CustomFieldDef(
         id: (j['_id'] ?? j['id'] ?? '').toString(),
         label: (j['label'] ?? '').toString(),
         type: (j['type'] ?? 'text').toString(),
         required: j['required'] == true,
+        options: j['options'] is List
+            ? [for (final o in j['options'] as List) o.toString()]
+            : const [],
       );
 }
 
@@ -138,29 +144,48 @@ class CustomFieldsFormState extends State<CustomFieldsForm> {
         for (final d in _defs)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: TextField(
-              controller: _ctrls[d.id],
-              readOnly: d.type == 'date',
-              onTap: d.type == 'date' ? () => _pickDate(d) : null,
-              keyboardType: d.type == 'number'
-                  ? const TextInputType.numberWithOptions(decimal: true)
-                  : TextInputType.text,
-              decoration: InputDecoration(
-                labelText: d.required ? '${d.label} *' : d.label,
-                hintText: d.type == 'date' ? 'Select date' : null,
-                suffixIcon: d.type == 'date' ? const Icon(Icons.calendar_today_rounded, size: 18) : null,
-                isDense: true,
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                ),
-              ),
-            ),
+            child: d.type == 'dropdown' && d.options.isNotEmpty
+                ? _dropdown(d)
+                : TextField(
+                    controller: _ctrls[d.id],
+                    readOnly: d.type == 'date',
+                    onTap: d.type == 'date' ? () => _pickDate(d) : null,
+                    keyboardType: d.type == 'number'
+                        ? const TextInputType.numberWithOptions(decimal: true)
+                        : TextInputType.text,
+                    decoration: _decoration(d),
+                  ),
           ),
       ],
+    );
+  }
+
+  InputDecoration _decoration(CustomFieldDef d) => InputDecoration(
+        labelText: d.required ? '${d.label} *' : d.label,
+        hintText: d.type == 'date' ? 'Select date' : null,
+        suffixIcon: d.type == 'date' ? const Icon(Icons.calendar_today_rounded, size: 18) : null,
+        isDense: true,
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        ),
+      );
+
+  /// A dropdown field: the user must pick one of the backend's options (it rejects
+  /// a free-typed value), so the stored value always matches exactly.
+  Widget _dropdown(CustomFieldDef d) {
+    final current = _ctrls[d.id]?.text ?? '';
+    final value = d.options.contains(current) ? current : null;
+    return DropdownButtonFormField<String>(
+      initialValue: value,
+      isExpanded: true,
+      decoration: _decoration(d),
+      hint: const Text('Select'),
+      items: [for (final o in d.options) DropdownMenuItem(value: o, child: Text(o))],
+      onChanged: (v) => setState(() => _ctrls[d.id]?.text = v ?? ''),
     );
   }
 }
